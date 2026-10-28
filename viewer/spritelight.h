@@ -503,6 +503,7 @@ static void csCompute(const Car *k, const CarBox *cb) {
   if (smkOn) { snprintf(b_, sizeof b_, "CARSIL level=%d car=%s odd=%d sectors=%d q=%.2f..%.2f pieces=%d verts=%d hw=%.2f hl=%.2f t=%.1f\n", gameLevel, k->p.name, csilState > 0, odd, qmin, qmax, npc_, nv_, cb->hw, cb->hl, smkT); smkWrite(b_); }
 }
 static void slShCar(const ColWorld *w, const Car *k, float ex, float ez) {
+  if (!carShadow1003On) return;   // №1003: тени машин выключены строкой Car Shadows (по умолчанию) — ни запросов опоры, ни рисования
   if (k != &car && hypotf(k->x - ex, k->z - ez) >= SL_SH_R) return;
   CarBox cb; memset(&cb, 0, sizeof cb); carBox(k, &cb); float n[3], gy;
   if (!slGround(w, cb.x, cb.z, cb.y, &gy, n)) return;
@@ -1116,6 +1117,48 @@ static float gm970Sin(float turns) { return gvSinT(turns); }
 #define GM970_SIN gm970Sin
 #include "glintmotion970.h"
 static int gvMode970, gvOne970;   // gvOne970 — одна звезда (звёзды монет)
+static int gvLog1022;   // №1022 служебно (flag glint1022log 1): строка на каждый блик ближе 12 м за кадр — центр, размер, пульс, источник
+static const char *gvSrc1022 = "?";
+// №1022 (Роб 26.10 ночь: «векторные блики и свечение на гаечном ключе и на телефоне жёстко глючат, даже в эмуляторе; количество не откатывать, доработать отображение»):
+// сама звезда ходит плавно (журнал GV1022: скачок размера ≤ 1,1 % за кадр), но она большая (полуразмер ≈ 1,8 м у ключа) и стояла за предметом с проверкой глубины мира: низ звезды
+// уходил в землю, бордюр и крышу будки, они резали её в рваный клин, который менялся с каждым поворотом камеры (прогон g1022ab, кадры wo/po). Звезда не пишет глубину, поэтому
+// ключ и трубка (спрайты, рисуются после неё) ложатся сверху на любом её удалении. Теперь звезда перенесена по лучу от глаза ближе — к GF1022_FRONT м перед центром предмета — и
+// уменьшена в то же число раз: на экране тот же центр, размер, форма, цвет и ход №970, а в мире она меньше и выше и до земли не достаёт. Перед ней (Гомер, стены) — закрывают честно.
+// GLINTFIX1022_OLD=1 / файл glintfix1022old рядом с EBOOT / flag glintfix1022 0 — как в TEST71
+#ifndef GLINTFIX1022_OLD
+#define GLINTFIX1022_OLD 0
+#endif
+#define GF1022_FRONT .9f   // м перед центром предмета: столько же, сколько звезда стояла за ним (0,9); запас низа над землёй ≈ 0,5–0,7 м при глазе 5 м
+static int glintFix1022 = !GLINTFIX1022_OLD;
+// №1031 (Роб 26.10: «блики под гаечным ключом глючат именно издалека, вблизи пропадает»): звезда ключа стояла с проверкой глубины мира; издалека взгляд скользит над землёй (угол 5–10°),
+// низ звезды (полуразмер 1,8 м, центр на 1,8 м над точкой ключа) ложится на землю и бордюр, глубина 16 бит рвёт край в полосы, и они мерцают с каждым шагом камеры. Теперь, как у трубки будки (№1022):
+// центр ключа виден лучом из глаза — звезда целиком без проверки глубины (ключ-спрайт рисуется после и ложится сверху); не виден — звезды нет.
+// GLINT1031_OLD=1 / файл glint1031old рядом с EBOOT / flag glint1031 0 — как после №1022
+#ifndef GLINT1031_OLD
+#define GLINT1031_OLD 0
+#endif
+static int glint1031 = !GLINT1031_OLD;
+// трубка будки: звезда в 2,5 раза крупнее трубки и уходит в крышу будки при любом переносе — рисуется без проверки глубины, если центр трубки виден лучом из глаза
+// (коллизия, кэш по месту на GF1022_RAYN кадров); не виден — звезды нет. Трубка (спрайт) рисуется после и ложится сверху
+#define GF1022_RAYN 4
+static struct { float key[3]; unsigned frame; int vis; } gf1022V[16];
+static int gf1022Visible(const float c[3], float ex, float ey, float ez) {
+  int k = -1, old = 0; for (int i = 0; i < 16; i++) { if (fabsf(gf1022V[i].key[0] - c[0]) + fabsf(gf1022V[i].key[2] - c[2]) < .5f) { k = i; break; } if (gf1022V[i].frame < gf1022V[old].frame) old = i; }
+  if (k >= 0 && smkFrameAbs - gf1022V[k].frame < GF1022_RAYN) return gf1022V[k].vis;
+  if (k < 0) k = old;
+  float a[3] = {ex, ey, ez}, b[3] = {c[0], c[1], c[2]}, d[3] = {a[0] - b[0], a[1] - b[1], a[2] - b[2]}, l = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+  if (l > .8f) { b[0] += d[0] / l * .6f; b[1] += d[1] / l * .6f; b[2] += d[2] / l * .6f; }   // конец луча на 0,6 м к глазу: не цепляет саму будку
+  int vis = l <= .8f || !haveCol || colRayFrac(&world, a, b, 0) >= .999f;
+  memcpy(gf1022V[k].key, c, 12); gf1022V[k].frame = smkFrameAbs; gf1022V[k].vis = vis; return vis;
+}
+static float gf1022Pull(float *c, const float obj[3], float ex, float ey, float ez) {   // c — центр звезды (меняется); obj — центр предмета; вернуть множитель размера
+  if (!glintFix1022) return 1.f;
+  float dc[3] = {c[0] - ex, c[1] - ey, c[2] - ez}, lc = sqrtf(dc[0] * dc[0] + dc[1] * dc[1] + dc[2] * dc[2]);
+  float dobj = sqrtf((obj[0] - ex) * (obj[0] - ex) + (obj[1] - ey) * (obj[1] - ey) + (obj[2] - ez) * (obj[2] - ez)) - GF1022_FRONT;
+  if (lc < .5f || dobj < .3f) return 1.f;
+  float k = dobj / lc; if (k > 1.f) k = 1.f; if (k < .15f) k = .15f;
+  c[0] = ex + dc[0] * k; c[1] = ey + dc[1] * k; c[2] = ez + dc[2] * k; return k;
+}
 static void gvAdd(const float c[3], float ex, float ey, float ez, float scale, unsigned rgb1, unsigned rgb2, float alpha, float phase) {
   if (gvNB >= 32) return;
   if (smkOn) { static int n944_, lv944_ = -1; static int16_t k944_[96][3]; if (lv944_ != gameLevel) { lv944_ = gameLevel; n944_ = 0; } if (n944_ < 96) { int16_t q_[3] = {(int16_t)lroundf(c[0]), (int16_t)lroundf(c[1]), (int16_t)lroundf(c[2])}; int j_ = 0; for (; j_ < n944_; j_++) if (!memcmp(k944_[j_], q_, sizeof q_)) break;   // №957б служебно: где в мире стоят блики (первое появление на 1 м сетке)
@@ -1135,6 +1178,7 @@ static void gvAdd(const float c[3], float ex, float ey, float ez, float scale, u
   if (!GV_COST845_OLD && !GLINT_SNOW900_OLD) { kA = 1.f + .06f * gvSinT(tm / 1.3f); kB = 1.f + .12f * gvSinT(tm / .85f + .3342254f); }   // №900: пульс мягче — «блинк-блинк» сдвигом
   float wx_ = 0.f, wy_ = 0.f;   // №970: ключ — свой ход слоёв (glintmotion970.h)
   if (gvMode970 && !fxGlint970Old) { gm970(tm, &kA, &kB, &wx_, &wy_); wx_ *= scale; wy_ *= scale; }
+  if (gvLog1022 && smkOn && dl < 12.f) { char l_[200]; snprintf(l_, sizeof l_, "GV1022 f=%u src=%s m970=%d c=%.3f,%.3f,%.3f sc=%.3f kA=%.3f kB=%.3f w=%.4f,%.4f a=%.3f ph=%.2f tm=%.3f\n", smkFrameAbs, gvSrc1022, gvMode970, c[0], c[1], c[2], scale, kA, kB, wx_, wy_, alpha, phase, tm); smkWrite(l_); }
   GvV *o = gvStar(v, c, R, U, .5f * scale * kA, 0, rgb1, 0xFFF0E0u, alpha);
   if (two_ && gvMode970 && !fxGlint970Old) {
     float cB[3] = {c[0] + R[0] * wx_ + U[0] * wy_, c[1] + R[1] * wx_ + U[1] * wy_, c[2] + R[2] * wx_ + U[2] * wy_};
@@ -1332,7 +1376,7 @@ static void wrGlowDraw(float ex, float ey, float ez, int inR) {
       snprintf(l_ + o_, sizeof l_ - (size_t)o_, "\n"); smkWrite(l_); } }   // №844 служебно: где ключи уровня
   if (!WRGLOW_ORIG_OLD && GLINT_VEC_OLD && !wrgState) wrgLoad();   // картинки (wrglow.bin) — только блику картинкой
   if (!WRGLOW_ORIG_OLD && (!GLINT_VEC_OLD || wrgState > 0)) {   // №803/№816: блик — две звезды (векторные, GLINT_VEC_OLD=1 — картинкой)
-    unsigned t1 = smkOn ? sceKernelGetSystemTimeLow() : 0; float e3[3] = {ex, ey, ez}; unsigned n0 = 0;
+    unsigned t1 = smkOn ? sceKernelGetSystemTimeLow() : 0; float e3[3] = {ex, ey, ez}; unsigned n0 = 0; int nd1031_ = 0;
     glintBegin(world.nwrench < 32 ? world.nwrench : 32);
     for (unsigned k = 0; k < world.nwrench && k < 32; k++) {
       int i = G.wrenchInst[k]; if (i < 0 || !sprops.run[i].alive || ((G.wrenchTaken >> k) & 1u)) continue;
@@ -1342,12 +1386,18 @@ static void wrGlowDraw(float ex, float ey, float ez, int inR) {
       float c3[3] = {W->p[0], W->p[1] + WRGLOW_CY, W->p[2]};
       if (rfSphereOut(pl, e3, c3, 3.f)) continue;
       float l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) l = 1e-3f; c3[0] += dx / l * .9f; c3[2] += dz / l * .9f;   // DIST -0.9 диска: за ключом от камеры
+      float obj_[3] = {W->p[0], W->p[1] + WRGLOW_CY, W->p[2]};
+      if (glint1031 && glintFix1022) { if (!gf1022Visible(obj_, ex, ey, ez)) continue; nd1031_ = 1; }   // №1031: виден — без проверки глубины, нет — звезды нет
+      float kp_ = gf1022Pull(c3, obj_, ex, ey, ez);   // №1022: ближе к глазу и меньше — на экране то же, землю не задевает
       gvMode970 = 1;   // №970: меньше (WRENCH970_S) и прозрачнее (WRENCH970_A) во всех слоях, свой ход слоёв
-      glintAdd(c3, ex, ey, ez, 5.22f * (fxGlint970Old ? 1.f : WRENCH970_S), 0xFF2685u, GLINT_VEC_OLD ? 0xFF4640u : 0xFF5B48u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * f * (fxGlint970Old ? 1.f : WRENCH970_A), (float)k * .37f); n0++;
+      gvSrc1022 = "wrench";
+      glintAdd(c3, ex, ey, ez, 5.22f * (fxGlint970Old ? 1.f : WRENCH970_S) * kp_, 0xFF2685u, GLINT_VEC_OLD ? 0xFF4640u : 0xFF5B48u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * f * (fxGlint970Old ? 1.f : WRENCH970_A), (float)k * .37f); n0++;
       gvMode970 = 0;   // цвета оригинала: (133,38,255) и (64,70,255) / (72,91,255)
     }
     if (smkOn) { wrGlowQuads += n0 * 2; wrGlowFrames++; }
+    if (nd1031_) sceGuDisable(GU_DEPTH_TEST);
     glintFlush();
+    if (nd1031_) sceGuEnable(GU_DEPTH_TEST);
     if (smkOn) wrGlowUs += sceKernelGetSystemTimeLow() - t1;
     return;
   }
@@ -1542,7 +1592,12 @@ static int iconSprHook(const char *name, const float *c, const float *cr, const 
       if (a == WS_EXCL && !GLINT_VEC_OLD) { p[0] = cr[0]; p[2] = cr[2]; }   // «!» стоит в позе покоя — блик под ним, не у свечения клипа
       dx = p[0] - ex; dz = p[2] - ez; l = sqrtf(dx * dx + dz * dz);
       if (l > 1e-3f) { p[0] += dx / l * gd; p[2] += dz / l * gd; }
-      glintBegin(1); gvCoreK970 = (a == WS_PHONE && !fxGlint970Old) ? PHONE970_CORE : 1.f; glintAdd(p, ex, ey, ez, gs, 0xFF2685u, GLINT_VEC_OLD ? 0xFF4640u : 0xFF5B48u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * MARK_GLINT_K * (a == WS_PHONE && !fxGlint970Old ? PHONE970_A : 1.f), (float)a * .53f);   /* №908, №970: будка */ gvCoreK970 = 1.f; glintFlush(); sceGuDisable(GU_FOG); } }
+      int nd1022_ = 0;   // №1022: «!» — звезда ближе к глазу и меньше (голова её не режет); трубка — целиком без проверки глубины, если видна
+      if (a == WS_PHONE && glintFix1022) { nd1022_ = gf1022Visible(c, ex, ey, ez); if (!nd1022_) gs = 0.f; } else gs *= gf1022Pull(p, c, ex, ey, ez);
+      if (gvLog1022 && smkOn) { char l_[160]; snprintf(l_, sizeof l_, "ICON1022 f=%u %s g=%.3f,%.3f,%.3f p=%.3f,%.3f,%.3f gs=%.3f gd=%.3f\n", smkFrameAbs, name, g[0], g[1], g[2], p[0], p[1], p[2], gs, gd); smkWrite(l_); }
+      gvSrc1022 = name;
+      if (nd1022_) sceGuDisable(GU_DEPTH_TEST);
+      glintBegin(1); gvCoreK970 = (a == WS_PHONE && !fxGlint970Old) ? PHONE970_CORE : 1.f; glintAdd(p, ex, ey, ez, gs, 0xFF2685u, GLINT_VEC_OLD ? 0xFF4640u : 0xFF5B48u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * MARK_GLINT_K * (a == WS_PHONE && !fxGlint970Old ? PHONE970_A : 1.f), (float)a * .53f);   /* №908, №970: будка */ gvCoreK970 = 1.f; glintFlush(); if (nd1022_) sceGuEnable(GU_DEPTH_TEST); sceGuDisable(GU_FOG); } }
   static unsigned logged_; if (smkOn && !(logged_ & (1u << a))) { logged_ |= 1u << a; char l_[160]; snprintf(l_, sizeof l_, "ICONSPR %s c=%.2f,%.2f,%.2f tilt=%.2f g=%.2f,%.2f,%.2f gw=%.2f gd=%.2f\n", name, c[0], c[1], c[2], tilt, g[0], g[1], g[2], gs, gd); smkWrite(l_); }
   if (a == WS_EXCL && !EXCL_PIVOT_OLD) { float p3[3] = {br[0], bt[1], br[2]};
     if (!EXCL_EASE_OLD) wsAddPivOff(a, p3, EXCL_TILT_K * (16.95f * 3.1415927f / 180.f) * cosf(6.2831853f * cf / 30.f), pv[0], pv[1], EXCL_NUDGE_X, EXCL_NUDGE_Y);

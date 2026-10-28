@@ -1,0 +1,14 @@
+scene Z_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+foot 213.9 306 3.1416
+wait 3
+shot z_a
+cam 214 40 300 0 -1 0.25 70
+wait 1.5
+shot z_top
+cam 214 25 330 0 -0.7 -0.7 70
+wait 1.5
+shot z_top2
+end

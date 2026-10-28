@@ -1,0 +1,15 @@
+wait 12
+flag cfgdefaults 1
+flag golevel 1
+wait 40
+flag toon 1
+wait 4
+flag flat912 1
+scene G_ON
+foot 295.5 166 3.14
+wait 22
+flag trfgoh 3
+flag trfgo 0.0 9
+wait 2
+shot probe
+end

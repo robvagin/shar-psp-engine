@@ -1,0 +1,19 @@
+# №544/546: цена кадра на улице с трафиком: L5, герой стоит, 3 вида по 8 с; PHSEC: work, x_trf, x_car3d, x_mcr
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene T_L5
+flag golevel 5
+wait 40
+flag flat912 1
+foot -154.9 -482.05 0.024
+wait 3
+flag trfmodel 2
+flag trfgo 0.7
+wait 8
+flag trfgo 2.4
+wait 8
+flag trfgo 4.2
+wait 8
+end

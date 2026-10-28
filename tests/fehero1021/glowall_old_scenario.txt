@@ -1,0 +1,29 @@
+# №1021-герои: все подсветки пунктов (feglow N) при Гомере путём игры: видно, закрывает ли контур Гомера подсветку
+flag menu
+flag lvset 1
+scene FE_BOOT
+wait 4
+flag toon 1
+flag fehero1021 0
+flag feglow 0
+wait 1.2
+shot gl0
+flag feglow 1
+wait 1.2
+shot gl1
+flag feglow 2
+wait 1.2
+shot gl2
+flag feglow 3
+wait 1.2
+shot gl3
+flag feglow 4
+wait 1.2
+shot gl4
+flag feglow 5
+wait 1.2
+shot gl5
+flag feglow 6
+wait 1.2
+shot gl6
+end

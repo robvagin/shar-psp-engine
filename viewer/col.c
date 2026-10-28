@@ -96,9 +96,11 @@ typedef struct {
   unsigned char thin;                     // №687: срез — отрезок (вертикальный треугольник без толщины): оси борта машины в выборе выталкивания взвешены THIN_END_W
   unsigned char prv;                      // правка 200: 1 — у точек свой радиус pr (оболочка кругов), 0 — общий rad
   float pr[8];
+  uint8_t rail;   // №1050 (Б): коробка — борт трамплина без торцов (railIs по миру, ставится при создании фигуры)
 } Shape;
 
 struct ColScratch {
+  uint32_t rail1050[8]; unsigned nrail1050;   // №1050 (Б): борта трамплина этого мира (не глобально: комнаты тоже зовут colInit)
   uint16_t *stamp; uint16_t cur;
   uint32_t *humpAt; uint8_t *hump;   // горбы капсул: начало битов капсулы (~0 — не горб), по 2 бита на шаг оси (стороны)
   uint8_t *segFlags;
@@ -456,6 +458,7 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
 
 static void pocketInit(ColWorld *w);
 static void zcReset(void);
+static void railInit(const ColWorld *w); static int railIs(const ColWorld *w, uint32_t i);   // №1050 (Б): ниже, у evalShape
 int colInit(ColWorld *w, const void *section, unsigned size) {
   memset(w, 0, sizeof *w); zcReset();
   if (!section || size < sizeof(ColHdr)) return -1;
@@ -551,6 +554,7 @@ int colInit(ColWorld *w, const void *section, unsigned size) {
     }
   }
   pocketInit(w);
+  railInit(w);
   return 0;
 }
 
@@ -1309,7 +1313,7 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
             if (colPassFol && boxPhantom(B)) continue;   // правка 475: невидимая коробка — насквозь, без вязкости листвы
             if (colPassFol && boxSlopePlate(B)) continue;   // №525: тонкий скат — не стена для кузова (опора остаётся)
             if (colPassFol && B->pad == 1.f) { colFolHits++; continue; }   // правка 173: куст — насквозь
-            if (sliceBox(q, B, sh)) { sh->ptype = COL_BOX; sh->idx = i; S->nshape++; }
+            if (sliceBox(q, B, sh)) { sh->ptype = COL_BOX; sh->idx = i; sh->rail = (uint8_t)railIs(w, i); S->nshape++; }
           } else if (t == COL_CYL) {
             const ColCyl *C = &w->cyl[i];
             float hx = fabsf(C->axis[0]) * C->halfLen + C->r, hy = fabsf(C->axis[1]) * C->halfLen + C->r;
@@ -1388,8 +1392,89 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
 typedef struct { float cx, cz, fx, fz, rx, rz, hw, hl; } Rect;
 
 // глубина проникновения фигуры в прямоугольник и направление, куда толкать машину (0 = не пересекаются)
+// №1050 (Роб: «въехал в самый стык трамплина L5, полностью остановился, дальше поехал без скорости»; разбор: канал входа на большой трамплин L5 шириной 4,5 м между двумя стенками-коробками 2 м × 0,4 м,
+// машина со смещением от оси ≥ 1,8 м упирается передним углом в ТОРЕЦ стенки и встаёт с 25 м/с в ноль, а по оси взлетает на 30 м/с): удар передним углом в торец ТОНКОЙ стенки (толщина ≤ 0,5 м, длина ≥ 2 м,
+// заход в пределах 0,4 м от конца) при курсе почти вдоль стенки (≤ 35° к оси) раньше выталкивал машину назад по торцу и гасил скорость. Теперь выталкивание — вбок, к ближней стороне стенки (в проём),
+// если нужный сдвиг не больше 1,3 м; лобовой удар в плоскость стенки, в торец под большим углом и по оси стенки (сдвиг больше 1,3 м) — как раньше. RAMP1050_OLD=1 / файл ramp1050old / flag ramp1050 0 — как было
+#ifndef RAMP1050_OLD
+#define RAMP1050_OLD 0
+#endif
+int colRamp1050 = 0;   // общее правило (А) выключено по умолчанию (Роб выбрал точечный вариант Б, flag ramp1050 1 включает)
+#define RAMP1050_THICK 0.5f
+#define RAMP1050_LEN 2.0f
+#define RAMP1050_END 1.0f   // проникновение в торец к моменту первого контакта: до скорость × шаг (25 м/с × 1/30 с ≈ 0,8 м), не 0,4 м
+#define RAMP1050_COS 0.819f
+#define RAMP1050_LAT 1.3f
+static int wallEndSlide(const Shape *s, const Rect *R, float *dx, float *dz, float *depth) {
+  if (s->ptype != COL_BOX || s->prv || s->rad != 0.f || s->np < 3 || s->np > 8) return 0;
+  // точки среза не обязаны идти по кругу (8 точек у ящика стенки): ось толщины — из осей фигуры s->a (нормали рёбер) с наименьшей протяжённостью точек
+  float lx = 0.f, lz = 0.f, T = 3.0e38f, L = 0.f, ex = 0.f, ez = 0.f; int have = 0;
+  for (int a = 0; a < s->na; a++) {
+    float ux = s->a[a][0], uz = s->a[a][1], ul = sqrtf(ux * ux + uz * uz); if (ul < 1e-5f) continue; ux /= ul; uz /= ul;
+    float mn = 3.0e38f, mx = -3.0e38f; for (int k = 0; k < s->np; k++) { float t = s->p[k][0] * ux + s->p[k][1] * uz; if (t < mn) mn = t; if (t > mx) mx = t; }
+    if (mx - mn < T) { T = mx - mn; lx = ux; lz = uz; have = 1; }
+  }
+  if (!have || T > RAMP1050_THICK) return 0;
+  ex = lz; ez = -lx;
+  { float mn = 3.0e38f, mx = -3.0e38f; for (int k = 0; k < s->np; k++) { float t = s->p[k][0] * ex + s->p[k][1] * ez; if (t < mn) mn = t; if (t > mx) mx = t; } L = mx - mn; }
+  if (L < RAMP1050_LEN) return 0;
+  if (fabsf(R->fx * ex + R->fz * ez) < RAMP1050_COS) return 0;
+  float oA[2], oL[2];
+  for (int a = 0; a < 2; a++) {
+    float ux = a ? lx : ex, uz = a ? lz : ez;
+    float ru = R->hl * fabsf(R->fx * ux + R->fz * uz) + R->hw * fabsf(R->rx * ux + R->rz * uz), mn = 3.0e38f, mx = -3.0e38f;
+    for (int k = 0; k < s->np; k++) { float d = (s->p[k][0] - R->cx) * ux + (s->p[k][1] - R->cz) * uz; if (d < mn) mn = d; if (d > mx) mx = d; }
+    float o1 = mx + ru, o2 = ru - mn; if (o1 <= 0.f || o2 <= 0.f) return 0;
+    if (a == 0) { oA[0] = o1; oA[1] = o2; } else { oL[0] = o1; oL[1] = o2; }
+  }
+  float oEnd = fminf(oA[0], oA[1]), oLat = fminf(oL[0], oL[1]);
+  if (oEnd > RAMP1050_END || oLat > RAMP1050_LAT) return 0;
+  float sg = oL[0] < oL[1] ? 1.f : -1.f;
+  *dx = sg * lx; *dz = sg * lz; *depth = oLat;
+  return 1;
+}
+// №1050 (Б, Роб: «торцы бортиков не держат», большой трамплин L5 к стеклянной трубе): четыре борта у въезда на скат — коробки COL1 867/868 (на ровной части перед скатом) и 869/870 (вдоль ската) — торцами
+// останавливали машину со смещением от оси: упёршись передним углом в торец, она теряла всю скорость. Теперь у этих бортов нет торцов: кузов, зашедший на торец, выталкивается только ВБОК (к ближней стороне),
+// боковые грани остаются стенками (с трамплина не выпасть). Борта опознаются по форме и месту (сигнатуры центров коробок), не по номеру: у уровня с тем же рельсом (L2 в тех же координатах) то же.
+// RAMPRAIL1050_OLD=1 / файл ramprail1050old / flag ramprail1050 0 — как было
+#ifndef RAMPRAIL1050_OLD
+#define RAMPRAIL1050_OLD 0
+#endif
+int colRampRail1050 = !RAMPRAIL1050_OLD;
+static void railInit(const ColWorld *w) {
+  static const float sig[4][3] = {{-90.7f, 29.4f, -430.6f}, {-90.7f, 29.5f, -435.5f}, {-104.0f, 33.2f, -430.6f}, {-104.0f, 33.2f, -435.5f}};
+  if (!w->scr) return;
+  w->scr->nrail1050 = 0;
+  for (uint32_t i = 0; i < w->nbox && w->scr->nrail1050 < 8; i++) {
+    const ColBox *b = &w->box[i];
+    for (int k = 0; k < 4; k++)
+      if (fabsf(b->c[0] - sig[k][0]) < .35f && fabsf(b->c[1] - sig[k][1]) < .35f && fabsf(b->c[2] - sig[k][2]) < .35f && fminf(b->h[0], fminf(b->h[1], b->h[2])) < .25f && fmaxf(b->h[0], fmaxf(b->h[1], b->h[2])) > 3.f) { w->scr->rail1050[w->scr->nrail1050++] = i; break; }
+  }
+}
+static int railIs(const ColWorld *w, uint32_t i) { if (!w->scr) return 0; for (unsigned k = 0; k < w->scr->nrail1050; k++) if (w->scr->rail1050[k] == i) return 1; return 0; }
+static int railLateral(const Shape *s, const Rect *R, float *dx, float *dz, float *depth) {
+  float lx = 0.f, lz = 0.f, T = 3.0e38f; int have = 0;
+  for (int a = 0; a < s->na; a++) {
+    float ux = s->a[a][0], uz = s->a[a][1], ul = sqrtf(ux * ux + uz * uz); if (ul < 1e-5f) continue; ux /= ul; uz /= ul;
+    float mn = 3.0e38f, mx = -3.0e38f; for (int k = 0; k < s->np; k++) { float t = s->p[k][0] * ux + s->p[k][1] * uz; if (t < mn) mn = t; if (t > mx) mx = t; }
+    if (mx - mn < T) { T = mx - mn; lx = ux; lz = uz; have = 1; }
+  }
+  if (!have) return 0;
+  float ex = lz, ez = -lx, o[2][2];
+  for (int a = 0; a < 2; a++) {
+    float ux = a ? lx : ex, uz = a ? lz : ez;
+    float ru = R->hl * fabsf(R->fx * ux + R->fz * uz) + R->hw * fabsf(R->rx * ux + R->rz * uz), mn = 3.0e38f, mx = -3.0e38f;
+    for (int k = 0; k < s->np; k++) { float d = (s->p[k][0] - R->cx) * ux + (s->p[k][1] - R->cz) * uz; if (d < mn) mn = d; if (d > mx) mx = d; }
+    o[a][0] = mx + ru; o[a][1] = ru - mn; if (o[a][0] <= 0.f || o[a][1] <= 0.f) return 0;
+  }
+  float oL0 = o[1][0], oL1 = o[1][1];
+  *dx = (oL0 < oL1 ? 1.f : -1.f) * lx; *dz = (oL0 < oL1 ? 1.f : -1.f) * lz; *depth = fminf(oL0, oL1);
+  return 1;
+}
 static float evalShape(const Shape *s, const Rect *R, float *dx, float *dz, int *behind) {
   *behind = 0;
+  if (colRampRail1050 && s->kind != SH_FENCE && s->ptype == COL_BOX && s->rail) { float sd; if (railLateral(s, R, dx, dz, &sd)) return sd; return 0.f; }
+  if (colRamp1050 && s->kind != SH_FENCE) { float sd; if (wallEndSlide(s, R, dx, dz, &sd)) return sd; }
   if (s->kind == SH_FENCE) {
     // координаты забора: t вдоль (fd), u по нормали (fn). Забор — прямоугольник t в [t0, t1], u в [-FENCE_D, 0]
     // (центр кузова с изнанки в пределах отрезка — зеркально: u в [0, FENCE_D], толкаем дальше на изнанку)

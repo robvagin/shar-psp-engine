@@ -1,0 +1,11 @@
+wait 3
+scene tire
+goto 188 279.9 1.5708
+wait 2
+press triangle
+wait 2.5
+flag jackplace
+wait 1
+flag trfmodels
+wait 1
+end

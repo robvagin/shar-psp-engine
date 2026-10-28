@@ -1,0 +1,31 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L4_load
+flag golevel 4
+wait 45
+flag stop
+flag player
+wait 3
+flag heapleft 3.2
+flag memtrim1060 1
+flag memtrimahead1060 1
+scene F_L4_CR1
+flag crmove 1
+goto 214.9 172.3 -3.0
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+shot r1
+scene F_L4_CR1b
+flag crmove 1
+goto 214.9 172.3 -3.0
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+shot r2
+end

@@ -1,0 +1,30 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+flag trfmodel 0
+flag trfstill
+flag trfgoh 1.0
+wait 1
+flag trfgo 0 14
+wait 1.5
+shot d14
+flag trfgo 0 25
+wait 1.5
+shot d25
+flag trfgo 0 35
+wait 1.5
+shot d35
+flag trfgo 0 50
+wait 1.5
+shot d50
+flag trfgo 0 80
+wait 1.5
+shot d80
+flag trfgo 0 120
+wait 1.5
+shot d120
+end

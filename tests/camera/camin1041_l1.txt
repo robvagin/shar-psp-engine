@@ -1,0 +1,63 @@
+# №1041: камера старта миссии (наезд) на L1 при выборе миссии: msnsel 2, 3, 1; MSNCAM req/start/end, MSNCAMP (поза камеры), STREAMCOST/SLOWFRAME (подгрузка и кадры)
+flag startcam 1
+flag cfgdefaults 1
+scene T_c1
+flag msn
+wait 8
+flag repair
+wait 2
+scene T_ms2
+flag msnsel 2
+wait 1.2
+shot m2_00
+wait 1.2
+shot m2_01
+wait 1.2
+shot m2_02
+wait 1.2
+shot m2_03
+wait 1.2
+shot m2_04
+wait 1.2
+shot m2_05
+wait 1.2
+shot m2_06
+wait 1.2
+shot m2_07
+scene T_ms3
+flag msnsel 3
+wait 1.2
+shot m3_00
+wait 1.2
+shot m3_01
+wait 1.2
+shot m3_02
+wait 1.2
+shot m3_03
+wait 1.2
+shot m3_04
+wait 1.2
+shot m3_05
+wait 1.2
+shot m3_06
+wait 1.2
+shot m3_07
+scene T_ms1
+flag msnsel 1
+wait 1.2
+shot m1_00
+wait 1.2
+shot m1_01
+wait 1.2
+shot m1_02
+wait 1.2
+shot m1_03
+wait 1.2
+shot m1_04
+wait 1.2
+shot m1_05
+wait 1.2
+shot m1_06
+wait 1.2
+shot m1_07
+end

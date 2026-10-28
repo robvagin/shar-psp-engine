@@ -1,0 +1,21 @@
+wait 3
+flag golevel 1
+wait 30
+scene menu
+goto 170 172 1.5708
+wait 3
+press start
+wait 1
+press up
+wait .4
+press up
+wait .4
+press cross
+wait .8
+press cross
+wait 1
+shot pic
+press cross
+wait 1
+shot toon
+end

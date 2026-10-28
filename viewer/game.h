@@ -78,6 +78,7 @@ void gameCarStep(Game *g, const CarInput *in, float dt);    // carUpdate
 void gameAfterCar(Game *g, const GamePad *p, float dt);     // Гомер и его удары, пропы, стейтпропы, монеты
 void gameRespawn(Game *g, float ex, float ez, float dt, int (*seen)(void *, float, float, float, float), void *u);   // возврат вне вида
 void gameHnr(Game *g, float dt);                            // спад шкалы Hit & Run (SetHitAndRunDecay L1 3.0 ед./с на шкале 100)
+extern int gameHnrChasePauseOld;                           // №723: 1 — в погоне пауза спада 3 с как до правки
 void gameHnrRate(Game *g, float dt, float rate);            // то же с заданной скоростью: погоня 6/с, комната 10/с (docs/gameplay.md §6)
 int gameHnrOffense(Game *g, int type);                      // нарушение HNR_*: 1 — засчитано (шкала, пауза спада)
 void gameHnrVehicle(Game *g, const char *name);             // игрок сел в машину name (NULL — машина уровня): другая, чем прошлая, — шкала в ноль

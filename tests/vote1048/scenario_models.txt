@@ -1,0 +1,14 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L5
+flag golevel 5
+wait 40
+flag player
+wait 10
+flag trfmodels
+wait 10
+flag trfmodels
+wait 10
+flag trfmodels
+end

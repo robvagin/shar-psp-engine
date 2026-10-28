@@ -1,0 +1,12 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1_load
+wait 10
+flag stop
+flag player
+wait 2
+scene REFFE
+flag mem1060fedemo 1
+wait 2
+end

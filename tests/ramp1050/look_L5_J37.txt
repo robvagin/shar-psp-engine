@@ -1,0 +1,23 @@
+# №1050: вид на трамплин L5 J3-7 (около x 140 z -405)
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene R_GO5
+flag golevel 5
+wait 40
+flag stop
+flag repair
+wait 3
+cam 100 38 -440 0.55 -0.1 0.55 62
+wait 1.5
+shot v1
+cam 175 44 -380 -0.7 -0.2 -0.3 62
+wait 1.5
+shot v2
+cam 140 70 -405 0.01 -0.95 0.02 62
+wait 1.5
+shot v3
+cam 112 34 -418 0.9 -0.1 0.4 62
+wait 1.5
+shot v4
+end

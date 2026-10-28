@@ -54,7 +54,8 @@ emu)
     python3 - "$O" "$L" "$SC" <<'PYEOF'
 import re, sys
 O, L, SC = sys.argv[1], sys.argv[2], sys.argv[3]
-o = ['scene C_BOOT', 'flag cfgdefaults 1', 'flag repair', 'wait 6', 'flag toon 1', 'wait 3', 'scene C_GO', 'press circle 0.3', 'wait 0.5', 'press circle 0.3', 'wait 0.5', 'flag golevel %s' % L, 'wait 40', 'press triangle 0.2', 'wait 3']
+import os
+o = ['scene C_BOOT', 'flag cfgdefaults 1'] + [x for x in os.environ.get('EXTRA', '').split(';') if x] + ['flag repair', 'wait 6', 'flag toon 1', 'wait 3', 'scene C_GO', 'press circle 0.3', 'wait 0.5', 'press circle 0.3', 'wait 0.5', 'flag golevel %s' % L, 'wait 40', 'press triangle 0.2', 'wait 3']
 for l in open('%s/starts_L%s.txt' % (O, L)):
     m = re.match(r'ROUTE L(\d+) r(\d+): старт \((-?\d+),(-?\d+)\) курс (-?[\d.]+)', l)
     if not m: continue

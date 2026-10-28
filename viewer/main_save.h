@@ -39,7 +39,7 @@ static void toneApplyAllSync(void) {
     for (unsigned i = 0; T && i < n; i++) {
       if (!T[i].pal) continue;
       if (toneToon() && !T[i].tstatOk) { unsigned char o_[1024]; if (toneReadOrig((const unsigned char *)T[i].pal, o_, toneRead, &rd) == 0) texToonStat(&T[i], o_); }   // проверка 18.10
-      toneSetStat(T[i].tstatOk ? T[i].tstat : 0); int r = toneRedo((unsigned char *)T[i].pal, toneRead, &rd); toneSetStat(0);
+      toneSetStat(toneStatOf(&T[i])); int r = toneRedo((unsigned char *)T[i].pal, toneRead, &rd); toneSetStat(0);
       if (r == 0) { ok++; if (!pass) curbPal(&T[i], (unsigned char *)T[i].pal); sceKernelDcacheWritebackRange(T[i].pal, 1024); } else if (r == -1) miss++; else err++;
     }
   }
@@ -96,7 +96,7 @@ static void toneJobStep(void) {
     Tex *tx_ = toneJob.tx[toneJob.done]; int rr_;
     if (toneToon() && tx_ && !tx_->tstatOk && (rr_ = toneReadOrig(toneJob.pal[toneJob.done], dst, toneRead, &toneJob.rd)) == 0) {   // проверка 18.10: средний цвет — по исходной палитре, одним чтением
       texToonStat(tx_, dst); toneSetStat(tx_->tstat); tonePal(dst); toneSetStat(0); }
-    else { toneSetStat(tx_ && tx_->tstatOk ? tx_->tstat : 0); rr_ = toneRedoTo(toneJob.pal[toneJob.done], dst, toneRead, &toneJob.rd); toneSetStat(0); }
+    else { toneSetStat(toneStatOf(tx_)); rr_ = toneRedoTo(toneJob.pal[toneJob.done], dst, toneRead, &toneJob.rd); toneSetStat(0); }
     if (rr_ != 0) memcpy(dst, toneJob.pal[toneJob.done], 1024);   // не прочиталась: остаётся как есть
     else curbPal(tx_, dst);   // №974: угловая деталь бордюра — в тон бордюра
     toneJob.done++; did++; now = sceKernelGetSystemTimeLow();
@@ -135,7 +135,11 @@ static void flatPoll(void) {
   if (want) { flatNoiseBuild(); gdBuild(); flatTintBuild(); }
   { static unsigned palHookGen_ = ~0u; static int palHookToon_ = -1;   // №974/№979: палитры тонируются при загрузке таблицы текстур, раньше чем читается flat912.bin (там класс угловой детали и асфальта) — один раз на уровень и режим добавляем их тон здесь; задание тона дальше ведёт их само (curbPal в шаге)
     int tn_ = toneToon(); if (flatFromFile && !toneJob.active && ntex > 0 && (palHookGen_ != flatLevelGen || palHookToon_ != tn_)) { palHookGen_ = flatLevelGen; palHookToon_ = tn_;
-      unsigned nh_ = 0; if (tn_) for (unsigned i_ = 0; i_ < ntex; i_++) if (tex[i_].pal && (tex[i_].asph || tex[i_].curb == 2)) { curbPal(&tex[i_], (unsigned char *)tex[i_].pal); sceKernelDcacheWritebackRange(tex[i_].pal, 1024); nh_++; }
+      unsigned nh_ = 0, nx_ = 0; ToneRd rdx_ = {-1, -1}; if (tn_) for (unsigned i_ = 0; i_ < ntex; i_++) if (tex[i_].pal && (tex[i_].asph || tex[i_].curb == 2 || (zn7On && zn7N && zn7Of((unsigned)i_)))) {
+        if (xwalk999On && tex[i_].xdon && !palToneOff) { toneSetStat(toneStatOf(&tex[i_])); if (toneRedo((unsigned char *)tex[i_].pal, toneRead, &rdx_) == 0) nx_++; toneSetStat(0); }   // №999: палитра перехода заново из исходной, со статистикой донора
+        curbPal(&tex[i_], (unsigned char *)tex[i_].pal); sceKernelDcacheWritebackRange(tex[i_].pal, 1024); nh_++; }
+      toneRdClose(&rdx_); if (smkOn && tn_ && flatFromFile) { char l_[100]; snprintf(l_, sizeof l_, "XWALK999 level=%d on=%d retoned=%u\n", gameLevel, xwalk999On, nx_); smkWrite(l_);
+        for (unsigned i_ = 0; i_ < ntex; i_++) if (tex[i_].xdon) { int a_[4], b_[4]; xwalk999Mean(&tex[tex[i_].xdon - 1], b_, 0); xwalk999Mean(&tex[i_], a_, b_); char m_[160]; snprintf(m_, sizeof m_, "XWALK999TEX level=%d tex=%u donor=%u own=%d,%d,%d(%d) don=%d,%d,%d(%d)\n", gameLevel, i_, tex[i_].xdon - 1u, a_[0], a_[1], a_[2], a_[3], b_[0], b_[1], b_[2], b_[3]); smkWrite(m_); } }
       if (nh_) { bound = -2; if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "CURBPALLOAD level=%d hooked=%u t=%.1f\n", gameLevel, nh_, smkT); smkWrite(l_);
         unsigned char t_[4] = {0, 0, 0, 0}; int ok_ = 0; for (unsigned q_ = 0; q_ < ntex && q_ < 1024 && !ok_; q_++) if (tex[q_].curb == 2) ok_ = curbTarget(&tex[q_], t_);
         snprintf(l_, sizeof l_, "CURB987 level=%d on=%d nat=%d,%d,%d(%d) corner=%d,%d,%d(%d)\n", gameLevel, curb987On, curbNat[0], curbNat[1], curbNat[2], curbNat[3], t_[0], t_[1], t_[2], ok_); smkWrite(l_); } } } }
@@ -154,6 +158,9 @@ static void flatPoll(void) {
   ggcClear(); pbReset(); resetState();
   if (smkOn && flatDump && want) for (unsigned t_ = 0; t_ < ntex && t_ < 1024; t_++) { const Tex *x_ = &tex[t_]; if (x_->flatK || !fdPieces[t_]) continue; char l_[160];
       snprintf(l_, sizeof l_, "FLATX %u %dx%d reason=%d el=%d g=%d tris=%u mean=%d,%d,%d edge=%d\n", t_, x_->w, x_->h, x_->flatR ? x_->flatR : 9, x_->flatE, (x_->tstat[4] & 4) != 0, fdTris[t_], x_->tstat[0], x_->tstat[1], x_->tstat[2], x_->flatEd); smkWrite(l_); }
+  if (smkOn && flatDump && want) for (unsigned t_ = 0; t_ < ntex && t_ < 1024; t_++) { const Tex *x_ = &tex[t_]; if (x_->flatK != 0 || !(x_->tstat[4] & 4)) continue;   // №1007: рисунки земли и стен — тон после цветокоррекции мультика
+      unsigned char c_[4] = {(unsigned char)(x_->flatC & 255), (unsigned char)((x_->flatC >> 8) & 255), (unsigned char)((x_->flatC >> 16) & 255), 255}; toneColorRGB(c_); char l_[200];
+      snprintf(l_, sizeof l_, "FLATD %u %dx%d reason=%d g=%d asph=%d curb=%d tris=%u dom=%d,%d,%d toned=%d,%d,%d\n", t_, x_->w, x_->h, x_->flatR, (x_->tstat[4] & 4) != 0, x_->asph, x_->curb, fdTris[t_], x_->flatC & 255, (x_->flatC >> 8) & 255, (x_->flatC >> 16) & 255, c_[0], c_[1], c_[2]); smkWrite(l_); }
   if (smkOn && flatDump && want) { flatTintBuild(); for (unsigned t_ = 0; t_ < ntex && t_ < 1024; t_++) { const Tex *x_ = &tex[t_]; if (!x_->flatK) continue; char l_[200];
       snprintf(l_, sizeof l_, "FLATT %u %dx%d el=%d g=%d mean=%d,%d,%d dom=%d,%d,%d share=%d tint=%d,%d,%d tris=%u edge=%d\n", t_, x_->w, x_->h, x_->flatE, (x_->tstat[4] & 4) != 0, x_->tstat[0], x_->tstat[1], x_->tstat[2],
                x_->flatC & 255, (x_->flatC >> 8) & 255, (x_->flatC >> 16) & 255, x_->flatS, flatTint[t_] & 255, (flatTint[t_] >> 8) & 255, (flatTint[t_] >> 16) & 255, fdTris[t_], x_->flatEd); smkWrite(l_); } }
@@ -174,7 +181,9 @@ static void cfgApply(void) {
     if (cfg.lineWidth != lwSet || cfg.eyeLines != eySet) { lwSet = cfg.lineWidth; eySet = cfg.eyeLines; skinToonLineParams(cfg.lineWidth, cfg.eyeLines); }
     if (pal) toneApplyAll(); }
   { static int ddSet = -1; if (cfg.drawDist < 0 || cfg.drawDist > 2) cfg.drawDist = 1;   // №795: Draw Distance — пол регулятора дальности (200 м — как было, без подмены)
-    if (cfg.drawDist != ddSet) { static const float dd_[3] = {150.f, 200.f, 250.f}; ddSet = cfg.drawDist; ddFloorOver = cfg.drawDist == 1 ? 0.f : dd_[cfg.drawDist]; } }
+    if (cfg.drawDist != ddSet) { static const float dd_[3] = {150.f, 200.f, 250.f}; ddSet = cfg.drawDist; ddFloorOver = cfg.drawDist == 1 && DRAWDEF1042_OLD ? 0.f : dd_[cfg.drawDist]; } }   // №1042б: 200 тоже явный выбор (потолок города не ниже выбранного, FAR1042)
+  if (cfg.curbTint < 0 || cfg.curbTint > 1) cfg.curbTint = 0; curbWant1064 = !curb1064Old && !cfg.curbTint;   // №1064: строка Curbs (Original — родная текстура бордюра, Tinted — как в TEST76)
+  if (cfg.carShadow < 0 || cfg.carShadow > 1) cfg.carShadow = 0; carShadow1003On = carShadow1003Old || cfg.carShadow;   // №1003: тени машин — строка Car Shadows
   if (cfg.camHeight < 0 || cfg.camHeight > 4) cfg.camHeight = 2;   // №996: страница CAMERA — Height и Distance (0..4, 2 — как было)
   if (cfg.camDist < 0 || cfg.camDist > 4) cfg.camDist = 2;
   { float h_ = camCfg996On ? camCfgH996[cfg.camHeight] : 1.f, d_ = camCfg996On ? camCfgD996[cfg.camDist] : 1.f;
@@ -197,10 +206,12 @@ static void cfgLoad(void) {
   char fn[256]; sibling(fn, "settings.bin"); Settings t = cfg;   // чего нет в файле (запись ver 1 короче) — по умолчанию
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
   if (f >= 0) { int n = sceIoRead(f, &t, sizeof t), n1 = (int)offsetof(Settings, tutorial);
-    if (n >= n1 && !memcmp(t.magic, "SHST", 4) && t.ver >= 1 && t.ver <= 11) {
+    if (n >= n1 && !memcmp(t.magic, "SHST", 4) && t.ver >= 1 && t.ver <= 14) {
       if (t.ver == 7 && n >= (int)sizeof t) t.oldTv = t.oldTv ? 5 : 0;   // №830: ver 7 — Off/On, теперь сила 0..10
       if (t.ver == 1 || n < (int)sizeof t) { Settings d = cfg; memcpy((char *)&d, &t, t.ver == 1 ? (size_t)n1 : (size_t)n); t = d; }
-      t.ver = 11; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; cfg = t; }   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
+      if (!DRAWDEF1042_OLD && t.ver < 13) t.drawDist = 2;   // №1042б: миграция один раз — Draw Distance 250 (выбор игрока потом сохраняется как есть)
+      if (t.ver < 14) t.curbTint = 0;   // №1064: старые сохранения получают «Original» (родной бордюр)
+      t.ver = DRAWDEF1042_OLD ? 12 : 14; if (t.curbTint < 0 || t.curbTint > 1) t.curbTint = 0; if (t.carShadow < 0 || t.carShadow > 1) t.carShadow = 0; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; cfg = t; }   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
     sceIoClose(f); }
   cfgApply();
 }
@@ -343,7 +354,9 @@ static int *cfgSlot(int scr, int row, int sound) {   // значение нас�
   if (scr == optLinkScr && row == optLinkRow) return 0;   // №783: строка-переход «Cartoon» на PICTURE — не значение (✕ открывает страницу CARTOON)
   if (SHAR_TOON_AVAILABLE && row == rowOf(scr, "CARTOON")) return &cfg.toon;   // №428: строка Cartoon (место серой Jump Cameras): Off / On
   if (row == rowOf(scr, "TEXTURES")) return &cfg.texturesOn;   // №912: строка Textures на PICTURE (Off — заливка вместо текстур, On — родные); раньше «TEXTURE» (Texture Detail), совпадение по началу подписи
-  if (row == rowOf(scr, "TREE")) return &cfg.treeShadow;   // Роб 17.10: строка «Tree Shadows» (Off / On) — подпись в пакете интерфейса ставит терминал игры
+  if (row == rowOf(scr, "TREE")) return &cfg.treeShadow;
+  if (row == rowOf(scr, "CURB")) return &cfg.curbTint;   // №1064: Curbs (Original / Tinted)
+  if (row == rowOf(scr, "CAR SHADOW")) return &cfg.carShadow;   // №1003: Car Shadows (Off / On)   // Роб 17.10: строка «Tree Shadows» (Off / On) — подпись в пакете интерфейса ставит терминал игры
   if (row == rowOf(scr, "CONTRAST")) { cfgContrastRow = (cfg.contrast - 50) / 10; return &cfgContrastRow; }   // №777: подстраница PICTURE
   if (row == rowOf(scr, "LINE")) return &cfg.lineWidth;                                                   // №777: подстраница CARTOON — Line Width
   if (row == rowOf(scr, "INK")) return &cfg.ink;                                                          // №951: Ink — Indigo / Black / Tone
@@ -382,8 +395,8 @@ static void optLog(const char *pack, int scr, int sel, int r) {
   if (!smkOn) return;
   char s[192]; int n = snprintf(s, sizeof s, "OPT pack=%s scr=%d sel=%d r=%d rows=", pack, scr, sel, r);
   for (int k = 0; k < uiScrRows(scr) && n < 150; k++) n += snprintf(s + n, sizeof s - n, "%s%d%s", k ? "," : "", uiScrGetRow(k), uiScrEnabled(scr, k) ? "" : "x");
-  snprintf(s + n, sizeof s - n, " vol=%d,%d,%d,%d radar=%d tut=%d colour=%d inv=%d toon=%d tree=%d ct=%d lw=%d eye=%d tex=%d ink=%d camh=%d camd=%d t=%.1f\n", cfg.music, cfg.effects, cfg.vehicle, cfg.voice,
-           cfg.radar, cfg.tutorial, cfg.colour, cfg.invertCam, cfg.toon, cfg.treeShadow, cfg.contrast, cfg.lineWidth, cfg.eyeLines, cfg.toonTex, cfg.ink, cfg.camHeight, cfg.camDist, smkT); smkWrite(s);
+  snprintf(s + n, sizeof s - n, " vol=%d,%d,%d,%d radar=%d tut=%d colour=%d inv=%d toon=%d tree=%d ct=%d lw=%d eye=%d tex=%d ink=%d camh=%d camd=%d carsh=%d curb=%d t=%.1f\n", cfg.music, cfg.effects, cfg.vehicle, cfg.voice,
+           cfg.radar, cfg.tutorial, cfg.colour, cfg.invertCam, cfg.toon, cfg.treeShadow, cfg.contrast, cfg.lineWidth, cfg.eyeLines, cfg.toonTex, cfg.ink, cfg.camHeight, cfg.camDist, cfg.carShadow, cfg.curbTint, smkT); smkWrite(s);
   if (smkOn) { char d_[48]; snprintf(d_, sizeof d_, "OPTDD dd=%d floor=%.0f t=%.1f\n", cfg.drawDist, ddFloorOver, smkT); smkWrite(d_); }
 }
 // меню паузы: 0 pauseoptions, 1 pausesound, 2 pausesettings (pmenu.shr открыт на время); -1 — закрыто

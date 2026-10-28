@@ -1,0 +1,59 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L3
+flag golevel 3
+wait 40
+scene S_W176
+foot -171.2 142.6 0
+wait 4
+cam -164.2 -28.8 149.6 -0.605 -0.518 -0.605
+wait 8
+flag flat912 1
+wait 6
+shot F_W176
+flag flat912 0
+wait 6
+shot T_W176
+flag flat912 1
+wait 2
+scene S_W176b
+foot -399.4 233.1 0
+wait 4
+cam -392.4 -54.1 240.1 -0.605 -0.518 -0.605
+wait 8
+flag flat912 1
+wait 6
+shot F_W176b
+flag flat912 0
+wait 6
+shot T_W176b
+flag flat912 1
+wait 2
+scene S_W172
+foot 160.1 97.0 0
+wait 4
+cam 167.1 0.4 104.0 -0.605 -0.518 -0.605
+wait 8
+flag flat912 1
+wait 6
+shot F_W172
+flag flat912 0
+wait 6
+shot T_W172
+flag flat912 1
+wait 2
+scene S_W290
+foot 158.3 -488.1 0
+wait 4
+cam 165.3 9.9 -481.1 -0.605 -0.518 -0.605
+wait 8
+flag flat912 1
+wait 6
+shot F_W290
+flag flat912 0
+wait 6
+shot T_W290
+flag flat912 1
+wait 2
+end

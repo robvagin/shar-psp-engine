@@ -1,0 +1,17 @@
+wait 12
+flag cfgdefaults 1
+flag golevel 1
+wait 40
+flag toon 1
+wait 4
+flag flat912 1
+scene G_ON
+foot 295.5 166 3.14
+wait 22
+flag trfgoh 4
+flag trfgo 0.0 14
+wait 2
+foot 261.1 161.1 1.571
+scene COST
+wait 14
+end

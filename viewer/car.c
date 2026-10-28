@@ -658,12 +658,38 @@ static int crossAt(const ColWorld *w, const CarBox *b, float x0, float z0, float
 int carJumpBoost = CAR_JUMP_BOOST;   // 1 — прежнее правило 47 вместо разгона (отрицательный контроль tests/jumps/twin.sh --gate)
 int carJumpZoneDriveOff;             // служебное: разгон зоны выключен (отрицательный контроль)
 int carJumpBoostOff;   // служебное: отрицательный контроль (tests/jumps) — зоны прыжка выключены (и разгон, и прежний подброс)
+// №705 часть 2 (Роб 17.10: «L5 J4-5, на трамплине невозможно прыгнуть»; PS2, knowledge/facts/ps2-h82-fire-escape.yaml, ps2_h82_v25a): зона рампы пожарной лестницы L5 — тонкие «ворота» поперёк въезда
+// (полудлина вдоль въезда 0,92 м, поперёк 3,86; у остальных зон, где сверено близнецом, вдоль въезда 4–8 м). По записи PS2 машина набирает скорость на рампе на отрезке ~17 м (x 53 -> 37 у
+// центра зоны x 45,3), а по правилу «в объёме + полудлина машины» окно было ~7 м: порт вылетал с 22,4 м/с против 24,3, вершина ниже на 1,3 м, на 25 м/с не садился на крышу.
+// Правило: полудлина зоны ВДОЛЬ курса меньше JUMP_ZONE_MIN_ALONG (6 м) — окно разгона считается как у зоны с такой полудлиной (раздув объёма на разницу). Зоны с полудлиной вдоль въезда от 6 м
+// (все четыре сверенные близнецом, tests/jumps/twin.sh) не меняются. JUMP_ZONE_GATE_OLD=1 / carJumpZoneGateOld = 1 / файл jzgate705old / flag jzgate705 0 — прежнее
+#ifndef JUMP_ZONE_MIN_ALONG
+#define JUMP_ZONE_MIN_ALONG 6.f
+#endif
+#ifndef JUMP_ZONE_GATE_OLD
+#define JUMP_ZONE_GATE_OLD 0
+#endif
+int carJumpZoneGateOld = JUMP_ZONE_GATE_OLD;
+static float zoneAlong(const ColZone *v, float fx, float fz) {   // полудлина объёма вдоль курса (fx, fz) в плане
+  if (!v->shape) return v->h[0];
+  const float *A[3] = {v->ax, v->ay, v->az}; float e = 0.f;
+  for (int k = 0; k < 3; k++) e += v->h[k] * fabsf(A[k][0] * fx + A[k][2] * fz);
+  return e;
+}
+// Правило только там, где запись PS2 его подтверждает (дирижёр 27.10): L5/L2 «L2_jumpzone» (H8-2, ps2_h82_v20a/v25a) — да. L1 jumpzone3 (J9-5, ps2_jz3_*, 50/70/84 км/ч): запись PS2 правило не подтвердила
+// (скорость на кромке на 84 км/ч и газом у прежнего правила ближе: +4,2 и +6,5 против +4,9 и +9,6 км/ч у нового), зона исключена. Остальные зоны без записи PS2 — тоже исключены; расширить список — только с записью
+static int zoneGateConfirmed(const ColZone *v) { return !strcmp(v->name, "L2_jumpzone"); }
 static void jumpZoneDrive(Car *c, const ColWorld *w, float thr, float dt) {
   if (carJumpBoost || carJumpZoneDriveOff || carJumpBoostOff || !w->nzone || thr <= 0.f || c->wheels <= 0) return;
+  float fx = sinf(c->h), fz = cosf(c->h);
   uint32_t i = 0;
-  for (; i < w->nzone; i++) if (colZoneContains(&w->zone[i], c->x, c->y + .5f, c->z, c->p.halfL)) break;
+  for (; i < w->nzone; i++) {
+    float grow = c->p.halfL;
+    if (!carJumpZoneGateOld && zoneGateConfirmed(&w->zone[i])) { float e = zoneAlong(&w->zone[i], fx, fz); if (e < JUMP_ZONE_MIN_ALONG) grow += JUMP_ZONE_MIN_ALONG - e; }
+    if (colZoneContains(&w->zone[i], c->x, c->y + .5f, c->z, grow)) break;
+  }
   if (i == w->nzone) return;
-  float fx = sinf(c->h), fz = cosf(c->h), a = JUMP_ZONE_ACC * thr * dt;
+  float a = JUMP_ZONE_ACC * thr * dt;
   c->vel[0] += fx * a; c->vel[2] += fz * a;
   c->boosts++; c->boostZone = (int)i;   // подшаги разгона зоны (прежнее правило 47 — отрывы с подбросом)
 }
@@ -1374,6 +1400,8 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   if (colDebug) printf("  substep: move %.4f %.4f %.4f -> maxDepth %.4f pen0 %.4f behind %d revert %d tries %d n %d | box %.4f %.4f f %.4f %.4f y %.4f g %.4f %.4f\n",
                        pos.x - pos0.x, pos.y - pos0.y, pos.z - pos0.z, b.maxDepth, pen0, b.behindFence, revert, tries, b.n, bPre.x, bPre.z, bPre.fx, bPre.fz, bPre.y, bPre.gx, bPre.gz);
 #endif
+  if (carDbgOn1050 && (revert || b.n) && !carDbg1050.revert && !carDbg1050.bn) { CarDbg1050 *d = &carDbg1050; d->revert = revert; d->tries = tries; d->bn = b.n < 8 ? b.n : 8; d->bdepth = b.maxDepth;
+    for (int k = 0; k < d->bn; k++) { d->btype[k] = b.type[k]; d->bidx[k] = b.index[k]; d->bnx[k] = b.nx[k]; d->bnz[k] = b.nz[k]; d->bd[k] = b.depth[k]; } }
   c->contacts = 0;
   float wallHit = 0.f;
   if (revert) {
@@ -1581,6 +1609,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       }
     }
     if(count) {
+      if (carDbgOn1050 && !carDbg1050.wn) { CarDbg1050 *d = &carDbg1050; d->wn = count < 8 ? count : 8; for (int k = 0; k < d->wn; k++) { d->wref[k] = refs[k]; d->wn3[k][0] = wheelCt[k].n.x; d->wn3[k][1] = wheelCt[k].n.y; d->wn3[k][2] = wheelCt[k].n.z; d->wdepth[k] = depths[k]; } }
       V3 shift=v3(0,0,0);for(int it=0;it<2;it++)for(int i=0;i<count;i++){float d=depths[i]-dot(shift,wheelCt[i].n);if(d>0)shift=madd(shift,wheelCt[i].n,d);}
       pos=add(pos,shift);comW=add(comW,shift);
       for(int i=0;i<count;i++) {wheelCt[i].r=sub(add(point[i],shift),comW);
@@ -2109,6 +2138,8 @@ static void perchEscape(Car *c, const ColWorld *w, const CarInput *in, float dt)
   if (c->perchT >= PERCH_T2) c->perchT = 0.f;
 }
 
+// №1050 диагностика (flag carcon1050 1): что держит машину — контакты кузова (тип, индекс, нормаль, глубина), колёсные контакты, откат подшага; строка CARCON в main_loop.h
+CarDbg1050 carDbg1050; int carDbgOn1050;
 void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   unsigned xt_ = XS_T(), xw_ = XS_W();
   if (dt > 0.1f) dt = 0.1f;

@@ -1,0 +1,11 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+wait 1
+flag trfmodels
+wait 1
+end

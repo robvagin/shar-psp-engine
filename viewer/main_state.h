@@ -374,12 +374,13 @@ static GroundCover groundCover;
 static int fb16 = 1;          // кадр 5650 + дизеринг (служебный файл fb32 рядом с EBOOT -> 8888, для сравнения)
 #include "jitter.h"   // эксперимент: временное сглаживание полпикселя (по умолчанию выкл., файл jitter)
 static int clearChk;          // служебный файл clearchk: кадр чистится пурпурным, P1 считает непокрытые пиксели
+static int pano917Cap; static float pano917Near, pano917Far;   // №917б: служебный кадр бота («flag pano917cap БЛИЗКО ДАЛЬНО»): город только дальше БЛИЗКО м (ближняя плоскость) до ДАЛЬНО м, пурпурный фон, без неба, ленты, интерфейса
 static int noSkyChk;          // замер-тур (03.10, «flag nosky 1»): небо не рисуется — с clearchk щель остаётся пурпурной, а не цветом неба
 static int seamsOld;          // служебный файл seamsold: город с абсолютными матрицами, как до правок 224/237/251 (красный контроль)
 static int seamChk;           // служебный файл seamchk (с clearchk): город без альфа-теста и полупрозрачного — пурпур остаётся только
                               // в щелях между непрозрачными поверхностями (правки 224/237/251, tools/seams_emu.py; листва иначе — тысячи «швов»)
 static int ccViews, ccMax; static long ccTot;
-typedef struct { int w, h, levels; void *pal; void *lv[8]; void *slv[8]; int pre; float slope; int ground; int t4; const void *opqPal; int opq; unsigned char tstat[5], tstatOk; int levelsAll; unsigned char lat; unsigned flatC; unsigned char flatK, flatE, flatS, flatR, flatEd, flatDone, curb, asph; } Tex;   // №904: levelsAll — уровней мипа в файле, lat — решётка (latticeScan, main_levels.h)   // tstat[4] (№786): 1 — текстура без шагов мультика (облака неба)   // t4: правка 129 — 4 бита (байт 6 = 4); opq/opqPal — правка 413 (carGlass)
+typedef struct { int w, h, levels; void *pal; void *lv[8]; void *slv[8]; int pre; float slope; int ground; int t4; const void *opqPal; int opq; unsigned char tstat[5], tstatOk; int levelsAll; unsigned char lat; unsigned flatC; unsigned char flatK, flatE, flatS, flatR, flatEd, flatDone, curb, asph; unsigned short xdon; } Tex;   // №904: levelsAll — уровней мипа в файле, lat — решётка (latticeScan, main_levels.h)   // tstat[4] (№786): 1 — текстура без шагов мультика (облака неба)   // t4: правка 129 — 4 бита (байт 6 = 4); opq/opqPal — правка 413 (carGlass)
 // строка уровня в файле, байт: T8 — ширина (в swizzle не меньше 16 Б, Ф2); T4 (правка 129, только в swizzle) — полширины, не меньше 16 Б
 static inline int texRowBytes(int t4, int pre, int lw) { return t4 ? ((lw + 1) >> 1 < 16 ? 16 : (lw + 1) >> 1) : (pre && lw < 16 ? 16 : lw); }
 // ширина буфера GE (TBW) в текселах: T8 не меньше 16, T4 не меньше 32 (блок swizzle 16 Б = 32 тексела по 4 бита)

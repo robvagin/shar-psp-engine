@@ -1,0 +1,86 @@
+# №1007: итоговые тоны заливок всех уровней (FLATT) + средний асфальт (ZONES1007SET)
+scene Z_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene Z_D1
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D2
+press circle 0.3
+wait 0.5
+flag golevel 2
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D3
+press circle 0.3
+wait 0.5
+flag golevel 3
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D6
+press circle 0.3
+wait 0.5
+flag golevel 6
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+scene Z_D7
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 10
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 1
+flag flat912 1
+wait 1.5
+end

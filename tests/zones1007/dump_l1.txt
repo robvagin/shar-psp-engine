@@ -1,0 +1,13 @@
+scene Z_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene Z_D1
+flag flatdump 1
+flag zones1007 0
+wait 0.5
+flag flat912 0
+wait 2
+flag flat912 1
+wait 2
+end

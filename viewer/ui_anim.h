@@ -173,6 +173,14 @@ static const float UI_BUB_K[UI_BUB_STEPS] = {0.25f, 0.525f, 0.595f, 0.70f, 0.77f
 #define BUBBLE992_OLD 0
 #endif
 extern int uiBubble992Old;   // ui.c: 1 — появление как в TEST70
+// №1040 (Роб 26.10 на TEST72: «ты очень усложнил анимацию message bubble, при появлении всё лагает; сделай простое появление пузыря с простым появлением текста, как в оригинале, но под PSP»): одно простое движение —
+// рамка вместе с текстом и значком растёт единым масштабом 0,88 → 0,94 → 0,98 → 1 тремя шагами по 1/50 с (замер PS2 из №638: ступени, без перелёта), БЕЗ ступенчатой прозрачности и БЕЗ отдельного фейда текста
+// (№1004) и сдвига: текст и аватар едут ровно тем же преобразованием, что рамка, с первого кадра. Перенос строк и ширина считаются один раз на сообщение (кэш раскладки на несколько сообщений, не по одному), не по кадрам
+// появления. BUBBLE1040_OLD=1 / файл bubble1040old / «flag bubble1040 0» — как в TEST72 (№992 + №1004)
+#ifndef BUBBLE1040_OLD
+#define BUBBLE1040_OLD 0
+#endif
+extern int uiBubble1040;   // ui.c: 1 — простое появление
 #define UI_BUB992_STEPS 3
 static const float UI_BUB992_K[UI_BUB992_STEPS] = {0.88f, 0.94f, 0.98f};
 static inline float uiBubScale(float t) {
@@ -203,7 +211,7 @@ static inline float uiEaseOutBack(float x) { const float c1 = 1.70158f, c3 = c1 
 // Возвращает 0, когда рисовать уже нечего (выход закончен).
 static inline int uiPopState(int kind, int on, float t, float *scale, float *alpha) {
   if (kind == UI_POP_PILL) {   // строка задания: масштаб — по высоте (ui.c: xf.sy), альфа 1; снята — сразу нет (один кадр)
-    if (!BUBBLE_UNIFORM_OLD) { *scale = on ? uiBubScale(t) : 1.f; *alpha = on && t < 0.06f ? 0.3f + 0.7f * (t < 0.f ? 0.f : t) / 0.06f : 1.f; return on ? 1 : 0; }
+    if (!BUBBLE_UNIFORM_OLD) { *scale = on ? uiBubScale(t) : 1.f; *alpha = (on && t < 0.06f && !uiBubble1040) ? 0.3f + 0.7f * (t < 0.f ? 0.f : t) / 0.06f : 1.f; return on ? 1 : 0; }
     *alpha = 1.f; *scale = on ? uiPillScale(t) : 1.f; return on ? 1 : 0;
   }
   float from = kind == UI_POP_BOX ? 0.8f : 0.4f;

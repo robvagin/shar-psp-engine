@@ -208,6 +208,10 @@ def tree_row(its):
 # №996 (Роб 26.10: «настройка высоты и дальности камеры в меню, и в машине, и пешком»): на странице CAMERA две строки — Height и Distance, по 5 шагов, середина (Normal) — как было.
 # CAMCFG996_OLD=1 — страница CAMERA как в TEST70 (3 строки)
 CAMCFG996_OLD = os.environ.get('CAMCFG996_OLD') == '1'
+# №1003 (Роб 26.10: «тени из-под машин убрать — мерцают; в меню тогл: тени деревьев и тени машин»): строка Car Shadows на странице PICTURE после Tree Shadows. CARSHADOW1003_OLD=1 — как TEST71
+CARSHADOW1003_OLD = os.environ.get('CARSHADOW1003_OLD') == '1'
+# №1064 (Роб 28.10: «текстуру бордюра поставить родную и иметь возможность это настроить в настройках»): строка Curbs на странице PICTURE после Draw Distance (Original / Tinted). CURB1064_OLD=1 — страница PICTURE как в TEST76
+CURB1064_OLD = os.environ.get('CURB1064_OLD') == '1'
 NEW_ROWS = {
     'Contrast': ('Contrast', ['%.2f' % (0.5 + 0.1 * i) for i in range(16)]),
     'LineWidth': ('Line Width', [str(i) for i in range(11)]),
@@ -216,11 +220,13 @@ NEW_ROWS = {
     'TexDetail': ('Texture Detail', ['%d%%' % (5 * i) for i in range(21)]),
     'Textures': ('Textures', ['Off', 'On']),   # №912: viewer/main_save.h cfgSlot "TEXTURES" — Off: мир без текстур (заливка), On: родные текстуры
     'DrawDist': ('Draw Distance', ['150 M', '200 M', '250 M']),   # №795: viewer/main_save.h cfgSlot "DRAW"
+    **({} if CURB1064_OLD else {'CurbStyle': ('Curbs', ['Original', 'Tinted'])}),   # №1064: viewer/main_save.h cfgSlot "CURB" — бордюр: Original — родной, Tinted — подкраска №987 (TEST76)
     'OldTV': ('Old TV', ['Off'] + ['%d%%' % (10 * i) for i in range(1, 11)]),   # №800/№830: сила «старого телевизора» (viewer/main_save.h cfgSlot "OLD", viewer/oldtv.h)
     **({} if CAMCFG996_OLD else {
         'CamHeight': ('Height', ['Low', 'Lower', 'Normal', 'Higher', 'High']),      # №996: viewer/main_save.h cfgSlot "HEIGHT" — высота камеры (машина и пешком), середина — как было
         'CamDist': ('Distance', ['Near', 'Nearer', 'Normal', 'Farther', 'Far']),    # №996: cfgSlot "DISTANCE" — дальность камеры
     }),
+    **({} if CARSHADOW1003_OLD else {'CarShadows': ('Car Shadows', ['Off', 'On'])}),   # №1003: viewer/main_save.h cfgSlot "CAR SHADOW" — тени машин, по умолчанию Off
 }
 # строки подстраниц сверху вниз (ключи групп PauseSettings.pag и копий порта)
 # №783 (Роб 18.10 после TEST34): включение мультика — на странице CARTOON первой строкой («в Cartoon строго настройки мультика, в том числе
@@ -243,8 +249,8 @@ _LINK_ROW = [] if CARTOON_PAGE_OLD or MENU_FLAT_OLD else ['CartoonLink']
 PAGE_ROWS = {
     'pausecamera': ['Camera', 'JumpCamera', 'InvertCamControl'] + ([] if CAMCFG996_OLD else ['CamHeight', 'CamDist']),
     'pausegame': ['IntersectNavSystem', 'Radar', 'Tutorial'],
-    'pausepicture': (_LINK_ROW if CARTOON_FIRST else []) + (['Textures'] if os.environ.get('TEXTURES_ROW_OLD') != '1' else []) + ['Colour', 'Contrast', 'TreeShadows']
-                    + ([] if os.environ.get('DRAWDIST_ROW_OLD') == '1' else ['DrawDist'])
+    'pausepicture': (_LINK_ROW if CARTOON_FIRST else []) + (['Textures'] if os.environ.get('TEXTURES_ROW_OLD') != '1' else []) + ['Colour', 'Contrast', 'TreeShadows'] + ([] if CARSHADOW1003_OLD else ['CarShadows'])
+                    + ([] if os.environ.get('DRAWDIST_ROW_OLD') == '1' else ['DrawDist']) + ([] if CURB1064_OLD else ['CurbStyle'])
                     + (['Cartoon'] if CARTOON_PAGE_OLD else ([] if CARTOON_FIRST else _LINK_ROW)),
     'pausecartoon': ([] if CARTOON_PAGE_OLD else ['Cartoon']) + ['LineWidth', 'EyeLines'] + ([] if os.environ.get('INK951_ROW_OLD') == '1' else ['InkStyle']) + ['TexDetail']
                     + ([] if os.environ.get('OLDTV_ROW_OLD') == '1' else ['OldTV']),   # №800: строка Old TV

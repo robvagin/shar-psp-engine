@@ -1,0 +1,29 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L3
+flag golevel 3
+wait 40
+scene S_S1
+foot 180.2 64.2 -1.571
+wait 6
+flag flat912 1
+wait 6
+shot F_S1
+flag flat912 0
+wait 6
+shot T_S1
+flag flat912 1
+wait 2
+scene S_S2
+foot 180.2 64.2 -1.571
+wait 6
+flag flat912 1
+wait 6
+shot F_S2
+flag flat912 0
+wait 6
+shot T_S2
+flag flat912 1
+wait 2
+end

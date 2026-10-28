@@ -221,6 +221,16 @@ static unsigned vecBeamN;
 #ifndef BEAM995_ABOT
 #define BEAM995_ABOT .55f    // яркость у земли — доля от яркости у днища
 #endif
+// №1036 (Роб на PSP, TEST72: «цилиндр у тарелки белый, фосфорно-неоновый»): цвет луча — не бледно-мятный из vlColor (ярче до 255 и наполовину к тёплому белому: (234,255,200)), а родной зелёный UfoBeam (квады ufobeam.p3d:
+// (124,255,134), (165,213,168), (58,191,53) — зелёный), мягче: BEAM1036_RGB и прозрачность BEAM1036_A; смешивание обычное (SRC_ALPHA / 1 − SRC_ALPHA, не сложение), затухание к земле и форма конуса те же. BEAM1036_OLD=1 / файл beam1036old / «flag beam1036 0» — как в TEST72
+#ifndef BEAM1036_OLD
+#define BEAM1036_OLD 0
+#endif
+#ifndef BEAM1036_A
+#define BEAM1036_A 100.f
+#endif
+#define BEAM1036_RGB 0x005fc85au   // ABGR без альфы: R 90, G 200, B 95
+static int beam1036 = !BEAM1036_OLD;
 static int beam995 = !BEAM995_OLD; static uint32_t b995Rgb = 0x00c8ffeau; static unsigned b995Draws, b995Tri, b995Calls, b995Us, b995UsOld; static float b995Top, b995Gy;
 static int beam995Draw_(const float ufo[3], float ex, float ey, float ez) {   // 1 — луч нарисован (или тарелка не над землёй), картинку луча не рисовать; 0 — рисовать как было
   (void)ex; (void)ey; (void)ez;
@@ -231,9 +241,9 @@ static int beam995Draw_(const float ufo[3], float ex, float ey, float ez) {   //
   if (gy > top - 2.f) return 1;
   typedef struct { unsigned c; float x, y, z; } BV3;
   const int NS = BEAM995_SIDES; unsigned b0 = ggVbUsed, nv = 0; BV3 *q = (BV3 *)ggVbAlloc(NS * 12 * sizeof(BV3)); if (!q) return 1;
-  float yy[3] = {top, top + (gy - top) * .4f, gy}, rr[3], aa[3] = {BEAM995_A, BEAM995_A * BEAM995_AMID, BEAM995_A * BEAM995_ABOT};
+  float a0_ = beam1036 ? BEAM1036_A : BEAM995_A, yy[3] = {top, top + (gy - top) * .4f, gy}, rr[3], aa[3] = {a0_, a0_ * BEAM995_AMID, a0_ * BEAM995_ABOT};
   for (int i = 0; i < 3; i++) rr[i] = BEAM995_RTOP + (BEAM995_RBOT - BEAM995_RTOP) * (yy[i] - top) / (gy - top);
-  unsigned cc[3]; for (int i = 0; i < 3; i++) cc[i] = ((unsigned)(aa[i] + .5f) << 24) | b995Rgb;
+  unsigned cc[3]; for (int i = 0; i < 3; i++) cc[i] = ((unsigned)(aa[i] + .5f) << 24) | (beam1036 ? BEAM1036_RGB : b995Rgb);
   for (int s = 0; s < NS; s++) { float c0 = csT[s], s0 = snT[s], c1 = csT[s + 1], s1 = snT[s + 1];
     for (int i = 0; i < 2; i++) { BV3 *o = q + nv;
       float x0a = ufo[0] + rr[i] * c0, z0a = ufo[2] + rr[i] * s0, x1a = ufo[0] + rr[i] * c1, z1a = ufo[2] + rr[i] * s1, x0b = ufo[0] + rr[i + 1] * c0, z0b = ufo[2] + rr[i + 1] * s0, x1b = ufo[0] + rr[i + 1] * c1, z1b = ufo[2] + rr[i + 1] * s1;
@@ -260,6 +270,7 @@ static int vecBeamHook(const float p[3], const float X[3], const float Y[3], uns
 }
 static int vecBeamHook_(const float p[3], const float X[3], const float Y[3], unsigned abgr) {
   if (VEC_BEAM_OLD || !vecLight) return 0;
+  if (smkOn) { static uint32_t seen_[8]; static int ns_; int k_ = 0; for (; k_ < ns_; k_++) if (seen_[k_] == abgr) break; if (k_ == ns_ && ns_ < 8) { seen_[ns_++] = abgr; char l_[120]; snprintf(l_, sizeof l_, "UFOBEAMCOL abgr=%08x hw=%.2f hh=%.2f t=%.1f\n", abgr, sqrtf(X[0] * X[0] + X[1] * X[1] + X[2] * X[2]), sqrtf(Y[0] * Y[0] + Y[1] * Y[1] + Y[2] * Y[2]), smkT); smkWrite(l_); } }   // №1036 служебно: исходные цвета квадов луча
   if (beam995) { b995Rgb = vlColor(abgr & 0xffffffu); return 1; }   // №995: квады луча (блинк, размытые квадраты) не рисуются — свет даёт конус beam995Draw
   float ya = (abgr >> 24) / 255.f; if (ya < .01f) return 1;
   { float hwq = X[0] * X[0] + X[1] * X[1] + X[2] * X[2], hhq = Y[0] * Y[0] + Y[1] * Y[1] + Y[2] * Y[2];

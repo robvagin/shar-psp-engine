@@ -50,6 +50,7 @@ int  feReady(void);
 void feDraw(int sel);
 // крючок хода чтения fe.shr (кусками по 256 КБ): main.c рисует экран загрузки меню; 0 — без него
 extern void (*feReadHook)(unsigned done, unsigned total);
+extern int feHero1021;   // №1021-герои: «flag fehero1021 0|1» — Гомер и герои меню в Cartoon путём игры; файл fehero1021old — выкл
 extern int feGlowTest;     // гейт (smoke flag feglow N): подсветка пункта N вместо sel; -1 выкл (feLoad сбрасывает)
 
 // Перелёты камеры оригинала (правка Роба 28.09): таймлайн FE_CameraController (camset.p3d, 1036 кадров @ 30) содержит

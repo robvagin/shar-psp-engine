@@ -397,6 +397,17 @@ int propsTallFallOld = PROP_TALL_FALL_OLD;
 #endif
 int propsPole968Old = PROP_POLE968_OLD;
 #define POLE_A 0.5f
+// №1046 (Роб, больше недели: «на причале L6 C7-7 железные фонари должны сбиваться ПЕРЕДОМ машины, а сейчас сбиваются центром машины; то же с красными столбами L5 F3-2»): касание у столба уже считалось от коробки кузова (бампер, угол, борт),
+// но валился он вяло: начальная угловая скорость 0,2 рад/с (+0,07 за каждый м/с выше 12) — к моменту, когда столб заметно наклонён (10° через 0,4 с), машина проехала 5 м и центром стоит под ним. Теперь столб получает толчок бампера:
+// начальная угловая скорость не меньше 0,25 рад/с на каждый м/с скорости машины (4 рад/с не больше): на 12 м/с лежит за ~0,5 с, наклон ~30° к моменту, когда центр машины доезжает до столба; лежащий столб (pole 2) машину не толкает (быстро упавший столб иначе тащился бы перед капотом). POLE1046_OLD=1 / файл pole1046old / flag pole1046 0 — как в TEST73
+#ifndef POLE1046_OLD
+#define POLE1046_OLD 0
+#endif
+int pole1046Old = POLE1046_OLD;
+float propsPoleKick1046(float v, float w0, float wk, float v0) {
+  float w = w0 + wk * fmaxf(0.f, v - v0); if (pole1046Old) return w;
+  float k = .25f * v; if (k > 4.f) k = 4.f; return w > k ? w : k;
+}
 #define POLE_W0 0.2f
 #define POLE_WK 0.07f
 #define POLE_V0 12.f
@@ -452,7 +463,7 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
   if (!PROP_HITSLOW_OLD && carSpeed < 0.5f) return;
   for (unsigned i = 0; i < p->ninst; i++) {
     PropState *st = &p->st[i]; const PropType *ty = &p->types[p->def[i].type];
-    if (st->hidden || st->pole == 1) continue;   // №968: падающий на шарнире столб машину не трогает (скорость машина потеряла при ударе)
+    if (st->hidden || st->pole == 1 || (!pole1046Old && st->pole == 2)) continue;   // №968; №1046: лежащий столб машину не толкает: падающий на шарнире столб машину не трогает (скорость машина потеряла при ударе)
     int awake = !st->asleep;
     if (carSpeed < 0.5f) continue;
     float dx = st->x - cb.x, dz = st->z - cb.z;
@@ -541,7 +552,7 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
     st->w[0] = dirz * ang; st->w[1] = -side * 3.f; st->w[2] = -dirx * ang;
     st->asleep = 0; st->sleepT = 0.f; st->fresh = 1;
     if (pole968) {   // кинематика шарнира вместо импульса коробки: основание на месте, угол по θ'' = 0,5·sin θ
-      st->pole = 1; st->poleTh = 0.0174533f; st->poleW = POLE_W0 + POLE_WK * fmaxf(0.f, carSpeed - POLE_V0);
+      st->pole = 1; st->poleTh = 0.0174533f; st->poleW = propsPoleKick1046(carSpeed, POLE_W0, POLE_WK, POLE_V0);
       st->poleD[0] = dirx; st->poleD[1] = dirz; memcpy(st->poleQ0, st->q, sizeof st->poleQ0);
       st->poleB[0] = st->x; st->poleB[1] = st->y - st->hy; st->poleB[2] = st->z;
       st->vel[0] = st->vel[1] = st->vel[2] = 0.f; st->w[0] = st->w[1] = st->w[2] = 0.f;
@@ -575,6 +586,22 @@ void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt) {
 // нынешней ориентации, срез по высоте, след на xz — прямоугольник по самой горизонтальной оси; низкое (верх не выше stepH над
 // ступнями) — опора сверху. Правило порта; у машины пропы прежние (propsHitCar). Возврат 1 — Гомера вытолкнули (нормаль в onx, onz)
 #define PROP_HOMER_MAXHALF .8f   // м: полуширина коробки пропа, до которой он твёрдый для Гомера (ящик 0,25–0,46; дерево 2,6)
+// №1034 (Роб, TEST72 на PSP, L5 проспект: «Апу могу пройти сквозь скамейки, решил запрыгнуть на неё — не могу»): скамейки — пропы с коробкой 2,5×0,8×0,8 м (полуразмеры 1,25 0,41 0,40 на L2, L3, L5, L6), мусорные
+// баки и ящики 1,5–1,8 м (L2, L3, L5, L6, L7) тоже шире PROP_HOMER_MAXHALF и потому для Гомера пешком были пустыми: проходил насквозь и не мог встать сверху. Теперь твёрдые и широкие низкие пропы:
+// длинная сторона до PROP_HOMER_WIDE, короткая не тоньше PROP_HOMER_THICK (деревья шире и выше, щиты и афиши тонкие — прежнее правило), высота по-прежнему не больше 1,2 м полувысоты. Низкое — опора сверху,
+// на скамейку можно запрыгнуть. BENCH1034_OLD=1 / файл bench1034old / flag bench1034 0 — как было
+#ifndef BENCH1034_OLD
+#define BENCH1034_OLD 0
+#endif
+int bench1034 = !BENCH1034_OLD;
+#define PROP_HOMER_WIDE 1.6f   // м: скамейки 1,25, баки 1,27, ящики 0,9–1,2; кроны и большие щиты шире, их тут нет (hy > 1.2 или полуширина больше)
+#define PROP_HOMER_THICK .3f
+static int homerSolidSize(const PropState *st) {
+  float w = fmaxf(st->hx, st->hz);
+  if (st->hy > 1.2f) return 0;
+  if (w <= PROP_HOMER_MAXHALF) return 1;
+  return bench1034 && w <= PROP_HOMER_WIDE && fminf(st->hx, st->hz) >= PROP_HOMER_THICK;
+}
 // Правка «плавность» (тур SHARTEST4): список «кто рядом» строится раз за homerUpdate (homer.c homerSolidFrame), подшаги идут по короткому
 // списку в том же индексном порядке. Вне homerUpdate кеша нет. -DHOMER_SOLID_CACHE_OLD=1 — прежний обход (флаг общий с homer.c)
 extern unsigned homerSolidFrame;
@@ -594,7 +621,7 @@ int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float 
     for (unsigned i = 0; i < p->ninst; i++) {
       const PropState *st = &p->st[i];
       if (st->hidden) continue;
-      if (fmaxf(st->hx, st->hz) > PROP_HOMER_MAXHALF || st->hy > 1.2f) continue;
+      if (!homerSolidSize(st)) continue;
       float br = sqrtf(st->hx * st->hx + st->hy * st->hy + st->hz * st->hz) + r + .3f + PS_CACHE_M, dx = *x - st->x, dz = *z - st->z;
       if (dx * dx + dz * dz > br * br) continue;
       if (cacheN >= PS_CACHE_MAX) { cacheOk = 0; break; }
@@ -606,7 +633,7 @@ int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float 
     unsigned i = useCache ? cacheList[q] : q;
     const PropState *st = &p->st[i];
     if (st->hidden) continue;
-    if (fmaxf(st->hx, st->hz) > PROP_HOMER_MAXHALF || st->hy > 1.2f) continue;   // деревья, щиты, большие знаки — их коробка шире ствола/стойки
+    if (!homerSolidSize(st)) continue;   // деревья, щиты, большие знаки — их коробка шире ствола/стойки
     float h[3] = {st->hx, st->hy, st->hz}, br = sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]) + r + .3f;
     float dx = *x - st->x, dz = *z - st->z;
     if (dx * dx + dz * dz > br * br) continue;

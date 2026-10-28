@@ -1,0 +1,35 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+flag trfmodel 0
+flag trfstill
+wait 1
+camrel 2.88 1.3 1.84 -0.846 -0.03 -0.540 55
+wait 1.5
+shot d6a
+camrel -7.28 1.3 -4.64 0.846 -0.03 0.540 55
+wait 1.5
+shot d6b
+camrel 6.26 1.3 4.00 -0.846 -0.03 -0.540 55
+wait 1.5
+shot d10a
+camrel -10.66 1.3 -6.80 0.846 -0.03 0.540 55
+wait 1.5
+shot d10b
+camrel 31.64 1.3 20.20 -0.846 -0.03 -0.540 55
+wait 1.5
+shot d40a
+camrel -36.04 1.3 -23.00 0.846 -0.03 0.540 55
+wait 1.5
+shot d40b
+camrel 82.40 1.3 52.60 -0.846 -0.03 -0.540 55
+wait 1.5
+shot d100a
+camrel -86.80 1.3 -55.40 0.846 -0.03 0.540 55
+wait 1.5
+shot d100b
+end

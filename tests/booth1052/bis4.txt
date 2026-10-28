@@ -1,0 +1,49 @@
+# №1052 бисекция 4 (основание снято): gbis 0/1/2/4/8/15 у будки L1
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L1
+flag golevel 1
+wait 40
+flag player
+flag service 1
+foot 146.04 84.77 3.1416
+wait 3
+flag gbis 0
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k00
+cam off
+flag gbis 1
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k01
+cam off
+flag gbis 2
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k02
+cam off
+flag gbis 4
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k04
+cam off
+flag gbis 8
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k08
+cam off
+flag gbis 15
+wait 0.4
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.5
+shot k15
+cam off
+end

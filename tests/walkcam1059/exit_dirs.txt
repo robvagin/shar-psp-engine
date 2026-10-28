@@ -1,0 +1,50 @@
+scene EX_L1_load
+flag golevel 1
+wait 15
+flag camlog
+flag cfgdefaults 1
+scene WD_up
+flag repair
+wait 1
+flag drive 4
+wait 5
+flag stop
+wait 3
+press triangle 0.2
+wait 1.5
+press up 4
+wait 5
+scene WD_down
+flag repair
+wait 1
+flag drive 4
+wait 5
+flag stop
+wait 3
+press triangle 0.2
+wait 1.5
+press down 4
+wait 5
+scene WD_left
+flag repair
+wait 1
+flag drive 4
+wait 5
+flag stop
+wait 3
+press triangle 0.2
+wait 1.5
+press left 4
+wait 5
+scene WD_right
+flag repair
+wait 1
+flag drive 4
+wait 5
+flag stop
+wait 3
+press triangle 0.2
+wait 1.5
+press right 4
+wait 5
+end

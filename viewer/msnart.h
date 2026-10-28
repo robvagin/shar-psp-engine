@@ -37,6 +37,8 @@ extern int (*msnartGeRoom)(unsigned bytes);
 // g/gw/gd — центр, ширина и сдвиг от камеры первого квада-свечения; 1 — нарисовано, 3D не рисуется. NULL — всё 3D. MSNART_SPRITE_OLD=1 — всё 3D
 extern int (*msnartSprite)(const char *name, const float *c, const float *cr, const float *bt, const float *br, const float *pv, float tilt, float cf, const float *g, float gw, float gd, float ex, float ey, float ez);
 extern unsigned msnartGeSkips;
+extern int msnartDecal1052;   // №1052: пятно <рисунок>_shadow со сложением не рисуется
+extern int msnartArrow1025; extern int (*msnartGroundN)(float x, float z, float yHi, float yLo, float *y, float *n3);   // №1025: стрелки пути по поверхности дороги, без бликов
 // №793 (Роб 18.10: «свечение под персонажами с миссией — векторное на всех уровнях; найти другие размытые свечения»): пятно
 // «<рисунок>_shadow» (билборд-квадрат на земле, missgen.p3d: exclamation/dice/checkered/dollar_shadow — синий диск сложением,
 // carsphere/triggersphere_shadow — голубое кольцо) — замер его картинки: радиус, две ступени яркости по кольцам (≥ 50 % и ≥ 12 %

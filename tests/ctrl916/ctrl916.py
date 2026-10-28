@@ -24,9 +24,9 @@ h = R.get('CT_hold', []); f = R.get('CT_fresh', []); end = last_walk(h)
 if not h or not end: print('CT_hold: нет ходьбы'); ok = False
 else:
     tchg = S0['CT_hold'] + 6.5   # сценарий: wait 3, ↑, +1,5 с → ↗, +2 с → к ним добавлен ↓
-    vt = min(h, key=lambda r: abs(r[0] - tchg)); exp = vt[2] - 135.
-    d = max(abs(w(r[5] - exp)) for r in end)
-    print(f'CT_hold: стик вправо-назад (135°), ход {end[-1][5]:.0f}°, от вида на момент смены (камера {vt[2]:.0f}°) ожидается {exp:.0f}°: расхождение {d:.0f}° (предел {LIM:.0f}°)')
+    # №1059 (PS2, ps2-walk-camera-stick): стик от НЫНЕШНЕГО вида непрерывно (камера следует за ходом ≤ 36°/с), ход = нынешний вид − 135° (PS2: 125° при стике 135°)
+    vt = min(h, key=lambda r: abs(r[0] - tchg)); d = max(abs(w(r[5] - (r[1] - 135.))) for r in end); exp = end[-1][1] - 135.
+    print(f'CT_hold: стик вправо-назад (135°), ход {end[-1][5]:.0f}°, от нынешнего вида (камера {end[-1][1]:.0f}°) ожидается {exp:.0f}°: расхождение {d:.0f}° (предел {LIM:.0f}°)')
     ok = ok and d <= LIM
 end2 = last_walk(f)
 if not end2: print('CT_fresh: нет ходьбы'); ok = False

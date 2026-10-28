@@ -1,0 +1,37 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L1
+flag golevel 1
+wait 12
+scene C_L2
+flag golevel 2
+wait 12
+scene C_L3
+flag golevel 3
+wait 12
+scene C_L4
+flag golevel 4
+wait 12
+scene C_L5
+flag golevel 5
+wait 12
+scene C_L6
+flag golevel 6
+wait 40
+scene S_L6_X1
+foot -102 114.7 0
+wait 4
+cam -95.0 -27.1 121.7 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X1
+scene S_L6_X2
+foot -186 150.0 0
+wait 4
+cam -179.0 -34.2 157.0 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X2
+scene C_L7
+flag golevel 7
+wait 12
+end

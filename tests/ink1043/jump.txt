@@ -1,0 +1,39 @@
+# №1043: рывок на L1 K3-4: линии в пустоте до подгрузки клеток: flag inkfar1043 1 / 0
+scene start
+wait 3
+flag cfgdefaults 1
+scene IK_L1
+flag repair
+foot 120 100 0
+wait 10
+flag inkfar1043 1
+foot 120 100 0
+wait 6
+foot 214.56 -442.41 -2.2239
+cam 214.56 3.5 -442.41 0.45 -0.85 0.25 75
+wait 0.15
+shot new_0
+wait 0.3
+shot new_1
+wait 0.5
+shot new_2
+wait 0.8
+shot new_3
+wait 1.5
+shot new_4
+flag inkfar1043 0
+foot 120 100 0
+wait 6
+foot 214.56 -442.41 -2.2239
+cam 214.56 3.5 -442.41 0.45 -0.85 0.25 75
+wait 0.15
+shot old_0
+wait 0.3
+shot old_1
+wait 0.5
+shot old_2
+wait 0.8
+shot old_3
+wait 1.5
+shot old_4
+end

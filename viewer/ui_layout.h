@@ -92,6 +92,16 @@ typedef int (*UiLineW)(const void *ctx, const char *s, int n);
 static inline int uiIsBreak(char c) { return c == '\n' || c == '\\'; }
 #define UI_WRAP_BALANCE 4   // бит wrap: ровные строки (№548, пузырь без значка): число строк как при полной ширине, ширина — наименьшая, дающая то же число строк. BUBBLE_FIT_OLD=1 — без
 #define UI_WRAP_NOWIDOW 2   // бит wrap: без висячего слова в последней строке абзаца (правка 215, текст задания HUD)
+#define UI_WRAP_NOGLUE 8    // бит wrap (№1037): без склейки коротких служебных слов со следующим (правило №401 отключено для этого переноса)
+// №1037 (Роб 26.10 на TEST72: «Talk to the sea captain в 3 строки, а места на 2; я просил без висячих строк, а в итоге всё с переносом; золотую середину»): правила красоты (короткое слово не в конце строки №401,
+// без висячего слова правка 215, ровные строки №548) раздували число строк: «TALK TO THE / SEA CAPTAIN» помещается в две, но «THE» в конце строки запрещено, и выходило «TALK / TO THE SEA / CAPTAIN». Теперь порядок такой:
+// 1) наименьшее число строк, которое помещается в ширину (жадный перенос без правил); 2) только внутри этого числа строк — правила по убыванию (все; без склейки коротких слов, но без висячего слова; без висячего
+// слова не требуется) — берётся первая раскладка, которая не добавляет строку. Никогда не добавлять строку ради красоты. WRAP1037_OLD=1 / файл wrap1037old / «flag wrap1037 0» — прежнее
+#ifndef WRAP1037_OLD
+#define WRAP1037_OLD 0
+#endif
+static int uiWrap1037 = !WRAP1037_OLD;
+static unsigned uiWrapN1040[2];   // №1040 служебно: вызовов uiWrapPara (верхний уровень) и uiWrapPara0 (с рекурсией баланса) — сколько раз считался перенос
 // №401 (Роб 08.10: «в уведомлениях висят строки: в конце or, of, but»): короткое служебное слово (артикль, союз, предлог) не
 // остаётся последним в строке — уходит на следующую вместе со своим словом, если там влезает. Правило набора порта, для всех
 // переносимых текстов. Прежнее: -DUI_WRAP_SHORT_OLD
@@ -106,16 +116,16 @@ static inline int uiShortWord(const char *w, int n) {
   }
   return 0;
 }
-static inline int uiWrapPara(const char *s, int base, int n, int maxw, int wrap, UiLineW lw, const void *ctx,
+static inline int uiWrapPara0(const char *s, int base, int n, int maxw, int wrap, UiLineW lw, const void *ctx,
                              int *st0, int *len, int nl, int maxLines) {
-  const char *p = s + base; int nl0 = nl;
+  const char *p = s + base; int nl0 = nl; uiWrapN1040[1]++;
   if (nl >= maxLines) return nl;
   if (!wrap || maxw <= 0 || lw(ctx, p, n) <= maxw) { st0[nl] = base; len[nl] = n; return nl + 1; }
   int ls = 0, i = 0, cur = -1;                          // cur = конец принятой части строки
   while (i <= n && nl < maxLines) {
     int we = i; while (we < n && p[we] != ' ') we++;    // слово [i, we)
 #ifndef UI_WRAP_SHORT_OLD
-    for (int ws = i; we < n && uiShortWord(p + ws, we - ws);) {   // №401: короткое слово склеено со следующим (как неразрывный пробел)
+    for (int ws = i; we < n && !(wrap & UI_WRAP_NOGLUE) && uiShortWord(p + ws, we - ws);) {   // №401: короткое слово склеено со следующим (как неразрывный пробел)
       ws = we + 1; we = ws; while (we < n && p[we] != ' ') we++; }
 #endif
     if (cur < 0 || lw(ctx, p + ls, we - ls) <= maxw) cur = we;
@@ -125,8 +135,8 @@ static inline int uiWrapPara(const char *s, int base, int n, int maxw, int wrap,
   if (nl < maxLines) { st0[nl] = base + ls; len[nl] = (cur < 0 ? n : cur) - ls; nl++; }
   if ((wrap & UI_WRAP_BALANCE) && nl - nl0 >= 2) {   // №548: наименьшая ширина с тем же числом строк (двоичный поиск); перенос заново по ней, с тем же правилом висячего слова
     int want = nl - nl0, lo = 1, hi = maxw, bw = wrap & ~UI_WRAP_BALANCE;
-    while (lo < hi) { int mid = (lo + hi) / 2; if (uiWrapPara(s, base, n, mid, bw, lw, ctx, st0, len, nl0, maxLines) - nl0 <= want) hi = mid; else lo = mid + 1; }
-    return uiWrapPara(s, base, n, lo, bw, lw, ctx, st0, len, nl0, maxLines);
+    while (lo < hi) { int mid = (lo + hi) / 2; if (uiWrapPara0(s, base, n, mid, bw, lw, ctx, st0, len, nl0, maxLines) - nl0 <= want) hi = mid; else lo = mid + 1; }
+    return uiWrapPara0(s, base, n, lo, bw, lw, ctx, st0, len, nl0, maxLines);
   }
   if ((wrap & UI_WRAP_NOWIDOW) && nl - nl0 >= 2) {   // правка 215: последняя строка не из одного слова — последнее слово
     int a0 = st0[nl - 2], al = len[nl - 2], b0 = st0[nl - 1], bl = len[nl - 1], k = a0 + al - 1, sp = 0;   // прошлой строки
@@ -135,6 +145,15 @@ static inline int uiWrapPara(const char *s, int base, int n, int maxw, int wrap,
     if (!sp && k > a0 && lw(ctx, s + k + 1, b0 + bl - (k + 1)) <= maxw) { len[nl - 2] = k - a0; st0[nl - 1] = k + 1; len[nl - 1] = b0 + bl - (k + 1); }
   }
   return nl;
+}
+static inline int uiWrapPara(const char *s, int base, int n, int maxw, int wrap, UiLineW lw, const void *ctx,
+                             int *st0, int *len, int nl, int maxLines) {   // №1037: наименьшее число строк — прежде всего; правила красоты только внутри него
+  uiWrapN1040[0]++;
+  if (!uiWrap1037 || !wrap || maxw <= 0 || nl >= maxLines || lw(ctx, s + base, n) <= maxw) return uiWrapPara0(s, base, n, maxw, wrap, lw, ctx, st0, len, nl, maxLines);
+  int plain = uiWrapPara0(s, base, n, maxw, UI_WRAP_NOGLUE, lw, ctx, st0, len, nl, maxLines) - nl;   // жадный перенос без правил — наименьшее число строк
+  int tries[3] = { wrap, wrap | UI_WRAP_NOGLUE, (wrap & ~UI_WRAP_NOWIDOW) | UI_WRAP_NOGLUE };
+  for (int k = 0; k < 3; k++) { int r = uiWrapPara0(s, base, n, maxw, tries[k], lw, ctx, st0, len, nl, maxLines); if (r - nl <= plain) return r; }
+  return uiWrapPara0(s, base, n, maxw, UI_WRAP_NOGLUE, lw, ctx, st0, len, nl, maxLines);
 }
 static inline int uiWrap(const char *s, int maxw, int wrap, UiLineW lw, const void *ctx, int *st0, int *len, int maxLines) {
   int n = 0; while (s[n]) n++;

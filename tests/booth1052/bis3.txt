@@ -1,0 +1,31 @@
+# №1052 бисекция 3: gbis 16 (куски города со смешиванием), 32 (проп/стейтпроп со смешиванием)
+scene booth
+flag msn
+wait 3
+foot 146.5 86.0 3.1416
+wait 2
+flag gbis 0
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot h00
+cam off
+flag gbis 16
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot h16
+cam off
+flag gbis 32
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot h32
+cam off
+flag gbis 48
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot h48
+cam off
+end

@@ -1,0 +1,12 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene F_SET
+flag golevel 3
+wait 30
+foot 214 210 -2.4
+wait 2
+press start 0.2
+wait 1.5
+shot pause
+end

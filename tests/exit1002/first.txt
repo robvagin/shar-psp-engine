@@ -1,0 +1,29 @@
+# №1002: первый кадр после загрузки уровня (golevel тем же путём, что «уровень пройден»): L1 -> L4 -> L5 -> L4 -> L7 -> L2 -> L3 -> L1
+scene X_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene X_GO1_L4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 12
+scene X_GO2_L5
+flag golevel 5
+wait 12
+scene X_GO5_L4
+flag golevel 4
+wait 12
+scene X_GO6_L7
+flag golevel 7
+wait 12
+scene X_GO7_L2
+flag golevel 2
+wait 12
+scene X_GO8_L3
+flag golevel 3
+wait 12
+scene X_GO9_L1
+flag golevel 1
+wait 12
+end

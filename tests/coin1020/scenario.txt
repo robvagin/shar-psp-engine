@@ -1,0 +1,28 @@
+scene K_BOOT
+flag cfgdefaults 1
+flag repair
+wait 6
+scene K_L1
+scene spawn
+goto 220 172 1.5708
+wait 4
+flag stop
+flag coincam 6.5
+wait 1.2
+shot c0
+wait 0.6
+shot c1
+wait 0.6
+shot c2
+wait 0.6
+shot c3
+wait 0.6
+shot c4
+wait 0.6
+shot c5
+wait 0.6
+shot c6
+wait 0.6
+shot c7
+wait 0.6
+end

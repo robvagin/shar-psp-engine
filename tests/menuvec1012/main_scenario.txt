@@ -1,0 +1,15 @@
+# №1012: главное меню в мультике (карусель): выделенный пункт NEW GAME (m0) и недоступный LOAD GAME (m1)
+flag menu
+flag cfgdefaults 1
+flag toon 1
+wait 2.5
+flag uimenutrace
+wait 0.5
+shot m0
+press right
+wait 1
+shot m1
+press right
+wait 1
+shot m2
+end

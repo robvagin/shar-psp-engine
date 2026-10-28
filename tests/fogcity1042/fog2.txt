@@ -1,0 +1,31 @@
+# №1042 туман города: стало (по умолчанию) / было (flag fogcity1042 0), L1 улица, L6 причал
+scene start
+wait 3
+flag cfgdefaults 1
+scene FC_L1
+flag repair
+goto 220 172 4.206
+wait 6
+wait 3
+shot L1_new
+flag fogcity1042 0
+wait 3
+shot L1_old
+flag fogcity1042 1
+scene FC_L6_load
+flag golevel 6
+wait 22
+scene FC_L6
+flag repair
+cam off
+foot -417 -50 0.1
+wait 10
+cam -417 6 -50 0.104 0.10 0.995 70
+wait 3
+wait 3
+shot L6_new
+flag fogcity1042 0
+wait 3
+shot L6_old
+flag fogcity1042 1
+end

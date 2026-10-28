@@ -1,0 +1,40 @@
+# №1052 бисекция 2: тени (shadowspr, shvec, shadowold)
+scene booth
+flag msn
+wait 3
+foot 146.5 86.0 3.1416
+wait 2
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot s_base
+cam off
+flag shadowspr 0
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot s_shadowspr0
+cam off
+flag shadowspr 1
+flag shvec 0
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot s_shvec0
+cam off
+flag shvec 1
+flag shadowold 1
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot s_shold
+cam off
+flag shadowold 0
+flag shadowspr 0
+flag shvec 0
+wait 0.5
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot s_shadowspr0_shvec0
+cam off
+end

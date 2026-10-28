@@ -1,0 +1,103 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1
+flag golevel 1
+wait 40
+flag player
+scene W
+flag repair
+wait 3
+flag wrencheye 5
+flag wrenchgo 7
+wait 6
+flag glintfix1022 0
+wait 1.5
+flag glint1022log 1
+wait 2
+flag glint1022log 0
+shot wo00
+wait 0.15
+shot wo01
+wait 0.15
+shot wo02
+wait 0.15
+shot wo03
+wait 0.15
+shot wo04
+wait 0.15
+shot wo05
+wait 0.15
+shot wo06
+wait 0.15
+shot wo07
+wait 0.15
+shot wo08
+wait 0.15
+shot wo09
+wait 0.15
+flag glintfix1022 1
+wait 1.5
+flag glint1022log 1
+wait 2
+flag glint1022log 0
+shot wn00
+wait 0.15
+shot wn01
+wait 0.15
+shot wn02
+wait 0.15
+shot wn03
+wait 0.15
+shot wn04
+wait 0.15
+shot wn05
+wait 0.15
+shot wn06
+wait 0.15
+shot wn07
+wait 0.15
+shot wn08
+wait 0.15
+shot wn09
+wait 0.15
+scene P
+flag eyeon 0
+flag player 1
+foot 226.0 153.8 3.1416
+wait 4
+flag glintfix1022 0
+wait 1.5
+flag glint1022log 1
+wait 2
+flag glint1022log 0
+shot po00
+wait 0.15
+shot po01
+wait 0.15
+shot po02
+wait 0.15
+shot po03
+wait 0.15
+shot po04
+wait 0.15
+shot po05
+wait 0.15
+flag glintfix1022 1
+wait 1.5
+flag glint1022log 1
+wait 2
+flag glint1022log 0
+shot pn00
+wait 0.15
+shot pn01
+wait 0.15
+shot pn02
+wait 0.15
+shot pn03
+wait 0.15
+shot pn04
+wait 0.15
+shot pn05
+wait 0.15
+end

@@ -1114,6 +1114,8 @@ FENCE_TRIM_RUN = int(os.environ.get('SHR_FENCE_TRIM_RUN', '2'))
 # правка Роба 93 (30.09): верх забора брался по всему видимому в полосе ±1.5 м — у пожарной машины это конец лестницы и крыша
 # Krusty (до 12 м), и в воздухе висела невидимая стена. Забор не выше земли + FENCE_CAP (живая изгородь и забор оригинала ниже 3 м)
 FENCE_CAP = 3.0
+FENCE_ROOF = os.environ.get('SHR_FENCE_ROOF_OLD') != '1'   # №705: факт PS2 есть (knowledge/facts/ps2-h82-fire-escape.yaml: 25 м/с садится на крышу, забора над краем нет) — по умолчанию ВКЛ; SHR_FENCE_ROOF_OLD=1 — прежнее
+FENCE_LEDGE_MIN, FENCE_ROOF_MARGIN = 2.0, 0.3   # №705: перепад земли лицо→изнанка и запас над крышей
 # Правка Роба 173 (01.10, L1 J9-4, гонка: «перестань делать из кустов стены, хочу проехать через кусты — доработай их везде»):
 # внутренний забор, у которого над землёй в полосе ±FENCE_BAND стоит только листва (текстуры FOL_TEX_RE: живые изгороди
 # дворов, кусты; не деревья — у них ствол), помечается «изгородь»: y0 = -COL_FENCE_FOL (движок: машина проезжает насквозь,
@@ -1794,6 +1796,15 @@ def col_fence_tops(SG, hmap, vis_tris, folmask=None, drop_invisible=False):
                 pieces.append((pa, pb, None, gt, False)); st['invisible'] = st.get('invisible', 0) + 1; continue
             y1 = max(vt + FENCE_MARGIN, gt + FENCE_MIN)
             if gt > -1e8: y1 = min(y1, gt + FENCE_CAP)
+            # Правка №705 (L5 H8-2, пожарная лестница-трамплин ведёт на крышу; 17.10): забор по краю крыши/уступа, где с лица земля НИЖЕ земли за ним на LEDGE_MIN и более (стена
+            # обрыва уже держит снизу), не растёт ещё на 2,5…3 м над крышей: верх = земля за забором + ROOF_MARGIN. Машина, перелетевшая край, садится на крышу, а не бьётся
+            # о невидимый «парапет» (seg 645: 22 → 0,4 м/с). SHR_FENCE_ROOF_OLD=1 — прежнее (факт PS2: knowledge/facts/ps2-h82-fire-escape.yaml)
+            if FENCE_ROOF and gt > -1e8:
+                fx2, fz2, fok2 = cells(Q[:, 0] + n[0] * FENCE_BEHIND, Q[:, 1] + n[1] * FENCE_BEHIND)
+                bx2, bz2, bok2 = cells(Q[:, 0] - n[0] * FENCE_BEHIND, Q[:, 1] - n[1] * FENCE_BEHIND)
+                gf = top[fz2[fok2], fx2[fok2]] if fok2.any() else np.array([np.nan]); gb = top[bz2[bok2], bx2[bok2]] if bok2.any() else np.array([np.nan])
+                if fok2.all() and bok2.all() and not np.isnan(gf).any() and not np.isnan(gb).any() and float(gb.min()) - float(gf.max()) >= FENCE_LEDGE_MIN:
+                    y1 = min(y1, float(gb.max()) + FENCE_ROOF_MARGIN); st['roof'] = st.get('roof', 0) + 1
             if FENCE_TRIM and not drop_invisible and gt > -1e8 and vt < gt + TRACK_FENCE_VIS:   # №581-класс: над землёй у куска ничего не нарисовано; считаем, ровная ли земля и с лица
                 fx, fz, fok = cells(Q[:, 0] + n[0] * FENCE_BEHIND, Q[:, 1] + n[1] * FENCE_BEHIND)
                 ft_ = top[fz[fok], fx[fok]] if fok.any() else np.array([np.nan])
@@ -2091,7 +2102,123 @@ def car_gap_metric(entries, bake_matrix):
     return len(bnd), int(near)
 
 
-def car_prims(meta, raw, conv_cache, blob, bake_matrix, light=None):
+# №1061 (Роб 27.10, TEST74: «покрышки чёрные издалека видны, крутятся как будто кто-то въехал в краску; на такси они жёлтые; пусть будут чёрные и у всех одна»):
+# колесо машины ложится на кусок ОБЩЕГО атласа кузова (такси: угол 32x64 из 128x128 рядом с жёлтыми панелями), а развёртка протектора идёт по кромке квадрата колеса
+# или по самой картинке диска: фильтр и мипы (в том числе затухание мипов к среднему цвету ВСЕГО атласа — у такси жёлтому) подмешивают чужие тексели, протектор крутится
+# и мажет колесо жёлтым или серым. Правило: колесо получает СВОЮ текстуру — вырезку квадрата колеса из атласа с картинкой диска (боковины как были), тексели вокруг
+# боковин заменены ближайшими использованными (кромки не подмешивают соседей), остальное поле — одна резина TIRE_RUBBER; ВСЕ треугольники протектора (поперёк оси
+# колеса, как viewer/wheelcap.h) смотрят в центр самого большого квадрата резины (не меньше 8x8 — выдерживает мип 3), у всех машин один чёрный тон. Мипы колеса —
+# без затухания к среднему. Одинаковые вырезки у разных машин — одна запись. Колесо, у которого есть только протектор, — общая текстура резины 16x8. TIRE1061_OLD=1 — как до правки
+TIRE_OLD = os.environ.get('TIRE1061_OLD') == '1'
+TIRE_RUBBER = (32, 37, 40)   # тон резины PS2: кольцо покрышки famil_v на кадре PS2 (build/ps2ref/c3.png, 5120x2880), медиана (32, 37, 40)
+TIRE_BLOCK = 8
+TIRE_STAT = {'wheels': 0, 'fixed': 0, 'skipped': 0, 'new': 0, 'grown': 0}
+TIRE_WHY = []   # причины пропусков (перепись)
+
+
+def _tri_mask(T, w, h):
+    """T (n,3,2) — треугольники в пикселях вырезки -> булева карта (h, w): пиксели, которых треугольник касается (сетка 4x4 внутри пикселя + рёбра и вершины — вырожденные треугольники)"""
+    m = np.zeros((h, w), bool)
+    g = (np.arange(4) + .5) / 4
+    for t in T:
+        lo = np.floor(t.min(0)).astype(int).clip(0, [w - 1, h - 1]); hi = np.ceil(t.max(0)).astype(int).clip(0, [w, h])
+        for e in range(3):   # рёбра и вершины
+            a, b = t[e], t[(e + 1) % 3]
+            for f in np.linspace(0, 1, max(2, int(np.hypot(*(b - a)) * 4) + 1)):
+                q = a + (b - a) * f; x, y = int(np.floor(q[0])), int(np.floor(q[1]))
+                if 0 <= x < w and 0 <= y < h: m[y, x] = True
+        (ax, ay), (bx, by), (cx, cy) = t; d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+        if abs(d) < 1e-9: continue
+        ys, xs = np.meshgrid(np.arange(lo[1], hi[1]), np.arange(lo[0], hi[0]), indexing='ij')
+        px = xs[..., None, None] + g[None, None, :, None] + 0 * g[None, None, None, :]; py = ys[..., None, None] + g[None, None, None, :] + 0 * g[None, None, :, None]
+        l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d; l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d; l3 = 1 - l1 - l2
+        ins = ((l1 >= -1e-9) & (l2 >= -1e-9) & (l3 >= -1e-9)).any((2, 3))
+        m[ys[ins], xs[ins]] = True
+    return m
+
+
+def _dilate(m, n=1):
+    for _ in range(n):
+        p = np.pad(m, 1); m = m | p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:] | p[:-2, :-2] | p[2:, 2:] | p[:-2, 2:] | p[2:, :-2]
+    return m
+
+
+def _big_square(free):
+    """булева карта свободных пикселей -> (сторона, x, y) самого большого квадрата из свободных, целиком внутри карты без выхода на кромку (запас 1 пиксель)"""
+    h, w = free.shape; f = free.copy(); f[0, :] = f[-1, :] = False; f[:, 0] = f[:, -1] = False
+    dp = np.zeros((h, w), int); best = (0, 0, 0)
+    for y in range(h):
+        for x in range(w):
+            if f[y, x]:
+                dp[y, x] = 1 + (min(dp[y - 1, x], dp[y, x - 1], dp[y - 1, x - 1]) if y and x else 0)
+                if dp[y, x] > best[0]: best = (int(dp[y, x]), x - dp[y, x] + 1, y - dp[y, x] + 1)
+    return best
+
+
+def tire_prepare(a, U, side):
+    """a — картинка колеса (H, W, 4 uint8), U (n, 3, 2) — развёртка треугольников в долях картинки, side (n,) — боковины (диск); -> (вырезка RGBA uint8, uv по вершинам (3n, 2) float32, ключ) или None"""
+    H, W = a.shape[:2]
+    rub = np.array(TIRE_RUBBER, np.uint8)
+    S = U[side].reshape(-1, 2)
+    if ((S.max(0) - S.min(0)) > 1.1).any(): TIRE_STAT['skipped'] += 1; TIRE_WHY.append('повтор развёртки'); return None
+    base = np.floor(S.min(0) + 1e-3); k = np.array([W, H], np.float64)
+    Pp = (U - base) * k                                                    # пиксели исходной картинки (развёртка всех треугольников)
+    Ps = Pp[side]
+    lo = np.floor(Ps.reshape(-1, 2).min(0) + 1e-3).astype(int); hi = np.ceil(Ps.reshape(-1, 2).max(0) - 1e-3).astype(int)
+    w2 = max(16, 1 << int(np.ceil(np.log2(max(hi[0] - lo[0], 1))))); h2 = max(8, 1 << int(np.ceil(np.log2(max(hi[1] - lo[1], 1)))))
+    lo = lo - np.array([(w2 - (hi[0] - lo[0])) // 2, (h2 - (hi[1] - lo[1])) // 2])   # запас до степени двойки — поровну по сторонам
+    if w2 > W * 2 or h2 > H * 2: TIRE_STAT['skipped'] += 1; TIRE_WHY.append('вырезка больше атласа'); return None
+    has_tread = bool((~side).any())
+    for _ in range(3):   # не хватило места под квадрат резины 8x8 вне боковин — вырезка вдвое выше (потом шире), до трёх раз
+        ys = (lo[1] + np.arange(h2)) % H; xs = (lo[0] + np.arange(w2)) % W
+        crop = a[ys][:, xs].copy(); Pc = Ps - lo.astype(np.float64)
+        used = _tri_mask(Pc, w2, h2)
+        near = _dilate(used, 2); sq = _big_square(~near) if has_tread else (0, 0, 0)
+        if not has_tread or sq[0] >= TIRE_BLOCK: break
+        TIRE_STAT['grown'] += 1
+        if h2 <= w2: lo = lo - np.array([0, 0]); h2 *= 2
+        else: w2 *= 2
+    else: TIRE_STAT['skipped'] += 1; TIRE_WHY.append('нет места под резину'); return None
+    # 1) пиксели вокруг боковин: ближайшие использованные (волной); 2) всё дальше двух пикселей — резина
+    filled = used.copy(); rgb = crop[..., :3].astype(np.float64)
+    for _ in range(3):
+        acc = np.zeros_like(rgb); cnt = np.zeros((h2, w2))
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            sh = np.roll(filled, (dy, dx), (0, 1)); sr = np.roll(rgb, (dy, dx), (0, 1))
+            if dy: sh[0 if dy > 0 else -1, :] = False
+            if dx: sh[:, 0 if dx > 0 else -1] = False
+            acc += sr * sh[..., None]; cnt += sh
+        new = ~filled & (cnt > 0); rgb[new] = acc[new] / cnt[new][:, None]; filled |= new
+    crop[..., :3] = np.round(rgb).astype(np.uint8); crop[..., 3] = 255
+    crop[~near, :3] = rub
+    key = 'tire1061:%dx%d:%s' % (w2, h2, _hashlib.sha1(crop.tobytes() + bytes(str(sq), 'ascii')).hexdigest()[:16])
+    uvi = ((Pp - lo.astype(np.float64)) / np.array([w2, h2], np.float64)).reshape(-1, 2)   # (3*ntri, 2): боковины сдвинуты в вырезку
+    if has_tread:
+        cx, cy = (sq[1] + sq[0] / 2) / w2, (sq[2] + sq[0] / 2) / h2
+        uvi[np.repeat(~side, 3)] = (cx, cy)
+    return crop, uvi.astype(np.float32), key
+
+
+def tire_tex(url, pos, uv, idx, cache, blob):
+    """колесо (вершины pos/uv куска w0..w3, индексы idx) -> (номер своей текстуры, uv по индексам (len(idx), 2)) или None (правило не применяется: развёртка на повторы, прозрачность)"""
+    if TIRE_OLD or not url or 'texq' not in globals(): return None
+    TIRE_STAT['wheels'] += 1
+    img = Image.open(ASSETS / url).convert('RGBA')
+    if url in PNG_SRC and os.environ.get('SHR_PNG_FLIP', '1') != '0': img = img.transpose(Image.FLIP_TOP_BOTTOM)
+    U = uv[idx].reshape(-1, 3, 2).astype(np.float64); Tp = pos[idx].reshape(-1, 3, 3).astype(np.float64)
+    n = np.cross(Tp[:, 1] - Tp[:, 0], Tp[:, 2] - Tp[:, 0]); side = n[:, 0] ** 2 >= .49 * ((n * n).sum(1) + 1e-12)
+    if not side.any():   # только протектор: общая текстура резины
+        im = Image.new('RGBA', (16, 8), TIRE_RUBBER + (255,)); t = texq.load_img('tire1061:rubber', im, cache, blob); TIRE_STAT['fixed'] += 1
+        return t, np.tile(np.array([[.5, .5]], np.float32), (len(idx), 1))
+    r = tire_prepare(np.asarray(img, np.uint8), U, side)
+    if r is None: return None
+    crop, uvi, key = r
+    if key not in cache: TIRE_STAT['new'] += 1
+    t = texq.load_img(key, Image.fromarray(crop, 'RGBA'), cache, blob); TIRE_STAT['fixed'] += 1
+    return t, uvi
+
+
+def car_prims(meta, raw, conv_cache, blob, bake_matrix, light=None, tire=True):
     """-> [(имя объекта (сустав), tex, flags, P, UV, C)]; P в осях сустава (bake_matrix=False) или в позе покоя.
     light — свет уровня (tools/level_light.level_light): светотень CAR_AMB × ambS + CAR_DIF × dirS по каналам R, G, B
     (29.09, рецепт §12: машины освещаются на ходу группой sun уровня, форма — прежняя, принятая на уровне 1; множители —
@@ -2118,7 +2245,11 @@ def car_prims(meta, raw, conv_cache, blob, bake_matrix, light=None):
             mat = meta['materials'].get(prim['shader'], {})
             flags = (1 if mat.get('alpha') else 0) | (2 if mat.get('translucent') or mat.get('blend') else 0)
             t = load_tex(mat.get('textureUrl', ''), conv_cache, blob, blend=bool(flags & 2))
-            out.append((obj['name'], t, flags, P[idx].astype(np.float32), uv[idx].astype(np.float32), abgr[idx].astype(np.uint32),
+            tf = None
+            if tire and re.fullmatch(r'w[0-3]', obj['name']) and not flags & 3:   # №1061: своя текстура колеса, резина чёрная (tire=False — дальняя версия трафика: суп как был, поверх тёмные колёса №866)
+                tf = tire_tex(mat.get('textureUrl', ''), pos, uv, idx, conv_cache, blob)
+                if tf: t, uvx = tf
+            out.append((obj['name'], t, flags, P[idx].astype(np.float32), (uvx if tf else uv[idx]).astype(np.float32), abgr[idx].astype(np.uint32),
                         np.array(obj['matrix'], np.float64).reshape(4, 4)))
     if CARGAP_OLD: return [e[:6] for e in out]
     # проверка после стягивания: правило не должно ухудшать модель — пробуем 15, 8 и 4 мм, берём лучший по числу зазоров, при росте зазоров или граничных
@@ -3027,6 +3158,7 @@ def main(level, out_path=None, scenes=None, coins=True, backdrop_level=None):
     SG, fst = col_fence_tops(SG, (lo, W, H, hm), np.concatenate(vis_tris), folmask, drop_invisible=TRACK_FENCES and own_scenes and not TRACK_FENCE_KEEP_INVISIBLE and all(re.fullmatch(r'b0\d', x_) for x_ in scenes))   # правка 47: внутренние заборы — до верха видимого
     print(f'заборы: границ (за ними пустота, бесконечные) {fst["bound"]}, внутренних {fst["inner"]} -> кусков {fst["pieces"]} (изгородей {fst["hedge"]}), ' +
           (f'№905: одиночных «границ» между внутренними звеньями -> внутренние {fst["bridged"]}, ' if fst.get("bridged") else '') + (f'невидимых звеньев отброшено {fst.get("invisible", 0)}, ' if fst.get("invisible") else '') + (f'FENCE_TRIM: убрано кусков {fst["trimmed"]} ({fst["trim_m"]:.0f} м), ' if fst.get("trimmed") else '') + (f'верх над опорой: медиана {np.median(fst["h"]):.1f} м, 90% {np.percentile(fst["h"], 90):.1f} м' if len(fst["h"]) else 'верх над опорой: заборов нет'))
+    if fst.get('roof'): print(f'заборы по краю крыши/уступа (№705): верх = земля за забором + {FENCE_ROOF_MARGIN} м у {fst["roof"]} кусков')
     sweep = None
     if aobj: BX, CY, sweep = aobj.col_extend(BX, CY)   # объёмы AnimCollision: статичные + живые (заметание клипа — в сетку)
     jmp, jz, jp = jumps_export.jmp1(level)   # зоны прыжка машин и подкидывающие точки Гомера из данных (правки 46, 47)

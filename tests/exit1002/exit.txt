@@ -1,0 +1,69 @@
+# №1002: уровень -> первый кадр; затем выход из дома (△) — ключевой кадр. Порядок как в туре TEST70: L1 L4 L5 L4 L7 L2 L3 L1
+scene X_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene X_GO1_L4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 14
+shot x1_in
+press triangle 0.2
+wait 9
+shot x1_out
+scene X_GO2_L5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 14
+shot x2_in
+press triangle 0.2
+wait 9
+shot x2_out
+scene X_GO5_L4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 14
+shot x5_in
+press triangle 0.2
+wait 9
+shot x5_out
+scene X_GO6_L7
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 14
+shot x6_in
+press triangle 0.2
+wait 9
+shot x6_out
+scene X_GO7_L2
+press circle 0.3
+wait 0.5
+flag golevel 2
+wait 14
+shot x7_in
+press triangle 0.2
+wait 9
+shot x7_out
+scene X_GO8_L3
+press circle 0.3
+wait 0.5
+flag golevel 3
+wait 14
+shot x8_in
+press triangle 0.2
+wait 9
+shot x8_out
+scene X_GO9_L1
+press circle 0.3
+wait 0.5
+flag golevel 1
+wait 14
+shot x9_in
+press triangle 0.2
+wait 9
+shot x9_out
+end

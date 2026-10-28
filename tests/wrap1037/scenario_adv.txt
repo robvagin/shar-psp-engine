@@ -1,0 +1,6 @@
+scene g646
+flag msn
+wait 2
+flag uimsg1037 0
+wait 1.5
+end

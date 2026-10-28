@@ -1,0 +1,33 @@
+# №1002: выход из дома через разговор с Бартом (△): L4, L7, L4 после L5. Кадры EXIT1002 после выхода
+scene X_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene X_E1_L4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 14
+shot e1_in
+press triangle 0.2
+wait 12
+shot e1_out
+scene X_E5_L7
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 14
+shot e5_in
+press triangle 0.2
+wait 12
+shot e5_out
+scene X_E6_L4
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 14
+shot e6_in
+press triangle 0.2
+wait 12
+shot e6_out
+end

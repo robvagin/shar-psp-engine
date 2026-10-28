@@ -1,0 +1,56 @@
+wait 12
+flag cfgdefaults 1
+flag golevel 1
+wait 40
+flag toon 1
+wait 4
+flag flat912 1
+scene G_ON
+foot 295.5 166 3.14
+wait 22
+flag trfgoh 4
+flag trfgo 0.0 14
+wait 2
+foot 261.10 161.10 1.571
+wait 3
+flag inksep1009 0
+wait 1.2
+shot o_h12
+flag inksep1009 1
+wait 0.6
+shot n_h12
+flag inksep1009 1
+foot 262.10 161.10 1.571
+wait 3
+flag inksep1009 0
+wait 1.2
+shot o_h22
+flag inksep1009 1
+wait 0.6
+shot n_h22
+flag inksep1009 1
+flag repair
+wait 3
+flag trfgo 0.0 14
+wait 1
+goto 282.00 162.70 1.571
+wait 1.5
+flag inksep1009 0
+wait 1.2
+shot o_cf
+flag inksep1009 1
+wait 0.6
+shot n_cf
+flag inksep1009 1
+goto 270.00 159.50 1.571
+wait 1.5
+flag inksep1009 0
+wait 1.2
+shot o_cb
+flag inksep1009 1
+wait 0.6
+shot n_cb
+flag inksep1009 1
+flag eyeon 0
+wait 1
+end

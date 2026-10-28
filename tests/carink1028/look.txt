@@ -1,0 +1,48 @@
+# №1028: своя машина L1 — обводка 30 см (flag carink1028 0, TEST71) и 80 см (1)
+scene C_L1
+flag cfgdefaults 1
+flag repair
+wait 5
+shot c_start
+flag carink1028 0
+cam 213.0 7.2 177.0 7 -3 -5 55
+wait 1.5
+shot rs_old
+flag carink1028 1
+cam 213.0 7.2 177.0 7 -3 -5 55
+wait 1.5
+shot rs_new
+flag carink1028 0
+cam 220.0 4.8 181.0 0 -0.2 -1 55
+wait 1.5
+shot side_old
+flag carink1028 1
+cam 220.0 4.8 181.0 0 -0.2 -1 55
+wait 1.5
+shot side_new
+flag carink1028 0
+cam 220.0 15.0 172.5 0 -1 0.02 55
+wait 1.5
+shot top_old
+flag carink1028 1
+cam 220.0 15.0 172.5 0 -1 0.02 55
+wait 1.5
+shot top_new
+flag carink1028 0
+cam 211.0 4.8 172.0 1 -0.2 0 55
+wait 1.5
+shot end_old
+flag carink1028 1
+cam 211.0 4.8 172.0 1 -0.2 0 55
+wait 1.5
+shot end_new
+flag carink1028 1
+press triangle 0.3
+wait 3
+flag carink1028 0
+wait 1.5
+shot foot_old
+flag carink1028 1
+wait 1.5
+shot foot_new
+end

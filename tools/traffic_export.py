@@ -396,7 +396,7 @@ def car_model(conv, name, cache, texblob, vblob, pieces, tmp='trf_car', light=No
     meta = json.loads((OUT / f'{tmp}.json').read_text()); raw = (OUT / f'{tmp}.bin').read_bytes()
     for ext in ('json', 'bin'): (OUT / f'{tmp}.{ext}').unlink()
     objs = {o['name']: np.array(o['matrix'], np.float64).reshape(4, 4) for o in meta['objects']}
-    baked = pe.car_prims(meta, raw, cache, texblob, True, light)    # поза покоя, мир модели; светотень — свет уровня (§12)
+    baked = pe.car_prims(meta, raw, cache, texblob, True, light, tire=False)    # поза покоя, мир модели; светотень — свет уровня (§12). №1061: колёса без своей текстуры — дальняя версия (суп) та же, что была
     local = pe.car_prims(meta, raw, cache, texblob, False, light)   # оси сустава (колёса)
     wheel = {}
     for nm_, M in objs.items():

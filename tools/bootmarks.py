@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Пиксельные знаки причастных на заставке GONE Makers (правка Роба 127, 01.10: «очень пиксельные логотипы Диснея, Мэтта
-Грейнинга, просто Симпсонов, сайта фанбазы, Sony, PSP — все причастные; шрифтами — дебильно; пусть будет как старая игра;
+Грейнинга, просто Симпсонов, сайта фанбазы, Sony, PSP — все причастные; шрифтами — плохо; пусть будет как старая игра;
 красиво появлялись, подобно GONE Makers, может по-разному; очень сильно оптимизировать»). Своего экрана логотипов у
 оригинала нет — правило порта. Знаки — битмапы 1:1 в слоте 144×40, 2 бита на пиксель, 4 серых системной гаммы (правка 101):
 индекс 0 — фон, 1..3 — #505050 / #9A9A9A / #E0E0E0, как текст заставки. Без сглаживания сверх палитры.
@@ -327,6 +327,74 @@ def elbarto_tag():
     return TAG_NAME, idx, 6, [0xFF000000, REST2] + [0xFF000000] * 14
 
 
+# №1010 (Роб 26.10: «на мусорных баках в игре написано El Barto красным — на уровне Барта (L6), бак, где он разговаривает в миссии; взять этот исходник для
+# заставки GONE Makers вместо найденного на стороне, чтобы было согласовано с игрой»): тег — текстура elbarto.tga гэга-бака art/nis/gags/l6_dump.p3d
+# (dumpstergag3, шейдер elbarto_m; 64×64; та же у l3_dump, у l2/l5 другой оттенок) с диска Роба, как в игре: наискось, с подтёками, маска — альфа ≥ 128.
+# №1010б (Роб 26.10 вечер: «тем же серым цветом, как все остальные логотипы; он какой-то сжатый и не так отображается»): цвет — серый знаков (REST2, без
+# своей краски); пропорции — как на баке: квадратная текстура натянута на грань 2,95 × 1,57 м при UV 0…1 (считается из сетки гэга, convert.geometry),
+# то есть по ширине в ≈ 1,87 раза — столбцы повторяются ближайшими пикселями (без размытия), по высоте целым кратным, сколько входит в высоту прежнего
+# тега Роба (112×50: ×1) — тег занимает то же место. Пиксели только в build/bootmarks.bin (не в git). Прежний тег 'elbarto' (файл Роба 04.10) остаётся
+# записью рядом: движок рисует один из двух (viewer/bootseq.h, ELBARTO1010_OLD / файл elbarto1010old). ELBARTO1010B_OLD=1 — как №1010 (1:1, красный)
+TAG6_NAME = 'elbarto6'
+TAG_INK = {}   # имя тега -> ABGR краски (4 последних байта поля имени); №1010б: пусто — тег цветом знаков
+TAG_OLD_BOX = (112, 50)   # место прежнего тега Роба (elbarto_tag) — по нему масштаб тега L6
+def elbarto_bin_aspect(p):
+    """№1010б: во сколько раз надпись на баке шире, чем в квадратной текстуре: (ширина грани / диапазон U) / (высота грани / диапазон V)"""
+    try:
+        sys.path.insert(0, str(ROOT / 'hit-and-run-web/tools'))
+        import convert as C
+        from p3d import read, walk
+        for c in walk(read(p)):
+            if c.id != 0x10002: continue
+            sh, parts = C.geometry(c)
+            if not sh.startswith('elbarto'): continue
+            for pt in parts:
+                P, uv = pt['position'], pt.get('uv')
+                if uv is None: continue
+                ext = P.max(0) - P.min(0); ax = np.argsort(ext)[::-1][:2]   # две оси грани: длинная — вдоль U, короткая — вдоль V
+                du, dv = float(np.ptp(uv[:, 0])), float(np.ptp(uv[:, 1]))
+                if du > 0 and dv > 0: return (float(ext[ax[0]]) / du) / (float(ext[ax[1]]) / dv)
+    except Exception as e: print('  (сетка бака не прочитана: %s — пропорции 1,87 по замеру 26.10)' % e)
+    return 2.946 / 1.574
+def disk_elbarto_l6():
+    if os.environ.get('ELBARTO1010_OLD') == '1': return None
+    sys.path.insert(0, str(ROOT / 'hit-and-run-web/tools'))
+    from p3d import read
+    from textures import decode_image
+    p = ROOT / 'hit-and-run-web/source/game/art/nis/gags/l6_dump.p3d'
+    if not p.exists(): print('  (нет диска: %s — El Barto L6 не ставится)' % p); return None
+
+    def walk(c):
+        yield c
+        for k in c.children: yield from walk(k)
+    for c in read(p).children:
+        if c.id == 0x19000 and b'elbarto' in bytes(c.data[:24]):
+            for x in walk(c):
+                if x.id == 0x19002:
+                    a = np.asarray(decode_image(x.data[4:]).convert('RGBA')).astype(int)
+                    m = a[..., 3] >= 128
+                    if os.environ.get('ELBARTO1010B_OLD') == '1':   # №1010: 1:1 и краской текстуры
+                        rgb = a[..., :3][a[..., 3] >= 200].mean(0).round().astype(int)
+                        TAG_INK[TAG6_NAME] = 0xFF000000 | int(rgb[2]) << 16 | int(rgb[1]) << 8 | int(rgb[0])
+                    else:
+                        asp = elbarto_bin_aspect(p); W = int(round(m.shape[1] * asp))
+                        m = m[:, np.minimum((np.arange(W) / asp).astype(int), m.shape[1] - 1)]   # ширина как на баке: ближайший столбец
+                    ys, xs = np.where(m)
+                    if not len(ys): return None
+                    m = m[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+                    if os.environ.get('ELBARTO1010B_OLD') != '1':
+                        k = max(1, min(TAG_OLD_BOX[1] // m.shape[0], TAG_OLD_BOX[0] // m.shape[1]))   # целым кратным в место прежнего тега
+                        if k > 1: m = np.repeat(np.repeat(m, k, 0), k, 1)
+                    return TAG6_NAME, m.astype(np.uint8), 6, [0xFF000000, REST2] + [0xFF000000] * 14
+    print('  (в l6_dump.p3d нет elbarto)'); return None
+
+
+def name_field(name):   # 14 байт поля имени записи; у тега №1010 — имя, нули и ABGR краски в последних 4 байтах
+    f = name.encode('ascii', 'replace')[:14].ljust(14, b'\0')
+    if name in TAG_INK: f = f[:10] + struct.pack('<I', TAG_INK[name])
+    return f
+
+
 PS_FONT = Path('/System/Library/Fonts/Supplemental/Futura.ttc')   # Futura Bold (index 2) — геометрический гротеск, как буквы знака
 
 
@@ -618,6 +686,8 @@ def build2():
     if TAG:
         t = elbarto_tag()
         if t: marks.append(t)
+        t6 = disk_elbarto_l6()   # №1010: родной тег с бака L6 — рядом с прежним
+        if t6: marks.append(t6)
     if TAG and not os.environ.get('BMK_294_OLD') and not os.environ.get('BMK_379_OLD') and not os.environ.get('BMK_396_OLD') \
             and not os.environ.get('BMK_397_OLD'):
         marks += idle_frames(dict((mk[0], mk) for mk in marks))
@@ -631,7 +701,7 @@ def build2():
         b += struct.pack('<2I', 0xFF000000, REST2)
         for name, idx, mode, _cols in marks:
             h, w = idx.shape
-            b += struct.pack('<2H2B', w, h, 1, mode) + name.encode('ascii', 'replace')[:14].ljust(14, b'\0')
+            b += struct.pack('<2H2B', w, h, 1, mode) + name_field(name)
             flat = list(idx.flatten()) + [0] * ((-w * h) % 8)
             b += bytes(sum(flat[i + j] << (7 - j) for j in range(8)) for i in range(0, len(flat), 8))
     else:
@@ -659,7 +729,7 @@ def parse(b):
     rec = 20 + (0 if v == 3 else 4 * npal)
     for k in range(min(n, NSLOT)):
         if p + rec > len(b) - 4: err.append('знак %d обрезан' % k); break
-        w, h, bpp, mode = struct.unpack_from('<2H2B', b, p); name = b[p + 6:p + 20].rstrip(b'\0').decode('ascii', 'replace')
+        w, h, bpp, mode = struct.unpack_from('<2H2B', b, p); name = b[p + 6:p + 20].split(b'\0')[0].decode('ascii', 'replace')   # №1010: после имени у тега — краска
         pal = global_pal if v == 3 else struct.unpack_from('<%dI' % npal, b, p + 20)
         if v != 3: p += rec
         else: p += 20
@@ -669,7 +739,7 @@ def parse(b):
             idx = (((bits[:, None] >> (7 - np.arange(8))) & 1).reshape(-1) if bpp_want == 1 else
                    (np.stack([(bits >> 6) & 3, (bits >> 4) & 3, (bits >> 2) & 3, bits & 3], 1) if bpp_want == 2 else np.stack([bits >> 4, bits & 15], 1)).flatten())[:w * h].reshape(h, w)
         sc2 = struct.unpack_from('<H', b, 10)[0] if v >= 2 else 1; sc2 = sc2 if sc2 == 2 else 1
-        tag = v >= 2 and mode == 6 and name == TAG_NAME   # правка 264: тег El Barto — свой размер (до 96×64, пиксель 2×2)
+        tag = v >= 2 and mode == 6 and name in (TAG_NAME, TAG6_NAME)   # правка 264 (+№1010 тег L6): тег El Barto — свой размер (до 96×64, пиксель 2×2)
         if tag: pass
         elif w < 1 or h < 1 or w * sc2 > slot[0] or h * sc2 > slot[1]: err.append('%s: %d×%d (×%d) вне слота %d×%d' % (name, w, h, sc2, *slot))
         if tag and (w > (128 if TAG_PX == 1 else 96) or h > (72 if TAG_PX == 1 else 64)): err.append('%s: тег %d×%d больше предела' % (name, w, h))

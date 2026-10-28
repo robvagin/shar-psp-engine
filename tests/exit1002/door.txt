@@ -1,0 +1,28 @@
+# №1002: настоящий выход из дома дверью (△ у выхода): L4, L7. exit locator 502.73,-20,398.03
+scene X_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene X_D1_L4
+flag golevel 4
+wait 8
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+shot d1_out
+wait 2
+scene X_D2_L7
+flag golevel 7
+wait 8
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+shot d2_out
+wait 2
+end

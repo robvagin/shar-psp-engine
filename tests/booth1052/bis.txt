@@ -1,0 +1,43 @@
+# №1052 бисекция: будка L1 вблизи, gbis 0/1/2/4/8/15
+scene booth
+flag msn
+wait 3
+foot 146.5 86.0 3.1416
+wait 2
+flag gbis 0
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g00
+cam off
+flag gbis 1
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g01
+cam off
+flag gbis 2
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g02
+cam off
+flag gbis 4
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g04
+cam off
+flag gbis 8
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g08
+cam off
+flag gbis 15
+wait 0.4
+cam 147.0 4.9 85.0 -0.55 -0.12 -0.83
+wait 0.4
+shot g15
+cam off
+end

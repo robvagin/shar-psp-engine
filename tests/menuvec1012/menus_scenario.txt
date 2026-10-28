@@ -1,0 +1,51 @@
+# №1012: меню в мультике — выделенный пункт: пауза, OPTIONS, PICTURE, CAMERA, главное меню (лист кадров «TEST71 / стало»)
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1
+flag golevel 1
+wait 40
+flag player
+flag toon 1
+flag uimenutrace
+wait 1
+press start
+wait 1.2
+shot pause_0
+press down
+wait 0.5
+shot pause_1
+press down
+wait 0.4
+press down
+wait 0.4
+press cross
+wait 1.4
+shot opt_0
+press down
+wait 0.5
+shot opt_1
+press cross
+wait 1.4
+shot picture_0
+press down
+wait 0.5
+shot picture_1
+press down
+wait 0.4
+press down
+wait 0.4
+shot picture_3
+press circle
+wait 1.2
+press down
+wait 0.4
+press down
+wait 0.4
+press cross
+wait 1.4
+shot camera_0
+press down
+wait 0.5
+shot camera_1
+end

@@ -192,10 +192,19 @@ int phoneViewTick(Shop *s, float dt) {
   if (phase == PV_OUT && t >= PV_LIGHT_OUT) { phase = PV_DONE; return PHONEV_EV_CLOSE; }
   return PHONEV_EV_NONE;
 }
+#ifndef BOOTHLR1038_OLD
+#define BOOTHLR1038_OLD 0
+#endif
+int boothLR1038Old = BOOTHLR1038_OLD;
+#ifndef BOOTHLR1057_OLD
+#define BOOTHLR1057_OLD 0
+#endif
+int boothLR1057Old = BOOTHLR1057_OLD;
 void phoneViewInput(Shop *s, unsigned hit) {
   if (!on || phase != PV_IDLE) return;
   if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) { snd(sBack); phase = PV_OUT; t = 0.f; return; }
-  int d = (hit & PSP_CTRL_RIGHT) ? 1 : (hit & PSP_CTRL_LEFT) ? -1 : 0;
+  // №1038 (Роб 26.10: «в меню паузы Mission Select уровни переключаются L/R, то же в выборе машины в будке, дополнительно к прежнему»): L — предыдущая машина, R — следующая, как ◄ и ►: тот же звук, смена и порядок. BOOTHLR1038_OLD=1 / файл boothlr1038old / «flag boothlr1038 0» — только ◄ ►
+  int d = (hit & (PSP_CTRL_RIGHT | (boothLR1038Old ? 0u : PSP_CTRL_RTRIGGER))) ? 1 : (hit & (PSP_CTRL_LEFT | (boothLR1038Old ? 0u : PSP_CTRL_LTRIGGER))) ? -1 : 0;
   if (d && nOrd > 1) { cur = (cur + d + nOrd) % nOrd; int r = rowOf(cur); snd(sScroll);
                        logf_("sel %d name=%s owned=%d lvl=%d now=%d stats=%d accept=%d", cur, pvName[r], owned(s, r), pvLvl[r], isNow(s, r),
                              boothShowStats(owned(s, r)), boothShowAccept(owned(s, r))); }

@@ -1,0 +1,57 @@
+# №1062 гейт кадрами: контур только у героя, NPC, машин, будки и предметов. L1, L3, L4, L7: машина (спавн), герой пешком, у L1 будка. flag camdet 1 — старый и новый идут кадр в кадр (dt 1/30),
+# разница кадров = только убранные линии окружения. Красный: flag ink1062old 1 первой строкой (до загрузки уровня)
+flag ink1062old 1
+wait 12
+flag cfgdefaults 1
+flag camdet 1
+flag camlog
+scene IK_L1
+flag repair
+wait 6
+shot ik1_car
+press triangle 0.2
+wait 3
+shot ik1_hero
+foot 144.5 83.0 3.1416
+wait 4
+shot ik1_booth
+scene IK_L3
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 3
+wait 40
+flag repair
+wait 4
+shot ik3_car
+press triangle 0.2
+wait 3
+shot ik3_hero
+scene IK_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+flag repair
+wait 4
+shot ik4_car
+press triangle 0.2
+wait 3
+shot ik4_hero
+scene IK_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 40
+flag repair
+wait 4
+shot ik7_car
+press triangle 0.2
+wait 3
+shot ik7_hero
+end

@@ -1,0 +1,48 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1
+flag golevel 1
+wait 40
+flag player
+scene P
+flag player 1
+foot 226.0 153.8 3.1416
+wait 4
+cam 221.5 7.2 149.6 1 0.03 0
+wait 2
+flag glintfix1022 0
+wait 1
+flag glint1022log 1
+wait 1.5
+flag glint1022log 0
+shot qo00
+wait 0.2
+shot qo01
+wait 0.2
+shot qo02
+wait 0.2
+shot qo03
+wait 0.2
+shot qo04
+wait 0.2
+shot qo05
+wait 0.2
+flag glintfix1022 1
+wait 1
+flag glint1022log 1
+wait 1.5
+flag glint1022log 0
+shot qn00
+wait 0.2
+shot qn01
+wait 0.2
+shot qn02
+wait 0.2
+shot qn03
+wait 0.2
+shot qn04
+wait 0.2
+shot qn05
+wait 0.2
+end

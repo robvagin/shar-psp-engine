@@ -136,9 +136,15 @@ static void uiOpen(void) {   // ui.shr уровня gameLevel (нет своег
   uiLevel = gameLevel;
   if (uiReady) { unsigned vo = BUF_W * SCR_H * ((fb16 ? 2 : 4) * 2 + 2), ve = 0x200000 - (fb16 && !JITTER_HIST_OLD ? JIT_HIST_BYTES : 0); int uu_ = uiUseVram(vo, ve - vo); tvBase = (vo + (unsigned)uu_ + 63u) & ~63u; tvEnd = ve & ~63u; }   // №657: остаток VRAM под текстуры города (flag texvram)   // последние 272 КБ VRAM — история мира для jitter.h
 }
+static int sndFail1065, sndFail1065Sim;   // №1065 служебно «flag sndfail1065 N»: следующие N открытий банка звука отказывают (проверка повтора без тесной кучи)
 static void levelUiSnd(void) {   // интерфейс и звук уровня gameLevel (на заставке открыты уровня 1)
   if (uiLevel != gameLevel) { bbStep = "ui-free"; if (uiReady) uiShutdown(); bbStep = "ui-open"; uiOpen(); bbStep = "ui-menus"; uiMenusSetup(); bbStep = "ui-cfg"; cfgApply(); uiSfxInit(smkWrite); }
-  if (sndLevel != gameLevel) { bbStep = "snd-off"; sndShutdown(); char ad[256]; levelFile(ad, "audio/"); bbStep = "snd-init"; sndInit(ad); sndLevel = gameLevel; bbStep = "snd-cfg"; cfgApply(); uiSfxInit(smkWrite);
+  if (sndLevel != gameLevel) { bbStep = "snd-off"; sndShutdown(); char ad[256]; levelFile(ad, "audio/"); bbStep = "snd-init"; int sndRc_ = sndFail1065 > 0 ? (sndFail1065--, -1) : sndInit(ad);
+    if (sndRc_ && memLoad1065 && (sndFail1065 >= 0 && (strstr(audioError(), "memory") || sndFail1065Sim))) {   // №1065: банк звука не выделился — место и один повтор
+      unsigned f0_ = heapFreeBytes(), b0_ = memMaxBlock ? memMaxBlock() : 0; mem1060Pre(2400000u, "sfx.sab");
+      int rc1_ = sndRc_; sndRc_ = sndFail1065 > 0 ? (sndFail1065--, -1) : sndInit(ad);
+      if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "SNDRETRY1065 level=%d rc=%d->%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", gameLevel, rc1_, sndRc_, f0_ / 1048576.f, heapFreeBytes() / 1048576.f, b0_ / 1048576.f, memMaxBlock ? memMaxBlock() / 1048576.f : 0.f, smkT); smkWrite(l_); } }
+    if (sndRc_ == 0 || !memLoad1065) sndLevel = gameLevel;   /* №1065: окончательный отказ — уровень звука не выставлен */ bbStep = "snd-cfg"; cfgApply(); uiSfxInit(smkWrite);
     bbThForgetAudio(); feNewsResume(); }   // правка 410: зонд BBCPU — к новым потокам звука по имени, с новой базой; №789: стингер газеты — дальше
   bbStep = "ui+snd";
 }
@@ -173,6 +179,7 @@ static void levelLog(const char *what, unsigned t0, unsigned h0) {   // smoke.tx
 #ifndef TOONLINES_OLD
 #define TOONLINES_OLD 0
 #endif
+// №1062: выключатель INK1062_OLD / ink1062Old — в main_render.h (первым в порядке включения)
 #define TL_CELL 64.f
 #define TL_RANGE 60.f
 typedef struct { int16_t cx, cz; uint32_t first, count; } TlCell;
@@ -262,6 +269,7 @@ static void edgeLoad(void) {
 }
 static int edgeCurbTex(void) { static unsigned gen_ = ~0u; static int t_ = -1; if (gen_ != flatLevelGen) { gen_ = flatLevelGen; t_ = -1; for (unsigned i = 0; i < ntex && i < 1024; i++) if (tex[i].curb == 1) { t_ = (int)i; break; } } return t_; }
 static unsigned edgeDraw(float ex, float ey, float ez) {   // слой кромки; вызывается до линий мира (линии лягут поверх)
+  if (!ink1062Old) return 0;   // №1062
   (void)ey; if (!edgeOn || !egNC || !flatOn || !curbOn || curb987On) return 0;   // №987: кромка серо-фиолетовым убрана — бордюр родной
   int ct = edgeCurbTex(); if (ct < 0) return 0;
   unsigned n = 0; int bound_ = 0;
@@ -277,8 +285,53 @@ static unsigned pathPen(void) {   // тёмный насыщенный тон т
   for (unsigned t = 0; t < ntex && t < 1024; t++) if (flatGd[t] == GD_CLS_WALK && flatTint[t]) { unsigned c = flatTint[t]; return skinInkTone(c & 255, (c >> 8) & 255, (c >> 16) & 255); }
   return 0;
 }
+// №1023 (Роб 26.10: «контур асфальта тонкий, почему у почтового ящика толстый, а у дороги нет; нужен тёмный насыщенный цвет асфальта, плотный, видный, не один пиксель, без дёрганья и биения, как мультик, а не шум»): с №978 край асфальта и бордюров —
+// 1 px и только ближе 28 м (линия на границе поверхностей рвётся и мерцает). Теперь край асфальта (линии №824) — несколько проходов со сдвигом на пиксель, как у линий мира №779, но толще: у глаза 3 px (крест из пяти сдвигов), до 30 м — 2 px
+// (квадрат 2×2, до 36 м), до 46 м — 1 px (у глаза крест до 22 м); перо то же (№1008: тёмный тон асфальта уровня), тот же туман и сдвиг глубины. ROADTHICK1023_OLD=1 / файл roadthick1023old / «flag roadthick1023 0» — как в TEST72 (1 px, 28 м)
+#ifndef ROADTHICK1023_OLD
+#define ROADTHICK1023_OLD 1   // Роб 26.10 ночь: вдоль асфальта видна вертикальная грань вместо контура; толстый край выключен по умолчанию
+#endif
+static int roadThick1023Old = ROADTHICK1023_OLD;
+#define RT_PASSES 6
+static const signed char rtDx[RT_PASSES] = {0, 1, 0, 1, -1, 0}, rtDy[RT_PASSES] = {0, 0, 1, 1, 0, -1};
+static const float rtNear[RT_PASSES] = {0.f, 36.f, 36.f, 36.f, 22.f, 22.f};   // дальность прохода: 0 — основной (всё, до RT_RANGE)
+#define RT_RANGE 46.f
+static unsigned rtPen(void) {   // перо края дороги: тёмный насыщенный тон асфальта (№1008), ещё темнее на 40 % — чтобы линия читалась и на тёмном асфальте (фиолетовый L1)
+  unsigned c = !roadInk1008Old && asphNat[3] ? skinInkTone(asphNat[0], asphNat[1], asphNat[2]) : ink978Pen();
+  return 0xff000000u | ((c & 0xff) * 6 / 10) | (((c >> 8 & 0xff) * 6 / 10) << 8) | (((c >> 16 & 0xff) * 6 / 10) << 16); }
+// №1052 (Роб 27.10: «у телефонной будки снизу голубым светится — это пятно убери»): основание-восьмиугольник будки (плоская верхняя грань на 0,19 м и кромка 0,09–0,30 м — отдельные куски; стенки основания — нижние треугольники кусков 0 и 5 того же текстурного набора)
+// не рисуется: у всех будок всех уровней (признак — стейтпроп из 7 кусков, где кусок 1 — плоский восьмиугольник из 6 треугольников на высоте 0,19 м размером 2×2 м). Сама будка, трубка и векторный блик остаются.
+// BOOTHBASE1052_OLD=1 / файл boothbase1052old рядом с EBOOT — как в TEST73 (на лету не переключается: данные куска правятся при загрузке уровня)
+#ifndef BOOTHBASE1052_OLD
+#define BOOTHBASE1052_OLD 0
+#endif
+static int boothBase1052Old = BOOTHBASE1052_OLD;
+static unsigned boothBase1052N;   // служебно: сколько типов будок поправлено при загрузке (строка BOOTHBASE1052 в журнале)
+static void boothBase1052(StateProps *s) {
+  if (boothBase1052Old) return;
+  for (unsigned t = 0; t < s->ntype; t++) {
+    const SpType *T = &s->type[t]; if (T->nPiece != 7 || T->kind) continue;
+    SpPiece *P = (SpPiece *)(uintptr_t)&s->piece[T->firstPiece];
+    if (!(P[1].nv == 18 && P[1].ni == 18 && P[6].nv == 42)) continue;   // уже поправлено или другая модель
+    const short *v1 = (const short *)((const char *)s->vertBase + P[1].vOff);
+    int flat = 1; for (unsigned q = 0; q < 18; q++) { float y = v1[8 * q + 5] * P[1].sc / 32768.f + P[1].oy; if (y < .15f || y > .23f) flat = 0; }
+    if (!flat) continue;
+    P[1].nv = P[1].ni = 0; P[6].nv = P[6].ni = 0;   // верхняя грань и кромка основания
+    for (int kk = 0; kk < 2; kk++) {   // стенки основания: треугольники кусков 0 и 5 целиком ниже 0,32 м
+      SpPiece *p = &P[kk ? 5 : 0]; if (p->nv != p->ni || p->nv % 3) continue;
+      short *v = (short *)((char *)s->vertBase + p->vOff); unsigned w = 0;
+      for (unsigned q = 0; q + 2 < p->nv; q += 3) {
+        float ymax = -1e9f; for (unsigned r = 0; r < 3; r++) { float y = v[8 * (q + r) + 5] * p->sc / 32768.f + p->oy; if (y > ymax) ymax = y; }
+        if (ymax <= .32f) continue;
+        if (w != q) memmove(v + 8 * w, v + 8 * q, 3 * 16); w += 3; }
+      if (w != p->nv) { p->nv = p->ni = w; sceKernelDcacheWritebackRange(v, (unsigned)(16 * (w ? w : 1))); } }
+    boothBase1052N++;
+  }
+  if (smkOn) { char l_[96]; snprintf(l_, sizeof l_, "BOOTHBASE1052 level=%d types=%u\n", gameLevel, boothBase1052N); smkWrite(l_); }
+}
 static void toonLinesLoad(void) {
-  toonLinesFree(); if (TOONLINES_OLD || !(levelToonLoaded || (!LEVEL_TOON_FILE_OLD && skinToonEnabled()))) return;   // линии — с режимом Cartoon (№754: и без level_toon.shr, сразу при переключении)
+  toonLinesFree(); if (!ink1062Old) { if (smkOn) smkWrite("INK1062 lines off (no read)\n"); return; }   // №1062: линии мира и край асфальта не читаются (ни ввода-вывода, ни памяти)
+  if (TOONLINES_OLD || !(levelToonLoaded || (!LEVEL_TOON_FILE_OLD && skinToonEnabled()))) return;   // линии — с режимом Cartoon (№754: и без level_toon.shr, сразу при переключении)
   if (tlReadSet("toonlines.shr", &tlC, &tlV, &tlNC, &tlN) && smkOn) { char l_[96]; snprintf(l_, sizeof l_, "TOONLINES level=%d lines=%u cells=%u\n", gameLevel, tlN, tlNC); smkWrite(l_); }
   if (!ROADLINES_OLD && tlReadSet("roadlines.shr", &rlC, &rlV, &rlNC, &rlN) && smkOn) { char l_[96]; snprintf(l_, sizeof l_, "ROADLINES level=%d lines=%u cells=%u\n", gameLevel, rlN, rlNC); smkWrite(l_); }   // №824
   tlBandSplit(&tlC, tlV, &tlNC, &tlY); tlBandSplit(&rlC, rlV, &rlNC, &rlY);   // №774
@@ -298,6 +351,7 @@ static void inkWorldRefresh(void) {
   if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "INKTONE level=%d world=%08x tex=%lu\n", gameLevel, skinInkWorldAbgr, n); smkWrite(l_); }
 }
 static unsigned toonLinesDraw(float ex, float ey, float ez) {
+  if (!ink1062Old) return 0;   // №1062
   if ((!tlNC && !rlNC) || !tlOn) return 0;
   inkWorldRefresh();
   if (!TOONLINE_W779_OLD && skinToonLineW <= 0) return 0;
@@ -311,13 +365,22 @@ static unsigned toonLinesDraw(float ex, float ey, float ez) {
     unsigned t0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; unsigned w0_ = smkOn ? (unsigned)sceGuCheckList() : 0;
     unsigned c0_ = tlDrawSet(tlC, tlV, tlY, tlNC, pass, ex, ey, ez, 0.f);
     unsigned t1_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
-    sceGuDepthOffset(rlDepth); sceGuColor(ink978On ? ink978Pen() : TL_RGBA_K(INK_ROAD));
-    unsigned c1_ = 0; if (!(ink978On && pass)) { if (ink978On) tlRangeOv = INK978_RANGE; c1_ = tlDrawSet(rlC, rlV, rlY, rlNC, pass, ex, ey, ez, rlLift); tlRangeOv = 0.f; }   // №824: край асфальта — тем же проходом, пером, туманом и толщиной
+    sceGuDepthOffset(rlDepth); sceGuColor(!roadInk1008Old && asphNat[3] ? skinInkTone(asphNat[0], asphNat[1], asphNat[2]) : ink978On ? ink978Pen() : TL_RGBA_K(INK_ROAD));   // №1008: край асфальта — тёмный тон самого асфальта
+    unsigned c1_ = 0; if (!(ink978On && (pass || !roadThick1023Old))) { if (ink978On) tlRangeOv = INK978_RANGE; c1_ = tlDrawSet(rlC, rlV, rlY, rlNC, pass, ex, ey, ez, rlLift); tlRangeOv = 0.f; }   // №824: край асфальта — тем же проходом, пером, туманом и толщиной
     sceGuDepthOffset(tlDepth); sceGuColor(TL_RGBA_K(INK_WORLD));
     if (smkOn) { tlUsW += t1_ - t0_; tlUsR += sceKernelGetSystemTimeLow() - t1_; tlWords += ((unsigned)sceGuCheckList() - w0_) / 4; }   // цена подачи линий на CPU (мкс), в smoke.txt раз в 1,5 с на кадр
     if (pathOn && !curb987On && plNC && !pass) { unsigned pp_ = pathPen(); if (pp_) { sceGuDepthOffset(tlDepth + 28); sceGuColor(pp_); tlRangeOv = INK978_RANGE; tlDrawSet(plC, plV, 0, plNC, 0, ex, ey, ez, 0.f); tlRangeOv = 0.f; sceGuDepthOffset(tlDepth); sceGuColor(TL_RGBA_K(INK_WORLD)); } }   // №983: линии тропинок поверх линий мира
     if (!pass) { n = c0_; nr = c1_; tlFr++; }
     if (pass) sceGuOffset(2048 - SCR_W / 2, 2048 - SCR_H / 2);
+  }
+  if (!roadThick1023Old && ink978On && rlNC) {   // №1023: край асфальта — толстые проходы (после линий мира; туман и состояние те же)
+    unsigned rt0_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
+    sceGuDepthOffset(rlDepth); sceGuColor(rtPen());
+    for (int q = 0; q < RT_PASSES; q++) {
+      sceGuOffset(2048 - SCR_W / 2 + rtDx[q], 2048 - SCR_H / 2 + rtDy[q]); tlRangeOv = RT_RANGE; tlThickOv = rtNear[q];
+      unsigned c_ = tlDrawSet(rlC, rlV, rlY, rlNC, q, ex, ey, ez, rlLift); if (!q) nr = c_; }
+    tlRangeOv = 0.f; tlThickOv = 0.f; sceGuOffset(2048 - SCR_W / 2, 2048 - SCR_H / 2);
+    if (smkOn) { static unsigned rtT_; unsigned now_ = sceKernelGetSystemTimeLow(); tlUsR += now_ - rt0_; if (now_ - rtT_ > 1000000u) { rtT_ = now_; char l_[120]; snprintf(l_, sizeof l_, "ROADTHICK1023 pen=%08x passes=%d us=%u lines=%u\n", rtPen(), RT_PASSES, now_ - rt0_, nr); smkWrite(l_); } }   // служебно: перо, проходы, мкс кадра на толстые проходы
   }
   sceGuDepthOffset(0); sceGuEnable(GU_TEXTURE_2D);
   if (!TOONLINE_W779_OLD) { fogBase(); if (!fog0_) sceGuDisable(GU_FOG); }   // №779: туман кадра как был
@@ -345,6 +408,7 @@ static void levelLoadAfter(void) {   // после newGame (порядок ка�
 }
 static void pfClear(void);
 static void levelUnload(void) {   // всё, что держит набор уровня, — обратно в кучу (ui.shr и audio/ — levelUiSnd при чтении)
+  if (starve1060 >= 0.f) { heapLeft(1000.f); starve1060 = -1.f; }   // №1060 служебное: потребитель уровня умер вместе с ним
   carLtReset();   // №853: длинные треугольники машин уровня (свой участок памяти)
   skyHorizonInvalidate();
   uiScrWarmClear();
@@ -536,6 +600,7 @@ static void levelPropAdopt(void *m, unsigned sz) {   // PRP1/PRP2 прочита
     props.onKick = propKickLog946; props.kickUser = &G;   // шкала, обломки SPR1 (viewer/game.c) + звук и частицы ATC (onPropKickFx)
     rfSpReset();   // render_fast О2: радиусы типов — от нового SPR1
     if (props.spr && spInit(&sprops, props.spr, props.sprSize) == 0) haveSP = 1;
+    if (haveSP) boothBase1052(&sprops);   // №1052
     for (unsigned i_ = 0; i_ < props.npiece; i_++) flatMarkPiece(props.pieces[i_].tex, props.pieces[i_].flags & (0xFF | F_ADDITIVE), 0);   // №912: куски предметов — те же правила заливки
     if (haveSP) for (unsigned i_ = 0; i_ < sprops.npiece; i_++) flatMarkPiece(sprops.piece[i_].tex, sprops.piece[i_].flags & (0xFF | F_ADDITIVE), 0);
     aoBind();
@@ -594,18 +659,31 @@ static void tailReadSync(void) {   // №LOADWAIT: тот же хвост COL1/P
 // Формат FLT1: 'FLT1', ntex, подпись (FNV-1a по номерам текстур кусков, как у notoon.txt), по текстуре 8 байт {заливка, причина, R, G, B, доля, границы, 0}. Нет файла или подпись не та —
 // разбор на месте (toonflat.h flatScan, прежний путь)
 static void flatListLoad(const unsigned char *table, unsigned npc_) {
-  flatFromFile = 0; flatLevelN = ntex; flatLevelGen++; if (flatOld || !tex || !ntex) return;
+  curbNat1064 = curbWant1064;   // №1064: строка Curbs действует с загрузки уровня (заливки не пересобираются на ходу)
+  flatFromFile = 0; flatLevelN = ntex; flatLevelGen++; free(zpMul); zpMul = 0; zpN = 0; zpNpc = 0; zpApplied = 0; if (flatOld || !tex || !ntex) return;
   char fn[256]; levelFile(fn, "flat912.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;
   unsigned hd[3]; int ok = sceIoRead(f, hd, 12) == 12 && hd[0] == 0x31544c46u && hd[1] == ntex;   // 'FLT1'
   unsigned h = 2166136261u; for (unsigned i = 0; ok && i < npc_; i++) { unsigned v; memcpy(&v, table + 80u * i + 24u, 4); h = (h ^ v) * 16777619u; }
   unsigned char *b = ok && h == hd[2] ? (unsigned char *)malloc(ntex * 8u) : 0;
   if (b && sceIoRead(f, b, (int)(ntex * 8u)) == (int)(ntex * 8u)) {
     for (unsigned i = 0; i < ntex; i++) { const unsigned char *r = b + i * 8; Tex *x = &tex[i];
-      x->flatK = r[0]; x->flatR = r[1]; x->flatC = (unsigned)r[2] | (unsigned)r[3] << 8 | (unsigned)r[4] << 16; x->flatS = r[5]; x->flatEd = r[6]; x->curb = r[7] & 15; x->asph = r[7] >> 4; x->flatDone = 1; }
+      x->flatK = (r[1] == WALK1005_REASON && r[0] == 0 && !walk1005On) ? 1 : r[0]; x->flatR = r[1]; x->flatC = (unsigned)r[2] | (unsigned)r[3] << 8 | (unsigned)r[4] << 16; x->flatS = r[5]; x->flatEd = r[6]; x->curb = r[7] & 15; x->asph = r[7] >> 4; x->xdon = (r[4] == XWALK999_MARK && (r[1] == 3 || r[1] == 7) && (r[7] & 0x10)) ? (unsigned short)((r[2] | r[3] << 8) + 1) : 0; if (x->xdon > ntex) x->xdon = 0; x->flatDone = 1; }
     flatFromFile = 1; flatTintKey = ~0u;
   }
   free(b); sceIoClose(f); flatSig = h;
-  if (smkOn) { char l_[96]; snprintf(l_, sizeof l_, "FLATLIST level=%d ok=%d ntex=%u file=%u/%08x sig=%08x\n", gameLevel, flatFromFile, ntex, ok ? hd[1] : 0, ok ? hd[2] : 0, h); smkWrite(l_); }
+  if (flatFromFile) { char zf[256]; levelFile(zf, "zones1007p.bin"); SceUID z = sceIoOpen(zf, PSP_O_RDONLY, 0);   // №1007б: множитель цвета вершин по куску
+    if (z >= 0) { unsigned zh[4]; if (sceIoRead(z, zh, 16) == 16 && zh[0] == 0x3730505au && zh[1] == npc_ && zh[2] == h && zh[3] <= npc_) { unsigned n = zh[3]; unsigned char *zb = n ? (unsigned char *)malloc(n * 8u) : 0; unsigned char *zm = (unsigned char *)calloc(npc_ + 1u, 4);
+        if (zb && zm && sceIoRead(z, zb, (int)(n * 8u)) == (int)(n * 8u)) { for (unsigned i = 0; i < n; i++) { unsigned k; memcpy(&k, zb + i * 8u, 4); if (k < npc_) { zm[k * 4] = zb[i * 8 + 4]; zm[k * 4 + 1] = zb[i * 8 + 5]; zm[k * 4 + 2] = zb[i * 8 + 6]; zm[k * 4 + 3] = 1; } } zpMul = zm; zpN = n; zpNpc = npc_; zm = 0; }
+        free(zb); free(zm); }
+      sceIoClose(z); }
+    if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "ZONES1007P level=%d pieces=%u on=%d\n", gameLevel, zpN, zn7On); smkWrite(l_); } }
+  zn7N = 0; if (flatFromFile) { char zf[256]; levelFile(zf, "zones1007.bin"); SceUID z = sceIoOpen(zf, PSP_O_RDONLY, 0);   // №1007: пары «заливка у асфальта → тон соседа»
+    if (z >= 0) { unsigned zh[3]; if (sceIoRead(z, zh, 12) == 12 && zh[0] == 0x37304e5au && zh[1] <= 256 && zh[2] == h) { unsigned n = zh[1]; unsigned char zb[256 * 8];
+        if (n && sceIoRead(z, zb, (int)(n * 8u)) == (int)(n * 8u)) { for (unsigned i = 0; i < n; i++) { zn7E[i].tex = (unsigned short)(zb[i * 8] | zb[i * 8 + 1] << 8); zn7E[i].tgt = (unsigned short)(zb[i * 8 + 2] | zb[i * 8 + 3] << 8); zn7E[i].mix = zb[i * 8 + 4]; } zn7N = n; } }
+      sceIoClose(z); } }
+  if (smkOn) { char l_[96]; snprintf(l_, sizeof l_, "FLATLIST level=%d ok=%d ntex=%u file=%u/%08x sig=%08x\n", gameLevel, flatFromFile, ntex, ok ? hd[1] : 0, ok ? hd[2] : 0, h); smkWrite(l_);
+    unsigned k_ = 0, n_ = 0; for (unsigned i_ = 0; flatFromFile && i_ < ntex; i_++) if (tex[i_].flatR == WALK1005_REASON) { n_++; k_ += tex[i_].flatK == 0; }
+    snprintf(l_, sizeof l_, "WALK1005 level=%d on=%d rows=%u native=%u\n", gameLevel, walk1005On, n_, k_); smkWrite(l_); }
 }
 // №949: масштаб шума земли по кускам (tools/noise949_list.py → noise949.bin рядом с level.shr). Формат NZ49: 'NZ49', npc, подпись (та же FNV-1a, что у flat912.bin), npc × {u, v}.
 // Нет файла или подпись не та — у кусков nz = 0: шум по родным UV, как было
@@ -734,12 +812,14 @@ static void levelLoad(void **fbp) {
   if (fragHeapMB) { fragHeap(fragHeapMB << 20); fragHeapMB = 0; }   // №775 тест: «flag fragheap N» — один раз, перед игроком уровня
   skyHorizonInvalidate();   // a new sky mesh, texture, or palette must be sampled
   BBP(BBP_LOAD);   // правка 103: сторож — долгое чтение уровня видно как фаза load, а не как зависание кадра
-  phT0 = sceKernelGetSystemTimeLow(); playerLoad(); phMark("player");    // правка 352: игрок уровня — до набора уровня (пакет ложится в кучу раньше клеток города)
+  phT0 = sceKernelGetSystemTimeLow();
+  if (memLoad1065) { levelUiSnd(); phMark("ui+sfx"); }   // №1065: самые крупные долгоживущие блоки (ui.shr 1 МБ, банк звука до 2,15 МБ) — первыми, пока куча пуста (раньше после игрока и в раздробленной куче: TEST77 L5 без звука)
+  playerLoad(); phMark("player");    // правка 352: игрок уровня — до набора уровня (пакет ложится в кучу раньше клеток города)
   unsigned lt0 = sceKernelGetSystemTimeLow(), lh0 = smkOn ? heapFreeBytes() : 0; lvMx0 = smkOn ? memMaxBlock() : 0;
   levelFile(levelShr, "level.shr");
   levelToonLoaded = 0;
   if (levelToonWanted && !TOONLINES_OLD && LEVEL_TOON_FILE_OLD) { char tf_[256]; SceIoStat st_; levelFile(tf_, "level_toon.shr"); if (sceIoGetstat(tf_, &st_) >= 0) { snprintf(levelShr, sizeof levelShr, "%s", tf_); levelToonLoaded = 1; } }   // №679: мир «мультик» — отдельный файл уровня (заливки + ступень света), выбор при загрузке уровня; коллизия та же (COL1 побайтно)
-  levelUiSnd(); phMark("ui+sfx");
+  if (!memLoad1065) { levelUiSnd(); phMark("ui+sfx"); }
   if (!FARPLAIN_OLD) {   // дальние версии кусков по уровню: файл far_plain в папке уровня (число — D, м); нет файла — как задано рядом с EBOOT (по умолчанию 0 — дальних версий нет)
     static float farPlainBoot = -1.f; if (farPlainBoot < 0.f) farPlainBoot = farPlainD;
     char fn_[256], b_[16]; levelFile(fn_, "far_plain"); SceUID o_ = sceIoOpen(fn_, PSP_O_RDONLY, 0); farPlainD = farPlainBoot;
@@ -948,7 +1028,7 @@ static void levelLoad(void **fbp) {
 #define SKY_CLOUD_TOON_OLD 0
 #endif
   if (!SKY_CLOUD_TOON_OLD && tex) for (unsigned i = 0; i < npc; i++) { Piece q_; memcpy(&q_.r, tab + 80 * i, 80);
-    if (q_.r.owner == 2 && q_.r.tex >= 0 && (unsigned)q_.r.tex < ntex) tex[q_.r.tex].tstat[4] = 1; }
+    if (q_.r.owner == 2 && q_.r.tex >= 0 && (unsigned)q_.r.tex < ntex) tex[q_.r.tex].tstat[4] = 9; }   // №1026: бит 8 — небо и купол (без шагов мультика и после правки), бит 1 без 8 — вывеска
   // №788 (Роб 18.10 после TEST34: «в мультике не накладывать цветокоррекцию на билборды (Красти), разбиваемые стёкла, стоп-знаки — пусть остаются светлыми, звонкими»):
   // список текстур уровня без шагов мультика — notoon.txt (номера записей level.shr через пробел; tools/notoon_list.py по именам текстур диска: вывески, щиты, знаки,
   // плакаты, логотипы, дирижабль Duff, витринное стекло). Первая строка «ntex N sig X»: число текстур и подпись (FNV-1a по номерам текстур всех кусков, Rec.tex @24) —
@@ -1218,10 +1298,12 @@ static void levelAdvance(int n, void **fbp) {
   sndEngine(0.f, 0.f, 0); sndSkid(0.f, 0); sndCarAir(0); sndMusic(SND_MUS_OFF); sndMaster(0.f);
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "LEVELUP from=%d to=%d t=%.1f\n", gameLevel, n, smkT); smkWrite(s); }
   gameLevel = n;
-  { char fn[256]; sibling(fn, "load.shr"); uiScrOpen(fn); scrTvOver = 0; }   // экран загрузки: газета уровня n
+  int unl_ = 0;   // №1065: газета не открылась — предыдущий уровень выгружается ДО неё (куча пуста), открытие повторяется
+  { int rc_ = scrOpen1065("levelup"); if (memLoad1065 && rc_ == -3) { levelUnload(); unl_ = 1; scrOpen1065("levelup-unloaded"); } scrTvOver = 0; }   // экран загрузки: газета уровня n
   sndMaster(1.f); feStinger("newspaper_spin");   // правка 20: газета следующего уровня влетает — стингер Newspaper_Spin
   ldBase = LOAD_RES_SHARE; loadBegin(fbp);
-  levelUnload(); levelLoad(fbp);
+  if (!unl_) levelUnload();
+  levelLoad(fbp);
   svPending = carry; svResumeOn = 1;
   menuStartGame(fbp, t0, 1);   // + комнаты и камеры уровня (levelLoadAfter): правка 356 — под газетой
   lvStateLine("after");
@@ -1444,14 +1526,15 @@ static void menuRun(void **fbp) {
     menuStartGame(fbp, t0, 0);
     return;
   }
-  { char fn[256]; sibling(fn, "load.shr"); uiScrOpen(fn); scrTvOver = 0; }   // загрузка уровня: Loading.scr (газета уровня gameLevel) — на время загрузки
+  int unl_ = 0;   // №1065: см. levelAdvance
+  { int rc_ = scrOpen1065("menustart"); if (memLoad1065 && rc_ == -3 && sw) { levelUnload(); unl_ = 1; scrOpen1065("menustart-unloaded"); } scrTvOver = 0; }   // загрузка уровня: Loading.scr (газета уровня gameLevel) — на время загрузки
   feNewsStinger("newspaper_spin");   // правки 20, 134: газета влетает — один Newspaper_Spin с доли темы меню
   ldBase = levelReady && !sw ? 0 : LOAD_RES_SHARE; loadBegin(fbp);   // правка Роба 35: газета влетает до чтения, огонь без возврата
   if (!svResumeOn && !musOld) { audioHoldStreams(1); levelHold = 1;   // правка 155: NEW GAME — звук уровня после газеты и ролика
     if (smkOn) { snprintf(s, sizeof s, "SNDHOLD on t=%.1f\n", smkT); smkWrite(s); } }
   menuT0 = t0;
   if (!levelReady) return;   // первое меню: уровень ещё не читался — main читает его под этим экраном, потом menuStartGame
-  if (sw) { levelUnload(); levelLoad(fbp); }
+  if (sw) { if (!unl_) levelUnload(); levelLoad(fbp); }
   menuStartGame(fbp, t0, sw);   // сменили уровень — и его комнаты и камеры (levelLoadAfter)
 }
 

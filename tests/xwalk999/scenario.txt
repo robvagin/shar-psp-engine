@@ -1,0 +1,97 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L6
+flag golevel 6
+wait 40
+scene S_L6_X1
+foot -102 114.7 0
+wait 4
+cam -95.0 -27.1 121.7 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X1
+scene S_L6_X2
+foot -186 150.0 0
+wait 4
+cam -179.0 -34.2 157.0 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X2
+scene S_L6_X3
+foot -2.7 -6.5 0
+wait 4
+cam 4.3 12.7 0.5 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X3
+scene S_L6_X4
+foot -128 101.0 0
+wait 4
+cam -121.0 -26.5 108.0 -0.605 -0.518 -0.605
+wait 8
+shot A_L6_X4
+scene C_L1
+flag golevel 1
+wait 40
+scene S_L1_X1
+foot 145.7 85.1 0
+wait 4
+cam 152.7 9.6 92.1 -0.605 -0.518 -0.605
+wait 8
+shot A_L1_X1
+scene C_L2
+flag golevel 2
+wait 40
+scene S_L2_X1
+foot 6.4 89.1 0
+wait 4
+cam 13.4 12.9 96.1 -0.605 -0.518 -0.605
+wait 8
+shot A_L2_X1
+scene S_L2_X2
+foot 100.8 -281.3 0
+wait 4
+cam 107.8 26.5 -274.3 -0.605 -0.518 -0.605
+wait 8
+shot A_L2_X2
+scene C_L3
+flag golevel 3
+wait 40
+scene S_L3_X1
+foot -275.8 -285.9 0
+wait 4
+cam -268.8 -47.3 -278.9 -0.605 -0.518 -0.605
+wait 8
+shot A_L3_X1
+scene C_L4
+flag golevel 4
+wait 40
+scene S_L4_X1
+foot 245.2 -175.3 0
+wait 4
+cam 252.2 -10.3 -168.3 -0.605 -0.518 -0.605
+wait 8
+shot A_L4_X1
+scene C_L5
+flag golevel 5
+wait 40
+scene S_L5_X1
+foot 6.4 89.1 0
+wait 4
+cam 13.4 12.9 96.1 -0.605 -0.518 -0.605
+wait 8
+shot A_L5_X1
+scene S_L5_X2
+foot 100.8 -281.3 0
+wait 4
+cam 107.8 26.5 -274.3 -0.605 -0.518 -0.605
+wait 8
+shot A_L5_X2
+scene C_L7
+flag golevel 7
+wait 40
+scene S_L7_X1
+foot -4.6 604.6 0
+wait 4
+cam 2.4 6.5 611.6 -0.605 -0.518 -0.605
+wait 8
+shot A_L7_X1
+end

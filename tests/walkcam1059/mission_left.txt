@@ -1,0 +1,14 @@
+wait 12
+flag cfgdefaults 1
+flag player
+flag camlog
+scene MS_left
+wait 3
+flag msn
+wait 2
+flag msnbot 1
+msngo
+wait 2.5
+press left 14
+wait 16
+end

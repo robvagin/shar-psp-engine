@@ -48,16 +48,32 @@ static unsigned tlDc[2], tlWords;   // №912 диагностика: подач
 #endif
 #define TL_SEL_MAX 400
 typedef struct { const TlCell *C; int pass, n, age; float e[3], oy; unsigned lines; unsigned short idx[TL_SEL_MAX]; } TlSel;
-static TlSel tlSel[8]; static unsigned tlSelHit, tlSelMiss, tlSelOver;   // tlSelOver: отборов, где кусков больше TL_SEL_MAX (хвост молча не рисовался — Надзор 24.10)
+static TlSel tlSel[12];   // №1023: 12 мест (линии мира 2 прохода, края дороги до 6, тропинки 1)
+static float tlThickOv;   // №1023: >0 — своя дальность толстого прохода (края дороги), м
+ static unsigned tlSelHit, tlSelMiss, tlSelOver;   // tlSelOver: отборов, где кусков больше TL_SEL_MAX (хвост молча не рисовался — Надзор 24.10)
 static float tlRangeOv;   // №978: >0 — своя дальность отбора клеток (линии края дороги), м
+// №1043 (Роб: «везде на фоне вдалеке появились какие-то чёрные провода»; кадры дирижёра l970_wr_*: на плоской тёмной земле ломаные чёрные линии углами и стойками без домов): линии мира и края дороги берутся из
+// level_toon.shr по своей сетке 64 м и рисовались, даже если клеток города под ними ещё нет в памяти (после рывка/телепорта, пока клетки грузятся, на краю подгрузки, у срезанной дальности): остаются
+// чёрные контуры домов в пустоте поверх подложки. Теперь клетка линий рисуется, только когда в памяти (state 2) есть клетка города, перекрывающая её квадрат. INKFAR1043_OLD=1 / файл inkfar1043old / «flag inkfar1043 0» — как было
+#ifndef INKFAR1043_OLD
+#define INKFAR1043_OLD 0
+#endif
+static int inkFar1043On = !INKFAR1043_OLD;
+static unsigned tlGateN, tlGateCut;
+static int tlCellLoaded(float ox, float oz) {
+  for (unsigned i = 0; i < ncell; i++) { const Cell *c = &cl[i]; if (c->state != 2) continue;
+    if (c->bb[3] >= ox && c->bb[0] <= ox + TL_CELL && c->bb[5] >= oz && c->bb[2] <= oz + TL_CELL) return 1; }
+  return 0;
+}
 static int tlKeep(const TlCell *C, const int16_t *Y, unsigned c, int pass, float ex, float ey, float ez, float oy) {   // запись в отборе кадра: дальность, полоса над головой, толстая линия только вблизи
   float ox = C[c].cx * TL_CELL, oz = C[c].cz * TL_CELL;
   float rg_ = tlRangeOv > 0.f ? tlRangeOv : (float)TL_RANGE;   // №978: у линий края дороги дальность короче
   if (ex < ox - rg_ || ex > ox + TL_CELL + rg_ || ez < oz - rg_ || ez > oz + TL_CELL + rg_) return 0;
+  if (inkFar1043On && cl && ncell) { tlGateN++; if (!tlCellLoaded(ox, oz)) { tlGateCut++; return 0; } }   // №1043
   if (Y) { float nx_ = ex < ox ? ox : ex > ox + TL_CELL ? ox + TL_CELL : ex, nz_ = ez < oz ? oz : ez > oz + TL_CELL ? oz + TL_CELL : ez;   // №774: полоса над головой
     if (Y[c] * .01f + oy - ey > TL_ABOVE + TL_ABOVE_K * sqrtf((nx_ - ex) * (nx_ - ex) + (nz_ - ez) * (nz_ - ez))) return 0; }
   if (pass && !TOONLINE_W779_OLD) { float nx_ = ex < ox ? ox : ex > ox + TL_CELL ? ox + TL_CELL : ex, nz_ = ez < oz ? oz : ez > oz + TL_CELL ? oz + TL_CELL : ez;   // №779: 2 px — только вблизи
-    if ((nx_ - ex) * (nx_ - ex) + (nz_ - ez) * (nz_ - ez) > TL_THICK_NEAR * TL_THICK_NEAR) return 0; }
+    float tn_ = tlThickOv > 0.f ? tlThickOv : TL_THICK_NEAR; if ((nx_ - ex) * (nx_ - ex) + (nz_ - ez) * (nz_ - ez) > tn_ * tn_) return 0; }
   return 1;
 }
 static unsigned tlDrawSet(const TlCell *C, const int16_t *V, const int16_t *Y, unsigned NC, int pass, float ex, float ey, float ez, float oy) {   // №824: один набор линий (мир или дорога) за один проход; число линий (только pass 0)
@@ -75,8 +91,8 @@ static unsigned tlDrawSet(const TlCell *C, const int16_t *V, const int16_t *Y, u
     return n;
   }
   if (tlSelReset) { memset(tlSel, 0, sizeof tlSel); tlSelReset = 0; }
-  TlSel *s = 0; for (int k = 0; k < 8; k++) if (tlSel[k].C == C && tlSel[k].pass == pass) { s = &tlSel[k]; break; }
-  if (!s) { for (int k = 0; k < 8; k++) if (!tlSel[k].C) { s = &tlSel[k]; break; } if (!s) s = &tlSel[0]; s->C = C; s->pass = pass; s->age = 1 << 20; }
+  TlSel *s = 0; for (int k = 0; k < 12; k++) if (tlSel[k].C == C && tlSel[k].pass == pass) { s = &tlSel[k]; break; }
+  if (!s) { for (int k = 0; k < 12; k++) if (!tlSel[k].C) { s = &tlSel[k]; break; } if (!s) s = &tlSel[0]; s->C = C; s->pass = pass; s->age = 1 << 20; }
   float dx = ex - s->e[0], dy = ey - s->e[1], dz = ez - s->e[2];
   if (s->age >= TL_REUSE_AGE || s->oy != oy || dx * dx + dy * dy + dz * dz > TL_REUSE * TL_REUSE) {   // пересчёт отбора
     int k = 0; unsigned lines = 0;

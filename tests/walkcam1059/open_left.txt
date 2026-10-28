@@ -1,0 +1,10 @@
+wait 12
+flag cfgdefaults 1
+flag player
+flag camlog
+scene WC_left
+foot 214 210 -2.4
+wait 3
+press left 7
+wait 8
+end

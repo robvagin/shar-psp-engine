@@ -1,0 +1,25 @@
+# №1021-герои: главное меню (гостиная) в Cartoon: TEST71 (flag fehero1021 0) и новое (1), три пункта карусели
+flag menu
+flag lvset 1
+scene FE_BOOT
+wait 4
+flag toon 1
+flag fehero1021 0
+wait 2
+shot a_old
+flag fehero1021 1
+wait 2
+shot a_new
+press right 0.2
+wait 5
+shot b_new
+flag fehero1021 0
+wait 2
+shot b_old
+press right 0.2
+wait 5
+shot c_old
+flag fehero1021 1
+wait 2
+shot c_new
+end

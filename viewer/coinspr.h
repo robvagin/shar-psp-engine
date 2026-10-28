@@ -19,7 +19,9 @@ typedef struct { char magic[4]; unsigned short w, h, levels, frames, cols, rows,
 static CsHdr csH; static unsigned char *csMem; static const unsigned char *csPal, *csLv[2]; static int csState;   // 0 — не читали, 1 — лента есть, -1 — нет
 static unsigned char csPalRaw[1024]; static int csRawOk;   // проверка 18.10: исходная палитра монеты — для смены тона (Cartoon, Saturation) без перезагрузки
 static void coinSprRetone(void) { wsRetone();   // №803: и палитра ключа-спрайта (Cartoon, Saturation)
-  if (!csRawOk || csState != 1 || !csPal) return; memcpy((void *)csPal, csPalRaw, 1024); palTone((void *)csPal); }
+  if (!csRawOk || csState != 1 || !csPal) { if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "COINRETONE skip raw=%d state=%d pal=%d\n", csRawOk, csState, csPal != 0); smkWrite(l_); } return; } memcpy((void *)csPal, csPalRaw, 1024); palTone((void *)csPal);
+  if (smkOn) { unsigned r_[3] = {0, 0, 0}, n_[3] = {0, 0, 0}, cnt_ = 0; for (int j = 0; j < 256; j++) if (csPal[j * 4 + 3] > 200) { cnt_++; for (int k = 0; k < 3; k++) { r_[k] += csPalRaw[j * 4 + k]; n_[k] += csPal[j * 4 + k]; } }
+    char l_[160]; snprintf(l_, sizeof l_, "COINRETONE n=%u raw_sum=%u,%u,%u now_sum=%u,%u,%u sat=%d ct=%d\n", cnt_, r_[0], r_[1], r_[2], n_[0], n_[1], n_[2], toneSatPct(), toneContrastPct()); smkWrite(l_); } }
 static void csLoad(void) {   // №877: повторный вызов не теряет прежнюю ленту
   if (csMem) { free(csMem); csMem = 0; csPal = 0; }
   csState = -1; char fn[256]; sibling(fn, "coinspr.bin"); SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0); if (fd < 0) return;
@@ -38,13 +40,21 @@ static void csLoad(void) {   // №877: повторный вызов не те�
 }
 static unsigned csFrame;   // кадр ленты этого кадра игры (один на все монеты)
 static void coinSprPreload(void) { if (!csState && coinSprite) csLoad(); }   // при загрузке уровня (main_levels.h levelLoadAfter)
-static int coinSprAdd(const Coin *c, float a, float ex, float ez) {   // 1 — монета ушла в пачку
+// №1020: кадр оборота монеты сдвинут по монете на COIN1020_PH кадров (номер монеты -> хэш, 0..COIN1020_PH − 1): монеты не вращаются синхронно, но видно, что они одной ленты
+#ifndef COIN1020_PH
+#define COIN1020_PH 6u
+#endif
+static unsigned coinPhMask1020;   // служебно: какие сдвиги кадра встретились
+static unsigned coinPh1020(unsigned i) { unsigned s = i * 0x9e3779b1u + 0x1234567u; s ^= s >> 16; s *= 0x7feb352du; s ^= s >> 15; s *= 0x846ca68bu; s ^= s >> 16; return s % COIN1020_PH; }
+static int coinSprAdd(const Coin *c, float a, float ex, float ez, unsigned idx) {   // 1 — монета ушла в пачку
   if (!csState) csLoad();
   if (csState < 0 || coinSprCnt >= COIN_SPR_MAX) return 0;
   if (!coinSprCnt) csFrame = (sceKernelGetSystemTimeLow() / (unsigned)(1e6f / csH.fps)) % csH.frames;
   float dx = c->x - ex, dz = c->z - ez, l = sqrtf(dx * dx + dz * dz); if (l < .05f) return 0;
   float Rx = -dz / l * csRSign, Rz = dx / l * csRSign, hs = csH.half * a, C[3] = {c->x, c->y + csH.cy * a, c->z};   // R — вправо по экрану
-  unsigned fc = csFrame % csH.cols, fr = csFrame / csH.cols;
+  unsigned ph_ = fxCoin1020 ? coinPh1020(idx) : 0u; coinPhMask1020 |= 1u << ph_;
+  unsigned cf_ = (csFrame + ph_) % csH.frames;   // №1020
+  unsigned fc = cf_ % csH.cols, fr = cf_ / csH.cols;
   float u0 = (fc * csH.px + .5f) / csH.w, u1 = ((fc + 1) * csH.px - .5f) / csH.w, v0 = (fr * csH.px + .5f) / csH.h, v1 = ((fr + 1) * csH.px - .5f) / csH.h;
   const float X[4] = {-1.f, 1.f, -1.f, 1.f}, Y[4] = {1.f, 1.f, -1.f, -1.f}, U[4] = {u0, u1, u0, u1}, V[4] = {v0, v0, v1, v1}; static const unsigned char ord[6] = {0, 2, 1, 1, 2, 3};
   CsV *o = coinSprV + coinSprCnt * 6;

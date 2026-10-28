@@ -215,7 +215,7 @@ typedef struct {
   // --- события
   HomerEvent ev[HOMER_MAXEV]; int nev;
   // --- камера пешком
-  float camYaw, camY, frame, heldX, heldY, neutralT, steerGap, sweepT; int camInit;   // №920: neutralT — сколько стик уже в нуле (кадр управления держится STEER_NEUTRAL_T); steerGap — сколько steer не вызывался (после машины, пинка, падения кадр не считается свежим)
+  float camYaw, camY, frame, heldX, heldY, neutralT, steerGap, sweepT; int camInit, flipSeen, flipLatch; float flipLatchT;   // №920: neutralT — сколько стик уже в нуле (кадр управления держится STEER_NEUTRAL_T); steerGap — сколько steer не вызывался (после машины, пинка, падения кадр не считается свежим)
   float safe[3], launchV; int idleNext;
   // --- отладка / тесты
   float maxY, lastLandV; int landings;
@@ -318,6 +318,7 @@ void homerCamDeathPose(Homer *H);
 #define HOMER_CAM_DEATH_EYE 1.891f    // [PS2] В86 trace.tsv кадр 608: cam y − Гомер y
 int camOverGround(const ColWorld *w, float x, float z, float y);   // правка 40: под глазом камеры есть опора коллизии
 extern int homerIrisCarOld;   // правка 333: 1 — прежнее (клипы двери и у машин с SetIrisTransition); красный контроль tests/homer/iris_car.py
+extern int homerWalkCam1059Old, homerViewOk; extern float homerWalkCamTau, homerWalkCamRate, homerViewYaw;   // №1059
 extern int homerCtrl916Old, homerExitYawOld, homerCtrlFreezeOld, homerCtrlOn, homerCamBusy; extern float homerCtrlYaw;   // homerCamBusy — №836: камера в переходе/вращается (ставит main_loop.h)   // №704: курс управления, замороженный на время облёта камеры
 extern int homerFlipStandOld;   // HOMER_FLIP_STAND_OLD=1 / flag homerflipstandold 1 — перескок камеры у стены и у стоящего Гомера (как было)
 extern int homerCamCarOld;   // №982: 1 — машина у спины Гомера, как стена: перескок камеры через героя и глаз в кузове (flag camcar982old)

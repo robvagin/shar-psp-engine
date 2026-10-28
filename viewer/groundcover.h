@@ -27,7 +27,13 @@ static inline void groundCoverReset(GroundCover *g, const ColWorld *w) {
   }
   if(bottom<1e30f)g->y=bottom-.25f; // port rule: below all finite solid bounds, not an infinite fence extrusion
 }
-static inline int groundCoverFog(const GroundCover *g){return !GROUND_COVER_OLD&&g->ready;}
+// №1042 (Роб: «никаких белых стен, никакого тумана, ни белого, ни цвета неба»): дымка края дальности выключена совсем — подложка рисуется без тумана, город чисто до выбранной дальности, за ним небо и силуэты.
+// FOGOFF1042_OLD=1 / файл fogoff1042old / «flag fogoff1042 0» — дымка подложки как в TEST72 (от .75 дальности, цвет неба или средний цвет подложки)
+#ifndef FOGOFF1042_OLD
+#define FOGOFF1042_OLD 0
+#endif
+static int fogOff1042On = !FOGOFF1042_OLD;
+static inline int groundCoverFog(const GroundCover *g){return !GROUND_COVER_OLD&&g->ready&&!fogOff1042On;}
 // Infinite under-world plane projected as its horizon half-plane. A finite quad
 // would miss distant cracks: its ray intersection can be beyond the far clip.
 // Depth 3 is behind city geometry and ahead of sky's authored depth range 2..0.

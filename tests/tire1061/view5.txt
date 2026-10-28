@@ -1,0 +1,49 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+flag cfgdefaults 1
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+flag trfmodel 0
+flag trfstill
+flag trfgoh 1.0
+wait 1
+flag toon 0
+flag flat912 0
+flag mipconst -1
+flag trfgo 0 8
+wait 1.5
+shot m-1_t0
+flag mipconst 1
+flag trfgo 0 8
+wait 1.5
+shot m1_t0
+flag mipconst 2
+flag trfgo 0 8
+wait 1.5
+shot m2_t0
+flag mipconst 3
+flag trfgo 0 8
+wait 1.5
+shot m3_t0
+flag toon 1
+flag flat912 1
+flag mipconst -1
+flag trfgo 0 8
+wait 1.5
+shot m-1_t1
+flag mipconst 1
+flag trfgo 0 8
+wait 1.5
+shot m1_t1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.5
+shot m2_t1
+flag mipconst 3
+flag trfgo 0 8
+wait 1.5
+shot m3_t1
+end

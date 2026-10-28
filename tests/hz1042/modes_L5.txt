@@ -1,0 +1,60 @@
+# №1042: горизонт L5: взгляд вдаль с высоты 14 м по четырём сторонам; три режима: без силуэтов (flag horizon 0), силуэты без цветов фасадов (flag hzcol997 0), силуэты с цветами №997
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L5
+flag golevel 5
+wait 40
+flag player
+flag service 1
+foot -154.9 -482.05 0.024
+wait 3
+flag ddfloor 250
+wait 3
+flag horizon 0
+wait 1.5
+camrel 0 14 0 0 -0.05 1
+wait 1.0
+shot off_v0
+camrel 0 14 0 1 -0.05 0
+wait 1.0
+shot off_v1
+camrel 0 14 0 0 -0.05 -1
+wait 1.0
+shot off_v2
+camrel 0 14 0 -1 -0.05 0
+wait 1.0
+shot off_v3
+flag horizon 8
+flag hzcol997 0
+wait 1.5
+camrel 0 14 0 0 -0.05 1
+wait 1.0
+shot plain_v0
+camrel 0 14 0 1 -0.05 0
+wait 1.0
+shot plain_v1
+camrel 0 14 0 0 -0.05 -1
+wait 1.0
+shot plain_v2
+camrel 0 14 0 -1 -0.05 0
+wait 1.0
+shot plain_v3
+flag horizon 8
+flag hzcol997 1
+wait 1.5
+camrel 0 14 0 0 -0.05 1
+wait 1.0
+shot col_v0
+camrel 0 14 0 1 -0.05 0
+wait 1.0
+shot col_v1
+camrel 0 14 0 0 -0.05 -1
+wait 1.0
+shot col_v2
+camrel 0 14 0 -1 -0.05 0
+wait 1.0
+shot col_v3
+cam off
+end

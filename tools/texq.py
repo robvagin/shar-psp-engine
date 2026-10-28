@@ -416,6 +416,16 @@ def load_tex(url, cache, blob, blend=False, sky=False, flat=False):
     return cache[url]
 
 
+def load_img(key, img, cache, blob):
+    """№1061: готовая картинка (вырезка колеса машины) -> запись текстуры под своим ключом; те же палитра, мипы и формат, что у load_tex"""
+    if key in cache: return cache[key]
+    _load_caps()
+    global _FADE_NOW; _FADE_NOW = FADE_URLS is None   # как у load_tex для машинной текстуры: вдали диск сливается в ровный тон, а не в полосу (приёмка Оптимизации: диагональ на диске sedanB, мип 3); среднее вырезки — резина
+    data, _, _, _ = build(img, CAP, 'kmeans', CLUT4, PRESWIZZLE)
+    blob.append(data); cache[key] = len(blob) - 1
+    return cache[key]
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # анализ: ошибки, память, картинки
 def decode(data):

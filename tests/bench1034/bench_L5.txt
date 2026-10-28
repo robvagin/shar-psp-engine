@@ -1,0 +1,43 @@
+# №1034: герой пешком идёт в скамейку (стик вперёд 2,5 с) и пытается запрыгнуть (✕ при упоре); L5, скамейка (-158.9, -482.9), подход с +x лицом на −x. old — flag bench1034 0, new — flag bench1034 1; позиции — в строках SHOT (pos x y z h)
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene B_GO5
+flag golevel 5
+wait 40
+flag stop
+flag player
+flag benchlog 1
+scene B_old_5
+flag bench1034 0
+foot -156.3 -482.9 4.712
+wait 2.5
+shot old_start
+stick 0 -1 2.5
+wait 3
+shot old_walk
+foot -156.3 -482.9 4.712
+wait 2.5
+stick 0 -1 0.9
+wait 1.2
+tap cross 0.15
+stick 0 -1 1.6
+wait 3
+shot old_jump
+scene B_new_5
+flag bench1034 1
+foot -156.3 -482.9 4.712
+wait 2.5
+shot new_start
+stick 0 -1 2.5
+wait 3
+shot new_walk
+foot -156.3 -482.9 4.712
+wait 2.5
+stick 0 -1 0.9
+wait 1.2
+tap cross 0.15
+stick 0 -1 1.6
+wait 3
+shot new_jump
+end

@@ -175,6 +175,7 @@ static void enter(StateProps *sp, unsigned i, int to) {
   SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
   if (to < 0 || to >= T->nState) return;
   r->state = (uint8_t)to; r->t = 0; r->callDone = 0; r->poseValid = 0; r->burst = 1; r->fxStarted = 0;
+  r->slN = 0;   // №1000: смена состояния обнуляет время — накопленный сон не нужен
   r->fxAcc[0] = r->fxAcc[1] = r->fxAcc[2] = r->fxAcc[3] = 0;
   r->poseF = sp->state[T->firstState + to].poseMin;
 }
@@ -453,6 +454,10 @@ int spPoleFallOld = SP_POLEFALL975_OLD;   // flag polefall975old 1 — как б
 #define SP_POLEBASE975_OLD 0
 #endif
 int spPoleBaseOld = SP_POLEBASE975_OLD;
+#ifndef POLE998_OLD
+#define POLE998_OLD 0
+#endif
+int spPole998Old = POLE998_OLD;   // flag pole998 0 — как было
 #ifndef SP_POLEWALL975_OLD
 #define SP_POLEWALL975_OLD 0
 #endif
@@ -461,6 +466,7 @@ int spPoleWallOld = SP_POLEWALL975_OLD;   // flag polewall975old 1 — как б
 #define SPF_W0 0.2f
 #define SPF_WK 0.07f
 #define SPF_V0 12.f
+float propsPoleKick1046(float v, float w0, float wk, float v0);   // №1046 (props.c)
 static void poleFallStart(StateProps *sp, unsigned i, const Car *car, const float bn[2]) {
   SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
   if (spPoleFallOld || r->fall || T->cls != 10 || T->h[1] < 2.f || !r->alive) return;
@@ -468,7 +474,7 @@ static void poleFallStart(StateProps *sp, unsigned i, const Car *car, const floa
   float vx = car->velPre[0], vz = car->velPre[2], v = sqrtf(vx * vx + vz * vz);
   if (v < 0.5f) { vx = -bn[0]; vz = -bn[1]; v = sqrtf(vx * vx + vz * vz); if (v < 1e-3f) return; v = 2.f; }
   float dx = vx / sqrtf(vx * vx + vz * vz), dz = vz / sqrtf(vx * vx + vz * vz);
-  r->fall = 1; r->fallTh = 0.0174533f; r->fallW = SPF_W0 + SPF_WK * fmaxf(0.f, v - SPF_V0); r->fallD[0] = dx; r->fallD[1] = dz; memcpy(r->fallR0, r->R, sizeof r->fallR0);
+  r->fall = 1; r->fallTh = 0.0174533f; r->fallW = propsPoleKick1046(v, SPF_W0, SPF_WK, SPF_V0); r->fallD[0] = dx; r->fallD[1] = dz; memcpy(r->fallR0, r->R, sizeof r->fallR0);
 }
 static void poleFallStep(SpRun *r, float dt) {
   float th = r->fallTh, w = r->fallW, h = dt / 4.f; int done = 0;
@@ -666,6 +672,15 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #else
   float closing = fmaxf(bimp, -vn);   // правка 297: по оси последнего входа (в том числе сверху); не меньше прежнего
 #endif
+  // №998 (Роб 26.10, TEST71 на PSP, L5 F3-2: «красные столбы не сбиваются, сколько можно», повтор №975): прямой удар в ствол работал (№975), а касание вскользь — бортом или углом кузова на ходу —
+  // нет: у вертикального цилиндра ствола нормаль SAT лежит поперёк движения, сближение по ней ~0 (< SP_HIT_SPEED), касание есть, реакции нет (перепись tests/pole998: у фонаря типа 8 при боковом смещении
+  // заезда 1,25 м от ствола 3–5 из 16 заездов «дыра»; на перекрёстке углы и борта задевают столбы чаще, чем бьют в лоб). Теперь у высокого предмета cls 10 касание на ходу засчитывается ударом:
+  // скорость удара — не меньше скорости кузова до касания (потеря скорости машины — по доле сближения от скорости, но не меньше четверти). POLE998_OLD=1 / flag pole998 0 — как было
+  float vPol = 1.f;
+  if (!spPole998Old && T->cls == 10 && T->h[1] >= 2.f) {
+    float vp = sqrtf(car->velPre[0] * car->velPre[0] + car->velPre[2] * car->velPre[2]);
+    if (closing < vp && vp >= SP_HIT_SPEED) { vPol = fmaxf(.25f, closing / vp); closing = vp; }
+  }
   sp->lastImpact = closing;
   // №564: Деревянные ворота у поля/огорода (L1 J3-6, l1/l4/l7_fence_Shape) — в оригинале PS2 сбиваются
   // любой машиной с обеих сторон (AnimDynaPhys cls 4, physProp 1, 4 доски fencebarShape). Ошибочный cls 11
@@ -690,7 +705,7 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
       poleFallStart(sp, i, car, bn);   // №975
       int broken = !r->alive || !r->colOn;
       if (PROP_BREAK_PASS_OLD || !broken) {
-        float k = SP_SMASH_LOSS * T->mass / (car->p.mass + T->mass);
+        float k = SP_SMASH_LOSS * T->mass / (car->p.mass + T->mass) * vPol;
         if (T->cls != 2) { car->vel[0] *= 1.f - k; car->vel[2] *= 1.f - k; }
         if (sp->killSpeed) car->vel[0] = car->vel[2] = 0.f;
       }
@@ -735,10 +750,43 @@ void spHitCar(StateProps *sp, const ColWorld *world, Car *car, Coins *coins) {
   }
 }
 
+// №1000 (стейтпропы: «каждый кадр перебираются все ~200, видимых 13–18»; рисование уже идёт по сетке 48 м, а шаг логики stepInst гонял все экземпляры): качающиеся деревья и кусты
+// (одно состояние, только поза по времени, без вызовов/частиц/билбордов/масок видимости; ≈ 60 % экземпляров на L3–L7) дальше SPN_R от глаза, машины и Гомера не шагают: рисование
+// всё равно держит их позу замершей дальше 25 м (main_loop.h SP_SWAY_FAR). Сон копит dt; при приближении время догоняется теми же сложениями (одинаковые dt — побитно как без сна),
+// потом обычный шаг. Состояние меняют только удары и события рядом с машиной/Гомером или вызовы миссии: enter() обнуляет сон. SPNEAR1000_OLD=1 / «flag spnear1000 0» / файл spnear1000old — как было
+#ifndef SPNEAR1000_OLD
+#define SPNEAR1000_OLD 0
+#endif
+#define SPN_R 45.f
+#define SPN_MAXN 3000
+int spNear1000 = !SPNEAR1000_OLD;
+unsigned spNearStat[2];   // отчёт smoke SPNEAR: спящих в последнем кадре, экземпляров
+static int spSleepable(const StateProps *sp, unsigned i) {
+  const SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i); const SpState *S = ST(sp, i);
+  return r->alive && T->kind == 0 && T->nState <= 1 && !T->nBill && !T->pvisMask && S->poseMode && !S->nCall && S->autoTo == 0xFF && !S->nFx
+      && !r->fall && !r->burst && r->cool <= 0.f && !r->jm0 && r->liftK == 0.f && !sp->inst[i].tag;
+}
+static void spNearWake(SpRun *r) {
+#ifdef SPNEAR1000_RED
+  r->slN = 0; return;   // красный контроль гейта tests/spnear1000: сон без догона времени
+#endif
+  if (!r->slMix) for (unsigned k = 0; k < r->slN; k++) r->t += r->slD0; else r->t += r->slSum;
+  r->slN = 0;
+}
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt) {
   if (dt <= 0.f) return;
   if (dt > 0.1f) dt = 0.1f;
-  for (unsigned i = 0; i < sp->ninst; i++) stepInst(sp, i, dt, world, coins);
+  if (spNear1000 && sp->nearOn && car) {
+    float p[3][2] = {{sp->nearP[0][0], sp->nearP[0][1]}, {sp->nearP[1][0], sp->nearP[1][1]}, {car->x, car->z}}; unsigned ns = 0;
+    for (unsigned i = 0; i < sp->ninst; i++) { SpRun *r = &sp->run[i];
+      if (spSleepable(sp, i) && r->slN < SPN_MAXN) {
+        int far = 1;
+        for (int k = 0; k < 3 && far; k++) { float dx = r->x - p[k][0], dz = r->z - p[k][1]; if (dx * dx + dz * dz <= SPN_R * SPN_R) far = 0; }
+        if (far) { if (!r->slN) { r->slD0 = dt; r->slMix = 0; r->slSum = 0.f; } else if (dt != r->slD0) r->slMix = 1; r->slSum += dt; r->slN++; ns++; continue; } }
+      if (r->slN) spNearWake(r);
+      stepInst(sp, i, dt, world, coins); }
+    sp->nearSleep = ns; spNearStat[0] = ns; spNearStat[1] = sp->ninst;
+  } else for (unsigned i = 0; i < sp->ninst; i++) { if (sp->run[i].slN) spNearWake(&sp->run[i]); stepInst(sp, i, dt, world, coins); }
   spHitCar(sp, world, car, coins);
 }
 

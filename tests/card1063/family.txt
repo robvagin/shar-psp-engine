@@ -1,0 +1,98 @@
+# №1063 семейство: по одной карточке на уровнях L1–L7 (первая в паке): машина в 12 м, камера в 5 м, журнал CARDSPOT (flag camlog). Красный: flag card1063old 1 первой строкой
+wait 12
+flag cfgdefaults 1
+flag camdet 1
+flag camlog
+scene FM_L1
+flag repair
+wait 2
+goto 224.3 213.5 3.14159
+wait 4
+cam 224.3 8.0 206.5 0 0 -1
+wait 2
+shot fam1
+scene FM_L2
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 2
+wait 40
+flag repair
+wait 2
+goto 134.2 -24.6 3.14159
+wait 4
+cam 134.2 16.7 -31.6 0 0 -1
+wait 2
+shot fam2
+scene FM_L3
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 3
+wait 40
+flag repair
+wait 2
+goto 25.6 18.2 3.14159
+wait 4
+cam 25.6 17.2 11.2 0 0 -1
+wait 2
+shot fam3
+scene FM_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+flag repair
+wait 2
+goto 243.2 347.0 3.14159
+wait 4
+cam 243.2 12.9 340.0 0 0 -1
+wait 2
+shot fam4
+scene FM_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 40
+flag repair
+wait 2
+goto -25.8 33.3 3.14159
+wait 4
+cam -25.8 19.9 26.3 0 0 -1
+wait 2
+shot fam5
+scene FM_L6
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 6
+wait 40
+flag repair
+wait 2
+goto 93.2 82.7 3.14159
+wait 4
+cam 93.2 9.8 75.7 0 0 -1
+wait 2
+shot fam6
+scene FM_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 40
+flag repair
+wait 2
+goto 263.0 222.1 3.14159
+wait 4
+cam 263.0 8.7 215.1 0 0 -1
+wait 2
+shot fam7
+end

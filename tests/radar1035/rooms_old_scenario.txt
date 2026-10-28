@@ -1,0 +1,30 @@
+# №1035: радар в помещениях: улица -> дом Симпсонов (L1) -> Kwik-E-Mart -> улица после выхода (foot наружу выходит из комнаты; лист «TEST72 / стало»)
+scene start
+flag radar1035 0
+wait 3
+shot r_street0
+scene SimpsonsHouse_door
+foot 228.94 180.42 0.0000 4.23
+wait 1.5
+press up 0.3
+press circle 0.3
+wait 1
+press triangle
+wait 3
+shot r_house
+foot 228.0 184.0 4.23
+wait 2
+shot r_street1
+scene KwikEMart_door
+foot 213.91 299.04 0.0000 5.56
+wait 1.5
+press up 0.3
+press circle 0.3
+wait 1
+press triangle
+wait 3
+shot r_kwik
+foot 213.9 303.0 5.56
+wait 2
+shot r_street2
+end

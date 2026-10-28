@@ -102,6 +102,8 @@ int colDeathAtEx(const ColWorld *w, float x, float y, float z, float grow, int f
 int colDeathFirst(const ColWorld *w, uint32_t i);                      // запись i — первый объём своего локатора
 int colDeathHeading(const ColWorld *w, uint32_t i, float *h);          // 1 — у точки возврата есть курс (h)
 extern int colGatherCacheOld;   // №984: 1 — без кэша «пусто» широкой фазы кузова (flag colcache984old, COL_GATHERCACHE984_OLD=1)
+extern int colRampRail1050;   // №1050 (Б): у бортов большого трамплина L5 нет торцов (flag ramprail1050 0 — как было)
+extern int colRamp1050;   // №1050: 1 — торец тонкой стенки не гасит машину в ноль, а отводит вбок (RAMP1050_OLD=1 / flag ramp1050 0 — как было)
 int colInit(ColWorld *w, const void *section, unsigned size);
 void colFree(ColWorld *w);
 const char *colError(int code);

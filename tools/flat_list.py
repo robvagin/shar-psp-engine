@@ -245,6 +245,49 @@ def corner_partners(lvl, res, cbs):
     return out
 
 
+XWALK999_MARK = 0x99   # №999: у разметочной текстуры дороги (вид 0, причина 3 или 7, бит асфальта) в R,G номер «донора» — чистой текстуры дороги того же тона; движок тонирует её палитру по статистике донора
+XWALK999_C, XWALK999_L = 10.0, 25.0   # донор: цветовой оттенок (цвет минус яркость, по каналам) не дальше C и яркость не дальше L от основного тона разметочной текстуры (L4: бледно-фиолетовый асфальт и перекрёсток на нём — другая дорога, не донор синей)
+
+
+def xwalk_donors(f, tex, res, cbs):
+    """№999: {номер разметочной текстуры дороги: номер чистой дороги того же тона (причина 8, бит асфальта, без разметки)}; ближайший по основному тону, не дальше XWALK999_R"""
+    plain = []; marked = []
+    for i, t in enumerate(tex):
+        if not t['ground'] or not (cbs[i] & 0x10): continue
+        c = cluster(t['pal'], np.bincount(indices(f, t).ravel(), minlength=256))
+        if c is None: continue
+        if res[i][1] == 8: plain.append((i, c[1]))
+        elif res[i][1] in (3, 7) and (cbs[i] & 15) not in (1, 2, 3): marked.append((i, c[1]))
+    out = {}
+    for i, col in marked:
+        lm = lambda c: .299 * c[0] + .587 * c[1] + .114 * c[2]
+        ok = [(float(np.sqrt((((col - lm(col)) - (pc - lm(pc))) ** 2).sum())), j) for j, pc in plain if abs(lm(col) - lm(pc)) <= XWALK999_L]
+        best = min(ok, default=None)
+        if best and best[0] <= XWALK999_C: out[i] = best[1]
+    return out
+
+
+# №1005 (Роб 26.10: «на уровне Лизы красивая родная текстура пешеходной зоны, я бы её оставил»): светлая плитка тротуара L3 (текстура 128×128, 29a452…) остаётся родной текстурой, а не заливкой с зерном.
+# Только L3: та же картинка на L6 (Барт) по слову Роба не меняется. Ключ — уровень и 12 знаков sha1 от индексов уровня 0 (как у CURB_REF). KEEP1005_OLD=1 — как в TEST71
+KEEP1005 = {3: {'29a4529498a4'}}
+KEEP1005_REASON = 11
+
+
+def keep_native_1005(lvl, f, tex, res):
+    """№1005: {номер текстуры уровня: ...} — заливка земли, которую оставить родной текстурой на этом уровне"""
+    import hashlib, re
+    if os.environ.get('KEEP1005_OLD') == '1': return set()
+    m = re.fullmatch(r'l(\d)', Path(lvl).resolve().parent.name); L = int(m.group(1)) if m else 1
+    keys = KEEP1005.get(L)
+    if not keys: return set()
+    out = set()
+    for i, t in enumerate(tex):
+        if not t['ground'] or res[i][0] != 1: continue
+        px = indices(f, t)
+        if hashlib.sha1(px.tobytes() + bytes([t['w'] % 256, t['h'] % 256])).hexdigest()[:12] in keys: out.add(i)
+    return out
+
+
 def build(lvl, notoon=None):
     """-> (байты flat912.bin, строки (вид, причина) по текстурам)"""
     notoon = notoon or str(Path(lvl).with_name('notoon.txt'))
@@ -257,6 +300,7 @@ def build(lvl, notoon=None):
             c = cluster(t['pal'], np.bincount(indices(f, t).ravel(), minlength=256))
             if c is not None and tones and min(float(np.sqrt(((c[1] - tc) ** 2).sum())) for tc in tones) <= ASPH_R and .299 * c[1][0] + .587 * c[1][1] + .114 * c[1][2] <= ASPH_LUM:
                 res[i] = (0, 8, res[i][2], 0, res[i][4])
+    for i in keep_native_1005(lvl, f, tex, res): res[i] = (0, KEEP1005_REASON, res[i][2], res[i][3], res[i][4])   # №1005: после правил асфальта, до списка бордюров и донора
     asph = asphalt_set(f, tex, res)   # №979: родной асфальт уровня — старшие 4 бита последнего байта строки: движок чуть осветляет палитру (flag asphlight)
     rows = []; body = bytearray()
     src = asphalt_source(lvl, tex, res)   # №977: чистый родной асфальт уровня — фрагмент для земли (класс 3)
@@ -267,9 +311,11 @@ def build(lvl, notoon=None):
         if i in asph: cb |= 0x10
         cbs.append(cb)
     part = {} if os.environ.get('CURB987_OLD') == '1' else corner_partners(lvl, res, cbs)   # №987
+    don = {} if os.environ.get('XWALK999_OLD') == '1' else xwalk_donors(f, tex, res, cbs)   # №999
     for i, (k, why, col, sh, ed) in enumerate(res):
         cb = cbs[i]
         if i in part: col = (part[i] & 255, part[i] >> 8, CORNER987_MARK)
+        if i in don: col = (don[i] & 255, don[i] >> 8, XWALK999_MARK)
         body += struct.pack('<BBBBBBBB', k, why, col[0], col[1], col[2], sh, ed, cb); rows.append((k, why))
     return b'FLT1' + struct.pack('<II', len(tex), sig) + bytes(body), rows, sig
 

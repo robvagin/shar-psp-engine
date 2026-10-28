@@ -44,7 +44,7 @@ typedef struct {
 } SpType;
 typedef struct { int16_t parent, track; uint32_t pad; float q[4], t[3], s[3]; uint32_t pad2; } SpJoint;   // q = w,x,y,z
 typedef struct { uint8_t slot, mode, cycles, preset; uint16_t min, max; float speed; } SpFx;   // mode 1 раз, 2 цикл
-extern int spPoleFallOld, spPoleWallOld, spPoleBaseOld;   // №975: 1 — прежнее (флаги сценария polefall975old / polewall975old)
+extern int spPoleFallOld, spPoleWallOld, spPoleBaseOld, spPole998Old;   // №975: 1 — прежнее (флаги сценария polefall975old / polewall975old)
 typedef struct {
   uint32_t vis;                    // бит = слот рисунка (prop или effect) включён; слоты 32.. — слова visX (spSlotOn)
   uint8_t autoTo, nEvent, nCall, poseMode;   // autoTo 0xFF нет; poseMode 0 стоп, 1 раз, 2 цикл
@@ -83,6 +83,7 @@ typedef struct {
   float dirC, dirS;
   uint8_t fall; float fallTh, fallW, fallD[2], fallR0[9];   // №975: 1 — столб валится на шарнире у основания (угол, скорость, направление, исходный поворот), 2 — лежит
   float hv[2];                     // №923: горизонтальная скорость машины (до стен кадра) при её ударе по этому предмету; обломок по вызову с задержкой берёт её отсюда
+  uint16_t slN; uint8_t slMix; float slD0, slSum;   // №1000: далёкий экземпляр спит — сколько кадров не шагал, первый dt, все ли dt равны, сумма dt; при пробуждении время догоняется (stateprops.c spNearStep)
 } SpRun;
 
 typedef struct { uint8_t preset, first; int16_t sys; float x, y, z, dx, dz, t0; } SpFxOut;   // t0 — кадр начала окна EFX (правка 80)   // sys >= 0: родная система fx.shr (один раз), иначе пресет
@@ -116,9 +117,11 @@ typedef struct {
   // (куст-шар сам встаёт через 1.3 с, фонарь через 1.0 с), возврат на место и обломок звука не дают. Очередь номеров экземпляров
   uint16_t sndQ[32]; unsigned sndN;
   int breaks;                      // обломков, запущенных вызовом SP_OP_BREAK (барьеры 0x3F0000F; отчёт, гейт tests/levelmech)
+  uint8_t nearOn; float nearP[2][2]; unsigned nearSleep;   // №1000: nearOn — игра задала глаз и Гомера (main_loop.h, game.c), иначе никто не спит; nearP — глаз и Гомер (x, z); nearSleep — спящих в последнем кадре (отчёт)
 } StateProps;
 
 // section — начало SPR1 (выровнено на 16). 0 = ок, <0 = ошибка формата/памяти
+extern int spNear1000;   // №1000: 1 — далёкие качающиеся деревья спят (stateprops.c)
 int spInit(StateProps *sp, const void *section, unsigned size);
 int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);
 void spFree(StateProps *sp);

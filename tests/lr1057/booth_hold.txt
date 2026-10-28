@@ -1,0 +1,29 @@
+# №1057: будка L3, листание машин зажатием. Одиночное касание L / R — ровно один шаг; зажатие R и L по 2 с — много шагов (повтор); зажатая ► — тоже повтор (как №706)
+scene start
+wait 6
+scene L3_load
+flag golevel 3
+wait 25
+flag msn
+flag phonego 0
+wait 2
+foot 91.5 141.2 0
+wait 1.5
+press triangle 0.2
+wait 4
+scene TAP
+press r 0.2
+wait 1.5
+press l 0.2
+wait 1.5
+scene HOLD_R
+press r 2
+wait 2
+scene HOLD_L
+press l 2
+wait 2
+scene HOLD_RIGHT
+press right 2
+wait 2
+shot booth_hold
+end

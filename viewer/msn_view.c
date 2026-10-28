@@ -274,8 +274,16 @@ static void iconNote(const char *what) {   // строка ICON в кольцо 
   snprintf(iconKey, sizeof iconKey, "%s", st);
   char l[112]; snprintf(l, sizeof l, "ICON %s lvpack %d cur %s", what, mvPackLevel(), st); bbNoteIcon(l);
 }
+int (*mvCamBusy)(void);
+static int holdOn; static char holdText[160], holdIcon[40];   // №1047: цель, ждущая конца наезда и ухода полос
+static void objectiveShow(const char *text, const char *icon);
+void mvBubblePump(void) { if (holdOn && (!mvCamBusy || !mvCamBusy())) { holdOn = 0; objectiveShow(holdText, holdIcon); } }
 static void uiObjectiveCb(void *u, const char *text, int msg, const char *icon) {
   (void)u; (void)msg;
+  if (text && *text && mvCamBusy && mvCamBusy()) { snprintf(holdText, sizeof holdText, "%s", text); snprintf(holdIcon, sizeof holdIcon, "%s", icon ? icon : ""); holdOn = 1; return; }   // №1047: сначала наезд, потом пузырь
+  holdOn = 0; objectiveShow(text, icon);
+}
+static void objectiveShow(const char *text, const char *icon) {
   if (text && *text) { msnartSetObjIcon(icon); uiMessage(text, iconIndex(icon), 0.f); iconLv = mvPackLevel(); iconNote("set"); }
   else { uiMessage(NULL, -1, 0.f); iconNote("off"); }
 }
@@ -1203,7 +1211,11 @@ static float routeT, routeP[3], routeH; static int routeOn;
 #ifndef ROUTE_Y849_OLD
 #define ROUTE_Y849_OLD 0
 #endif
+float gArrowForce[4]; static int forceArrowOn; static float forceArrowP[4];   // №1025 служебно: «flag arrowat X Y Z ГРАД» — набор стрелок в точке без миссии (замер на склоне, лист)
+void mvForceArrow(int on, float x, float y, float z, float h) { forceArrowOn = on; forceArrowP[0] = x; forceArrowP[1] = y; forceArrowP[2] = z; forceArrowP[3] = h; }
 static void drawRouteArrow(float ex, float ey, float ez, float t) {
+  if (forceArrowOn) { routeOn = 1; routeP[0] = forceArrowP[0]; routeP[1] = forceArrowP[1]; routeP[2] = forceArrowP[2]; routeH = forceArrowP[3]; routeT = 1e9f; }
+  else
   if (!H.markerOn || M.interior || M.rt.status != MSN_RUNNING || !pointVisible(H.marker.pos.x, H.marker.pos.y, H.marker.pos.z, NULL)) { routeOn = 0; return; }
   if ((routeT -= 1.f / 60.f) <= 0.f) {
     routeT = ROUTE_DT; int was = routeOn; float wp[3] = {routeP[0], routeP[1], routeP[2]};
@@ -1215,7 +1227,7 @@ static void drawRouteArrow(float ex, float ey, float ez, float t) {
   // а асфальт под стрелками (склон, бугор, мост) бывает выше. Набор (три стрелки через 4 м вдоль курса) поднимается на самую высокую точку коллизии под ним + ROAD_ARROW_LIFT,
   // и рисуется со сдвигом глубины к камере (мелкая разница высот в 16-бит глубине не прячет стрелку). ROAD_ARROW_OLD=1 / «flag roadarrowold 1» — как раньше
   float P[3] = {routeP[0], routeP[1], routeP[2]};
-  if (!roadArrowOld && mvGround) {
+  if (!roadArrowOld && mvGround && !(msnartArrow1025 && msnartGroundN)) {   // №1025: каждая стрелка берёт высоту и нормаль своей точки (msnart.c), набор не поднимается целиком
     // №849 (тур TEST39: L3 в езде «стрелка пути» до 0,24 мс эмулятора на кадр): высота набора стрелок — пробы земли — пересчитывается, только
     // когда точка или курс стрелки сменились (gameMsnRouteArrow раз в ROUTE_DT), а не каждый кадр. ROUTE_Y849_OLD=1 — каждый кадр
     static float lastP_[3] = {1e30f, 0.f, 0.f}, lastH_, lastY_;
@@ -1565,6 +1577,13 @@ int mvMissionSelectAvail(int rows) {   // пункт ДОБИВКИ 26: есть
   }
   return menuAccessMissionSelect(story, ns, M.rt.completed, M.rt.story, rows);
 }
+// №1058 (Роб 27.10: «в Mission Select, влево-вправо по уровням, какой город — присвой управление L R»): L — предыдущий открытый уровень, R — следующий, как ◄ и ►: тот же порядок, пропуск закрытых, звук.
+// ↑ ↓ по миссиям — как было. MSLR1058_OLD=1 / файл mselr1058old / flag mselr1058 0 — только ◄ ►
+#ifndef MSLR1058_OLD
+#define MSLR1058_OLD 0
+#endif
+static int msLR1058Old = MSLR1058_OLD;
+void mvMsLR1058Set(int old) { msLR1058Old = old; }
 int mvMissionSelect(int on, unsigned hit) {
   if (!active) return 0;
   if (on && !selOn) {   // открыть: пройденные и текущая сюжетная, в порядке расписания (как в оригинале)
@@ -1594,8 +1613,9 @@ int mvMissionSelect(int on, unsigned hit) {
   }
   if (!selOn) return 0;
   int was = selIdx;
-  if (selRows && !msOld && (hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))) {   // правка 348: ◄ ► — открытый уровень (по кругу 1..7)
-    int d = (hit & PSP_CTRL_LEFT) ? -1 : 1, to = msLv;
+  unsigned lvL = PSP_CTRL_LEFT | (msLR1058Old ? 0u : PSP_CTRL_LTRIGGER), lvR = PSP_CTRL_RIGHT | (msLR1058Old ? 0u : PSP_CTRL_RTRIGGER);
+  if (selRows && !msOld && (hit & (lvL | lvR))) {   // правка 348: ◄ ► (№1058: и L R) — открытый уровень (по кругу 1..7)
+    int d = (hit & lvL) ? -1 : 1, to = msLv;
     for (int k = 1; k < 7; k++) { int n = (msLv - 1 + d * k + 70) % 7 + 1; if (msLevelOk(n)) { to = n; break; } }
     int moved = to != msLv;
     if (moved) {
@@ -1670,6 +1690,7 @@ void mvServiceUi(const char *flag, float a) {
   if (!strcmp(flag, "uiavatar") || !strcmp(flag, "uiavatarold")) { uiAvatarOld(flag[8] == 'o'); uiTrace(UI_TRACE_AVATAR); return; }
   // правка 48: сообщение без значка (как «GO!» отсчёта) — текст внутри пузыря (UIOBJTEXT); uimsgnoiconold — прежний код (красный)
   if (!strcmp(flag, "uibatchold")) { uiBatchOld(1); logf_("UIBATCH old\n"); return; }   // наряд 11.10: красный контроль «кадр побитно тот же»
+  if (!strcmp(flag, "wrap1037")) { uiWrap1037Set((int)a); logf_("WRAP1037 on=%d\n", (int)a); return; }   // №1037
   if (!strcmp(flag, "uiobjwidowold")) { uiObjWidowOld(1); logf_("UIOBJWIDOW old\n"); return; }   // правка 215: красный контроль
   if (!strcmp(flag, "uimsgnoicon") || !strcmp(flag, "uimsgnoiconold")) { uiObjTextOld(flag[11] == 'o'); uiTrace(UI_TRACE_AVATAR);
     uiMessage("GO TO THE KWIK-E-MART", -1, 2.f); return; }

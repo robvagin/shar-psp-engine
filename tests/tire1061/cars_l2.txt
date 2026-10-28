@@ -1,0 +1,130 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+flag cfgdefaults 1
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+flag trfstill
+flag trfgoh 1.0
+wait 1
+flag toon 0
+flag flat912 0
+wait 1
+flag trfmodel 0
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot tex_taxi_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot tex_taxi_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot tex_taxi_m3
+flag trfmodel 1
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot tex_sedanb_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot tex_sedanb_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot tex_sedanb_m3
+flag trfmodel 2
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot tex_sports_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot tex_sports_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot tex_sports_m3
+flag trfmodel 3
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot tex_pizza_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot tex_pizza_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot tex_pizza_m3
+flag toon 1
+flag flat912 1
+wait 1
+flag trfmodel 0
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot toon_taxi_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot toon_taxi_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot toon_taxi_m3
+flag trfmodel 1
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot toon_sedanb_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot toon_sedanb_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot toon_sedanb_m3
+flag trfmodel 2
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot toon_sports_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot toon_sports_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot toon_sports_m3
+flag trfmodel 3
+flag trfstill
+flag mipconst -1
+flag trfgo 0 8
+wait 1.2
+shot toon_pizza_m-1
+flag mipconst 2
+flag trfgo 0 8
+wait 1.2
+shot toon_pizza_m2
+flag mipconst 3
+flag trfgo 0 8
+wait 1.2
+shot toon_pizza_m3
+end

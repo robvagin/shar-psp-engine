@@ -1,0 +1,30 @@
+wait 3
+flag golevel 2
+wait 20
+scene tire
+flag cfgdefaults 1
+flag toon 1
+flag flat912 1
+foot 153.49 -40.81 5.7200
+wait 2
+flag jackplace
+flag trfmodel 0
+flag trfstill
+flag trfgoh 1.0
+wait 1
+flag trfgo 0.0000 6
+wait 1.5
+shot t6_0
+flag trfgo 0.0000 8
+wait 1.5
+shot t8_0
+flag trfgo 3.1416 8
+wait 1.5
+shot t8_2
+flag trfgo 0.0000 14
+wait 1.5
+shot t14_0
+flag trfgo 3.1416 14
+wait 1.5
+shot t14_2
+end

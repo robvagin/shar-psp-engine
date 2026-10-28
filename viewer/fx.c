@@ -434,6 +434,20 @@ void fxSparkle(float x, float y, float z, float size, float phase) { fxSparkleC(
 #endif
 int fxGlint970Old = GLINT970_OLD;
 int fxBling989 = !BLING989_OLD;   // №989 (fx.h)
+// №1020 (Роб 26.10: «на монетах много мелких бликов; хочу возле монетки асимметрично один-два блика, чтобы рандомно появлялись; у монет хотя бы минимальное рандомное поведение, бликов меньше, но более рандомные»):
+// у каждой монеты (зерно — её номер, детерминированно) два «слота» блика, второй есть не у каждой; у слота свой период (1,5–3 с) и сдвиг, блик виден 36 % периода (плавное нарастание и спад sin², рывков нет),
+// место при каждом появлении новое: случайный угол вокруг монеты на радиусе у края монеты (асимметрия), размер чуть разный. Форма блика, цвет, сдвиг к глазу (№965) те же. Дальше COIN_SAT_NEAR м и сверх
+// COIN_SAT_MAXN монет за кадр — один слот. COIN1020_OLD=1 / файл coin1020old / «flag coin1020 0» — прежние три звезды кольцом. Кадр оборота спрайта сдвигается по монете — coinspr.h
+#ifndef COIN1020_OLD
+#define COIN1020_OLD 0
+#endif
+int fxCoin1020 = !COIN1020_OLD;
+#ifndef COIN1020_DUTY
+#define COIN1020_DUTY .36f
+#endif
+unsigned fxCoinStat[4];
+static unsigned hash1020(unsigned s) { s ^= s >> 16; s *= 0x7feb352du; s ^= s >> 15; s *= 0x846ca68bu; s ^= s >> 16; return s; }
+static float rnd1020(unsigned seed, unsigned k) { return (float)(hash1020(seed * 0x9e3779b1u + k * 0x85ebca6bu + 0x1234567u) & 0xffffff) * (1.f / 16777216.f); }
 #ifndef COIN_SAT_N
 #define COIN_SAT_N 3
 #endif
@@ -457,6 +471,7 @@ void fxSparkleCoin(float x, float y, float z, float size, float phase, float ex,
     if (d > o + .3f) { k = (d - o) / d; x += dx * (o / d); y += dy * (o / d); z += dz * (o / d); } }   // ближе — монета у самых глаз, сдвиг не нужен
   if (fxGlint970Old || COIN_GLINT965_OLD || d < .3f) { fxSparkleCA(x, y, z, size * COIN_GLINT_S * k, phase, 0xffc8f0ff, COIN_GLINT_A); return; }
   if (d > COIN_SAT_FAR) return;   // далеко: блика нет
+  fxCoinStat[0]++; { unsigned g_ = (d > COIN_SAT_NEAR || coinSat970 >= COIN_SAT_MAXN) ? 1u : (unsigned)COIN_SAT_N; fxCoinStat[1] += g_; if (g_ > fxCoinStat[2]) fxCoinStat[2] = g_; }   // №1020 служебно
   fxGlintOne970 = 1;
   if (d > COIN_SAT_NEAR || coinSat970 >= COIN_SAT_MAXN) { fxSparkleCA(x, y, z, size * .3f * k, phase, 0xffc8f0ff, COIN_SAT_A); fxGlintOne970 = 0; return; }
   coinSat970++;
@@ -468,6 +483,29 @@ void fxSparkleCoin(float x, float y, float z, float size, float phase, float ex,
     fxSparkleCA(x + (Rx * ca + Ux * sa) * r, y + Uy * sa * r, z + (Rz * ca + Uz * sa) * r, size * sz[j] * k, phase + (float)j * .31f, 0xffc8f0ff, COIN_SAT_A);
   }
   fxGlintOne970 = 0;
+}
+
+void fxSparkleCoin1020(float x, float y, float z, float size, float age, unsigned seed, float ex, float ey, float ez) {
+  float k = 1.f, dx = ex - x, dy = ey - y, dz = ez - z, d = sqrtf(dx * dx + dy * dy + dz * dz);
+  { float o = COIN_GLINT_LIFT; if (d > o + .3f) { k = (d - o) / d; x += dx * (o / d); y += dy * (o / d); z += dz * (o / d); } }   // как №965: целиком перед монетой
+  if (d < .3f) { fxSparkleCA(x, y, z, size * COIN_GLINT_S * k, age, 0xffc8f0ff, COIN_GLINT_A); return; }
+  if (d > COIN_SAT_FAR) return;
+  int slots = (d <= COIN_SAT_NEAR && coinSat970 < COIN_SAT_MAXN && rnd1020(seed, 30) < .45f) ? 2 : 1;
+  if (d <= COIN_SAT_NEAR && coinSat970 < COIN_SAT_MAXN) coinSat970++;
+  float vx = dx / d, vy = dy / d, vz = dz / d, rl = sqrtf(vx * vx + vz * vz); if (rl < 1e-3f) return;
+  float Rx = -vz / rl, Rz = vx / rl, Ux = -vy * vx / rl, Uy = rl, Uz = -vy * vz / rl;   // оси экрана: вправо (горизонталь), вверх
+  fxCoinStat[0]++; unsigned gl_ = 0;
+  for (int j = 0; j < slots; j++) {
+    float P = 1.5f + 1.5f * rnd1020(seed, 10 + (unsigned)j), t = age + rnd1020(seed, 20 + (unsigned)j) * P + (j ? 0.f : 0.f);
+    float n = floorf(t / P), u = (t - n * P) / P; if (u >= COIN1020_DUTY) continue;
+    float e = sinf(3.14159265f * u / COIN1020_DUTY); e *= e;   // плавно 0 -> 1 -> 0
+    unsigned cyc = (unsigned)(int)n * 7u + (unsigned)j;
+    float a = rnd1020(seed, 100 + cyc) * 6.2831853f, ca = cosf(a), sa = sinf(a), rho = (.36f + .16f * rnd1020(seed, 200 + cyc)) * size * k, sz = (.15f + .07f * rnd1020(seed, 300 + cyc)) * size * k;
+    fxGlintOne970 = 1;
+    fxSparkleCA(x + (Rx * ca + Ux * sa) * rho, y + Uy * sa * rho, z + (Rz * ca + Uz * sa) * rho, sz, rnd1020(seed, 400 + cyc) + u, 0xffc8f0ff, COIN_SAT_A * 1.25f * e);
+    fxGlintOne970 = 0; gl_++;
+  }
+  fxCoinStat[1] += gl_; if (gl_ > fxCoinStat[2]) fxCoinStat[2] = gl_;
 }
 
 // ---------- рисование ----------

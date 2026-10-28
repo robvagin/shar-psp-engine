@@ -259,3 +259,5 @@ int trafficRouteArrow(const Traffic *t, float px, float pz, float ph, float tx, 
 }
 #endif
 #endif
+extern int trfCost1001b;   // №1001б: 1 — pathGap отбрасывает далёкие препятствия заранее (побитно то же); TRFCOST1001B_OLD=1 / flag trfcost1001b 0 — прежний обход
+extern unsigned trfProfUs[8]; extern int trfProfOn;   // №1001б: разбивка trafficUpdate по частям (диагностика, строка TRFSUB)

@@ -1,0 +1,55 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L1
+flag golevel 1
+wait 40
+scene S_b327_0
+foot 197.5 349.9 0
+wait 3
+cam 194.4 8.7 347.4 -0.612 -0.3 -0.515
+wait 6
+shot b327_0
+scene S_b327_2
+foot 179.1 334.5 0
+wait 3
+cam 182.2 8.7 337.0 0.612 -0.3 0.515
+wait 6
+shot b327_2
+scene S_b133_0
+foot 175.5 261.9 0
+wait 3
+cam 172.4 10.4 259.4 -0.612 -0.3 -0.515
+wait 6
+shot b133_0
+scene S_b133_2
+foot 157.1 246.5 0
+wait 3
+cam 160.2 10.4 249.0 0.612 -0.3 0.515
+wait 6
+shot b133_2
+scene S_b349_0
+foot 19.2 648.2 0
+wait 3
+cam 16.1 10.1 645.7 -0.612 -0.3 -0.515
+wait 6
+shot b349_0
+scene S_b349_2
+foot 0.8 632.8 0
+wait 3
+cam 3.9 10.1 635.3 0.612 -0.3 0.515
+wait 6
+shot b349_2
+scene S_b39_0
+foot 97.0 204.6 0
+wait 3
+cam 93.9 10.5 202.1 -0.612 -0.3 -0.515
+wait 6
+shot b39_0
+scene S_b39_2
+foot 78.6 189.2 0
+wait 3
+cam 81.7 10.5 191.7 0.612 -0.3 0.515
+wait 6
+shot b39_2
+end

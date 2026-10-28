@@ -10,6 +10,7 @@
 #include <math.h>
 #include "frontend3d.h"
 #include "skin.h"
+#include "tone.h"   // №1021-герои: toneToon (Cartoon)
 #include "fe_billcut.h"
 #include "fe_gag_clock.h"
 
@@ -445,6 +446,7 @@ int feGlowCut = FE_GLOW_CUT_OLD;
 int feBillOld = FE_BILL_CUT_OLD;
 static int billNeed, billCut;
 static float glowFade = 1.f, glowOffT = -1.f;            // множитель подсветки пункта (1 — полная) и часы гостиной, когда ушли из главного вида
+static int feHeroOn(void);
 static void drawBill(const FeBill *b, int sel) {
   float w = b->w, h = b->h; unsigned c = b->abgr;
   if (b->track != 0xffff) {
@@ -504,11 +506,32 @@ static void drawBill(const FeBill *b, int sel) {
   feStats.bills++; feStats.tris += 2; (void)sel;
 }
 
+// №1021-герои (Роб 26.10: «главное меню — гостиная внутри дома в игре уже мультиком, сделай по такому же подобию, только Гомеру сильную обводку»): в Cartoon Гомер и герои сценок меню рисуются тем же путём, что в игре
+// (skinDrawPal в мультяшном режиме: ровный цвет, контур-оболочка по расстоянию), контур — видимой толщины под камеру меню. FEHERO1021_OLD=1 / файл fehero1021old / «flag fehero1021 0» — как в TEST71 (свет и текстуры)
+#ifndef FEHERO1021_OLD
+#define FEHERO1021_OLD 1   // Роб 26.10 23:4x: «меню в гостиной мультиком выбивается, диван просвечивает сквозь Гомера — откати, меню родное» — выключено по умолчанию
+#endif
+int feHero1021 = !FEHERO1021_OLD;
+static int feHeroOn(void) { return feHero1021 && skinToonEnabled() && toneToon(); }
+static void feHeroRestore(void) {   // состояние GE и кэши feDraw после skinDrawPal (оно оставляет своё)
+  sceGuDisable(GU_LIGHT1); sceGuDisable(GU_LIGHT0); sceGuDisable(GU_LIGHTING); sceGuColorMaterial(0); sceGuEnable(GU_TEXTURE_2D);
+  sceGuEnable(GU_DEPTH_TEST); sceGuDepthFunc(GU_GEQUAL); sceGuDepthMask(GU_FALSE); sceGuDisable(GU_FOG); sceGuDisable(GU_CULL_FACE); sceGuDisable(GU_BLEND); sceGuDisable(GU_ALPHA_TEST); sceGuShadeModel(GU_SMOOTH);
+  sceGuTexMapMode(GU_TEXTURE_COORDS, 0, 0); sceGuTexWrap(GU_REPEAT, GU_REPEAT); sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA); sceGuTexScale(128.f, 128.f); sceGuTexOffset(0.f, 0.f); sceGuTexFilter(GU_LINEAR, GU_LINEAR);
+  sceGuAlphaFunc(GU_GREATER, 0x40, 0xff); sceGuTexLevelMode(GU_TEXTURE_AUTO, 0.f); sceGuAmbientColor(0xffffffff); sceGuModelColor(0, 0xffffffff, 0xffffffff, 0); curLvl = -1; curSl = -1.f; bound = -2; curFl = -1;
+}
 static void drawChr(const SkinModel *m, const SkinPlayer *pl, const float *place, int eyeTex);
 static void drawHomer(void) { drawChr(&hm, hp, H->place, -1); }
 // eyeTex >= 0 — текстура батчей глаз (флаг 1): кадр дорожки TEX_* сценки №404
 static void drawChr(const SkinModel *m, const SkinPlayer *pl, const float *place, int eyeTex) {
   ScePspFMatrix4 w; rowsToMat(&w, place);
+  if (feHeroOn()) {   // №1021-герои: путь игры (skinDrawPal в мультяшном режиме) и возврат состояния кадра гостиной
+    ScePspFVector3 kd = {lt->key[0], lt->key[1], lt->key[2]}; unsigned kc = lt->keyCol; float kdir[1][3] = {{kd.x, kd.y, kd.z}};
+    skinToonEye(cp[0], cp[1], cp[2]); skinLights(1, kdir, &kc, lt->ambCol);
+    setFlags(0); skinDrawPal(m, pl->pal, &w, eyeTex);
+    skinLights(0, 0, 0, 0);
+    for (unsigned i = 0; i < m->h->nBatches; i++) feStats.tris += (int)m->b[i].nverts / 3;
+    feHeroRestore();
+    return; }
   ScePspFVector3 k = {lt->key[0], lt->key[1], lt->key[2]}, f = {lt->fill[0], lt->fill[1], lt->fill[2]};
   sceGuSetMatrix(GU_MODEL, &w);
   setFlags(0); bound = -2;
@@ -761,7 +784,8 @@ void feDraw(int sel) {
   for (unsigned i = 0; i < H->nBill; i++) {
     const FeBill *b = &bl[i];
     if (b->glow != 0xff && b->glow != sel) continue;
-    int g = (b->flags & F_PREHOMER) ? 0 : 1; if (nb[g] >= MAXP) continue;
+    int g = (b->flags & F_PREHOMER) ? 0 : 1; if (b->glow != 0xff && feHeroOn()) g = 1;   // №1021-герои: подсветка выбранного пункта — после Гомера и его контура, поверх
+    if (nb[g] >= MAXP) continue;
     const float *m = b->m; float d[3] = {m[3] - cp[0], m[7] - cp[1], m[11] - cp[2]};
     order[g][nb[g]] = (short)(-1 - (int)i); dist[g][nb[g]++] = d[0] * cf[0] + d[1] * cf[1] + d[2] * cf[2];
   }

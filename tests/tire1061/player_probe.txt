@@ -1,0 +1,57 @@
+wait 3
+flag golevel 3
+wait 25
+scene carwheel
+flag cfgdefaults 1
+flag toon 0
+flag flat912 0
+wait 2
+flag mipconst -1
+camrel 4 1.0 0 -1 -0.1 0 55
+wait 1.2
+shot m-1a
+flag mipconst -1
+camrel -4 1.0 0 1 -0.1 0 55
+wait 1.2
+shot m-1b
+flag mipconst -1
+camrel 0 1.0 4 0 -0.1 -1 55
+wait 1.2
+shot m-1c
+flag mipconst -1
+camrel 0 1.0 -4 0 -0.1 1 55
+wait 1.2
+shot m-1d
+flag mipconst 2
+camrel 4 1.0 0 -1 -0.1 0 55
+wait 1.2
+shot m2a
+flag mipconst 2
+camrel -4 1.0 0 1 -0.1 0 55
+wait 1.2
+shot m2b
+flag mipconst 2
+camrel 0 1.0 4 0 -0.1 -1 55
+wait 1.2
+shot m2c
+flag mipconst 2
+camrel 0 1.0 -4 0 -0.1 1 55
+wait 1.2
+shot m2d
+flag mipconst 3
+camrel 4 1.0 0 -1 -0.1 0 55
+wait 1.2
+shot m3a
+flag mipconst 3
+camrel -4 1.0 0 1 -0.1 0 55
+wait 1.2
+shot m3b
+flag mipconst 3
+camrel 0 1.0 4 0 -0.1 -1 55
+wait 1.2
+shot m3c
+flag mipconst 3
+camrel 0 1.0 -4 0 -0.1 1 55
+wait 1.2
+shot m3d
+end

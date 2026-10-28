@@ -253,9 +253,14 @@ void uiPause(int on);
 void uiPauseMenuHide(int on);                     // 1: пункты паузы не рисуются (подменю рисует свой список в той же рамке)
 void uiPauseSlow(float k);        // служебно (smoke, flag pauseslow K): анимация паузы медленнее в K раз
 int  uiPaused(void);
+void uiPadRepeatLR(int on);   // №1057: 1 — автоповтор и у L R (короче пауза и шаг), на один кадр; звать перед uiPadRepeat
 unsigned uiPadRepeat(unsigned buttons, unsigned hit);   // правка 202/№706: автоповтор ↑ ↓ ◄ ► (0,4 с, затем 0,12 с) в списках
 void uiPadRepeatOld(int on);                            // №706: 1 — прежнее (только ↑/↓, 0,35/0,09 с)
 void uiBubble992Set(int old);                         // №992: 1 — появление пузыря как в TEST70 (8 шагов, текст после рамки); 0 — короче, содержимое вместе с рамкой (flag bubble992 0 / файл bubble992old)
+void uiRadarIndoor(int on);                           // №1035: 1 — игрок в помещении: радар без карты, значков, клина и фона круга (остаётся рамка-кольцо)
+void uiRadar1035Set(int old);                         // №1035: 1 — радар в комнате как в TEST72
+void uiMenuVec1012Set(int old);                        // №1012: 1 — выделенный пункт меню как в TEST71 (только жёлтый текст); 0 — в Cartoon векторная плашка с контуром и бликом
+void uiTextLate1004Set(int old);                     // №1004: 1 — текст пузыря растёт с рамкой, как в TEST71 (flag textlate1004 0 / файл textlate1004old)
 extern int uiPadRepeated;                                // 1 — в hit шаг повтора (у края списка не по кругу)
 int  uiPauseSelected(void);
 int  uiPauseInput(unsigned buttonsJustPressed);
@@ -386,6 +391,9 @@ enum { UI_TRACE_MENU = 16 };     // MENUITEM — рамка пульсирующ
 void uiScrMenuFlags(int flags);   // 413: флаги пункта CGuiMenu оригинала для следующего uiScrDrawMenu (2 — пульс масштабом), SLES_518.97   // UIAVATAR / UIBUBBLE — нарисованные рамки аватара и пузыря задания (правка 22, tests/ui/avatar_check.py)
 void uiPix8(int on);            // правка 126: 1 (по умолчанию) — сообщения и уведомления пиксельным шрифтом 8×8 (msx); 0 — шрифтами пакета
 void uiBatchOld(int on);      // служебное (наряд 11.10): 1 — раскладка текста без кэша, как до UI_BATCH
+void uiDrawLog1040Set(int on);
+void uiBubble1040Set(int on);   // №1040: «flag bubble1040 0|1», файл bubble1040old
+void uiWrap1037Set(int on);   // №1037: «flag wrap1037 0|1», файл wrap1037old
 void uiObjWidowOld(int on);   // служебное: текст задания с висячим словом в последней строке, как до правки 215
 void uiObjTextOld(int on);      // служебное: 1 — текст задания без значка с места значка (прежний код; отрицательный контроль правки 48)
 void uiAvatarOld(int on);       // служебное: 1 — аватар прежнего размера (рамка первого слота; отрицательный контроль)
@@ -406,3 +414,5 @@ UiStats uiLastStats(void);
 }
 #endif
 #endif
+extern void (*uiPakProgress1060)(unsigned done, unsigned total);   // №1060б: вызывается после каждого куска чтения пакета (NULL — нет)
+void uiPakSegMax1051(unsigned bytes);   // №1051: потолок куска при чтении пакета (0 — 1 МБ), будка в тесной куче ставит 256 КБ

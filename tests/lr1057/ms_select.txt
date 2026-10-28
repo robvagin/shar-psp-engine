@@ -1,0 +1,31 @@
+# №1058: пауза -> MISSION SELECT, уровень L/R. NEW GAME на L3: R — следующий открытый уровень (L3 -> L1), L — предыдущий (L1 -> L3), ◄ ► — как раньше; ↑ ↓ по миссиям как есть
+flag menu
+flag lvset 3
+wait 1.5
+press cross
+wait 70
+flag uimsndone 15
+wait 1
+flag msnhud 1
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1
+shot ms_open
+press r
+wait 0.8
+shot ms_R
+press l
+wait 0.8
+shot ms_L
+press right
+wait 0.8
+press left
+wait 0.8
+press down
+wait 0.6
+press up
+wait 0.6
+end

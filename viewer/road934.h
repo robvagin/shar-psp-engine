@@ -92,6 +92,7 @@ static void road934Draw(float ex, float ey, float ez) {
   sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_BLEND); sceGuDisable(GU_ALPHA_TEST); sceGuDisable(GU_CULL_FACE);
   sceGuEnable(GU_DEPTH_TEST); sceGuDepthFunc(GU_ALWAYS); sceGuDepthMask(GU_TRUE);   // глубина не пишется и не проверяется: порядок блоков, город после слоя
   if (road934Dbg) { sceGuEnable(GU_FOG); sceGuFog(0.f, 1e-3f, 0xff00ffu); }   // служебное: сплошной пурпур (как hlod 4), гейт tests/road934
+  else if (fogCity1042On) { sceGuDisable(GU_FOG); }   // №1042: слой дальних дорог без дымки (до RD_FAR полным цветом)
   else { float f0 = drawDist + (RD_FAR - drawDist) * RD_FOG0; sceGuEnable(GU_FOG); sceGuFog(f0 * k, (RD_FAR + 2.f) * k, cityFogColor() & 0xffffffu); }
   // ближняя плоскость слоя = near_ (в масштабе k): видеочип сам срезает дороги ближе дальности города, блоки (160 м) заходят под город на десятки метров; матрица считается при смене поля зрения/дальности, не каждый кадр
   static ScePspFMatrix4 pm1; static float pmFov = -1.f, pmNear = -1.f, pmDd = -1.f; ScePspFMatrix4 pm0;

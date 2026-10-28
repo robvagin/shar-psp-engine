@@ -72,6 +72,35 @@ static void trafficHornFrame(float dt, float camx, float camy, float camz) {
   }
 #endif
 }
+// №1048 (Роб 26.10 на TEST72: «есть NPC-машина, которая говорит "Vote Quimby", когда проезжает мимо — она должна это говорить»): фургон кампании Квимби (votetruc, в трафике L5, в миссиях гонки sr2) играет клип гудка
+// votetruc_horn (sound/carsound/vote_quimby_03.rsd, SetLooping false, trim 0,75 в votetruc.spt) позиционно, пока она ближе VOTE_NEAR м: первый раз сразу при подъезде, дальше раз в VOTE_REPEAT с, пока рядом;
+// ушла дальше VOTE_FAR м — счёт сбрасывается (следующий проезд снова с первой фразы). Громкость и затухание — как у любого позиционного звука порта (spatialPoint: полная до 4 м, затухание до 60 м), один голос на
+// фургон, цена — перебор машин трафика раз в кадр. Клип уже в пакете звуков L5 (sfx.sab). VOTE1048_OLD=1 / файл vote1048old / «flag vote1048 0» — без голоса
+#ifndef VOTE1048_OLD
+#define VOTE1048_OLD 0
+#endif
+#define VOTE_NEAR 40.f
+#define VOTE_FAR 60.f
+#define VOTE_REPEAT 9.f
+static int vote1048On = !VOTE1048_OLD; static float voteT[TR_MAXCAR]; static int voteId = -2, voteLvl = -1; static unsigned voteSaid;
+static void trafficVoteFrame(float dt, float camx, float camy, float camz) {
+  if (!vote1048On || !haveTraffic) return;
+  if (voteLvl != gameLevel) { voteLvl = gameLevel; voteId = -2; memset(voteT, 0, sizeof voteT); }
+  for (int i = 0; i < TR_MAXCAR && i < traffic.maxCars; i++) {
+    const TrCar *a = &traffic.car[i];
+    if ((a->mode != TRM_DRIVE && a->mode != TRM_PHYS) || a->car.destroyed || a->model < 0 || a->model >= (int)traffic.hd->nModel || strncmp(traffic.model[a->model].name, "votetruc", 8)) { voteT[i] = 0.f; continue; }
+    float dx = a->car.x - camx, dy = a->car.y - camy, dz = a->car.z - camz, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > VOTE_FAR * VOTE_FAR) { voteT[i] = 0.f; continue; }
+    if (d2 > VOTE_NEAR * VOTE_NEAR) continue;
+    voteT[i] -= dt;
+    if (voteT[i] > 0.f) continue;
+    if (voteId == -2) voteId = sndId("votetruc_horn");
+    voteT[i] = VOTE_REPEAT;
+    if (voteId < 0) continue;
+    int h_ = sndPlayId(voteId, a->car.x, a->car.y + 1.5f, a->car.z, 1.f); voteSaid++;
+    if (smkOn) { float g_ = 0.f, p_ = 0.f; audioSpatial(a->car.x, a->car.y + 1.5f, a->car.z, 4.f, 60.f, &g_, &p_); char l_[160]; snprintf(l_, sizeof l_, "VOTE1048 t=%.1f car=%d dist=%.1f gain=%.2f handle=%d said=%u level=%d\n", smkT, i, sqrtf(d2), g_, h_, voteSaid, gameLevel); smkWrite(l_); }
+  }
+}
 
 static void trafficHornClear(void) {
   for (int i = 0; i < TR_MAXCAR; i++) {
@@ -240,17 +269,34 @@ static void gagSound(int g) {
 #define DEFAULTS794_OLD 0
 #endif
 typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, tutorial; unsigned tutSeen, movies; int colour, invertCam, toon, treeShadow;
-                 int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist; } Settings;   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
+                 int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist, carShadow, curbTint; } Settings;   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
 // №794 (сверено 19.10 с settings.bin Роба на PSP: насыщенность 1,56, контраст 1,50): значения по умолчанию для нового файла. DEFAULTS794B_OLD=1 — 1,36/1,00
 #ifndef DEFAULTS794B_OLD
 #define DEFAULTS794B_OLD 0
 #endif
-static Settings cfg = {{'S', 'H', 'S', 'T'}, 10, 1000, 1000, 1000, 1000, 1, 1, 0, 1, DEFAULTS794B_OLD ? TONE_SAT_DEF : 156, 1, DEFAULTS794_OLD ? 0 : 1, 0, DEFAULTS794B_OLD ? 100 : 150,
-                       DEFAULTS794_OLD ? 5 : 4, 1, DEFAULTS794_OLD ? 35 : 45, 1, 5, 0, INK951_DEF, 2, 2};   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
+// №1042б (Роб: «используй максимум возможностей, я хочу увидеть дальнюю прорисовку»): Draw Distance по умолчанию 250 м (было 200), settings.bin ver 13 один раз поднимает выбор до 250 у тех,
+// у кого записано 150/200 (потолок 150 вне зон снят в FAR1042, выбор игрока = дальность). DRAWDEF1042_OLD=1 — по умолчанию 200, ver 12 не мигрирует
+#ifndef DRAWDEF1042_OLD
+#define DRAWDEF1042_OLD 0
+#endif
+// №1066 (Роб 28.10, фото меню CARTOON и PICTURE на PSP: «как у нас должны стоять настройки по умолчанию»): для НОВОГО settings.bin Saturation 1.28 (было 1.56), Contrast 1.30 (1.50), Eye Lines Off (Soft),
+// Texture Detail 80 % (45), Old TV 20 % (50), Textures On (Off); Cartoon On, Line Width 4, Ink Black, Tree/Car Shadows Off, Draw Distance 250, Curbs Original — как было. Сохранения не трогаются (cfgLoad читает файл как есть).
+// DEFAULTS1066_OLD=1 / файл defaults1066old рядом с EBOOT (до cfgLoad) — прежние значения
+#ifndef DEFAULTS1066_OLD
+#define DEFAULTS1066_OLD 0
+#endif
+static Settings cfg = {{'S', 'H', 'S', 'T'}, DRAWDEF1042_OLD ? 10 : 14, 1000, 1000, 1000, 1000, 1, 1, 0, 1, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? TONE_SAT_DEF : 156) : 128, 1, DEFAULTS794_OLD ? 0 : 1, 0, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? 100 : 150) : 130,
+                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
 // №996: CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители камеры всегда 1 (как TEST70); шаги Height / Distance — множитель дальности и отступа глаза над точкой взгляда
 #ifndef CAMCFG996_OLD
 #define CAMCFG996_OLD 0
 #endif
+// №1003 (Роб 26.10 после TEST71: «давай уберём тени из-под машин — они мерцают, и это оптимизация (0,6–0,9 мс PSP); тогл в меню рядом с тенями деревьев»): тени всех машин (своя, трафик,
+// стоящие, миссионные) по умолчанию не считаются и не рисуются; строка Car Shadows на PICTURE включает их как в TEST71. CARSHADOW1003_OLD=1 / файл carshadow1003old — тени всегда, как в TEST71
+#ifndef CARSHADOW1003_OLD
+#define CARSHADOW1003_OLD 0
+#endif
+static int carShadow1003Old = CARSHADOW1003_OLD, carShadow1003On;   // carShadow1003On ставит cfgApply: тени машин рисуются
 static int camCfg996On = !CAMCFG996_OLD, camCfgSnap996;   // camCfgSnap996: Height / Distance сменились — сглаживание камеры (отпускание стены, опора глаза) сбросить: под паузой (dt = 0) оно иначе не сдвинется
 static const float camCfgH996[5] = {.5f, .75f, 1.f, 1.25f, 1.5f}, camCfgD996[5] = {.7f, .85f, 1.f, 1.15f, 1.3f};
 static int toonDevFile;   // №428: служебный файл toon рядом с EBOOT — режим включён поверх настройки игрока
@@ -293,6 +339,7 @@ static void gagMovie(int g, void **fbp) {
   if (movieSystem(1) < 0) { collLog("fmv_nojpeg", g, coll.gag[g].fmv); return; }
   if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
   sndMaster(0.f);
+  mem1060Pre(2560u << 10, "movie");   // №1060: кольцо кусков и кадр ролика (≈1,6 МБ) — цельным блоком; экран ролика закрывает мир
   int err = 0, shot = 0; Movie *m = movieOpen(fn, &err);
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
@@ -444,6 +491,35 @@ static void collHud(void) {
 // модели пакета: в городе — карточки, осы и уличные гэги; в комнате — только гэги этой комнаты
 static int gagSnap = -1;
 static int glowFogOld;   // отрицательный контроль правки 76 (flag glowfog): свечение сложением в тумане, как раньше
+// №1063 (Роб 27.10: «у карточек такой же блик, как в оригинале… точно векторное свечение, не старое»): данные оригинала — у карточки один билборд-квад 1,6 м со сложением, цвет вершины белый (его альфа — пульс),
+// текстура — серый радиальный градиент 32×32 (по кольцам от центра: 0,89 → 0,6 (0,19 радиуса) → 0,23 (0,31) → 0,10 (0,44) → 0,03 (0,69) → 0 на краю квада). Пятно рисуется ВЕКТОРОМ: кольца вершин с альфой по этому профилю,
+// без текстуры и без размытого спрайта; белое, сложением, как в оригинале (оранжево-розовый — от картинки карточки под ним). CARD1063_OLD=1 / файл card1063old / flag card1063old 1 — блик-звезда №839 прежний
+#ifndef CARD1063_OLD
+#define CARD1063_OLD 0
+#endif
+static int card1063Old = CARD1063_OLD;
+static int cardGlowInst(unsigned i) { for (unsigned k = 0; k < coll.ncard; k++) if (coll.card[k].inst == i) return 1; return 0; }
+static int cardSpotDraw(const float *v, unsigned col) {   // квад билборда (4 угла) -> векторное радиальное пятно (список треугольников); 0 — не нарисовано (альфа 0)
+  float a0 = (float)(col >> 24) / 255.f; if (a0 < .01f) return 0;
+  float cx = (v[0] + v[3] + v[6] + v[9]) * .25f, cy = (v[1] + v[4] + v[7] + v[10]) * .25f, cz = (v[2] + v[5] + v[8] + v[11]) * .25f;
+  float rx = (v[3] - v[0] + v[9] - v[6]) * .25f, ry = (v[4] - v[1] + v[10] - v[7]) * .25f, rz = (v[5] - v[2] + v[11] - v[8]) * .25f;   // полуширина (вправо)
+  float ux = (v[6] - v[0] + v[9] - v[3]) * .25f, uy = (v[7] - v[1] + v[10] - v[4]) * .25f, uz = (v[8] - v[2] + v[11] - v[5]) * .25f;   // полувысота (вверх)
+  enum { SEG = 12, RINGS = 7, NV = SEG * 3 + SEG * (RINGS - 2) * 6 };
+  static const float rf[RINGS] = {0.f, .19f, .31f, .44f, .69f, .88f, 1.f}, ra[RINGS] = {.89f, .6f, .23f, .10f, .03f, .01f, 0.f};
+  typedef struct { unsigned c; float x, y, z; } SV;
+  SV *q = (SV *)geVbAlloc(NV * sizeof(SV), GEVB_COLLECT_OLD); if (!q) return 0;
+  unsigned n = 0;
+#define SPV(r, k) do { float th_ = 6.2831853f * (float)((k) % SEG) / SEG, cs_ = cosf(th_) * rf[r], sn_ = sinf(th_) * rf[r]; \
+    q[n].c = ((unsigned)(ra[r] * a0 * 255.f) << 24) | 0xffffffu; q[n].x = cx + rx * cs_ + ux * sn_; q[n].y = cy + ry * cs_ + uy * sn_; q[n].z = cz + rz * cs_ + uz * sn_; n++; } while (0)
+  for (int k = 0; k < SEG; k++) { SPV(0, 0); SPV(1, k); SPV(1, k + 1); }
+  for (int r = 1; r < RINGS - 1; r++) for (int k = 0; k < SEG; k++) { SPV(r, k); SPV(r + 1, k); SPV(r, k + 1); SPV(r, k + 1); SPV(r + 1, k); SPV(r + 1, k + 1); }
+#undef SPV
+  ScePspFMatrix4 I; memset(&I, 0, sizeof I); I.x.x = I.y.y = I.z.z = I.w.w = 1.f; sceGuSetMatrix(GU_MODEL, &I);
+  sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_ALPHA_TEST); sceGuEnable(GU_BLEND); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, 0xffffffff); sceGuDepthMask(GU_TRUE); sceGuDisable(GU_FOG); setCull(0); curFlags = -1;
+  sceGuDrawArray(GU_TRIANGLES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, (int)n, 0, q);
+  if (smkOn) { static unsigned nl_; if ((nl_++ & 63) == 0) { char l_[160]; snprintf(l_, sizeof l_, "CARDSPOT n=%u a=%.2f c=%.1f,%.1f,%.1f half=%.2f,%.2f\n", nl_, a0, cx, cy, cz, sqrtf(rx * rx + ry * ry + rz * rz), sqrtf(ux * ux + uy * uy + uz * uz)); smkWrite(l_); } }   // №1063 служебно
+  return 1;
+}
 static int spBillUvOld;  // №370: отрицательный контроль прежнего переворота неона (flag spuvold 1)
 #ifndef GRANDPA_GLASSES_OLD
 #define GRANDPA_GLASSES_OLD 0
@@ -558,7 +634,7 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
     }
   }
   if (smkOn) cp2 = sceKernelGetSystemTimeLow();
-  int nb = 0;   // билборды (свечение карточки, лучи осы, огонь/свет сцен): как у стейтпропов уровня
+  int nb = 0, spot_ = 0;   // билборды (свечение карточки, лучи осы, огонь/свет сцен): как у стейтпропов уровня
   collNearBuild(sp, room, 60.f, ex, ez);
   for (unsigned ii_ = 0; ii_ < collNearN(sp); ii_++) { unsigned i = collNearAt(sp, ii_);
     if (collectInstRoom(&coll, i) != room || !spDrawable(sp, i, ex, ez, 60.f)) continue;
@@ -574,6 +650,8 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
       // эффекты героя — взмах ноги (kickFx, 14 кадров диска), удар током (shockFx) и молнии (bolt) — их квады сложением остаются картинкой, бликом — только свечения предметов
       int fx_ = (int)i == coll.kickFx || (int)i == coll.shockFx || (coll.bolt0 >= 0 && i >= (unsigned)coll.bolt0 && i < (unsigned)coll.bolt0 + coll.nbolt);
       if (!fx_ && neonArchBig957(v, bfl)) continue;   // №957б: арка, вывеска — без свечения
+      if (smkOn) { static unsigned char lg_[1024]; unsigned ok_ = bt >= 0 && (unsigned)bt < ntex; const Tex *tt_ = ok_ ? &tex[bt] : &tex[0]; unsigned k_ = i & 1023; if (!lg_[k_]) { lg_[k_] = 1; char l_[200]; snprintf(l_, sizeof l_, "CARDGLOW i=%u b=%u bt=%d mode=%d col=%08x stat=%u,%u,%u,%u,%u ok=%u p=%.1f,%.1f,%.1f w=%.2f\n", i, b, bt, (int)((bfl >> 8) & 0xFF), col, tt_->tstat[0], tt_->tstat[1], tt_->tstat[2], tt_->tstat[3], tt_->tstat[4], ok_ ? (unsigned)tt_->tstatOk : 99u, (v[0] + v[9]) * .5f, (v[1] + v[10]) * .5f, (v[2] + v[11]) * .5f, sqrtf((v[3] - v[0]) * (v[3] - v[0]) + (v[5] - v[2]) * (v[5] - v[2]))); smkWrite(l_); } }   // №1063 служебно: чем светится карточка (журнал смоука, раз на экземпляр)
+      if (!card1063Old && !fx_ && ((bfl >> 8) & 0xFF) == 2 && cardGlowInst(i)) { if (cardSpotDraw(v, col)) spot_ = 1; continue; }   // №1063: свечение карточки — векторное пятно оригинала (1,6 м, радиальный градиент)
       if (!GLOW_GLINT_OLD && ((bfl >> 8) & 0xFF) == 2 && (FX_GLINT846_OLD || !fx_)) { gq944Site = "coll"; glowQuadQ(v, col, (float)i * .41f + (float)b); continue; }   // №839: свечение предмета — бликом
       if (!nb++) {
         ScePspFMatrix4 I; memset(&I, 0, sizeof I); I.x.x = I.y.y = I.z.z = I.w.w = 1.f;
@@ -592,7 +670,7 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
       sceGuDrawArray(GU_TRIANGLE_STRIP, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, 4, 0, q);
     }
   }
-  if (nb) { sceGuTexScale(128.f, 128.f); if (!inR) sceGuEnable(GU_FOG); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0); resetState(); }
+  if (nb || spot_) { sceGuTexScale(128.f, 128.f); if (!inR) sceGuEnable(GU_FOG); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0); resetState(); }
   glowGlintFlush(ex, ey, ez);   // №839
   for (unsigned g = 0; g < coll.ngag; g++) {   // блёстки над ненайденными гэгами (GagSetSparkle): как у монет, слот частиц 0
     const CollGag *G = &coll.gag[g];

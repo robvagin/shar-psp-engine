@@ -19,15 +19,18 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--to', type=float, nargs='+', required=True); ap.add_argument('--act', default='triangle')
     ap.add_argument('--after', type=int, default=600); ap.add_argument('--out', default='v12_booth'); ap.add_argument('--near', type=float, default=1.6)
     ap.add_argument('--png', type=int, default=5); ap.add_argument('--seq', default='triangle@0'); ap.add_argument('--save', default='')
-    ap.add_argument('--cam', action='store_true', help='писать камеру оригинала (cam_pos, cam_fwd) в walk.tsv'); a = ap.parse_args()
+    ap.add_argument('--hold', default='', help='№1059: стик во время действия, имя@кадр от прихода: up@200,left@300 (up/down/left/right/none)')
+    ap.add_argument('--cam', action='store_true', help='писать камеру оригинала (cam_pos, cam_fwd) в walk.tsv')
+    ap.add_argument('--state', default='build/ps2ref/state_l1_incar.p2s'); ap.add_argument('--skip-exit', action='store_true', help='Гомер уже пешком: сразу идти (без выхода из машины)'); a = ap.parse_args()
     wps = [(a.to[i], a.to[i + 1]) for i in range(0, len(a.to) - 1, 2)]; wi = 0   # путь по точкам: --to x1 z1 x2 z2 …
-    o = D.Original(C.OUT / 'o4' / a.out, extra=HOMER + (CAM if a.cam else [])); (o.out / 'png').mkdir(exist_ok=True)
+    o = D.Original(C.OUT / 'o4' / a.out, state=a.state, extra=HOMER + (CAM if a.cam else [])); (o.out / 'png').mkdir(exist_ok=True)
     tsv = (o.out / 'walk.tsv').open('w'); tsv.write('кадр\tгх\tгz\tд\tфаза\tмашина x\tмашина z' + ('\tcam x\ty\tz\tfwd x\ty\tz\tгy' if a.cam else '') + '\n')
     phase, t0, prev, cam, cmd_ang, seg_start, hist, side_until, side, side_in_window = 'выход', 0, None, None, None, None, [], -1, 1, False
     while True:
         s = o.step()
         if s is None: break
         f = o.frame; hx, hz = s['hx'], s['hz']; tgt = wps[wi]; d = math.hypot(tgt[0] - hx, tgt[1] - hz); cmds = []
+        if phase == 'выход' and a.skip_exit: phase, t0 = 'идти', f
         if phase == 'выход':
             cmds = ['pad triangle 1'] if 60 <= f < 66 else ['pad triangle 0']
             if f >= 210: phase, t0 = 'идти', f
@@ -60,6 +63,14 @@ def main():
                 at = int(at)
                 if at <= f - t0 < at + dur: cmds.append(f'pad {b} 1')
                 elif at + dur <= f - t0 < at + dur + 2: cmds.append(f'pad {b} 0')
+            if a.hold:
+                cur_ = 'none'
+                for item in a.hold.split(','):
+                    nm, at = item.split('@')
+                    if f - t0 >= int(at): cur_ = nm
+                if cur_ != getattr(o, '_hold', 'none') or f - t0 == 0:
+                    o._hold = cur_; ax_ = {'up': ('y', 1.0), 'down': ('y', -1.0), 'left': ('x', -1.0), 'right': ('x', 1.0)}.get(cur_)
+                    cmds += [*D.axis('l', 'y', 0.0), *D.axis('l', 'x', 0.0)] if ax_ is None else [*D.axis('l', 'x' if ax_[0] == 'y' else 'y', 0.0), *D.axis('l', ax_[0], ax_[1])]
             if a.save and f - t0 in [int(x) for x in a.save.split(',')]: cmds.append(f"save {o.out / f'snap_{f - t0}.p2s'}")
             if f - t0 > a.after: o.p.stdin.write('end\n'); o.p.stdin.flush(); break
         prev = (hx, hz)

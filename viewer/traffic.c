@@ -522,7 +522,40 @@ static float obsDist(const Obs *o, float x, float z) {
   float a = fabsf(dx * o->fx + dz * o->fz) - o->hl, l = fabsf(-dx * o->fz + dz * o->fx) - o->hw;
   return (a > 0.f && l > 0.f) ? sqrtf(a * a + l * l) : fmaxf(a, l);
 }
+// №1001б (цель: минус 1 мс PSP в езде L3–L7, поведение побитно то же): на PSP/в эмуляторе pathGap — две трети цены езды машины трафика (12 вызовов routeAt и обход всех препятствий
+// на каждую точку), а препятствий на пути впереди почти всегда нет. Точки пути лежат не дальше front + 12 м (дуга) от начала машины: препятствие, чей круг/габарит дальше
+// front + 12 + r + габарит + запас 3 м, задеть не может ни в какой точке — такие отбрасываются заранее (без них результат тот же), нет ни одного — 1e9 без единого routeAt.
+// TRFCOST1001B_OLD=1 / файл trfcost1001bold / flag trfcost1001b 0 — прежний обход
+#ifndef TRFCOST1001B_OLD
+#define TRFCOST1001B_OLD 0
+#endif
+int trfCost1001b = !TRFCOST1001B_OLD;
+static float pathGapFast(const Traffic *t, const TrCar *c, const Obs *o, int n, const Obs *pk, int npk) {
+  const Car *k = &c->car; int self = (int)(c - t->car); float front = k->p.halfL + k->p.bodyOfs, r = k->p.halfW + .2f;
+  float p0[3]; routeAt(t, c, 0.f, p0);
+#ifndef TRFCOST1001B_BREAK
+#define TRFCOST1001B_BREAK 0   // отрицательный контроль гейта tests/trfcost1001b: 1 — отбор слишком тесный (поведение меняется, гейт обязан покраснеть)
+#endif
+  float reach = TRFCOST1001B_BREAK ? 1.f : front + 12.f + r + 3.f;
+  const Obs *rel[TR_MAXPED + TR_MAXCAR + TR_MAXEXTRA + 2 + 24]; int nr = 0;
+  for (int i = 0; i < n; i++) {
+    if (o[i].own == self) continue;
+    float hr = o[i].box ? sqrtf(o[i].hl * o[i].hl + o[i].hw * o[i].hw) : o[i].r, dx = o[i].x - p0[0], dz = o[i].z - p0[2], R = reach + hr;
+    if (dx * dx + dz * dz <= R * R) rel[nr++] = &o[i];
+  }
+  for (int i = 0; i < npk; i++) {
+    float hr = pk[i].box ? sqrtf(pk[i].hl * pk[i].hl + pk[i].hw * pk[i].hw) : pk[i].r, dx = pk[i].x - p0[0], dz = pk[i].z - p0[2], R = reach + hr;
+    if (dx * dx + dz * dz <= R * R) rel[nr++] = &pk[i];
+  }
+  if (!nr) return 1e9f;
+  for (float d = 1.f; d <= 12.f; d += 1.f) {
+    float p[3]; routeAt(t, c, front + d, p);
+    for (int i = 0; i < nr; i++) if (obsDist(rel[i], p[0], p[2]) < r) return d - 1.f;
+  }
+  return 1e9f;
+}
 static float pathGap(const Traffic *t, const TrCar *c, const Obs *o, int n, const Obs *pk, int npk) {
+  if (trfCost1001b) return pathGapFast(t, c, o, n, pk, npk);
   const Car *k = &c->car; int self = (int)(c - t->car); float front = k->p.halfL + k->p.bodyOfs, r = k->p.halfW + .2f;
   for (float d = 1.f; d <= 12.f; d += 1.f) {
     float p[3]; routeAt(t, c, front + d, p);
@@ -531,6 +564,14 @@ static float pathGap(const Traffic *t, const TrCar *c, const Obs *o, int n, cons
   }
   return 1e9f;
 }
+// №1001б: разбивка trafficUpdate по частям (на PSP при включённой диагностике, строка TRFSUB): 0 — зоны и удаление, 1 — спавн машин, 2 — спавн пешеходов, 3 — препятствия,
+// 4 — езда и физика машин, 5 — столкновения машин, 6 — стоящие машины, 7 — пешеходы
+unsigned trfProfUs[8]; int trfProfOn; static unsigned trfProfT0;
+#ifdef __PSP__
+#define TP(i) do { if (trfProfOn) { unsigned t_ = sceKernelGetSystemTimeLow(); if ((i) > 0) trfProfUs[(i) - 1] += t_ - trfProfT0; trfProfT0 = t_; } } while (0)
+#else
+#define TP(i) do { } while (0)
+#endif
 static void driveStep(Traffic *t, const ColWorld *w, TrCar *c, const Obs *obs, int nobs, float dt) {
   const TrRoad *r = &t->road[c->road];
   float L = c->elem == 0 ? laneLen(t, c->road, c->lane) : c->bzLen;
@@ -1355,6 +1396,7 @@ int trafficPedGroup(Traffic *t, int group) {
 void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, const float ppos[3],
                    const float eye[3], const float fwd[3], float dt) {
   if (!t->hd || dt <= 0.f) return;
+  TP(0);
   if (dt > .1f) dt = .1f;
   t->time += dt;
   float fl = sqrtf(fwd[0] * fwd[0] + fwd[2] * fwd[2]), fx = fl > 1e-4f ? fwd[0] / fl : 0.f, fz = fl > 1e-4f ? fwd[2] / fl : 1.f;
@@ -1376,6 +1418,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     int seen = inView(eye, fwd, c->car.x, c->car.y + 1.f, c->car.z, carR(&c->car), t->drawDist);
     if (d > REMOVE_HARD || (d > REMOVE_R && !seen) || (c->next < 0 && c->v < .1f && !seen)) c->mode = TRM_OFF;
   }
+  TP(1);
   if ((t->scanT -= dt) <= 0.f || t->fresh) {
     t->scanT = .25f;
     if (trfSpawnOld) spawnCarsOld(t, w, player, ppos, cen, eye, fwd);
@@ -1393,6 +1436,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
       spawnCars(t, w, player, ppos, cen, &V);
     }
   }
+  TP(2);
   for (int i = 0; i < t->maxPeds; i++) {
     TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF || e->test) continue;
     float dx = e->x - ppos[0], dz = e->z - ppos[2], d = sqrtf(dx * dx + dz * dz);
@@ -1400,6 +1444,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
   }
   if ((t->pedScanT -= dt) <= 0.f || t->fresh) { t->pedScanT = .5f; spawnPeds(t, w, ppos, eye, fwd); }
   t->fresh = 0;
+  TP(3);
   // --- препятствия для водителей (стоящие машины gapAhead смотрит сам)
   Obs obs[2 + TR_MAXPED + TR_MAXCAR + TR_MAXEXTRA]; int no = 0, carObs[TR_MAXCAR];
   if (player) obsCar(&obs[no++], player, -1);
@@ -1410,6 +1455,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     carObs[i] = -1; if (t->car[i].mode == TRM_OFF) continue;
     carObs[i] = no; obsCar(&obs[no++], &t->car[i].car, i);
   }
+  TP(4);
   // --- езда и физика
   t->activeCars = t->movingCars = 0;
   for (int i = 0; i < t->maxCars; i++) {
@@ -1421,6 +1467,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
       if (c->v > .5f) t->movingCars++;
     } else physStep(t, w, c, dt);
   }
+  TP(5);
   // --- столкновения: игрок и трафик, трафик между собой, стоящие
   for (int i = 0; i < t->maxCars; i++) {
     TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) continue;
@@ -1444,6 +1491,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     carRamCapFrame(&c->car, dmg);   // №176 повтор: один удар не разбивает трафик
     if (c->car.destroyed && c->mode != TRM_WRECK) c->mode = TRM_WRECK;
   }
+  TP(6);
   t->awakePark = 0;
   for (int i = 0; i < t->npark; i++) {
     TrParked *P = &t->park[i]; if (P->gone) continue;
@@ -1472,6 +1520,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     if (moved && !P->off && !P->state && px * px + pz * pz > PARK_BACK * PARK_BACK && !inView(eye, fwd, P->car.x, P->car.y + 1.f, P->car.z, carR(&P->car), t->drawDist)) {
       carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->wreck = 0; }
   }
+  TP(7);
   // --- пешеходы
   t->activePeds = 0;
   for (int i = 0; i < t->maxPeds; i++) {
@@ -1483,6 +1532,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     for (int j = 0; j < t->maxCars; j++) if (t->car[j].mode == TRM_PHYS || t->car[j].mode == TRM_WRECK) pedHitBy(t, i, &t->car[j].car);
     pedStep(t, w, i, player, driving, ppos, dt);
   }
+  TP(8);
 }
 
 // ================================================================ Гомер

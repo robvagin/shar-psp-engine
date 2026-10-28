@@ -13,6 +13,8 @@ extern "C" {
 #endif
 
 extern int propsPole968Old;   // №968: 1 — столб (высокий предмет без обломка) падает физикой коробки, как до правки (flag pole968old)
+extern int pole1046Old;   // №1046: 1 — столб валится вяло, как в TEST73 (flag pole1046 0)
+float propsPoleKick1046(float v, float w0, float wk, float v0);   // №1046: начальная угловая скорость столба от скорости машины (толчок бампера)
 extern int propsTallFallOld;   // №946: 1 — высокий предмет падает медленно, как было (flag tallfall946old)
 typedef struct { float ox, oy, oz, sc; int tex, flags; unsigned nv, ni, vOff, iOff; } PropPiece;  // кусок типа (файл psp_export.py)
 typedef struct { float radius, halfH, mass; unsigned firstPiece, nPiece; } PropType;               // тип пропа
@@ -66,6 +68,7 @@ void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt);
 // Several actors: advance the shared objects once, then submit each actor's own sweep.
 void propsAdvance(Props *p, const ColWorld *world, float dt);
 void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previous);
+extern int bench1034;   // №1034: 1 — скамейки, баки, большие ящики твёрдые для Гомера пешком и держат сверху (BENCH1034_OLD=1 / flag bench1034 0 — как было)
 int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float stepH, float bodyH, float *top, float *onx, float *onz);   // правка 290: пропы твёрдые для Гомера
 // Обычные пропы возвращаются только далеко и вне вида (исходное И текущее место), после 5 с
 void propsRespawnStep(Props *p, float ex, float ez, float dt,

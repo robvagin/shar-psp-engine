@@ -15,6 +15,7 @@ static int ground(float x, float z, float y, float step, float *out) {
 }
 extern int roadArrowOld;   // viewer/msn_view.c, №606
 static int mvGroundHook(float x, float z, float yHi, float yLo, float *out) { float n[3]; return haveCol && colGround(&world, x, z, yHi, yLo, out, n); }   // №606: высота коллизии под стрелкой маршрута
+static int mvGroundNHook(float x, float z, float yHi, float yLo, float *y, float *n3) { return haveCol && colGround(&world, x, z, yHi, yLo, y, n3); }   // №1025: высота и нормаль под стрелкой
 // стена в клетке перекрывает высоты кузова машины?
 static int wallAt(float x, float z, float y) {
   int gx = (int)((x - hox) / hcell), gz = (int)((z - hoz) / hcell);
@@ -282,6 +283,14 @@ static void setCull(int on) {
 #endif
 static int neonGlowOn = NEON_GLOW_ON;
 // №933 служебно (инвентарь светящегося текстурой/сложением): GLOWTOP раз в секунду — что ещё рисуется как свет не вектором. src: фаза кадра для кусков со сложением (A<фаза>), «B» — билборд-квад (текстура, режим BLMD, PVIS)
+// №1052 (Роб 27.10: «в будке внизу осталось размытое мигание, у нас только векторное свечение»; «любое такое свечение удали»): размытые пятна с текстурой и сложением не рисуются нигде. Инвентарь (кадры 26.10, L1 будка, L5, L7; журнал GLOWTOP):
+// билборды-ореолы mode 2 — уже блик или ничего (№839, neonGlowOn 0), таблица света lightsprite.h при slLightOn — ореолы и знаки mode 0/1 не рисуются, остаются конусы и лучи (вектор), аддитивные куски города до 64 треугольников — векторные звёзды (spritelight.h),
+// остаётся одно место: аддитивный кусок с текстурой крупнее 64 треугольников (owner 0) рисовался прямо — теперь нет (конусы ламп и лучи идут таблицей света и вектором). GLOWOFF1052_OLD=1 / файл glowoff1052old / flag glowoff1052 0 — как в TEST73
+#ifndef GLOWOFF1052_OLD
+#define GLOWOFF1052_OLD 0
+#endif
+static int glowOff1052Old = GLOWOFF1052_OLD;
+#define GLOWOFF1052_SKIP(d) (!glowOff1052Old && ((d)->r.flags & F_ADDITIVE) && (d)->r.owner == 0 && (d)->r.tex >= 0)
 static int gloSite;   // №933 служебно: 1 пропы, 2 стейтпропы, 3 собираемое (collDraw), 0 прочее — откуда рисуется кусок (GLOWBIG)
 static struct { char src; int a, b, c; unsigned n, tris; } gloT[24]; static int gloN; static float gloT0; static unsigned gloFr;
 static void gloAdd(char src, int a, int b, int c, unsigned tris) {
@@ -729,6 +738,10 @@ static int tqPush(const Piece *d, const ScePspFMatrix4 *m, int far, int cnt, flo
 #ifndef CAM_CLIP_R
 #define CAM_CLIP_R 0.5f
 #endif
+#ifndef CAMCLIPFAST1060_OLD
+#define CAMCLIPFAST1060_OLD 0
+#endif
+static int camClipFast1060 = !CAMCLIPFAST1060_OLD, camClipChk1060;   // №1060: служебный счётчик CAMCLIPSTAT без чтения далёких кусков
 // №634 (арка J9-5, TEST19: стены навеса на железе бледные и просвечивают, у PS2 плотные): у PSP нет отсечения по ближней плоскости, GE выбрасывает треугольник целиком, если вершина
 // за плоскостью; срез у камеры (ggOn, правка 340) раньше включался только при опущенной ближней плоскости. Теперь и в кадре, где непрозрачный кусок города ближе GG_NEAR_R к глазу.
 // Рантайм «flag ggnear 0/1»; CAM_GG_NEAR_OLD=1 — как было
@@ -752,7 +765,16 @@ static void carToonHull(Piece *d, const float *m);
 // №675: контур и у мелких предметов мира (пропы, столбы, знаки, урны): кусок не крупнее TOON_WORLD_EXT по любой оси, ближе TOON_WORLD_R к глазу; дома и крупные плиты города не трогаем (оболочка около центра бокса на 2,5 см у большого куска не видна)
 #define TOON_WORLD_EXT 8.f
 #define TOON_WORLD_R 45.f
+// №1062 (Роб 27.10: «обводка только у героя, NPC, машин, будки и предметов, с которыми взаимодействуем; дома, дороги, край асфальта, линии мира, весь фон — без контура, ради скорости и гладкости»):
+// линии окружения (toonlines.shr — дома и крупные предметы, roadlines.shr — край асфальта, линии троп, кромка) не читаются и не рисуются, контур мелких кусков города (toonWorldOk) выключен.
+// Остаются оболочки героя, NPC, всех машин, пропов и стейтпропов (будка, предметы). INK1062_OLD=1 / файл ink1062old рядом с EBOOT (до загрузки уровня) / flag ink1062old 1 в начале сценария — как в TEST74
+#ifndef INK1062_OLD
+#define INK1062_OLD 0
+#endif
+static int ink1062Old = INK1062_OLD;
+static unsigned worldToonDraws, hullToonCalls;   // №1062: оболочки мелких кусков города (входят в carToonDraws), строка INK1062 в журнале
 static inline int toonWorldOk(const Piece *d) {
+  if (!ink1062Old) return 0;   // №1062: контур мелких кусков города (пропы в мешах, столбы, знаки) — фон, без контура
   if (SKIN_TOON_V675_OLD || !skinToonEnabled() || (d->r.flags & (2 | 4)) || d->r.ni > 1500) return 0;
   float ex = d->r.bb[3] - d->r.bb[0], ey = d->r.bb[4] - d->r.bb[1], ez = d->r.bb[5] - d->r.bb[2];
   if (ex > TOON_WORLD_EXT || ey > TOON_WORLD_EXT || ez > TOON_WORLD_EXT) return 0;
@@ -771,7 +793,7 @@ static void drawPiece(Piece *d, int far, float tx, float ty, float tz, float c, 
   if (opqFar && d >= pc && d < pc + npc && opqFar[d - pc] && tx == 0.f && ty == 0.f && tz == 0.f) { far = !ggBoxRiskW(d->r.bb); if (far) opqFarUse++; else opqFarNear++; }   // №863: море — крупной версией везде, где GE нарисует её целиком (main_levels.h opq863Apply)
   if ((d->r.flags & F_NEAR) && !(far && (farPlainD > 0.f || (opqFar && d >= pc && d < pc + npc && opqFar[d - pc])) && (d->r.flags & F_FARP))) far = 0;   // правка 508: F_FARP — дальняя версия без нарезки по far_plain
   int cnt = far ? (int)d->r.nf : d->r.ni;
-  if (cnt <= 0 || geOver(GE_HARD) || !pieceOk(d, far) || NEON_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103: список GE почти полон / битый адрес
+  if (cnt <= 0 || geOver(GE_HARD) || !pieceOk(d, far) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103: список GE почти полон / битый адрес
   if (d->r.flags & F_ADDITIVE) { dbgAddN++; dbgAddTri += (unsigned)cnt / 3; if (cnt > 600) dbgAddBig++; gloAdd('c', d->r.tex, far, d->r.ni > 600, (unsigned)cnt / 3); }   // №933: город со сложением, прошедший NEON_SKIP (вода: ni > 192)
   float k = d->r.sc, ox = d->r.ox, oy = d->r.oy, oz = d->r.oz;
   ScePspFMatrix4 m = {
@@ -779,7 +801,7 @@ static void drawPiece(Piece *d, int far, float tx, float ty, float tz, float c, 
     {tx + c * ox + s * oz, ty + oy, tz - s * ox + c * oz, 1}};
   if (tqPush(d, &m, far, cnt, (d->r.bb[0] + d->r.bb[3]) * .5f + tx, (d->r.bb[1] + d->r.bb[4]) * .5f + ty, (d->r.bb[2] + d->r.bb[5]) * .5f + tz)) return;
   drawnTris += cnt / 3; draws++;
-  if (!far && toonWorldOk(d)) carToonHull(d, (const float *)&m);   // №675
+  if (!far && toonWorldOk(d)) { carToonHull(d, (const float *)&m); worldToonDraws++; }   // №675
   phAllow = d->r.owner == 0; NZP(d); bindTexLean(d->r.tex); phAllow = 0; { int ccn_ = camClipNear(d); camClipPieces += ccn_; setFlags(d->r.flags | (ccn_ ? F_LSIDE : 0)); }
   sceGuSetMatrix(GU_MODEL, &m);
   int glowFog = glowFogBegin(d->r.flags);
@@ -853,8 +875,24 @@ static int carNear853(const Piece *d, const ScePspFMatrix4 *m); static void draw
 #endif
 #define CAR_TOON_SIL_NPC .8f
 static int carInk991 = !CARINK991_OLD;
+// №1009 (Роб 26.10: «контур не должен сливаться: персонаж на фоне проезжающей машины NPC — разные объекты, у них разные контуры»): обводка героя и своей машины рисуется оболочкой без записи глубины, а тела машин
+// трафика и стоящих рисовались ПОСЛЕ героя и своей машины: тело, нарисованное позже, закрывало ободок там, где за героем (или за своей машиной) стоит машина NPC — линия пропадала, силуэты слипались.
+// Теперь машины трафика и стоящие рисуются раньше своей машины и героя (до их ободков; их собственные оболочки встают в пачку и выходят перед следующим слоем, как всегда): ободок ближнего ложится поверх тела
+// дальней машины. Порядок кадров другой, число вызовов то же, цена 0. INKSEP1009_OLD=1 / файл inksep1009old / «flag inksep1009 0» — прежний порядок
+#ifndef INKSEP1009_OLD
+#define INKSEP1009_OLD 0
+#endif
+static int inkSep1009 = !INKSEP1009_OLD;
+// №1028 (Роб 26.10, скриншот из эмулятора: «у розовой машины Гомера сзади-сбоку левый бок и торец залиты широкой чёрной полосой, торец всё равно ломается, даже на моей машине»): сдвиг оболочки назад 80 см, как у NPC-машин
+// (№991), теперь и у машины игрока и машин миссий (carToonHull с carToonNpcNow = 0): на скользящем угле оболочка плоского бока и торца под сдвигом 30 см проходила тест глубины и красила их тушью. Толщина линии и перо те же.
+// CARINK1028_OLD=1 / «flag carink1028 0» / файл carink1028old — как в TEST71
+#ifndef CARINK1028_OLD
+#define CARINK1028_OLD 0
+#endif
+static int carInk1028 = !CARINK1028_OLD;
 static int carToonNpcNow;   // №931: рисуется контур NPC-машины (npcCarToon): тоньше и светлее с расстоянием, дальше TOON_NPC_N линии нет; машина игрока — прежнее
 static void carToonHull(Piece *d, const float *m) {
+  hullToonCalls++;   // №1062: все оболочки машин и мелких кусков города (счётчик журнала INK1062)
   if (d->r.ni <= 0 || geOver(GE_HARD) || d->r.sc <= 0.f) return;
   if (!TOON_HULL870_OLD && (d->r.ni < 16 * 3 || fmaxf(fmaxf(d->r.bb[3] - d->r.bb[0], d->r.bb[4] - d->r.bb[1]), d->r.bb[5] - d->r.bb[2]) < .3f)) return;
   unsigned th0_ = thDiag ? sceKernelGetSystemTimeLow() : 0, thw_ = thDiag ? (unsigned)sceGuCheckList() : 0;
@@ -867,7 +905,7 @@ static void carToonHull(Piece *d, const float *m) {
   float W_ = CAR_TOON_W779_OLD ? CAR_TOON_W : carToonNpcNow ? skinToonWorldWNpc(dW_) : skinToonWorldW(dW_);
   if (W_ <= 0.f) return;
   unsigned ink_ = TOON_INK_OLD ? 0u : (CAR_TOON_W779_OLD ? TOON_INK_ABGR : carToonNpcNow ? skinToonAirMixNpc(skinInkAbgr(INK_CHAR), dist_) : skinToonAirMix(skinInkAbgr(INK_CHAR), dist_)) & 0xffffff;   // №796: перо линий
-  int silD_ = (!CAR_TOON_W779_OLD && dist_ > .5f) ? (int)fminf(20000.f, (carToonNpcNow && carInk991 ? CAR_TOON_SIL_NPC : CAR_TOON_SIL_M) * 65535.f / dist_) : 0;
+  int silD_ = (!CAR_TOON_W779_OLD && dist_ > .5f) ? (int)fminf(20000.f, ((carToonNpcNow || carInk1028) && carInk991 ? CAR_TOON_SIL_NPC : CAR_TOON_SIL_M) * 65535.f / dist_) : 0;
   float sc3[3], tr3[3], o[3] = {d->r.ox, d->r.oy, d->r.oz};   // оболочка: масштаб по осям вокруг центра куска и сдвиг (диагональная A)
   for (int i = 0; i < 3; i++) {
     float half = (d->r.bb[i + 3] - d->r.bb[i]) * .5f, c = (d->r.bb[i + 3] + d->r.bb[i]) * .5f;
@@ -1405,7 +1443,7 @@ static void drawPieceM(Piece *d, const ScePspFMatrix4 *m) {   // кусок с �
 #define XQ(i) ((void)0)
 #endif
   RBC(rbcDrawM);
-  if (d->r.ni <= 0 || geOver(GE_HARD) || !pieceOk(d, 0) || NEON_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103
+  if (d->r.ni <= 0 || geOver(GE_HARD) || !pieceOk(d, 0) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103
   if (d->r.flags & F_ADDITIVE) { dbgAddN++; dbgAddTri += (unsigned)d->r.ni / 3; if (d->r.ni > 600) dbgAddBig++; gloAdd((char)('A' + (bbPhase < 0 || bbPhase > 20 ? 0 : bbPhase)), d->r.tex, d->r.owner, 0, (unsigned)d->r.ni / 3);
     if (smkOn && d->r.ni > 600) { static const void *seen_[12]; static int ns_; int k_ = 0; for (; k_ < ns_; k_++) if (seen_[k_] == d->v) break; if (k_ == ns_ && ns_ < 12) { seen_[ns_++] = d->v; char l_[260];
         snprintf(l_, sizeof l_, "GLOWBIG t=%.1f sc=%s site=%d phase=%d tex=%d ni=%d fl=%x own=%d at=%.1f,%.1f,%.1f sc=%.2f eye_d=%.1f\n", smkT, smkScene, gloSite, (int)bbPhase, d->r.tex, d->r.ni, d->r.flags, d->r.owner, m->w.x, m->w.y, m->w.z, matScale((const float *)m), sqrtf((m->w.x - eyeX) * (m->w.x - eyeX) + (m->w.y - eyeY) * (m->w.y - eyeY) + (m->w.z - eyeZ) * (m->w.z - eyeZ))); smkWrite(l_); } } }
@@ -1914,7 +1952,7 @@ static int mcrLoadedF, mcrDeferred, mcrForceLoad, mcrStaggerOn;   // StaggerOn �
 #define MCR_ASYNC_OLD 0
 #endif
 #ifndef NEAR_CAR_DRAW_OLD
-#define NEAR_CAR_DRAW_OLD 1   // TEST17 (слово Роба/дирижёра 15.10: отрисовка как в 1721 f32c8c31): машины ближе 30 м без принудительной отрисовки (как в 1721); 0 — №544/546
+#define NEAR_CAR_DRAW_OLD 0   // №544/546 включены по умолчанию (слово Роба 27.10: машины, что бьют игрока, видны всегда; грузовик не пропадает у края кадра; выключили без слова Роба 15.10); прежнее -DCULL_SPHERE_OLD=1 / -DNEAR_CAR_DRAW_OLD=1; TEST17 (слово Роба/дирижёра 15.10: отрисовка как в 1721 f32c8c31): машины ближе 30 м без принудительной отрисовки (как в 1721); 0 — №544/546
 #endif
 typedef struct { int e; SceUID fd; unsigned char *b; unsigned size; int age; } McrPre;
 #define MCR_NPRE 2
@@ -2792,6 +2830,7 @@ static unsigned long long ggCellMaskC(unsigned ci) {   // маска клетк�
 #include "horizon.h"
 #include "hlod.h"   // горизонт: плоские силуэты дальнего города (flag horizon)
 #include "silh.h"   // силуэты за дальностью (Загрузка 3)
+#include "pano917.h"   // №917: кольцо-панорама дали за 150 м (pano917.bin уровня)
 #include "road934.h"   // №934: дальние версии кусков дорог и мостов до 520 м (файл road934.shr уровня)
 static unsigned cuDrawn;   // клеток подложки в последнем кадре (отладка)
 static void cellUnderlayDraw(float ex, float ey, float ez) {
@@ -2968,9 +3007,22 @@ static void dlCity(float ex, float ey, float ez) {
         chk_ = 1;
         for (int k_ = 0; k_ < 7; k_++) { float q_[3] = {eyeX + o_[k_][0], eyeY + o_[k_][1], eyeZ + o_[k_][2]}; if (cgOcc(c_, q_)) { wall_ = 1; break; } } } }
     front_ = camRealWall(wallFrontR > 0.f ? wallFrontR : fmaxf(camZn, .3f) + .2f);   // wall_front: стена по взгляду до max(znear, 0,3) + 0,2 м
-    for (int i = 0; i < nd; i++) { const Piece *d_ = &pc[sp[i]]; if (d_->r.flags & (2 | 4)) continue;
+    // №1060 (скорость 250: счётчик CAMCLIPSTAT — служебная цена тура 0,6–1,3 мс PSP за кадр на каждый кадр: обход всех видимых кусков с чтением Piece 112 Б; в игре без смоука его нет): кусок, чья клетка
+    // дальше 0,5 м от глаза, не ближе 0,5 м сам (ящик куска внутри ящика клетки) — Piece не читается; строка CAMCLIPSTAT та же. CAMCLIPFAST1060_OLD=1 / файл camclipfast1060old / flag camclipfast1060 0 — полный обход;
+    // flag camclipchk 1 — считать обоими способами и писать расхождения (CAMCLIPFAST mismatch)
+    static unsigned ccEp1060[4096], ccVal1060[4096]; static unsigned ccEpoch1060; static unsigned ccBad1060;
+    const int ccFast_ = camClipFast1060 && ncell <= 4096u; if (ccFast_) ccEpoch1060++;
+    int in2_ = 0, near2_ = 0, cl2_ = 0;
+    for (int i = 0; i < nd; i++) {
+      if (ccFast_ && scl[i] < ncell) { unsigned c_ = scl[i]; if (ccEp1060[c_] != ccEpoch1060) { ccEp1060[c_] = ccEpoch1060; ccVal1060[c_] = boxD2(cl[c_].bb) < CAM_CLIP_R * CAM_CLIP_R; }
+        if (!ccVal1060[c_] && !camClipChk1060) continue; }
+      const Piece *d_ = &pc[sp[i]]; if (d_->r.flags & (2 | 4)) continue;
       float dx = fmaxf(fmaxf(d_->r.bb[0] - eyeX, eyeX - d_->r.bb[3]), 0.f), dy = fmaxf(fmaxf(d_->r.bb[1] - eyeY, eyeY - d_->r.bb[4]), 0.f), dz = fmaxf(fmaxf(d_->r.bb[2] - eyeZ, eyeZ - d_->r.bb[5]), 0.f);
-      float q_ = dx * dx + dy * dy + dz * dz; if (q_ == 0.f) in_ = 1; if (q_ < .09f) near_ = 1; if (q_ < CAM_CLIP_R * CAM_CLIP_R) cl_++; }
+      float q_ = dx * dx + dy * dy + dz * dz;
+      if (camClipChk1060 && ccFast_ && scl[i] < ncell && !ccVal1060[scl[i]] && q_ < CAM_CLIP_R * CAM_CLIP_R) { ccBad1060++; if (smkOn && ccBad1060 <= 5) { char l_[160]; snprintf(l_, sizeof l_, "CAMCLIPFAST mismatch piece=%d cell=%u q=%.3f\n", i, (unsigned)scl[i], q_); smkWrite(l_); } }
+      if (camClipChk1060 && ccFast_ && scl[i] < ncell && !ccVal1060[scl[i]]) continue;   // сверка: быстрый путь этот кусок пропустил бы
+      if (q_ == 0.f) in_ = 1; if (q_ < .09f) near_ = 1; if (q_ < CAM_CLIP_R * CAM_CLIP_R) cl_++; }
+    (void)in2_; (void)near2_; (void)cl2_;
     nF_++; nIn_ += in_; nNear_ += near_; nWall_ += wall_; nChk_ += chk_; nFront_ += front_; if ((unsigned)cl_ > nMaxCl_) nMaxCl_ = (unsigned)cl_;
     unsigned now_ = sceKernelGetSystemTimeLow(); if (!t0_) t0_ = now_;
     if (now_ - t0_ >= 1000000u) { char l_[220]; snprintf(l_, sizeof l_, "CAMCLIPSTAT t=%.1f frames=%u eye_inside=%u near03=%u clip_pieces_max=%u wall_vox=%u wall_grid=%u wall_front=%u ggnear_frames=%u ggnear=%d\n", smkT, nF_, nIn_, nNear_, nMaxCl_, nWall_, nChk_, nFront_, ggNearFrames, ggNearOn); ggNearFrames = 0; smkWrite(l_); t0_ = now_; nF_ = nIn_ = nNear_ = nMaxCl_ = nWall_ = nChk_ = nFront_ = 0; } }

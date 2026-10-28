@@ -83,6 +83,9 @@ extern int fxGlintOne970;   // №970: следующий блик очеред�
 extern int fxBling989;
 #define BLING989_A (fxBling989 ? BLING989_K : 1.f)
 void fxSparkleCA(float x, float y, float z, float size, float phase, unsigned abgr, float alpha);
+extern unsigned fxCoinStat[4];   // №1020 служебно (журнал, приёмка): монет с блёстками, блёсток, наибольшее число блёсток у монеты за кадр, монет с блёстками в кадре
+extern int fxCoin1020;   // №1020: блики монет — не больше двух на монету, случайно по зерну монеты (flag coin1020); сдвиг кадра оборота спрайта у каждой монеты
+void fxSparkleCoin1020(float x, float y, float z, float size, float age, unsigned seed, float ex, float ey, float ez);
 extern int fxGlint970Old;   // №970: 1 — блики как в TEST66 (ключ, будка, монеты, огни машин); flag glint970old
 void fxSparkleCoin(float x, float y, float z, float size, float phase, float ex, float ey, float ez);   // №910: блёстки монет прозрачнее
 void fxSparkleC(float x, float y, float z, float size, float phase, unsigned abgr);

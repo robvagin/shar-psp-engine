@@ -19,6 +19,7 @@
 #include "ui_anim.h"
 #include "ui_layout.h"   // правка 126: пиксельный шрифт 8×8 пузыря, перенос, начало текста задания
 #include "marker_lod.h"
+#include "glintshape941.h"   // №1012: тот же векторный шейп блика ✦ — метка выделенного пункта меню
 #include "bootmsx.h"    // шрифт msx 8×8 (pspsdk libpspdebug, tools/bootmsx.sh)
 
 typedef struct {
@@ -384,7 +385,10 @@ __attribute__((weak)) int (*msnartRoom)(unsigned);   /* msnart.c задаёт н
 #define PAK_SPLIT_OLD 0
 #endif
 #define PAK_SEG_MAX (1u << 20)
-#define PAK_SEG_N 16
+#define PAK_SEG_N 32
+static unsigned pakSegMax1051 = PAK_SEG_MAX;   // №1051: будка в тесной куче читает пакет кусками помельче (границы по-прежнему только на началах разделов и картинок)
+void uiPakSegMax1051(unsigned bytes) { pakSegMax1051 = bytes ? bytes : PAK_SEG_MAX; }
+void (*uiPakProgress1060)(unsigned done, unsigned total);   // №1060б: кадр экрана загрузки между кусками чтения пакета (ставит mem1060.h на время сцены)
 struct UiSegs { int n; unsigned start[PAK_SEG_N], len[PAK_SEG_N]; unsigned char *p[PAK_SEG_N]; };
 static const unsigned char *pakAtIn(const struct UiSegs *sg, const unsigned char *base, unsigned off) {
   if (!sg) return base + off;
@@ -418,7 +422,7 @@ static int pakReadSplit(SceUID fd, unsigned size, struct UiSegs **sgOut) {
     unsigned b = i + 1; while (b < n && st[b] == st[i]) b++;   // дубли
     unsigned segStart = st[i], segEnd = b < n ? st[b] : size; unsigned j = b;
     while (j < n) { unsigned e = (j + 1 < n ? st[j + 1] : size); unsigned nj = j + 1; while (nj < n && st[nj] == st[j]) nj++; e = nj < n ? st[nj] : size;
-      if (e - segStart > PAK_SEG_MAX) break; segEnd = e; j = nj; }
+      if (e - segStart > pakSegMax1051) break; segEnd = e; j = nj; }
     if (sg->n >= PAK_SEG_N) { pakFreeAll(0, sg); free(st); return -5; }
     sg->start[sg->n] = segStart; sg->len[sg->n] = segEnd - segStart; sg->n++;
     i = j; (void)a;
@@ -432,6 +436,7 @@ static int pakReadSplit(SceUID fd, unsigned size, struct UiSegs **sgOut) {
     sceIoLseek32(fd, sg->start[i], PSP_SEEK_SET);
     if (sceIoRead(fd, m, sg->len[i]) != (int)sg->len[i]) { sg->n = i + 1; pakFreeAll(0, sg); return -4; }
     sceKernelDcacheWritebackRange(m, sg->len[i]);
+    if (uiPakProgress1060) uiPakProgress1060((unsigned)(i + 1), (unsigned)sg->n);
   }
   *sgOut = sg; return 0;
 }
@@ -443,7 +448,7 @@ static int pakRead(const char *path) {
   sceIoLseek(fd, 0, PSP_SEEK_SET);
   if (size < 128) { sceIoClose(fd); return -2; }
   struct UiSegs *sg = 0; unsigned char *m;
-  if (!PAK_SPLIT_OLD && (unsigned)size > PAK_SEG_MAX) {
+  if (!PAK_SPLIT_OLD && (unsigned)size > pakSegMax1051) {
     int sr = pakReadSplit(fd, (unsigned)size, &sg); sceIoClose(fd); if (sr) return sr;
     m = sg->p[0];
   } else {
@@ -866,6 +871,21 @@ static int gDx;                                              // №710: сдви
 static int dbgWrapW, dbgNl, dbgWrapCalc;   // №942 (гейт): ширина строки и число строк последнего текста пузыря; сколько раз за прогон считался перенос
 int uiBubble992Old = BUBBLE992_OLD;   // №992: 1 — появление пузыря как в TEST70 (flag bubble992 0 / файл bubble992old)
 void uiBubble992Set(int old) { uiBubble992Old = old; }
+// №1004 (Роб 26.10 после TEST71, «в который раз»: текст в пузыре сообщения появляется сначала узким по ширине зоны, потом расширяется — убрать; пусть появится чуть позже, и всё):
+// с №992 текст масштабировался вместе с рамкой (0,88 → 1). Теперь текст пузыря задания и окна сообщения, окна сообщения №639 и подсказки №516 НЕ масштабируется никогда: пока рамка
+// раскрывается или уходит, текста нет; когда рамка стала полной, текст сразу в конечной раскладке и ширине, проявляется за UI_TL1004_FADE. Аватар и значок — как в №992.
+// TEXTLATE1004_OLD=1 / файл textlate1004old рядом с EBOOT / flag textlate1004 0 — как в TEST71
+#ifndef TEXTLATE1004_OLD
+#define TEXTLATE1004_OLD 0
+#endif
+#define UI_TL1004_DELAY 0.06f   // с: рамка раскрылась (3 шага №992 по 0,02 с)
+#define UI_TL1004_FADE  0.08f   // с: проявление текста на месте
+int uiTextLate1004Old = TEXTLATE1004_OLD;
+int uiBubble1040 = !BUBBLE1040_OLD;   // №1040 (ui_anim.h)
+int uiDrawLog1040;   // служебно: журнал цены кадра интерфейса во время появления без трассы POP (она сама тратит время)
+void uiDrawLog1040Set(int on) { uiDrawLog1040 = on; }
+void uiBubble1040Set(int on) { if (uiBubble1040 != (on != 0)) { uiBubble1040 = on != 0; layGen++; } }
+void uiTextLate1004Set(int old) { uiTextLate1004Old = old; }
 static int bubSlideNow;                                       // №942: сдвиг вправо текста пузыря в начале проявления (px)
 // №942: содержимое пузыря задания (текст, аватар, значок) — всё, кроме самой капсулы (широкая картинка)
 static int bubContent(const UiItem *it) { return it->type == T_TEXT || it->type == T_SLOT || (it->type == T_IMG && it->w * 2 < it->h * 3); }
@@ -1410,6 +1430,7 @@ static const char *fitS; static int lastGW, lastGH, lawRight = -1;   // lawRight
 static UiFont pix8F; static int pix8Ready, pix8Off;
 static int objWidowOld;   // служебное (flag uiobjwidowold): текст задания с висячим словом, как до правки 215
 void uiObjWidowOld(int on) { objWidowOld = on; }
+void uiWrap1037Set(int on) { if (uiWrap1037 != (on != 0)) { uiWrap1037 = on != 0; layGen++; } }   // layGen — ключ кэша раскладки текста   // №1037: наименьшее число строк прежде красоты переноса (ui_layout.h)
 void uiPix8(int on) { pix8Off = !on; }
 static const UiFont *pix8Font(void) {
   if (!pix8Ready) {
@@ -1454,6 +1475,53 @@ static const UiFont *pix8Variant(int trk, int lead) {
 }
 static const UiFont *itemFont(const UiItem *it, int screen) {
   return pix8Want(it, screen) ? pix8Variant(TYPO_TRK(it), TYPO_LEAD(it)) : &fonts[it->font < H->nfont ? it->font : 0];
+}
+// №1012 (Роб 26.10: «для целостности меню внутреннее перевести в векторный формат, раз мультик по умолчанию; не на всё, а на ховер и важные объекты, чтобы выделение выделялось, аккуратненько»):
+// в режиме Cartoon выделенный пункт меню (пауза, её подстраницы OPTIONS / PICTURE / SOUND / CAMERA / GAME, главное меню) получает векторную плашку-капсулу: чернильный контур (чёрный),
+// жёлтая жилка, тёмно-фиолетовая заливка (светлее панели, чтобы читалась) и блик ✦ того же шейпа, что у ключей и фар (glintshape941.h) у левого края. Плашка стоит неподвижно (пульс текста сохранён), текст и раскладка не тронуты.
+// MENUVEC1012_OLD=1 / файл menuvec1012old / flag menuvec1012 0 — как в TEST71 (только жёлтый текст). Остальные пункты, рамки и значки — как были
+#ifndef MENUVEC1012_OLD
+#define MENUVEC1012_OLD 1   // Роб 26.10 ночь: «не то меню — паузу менять не надо, откати»; плашка выключена по умолчанию, вектор — главное меню с гостиной (№1021)
+#endif
+int uiMenuVec1012Old = MENUVEC1012_OLD; void uiMenuVec1012Set(int old) { uiMenuVec1012Old = old; }
+extern int toneToon(void);
+static void mvFan(const float *px, const float *py, int n, unsigned col, float cx, float cy) {   // веер вокруг центра: n точек контура + замыкание
+  void *b; VFCol *v = (VFCol *)vbeg((unsigned)(n + 2) * sizeof(VFCol), &b);
+  v[0] = (VFCol){col, xfX(cx), xfY(cy), 0};
+  for (int i = 0; i <= n; i++) { int k = i % n; v[i + 1] = (VFCol){col, xfX(px[k]), xfY(py[k]), 0}; }
+  vend(b, (unsigned)(n + 2) * sizeof(VFCol));
+  sceGuDrawArray(GU_TRIANGLE_FAN, VT_FCOL, n + 2, 0, v);
+  st.draws++; st.verts += n + 2;
+}
+static void mvCapsule(float x0, float y0, float x1, float y1, unsigned col) {   // капсула: полукруги на концах (по 8 отрезков)
+  float r = (y1 - y0) * .5f, cy = (y0 + y1) * .5f, px[18], py[18]; int n = 0;
+  for (int i = 0; i <= 8; i++) { float a = -1.5707963f + 3.1415927f * i / 8.f; px[n] = x1 - r + cosf(a) * r; py[n++] = cy + sinf(a) * r; }
+  for (int i = 0; i <= 8; i++) { float a = 1.5707963f + 3.1415927f * i / 8.f; px[n] = x0 + r + cosf(a) * r; py[n++] = cy + sinf(a) * r; }
+  mvFan(px, py, n, col, (x0 + x1) * .5f, cy);
+}
+static int menuVecWanted(const UiItem *it, int sidx, int selected, const char *s) {
+  if (uiMenuVec1012Old || !s || !*s || typoShot || !toneToon()) return 0;
+  if (it->flags & F_MENU) return it->menu == selected && !(it->menu < 32 && (menuOff[sidx] >> it->menu & 1));
+  return sidx == UI_SCREEN_MAIN && !scrMode && it->field == UI_F_MENU_ITEM;
+}
+static void drawTextItem(const UiItem *it, const char *s, unsigned col);
+static void menuVecPlate(const UiItem *it, const char *s) {
+  const UiFont *f = itemFont(it, curScreen); if (!f || it->font >= H->nfont) return;
+  int tw = lineWidth(f, s, (int)strlen(s)), lh = f->h.lh > 0 ? f->h.lh : 14;
+  float tx = it->halign == 1 ? it->x + floordiv(it->w - tw, 2) : it->halign == 2 ? (float)(it->x + it->w - tw) : (float)it->x;
+  float ty = (it->valign == 1 ? it->y + floordiv(it->h - lh, 2) : it->valign == 2 ? it->y + it->h - lh : it->y) + (float)gDy;   // gDy — сдвиг оверлея, как у текста
+  int small = lh < 14;   // пиксельный шрифт 8×8 (страница CAMERA / GAME): ячейка почти равна строке
+  float padX = small ? 11.f : 15.f, x0 = tx - padX, x1 = tx + tw + padX, y0 = small ? ty - 2.f : ty + 2.f, y1 = small ? ty + lh + 2.f : ty + lh - 1.f;   // крупный шрифт: буквы стоят в верхних ~15 px ячейки строки
+  if (traceBits & UI_TRACE_MENU) uiLogf("MENUVEC1012 plate=%.0f,%.0f,%.0f,%.0f text=%.0f,%.0f,%d,%d\n", x0 - 2.f, y0 - 2.f, x1 + 2.f, y1 + 2.f, tx, ty, tw, lh);   // гейт tests/menuvec1012: рамка плашки и рамка текста
+  float a = xf.on ? xf.a : 1.f; bflush(); texEnable(0);
+  mvCapsule(x0 - 2.f, y0 - 2.f, x1 + 2.f, y1 + 2.f, mulAlpha(0xff000000u, a));   // чернильный контур
+  mvCapsule(x0 - 1.f, y0 - 1.f, x1 + 1.f, y1 + 1.f, mulAlpha(0xff14e6ffu, a));   // жёлтая жилка (цвет выделения SHAR)
+  mvCapsule(x0, y0, x1, y1, mulAlpha(0xf0701c3cu, a));                          // заливка (ABGR: R 60, G 28, B 112)
+  float px[GS_MAXPTS], py[GS_MAXPTS]; int n = gsOutline(&GS_GLINT_A, 5, 1.f, px, py); float cx = x0 + (small ? 4.f : 7.f), cy = (y0 + y1) * .5f, R = (y1 - y0) * (small ? .5f : .56f);
+  for (int i = 0; i < n; i++) { px[i] = cx + px[i] * R; py[i] = cy + py[i] * R; }
+  mvFan(px, py, n, mulAlpha(0xff000000u, a), cx, cy);                           // блик: чёрная подложка (контур) и светлая звезда поменьше
+  for (int i = 0; i < n; i++) { px[i] = cx + (px[i] - cx) * .72f; py[i] = cy + (py[i] - cy) * .72f; }
+  mvFan(px, py, n, mulAlpha(0xffd8f6ffu, a), cx, cy);
 }
 static void drawTextItem(const UiItem *it, const char *s, unsigned col) {
   if (typoShot || it->font >= H->nfont || !s || !*s) return;
@@ -1914,14 +1982,15 @@ static int fitW(const UiItem *t, int sidx, int *maxLines) {
     int wf = 1 | (objWidowOld ? 0 : UI_WRAP_NOWIDOW) | UI_WRAP_BALANCE;
     int maxTW = BUB_LAW_RIGHT + bubShift - R - BUB_LAW_PAD - t->x; if (maxTW < BUB_MINTEXT) maxTW = BUB_MINTEXT;   // bubShift: рамка рисуется левее пакета на него
     if (!BUB_ONE_OLD) { maxTW = BUB_ONE_RIGHT + bubShift - R - BUB_LAW_PAD - t->x; if (maxTW < BUB_MINTEXT) maxTW = BUB_MINTEXT; }   // один формат
-    int nl, mw = 0;
-    static struct { const UiFont *f; int maxTW, wf, nl, mw, ok; char s[160]; } wc;   // №942: перенос считается один раз на текст и ширину (раньше — при каждом из 2–3 вызовов за кадр, пока виден пузырь)
-    if (!BUBBLE_WRAP942_OLD && wc.ok && wc.f == f && wc.maxTW == maxTW && wc.wf == wf && strlen(fitS) < sizeof wc.s && !strcmp(wc.s, fitS)) { nl = wc.nl; mw = wc.mw; }
-    else {
+    static struct { const UiFont *f; int maxTW, wf, nl, mw, ok, w37; char s[160]; } wcs[4]; static int wcN;   // №942: перенос считается один раз на текст и ширину; №1040: четыре записи (сообщение, задание и подсказка не вытесняют друг друга и не пересчитываются по кадрам появления)
+    int nl = 0, mw = 0, hit_ = 0;
+    if (!BUBBLE_WRAP942_OLD && strlen(fitS) < sizeof wcs[0].s) for (int k = 0; k < 4; k++) { if (wcs[k].ok && wcs[k].f == f && wcs[k].maxTW == maxTW && wcs[k].wf == wf && wcs[k].w37 == uiWrap1037 && !strcmp(wcs[k].s, fitS)) { nl = wcs[k].nl; mw = wcs[k].mw; hit_ = 1; break; } }
+    if (!hit_) {
       nl = wrapLines(f, fitS, maxTW, wf, st0, len);
       for (int l = 0; l < nl; l++) { int lw = lineWidth(f, fitS + st0[l], len[l]); if (lw > mw) mw = lw; }
       dbgWrapCalc++; if (traceBits & UI_TRACE_POP) uiLogf("UIWRAP942 calc=%d w=%d nl=%d\n", dbgWrapCalc, maxTW, nl);
-      if (strlen(fitS) < sizeof wc.s) { wc.f = f; wc.maxTW = maxTW; wc.wf = wf; wc.nl = nl; wc.mw = mw; snprintf(wc.s, sizeof wc.s, "%s", fitS); wc.ok = 1; }
+      static int adv1037_; if ((traceBits & UI_TRACE_POP) && !adv1037_++) { char b_[300]; int o_ = 0; for (int c_ = 32; c_ < 127 && o_ < 280; c_++) o_ += snprintf(b_ + o_, sizeof b_ - o_, "%d,", f->g[c_].flags ? f->g[c_].adv : -1); uiLogf("UIADV1037 %s\n", b_); }   // №1037 служебно: шаги знаков шрифта пузыря (код 32..126)
+      if (strlen(fitS) < sizeof wcs[0].s) { int k = wcN; wcN = (wcN + 1) & 3; wcs[k].f = f; wcs[k].maxTW = maxTW; wcs[k].wf = wf; wcs[k].w37 = uiWrap1037; wcs[k].nl = nl; wcs[k].mw = mw; snprintf(wcs[k].s, sizeof wcs[k].s, "%s", fitS); wcs[k].ok = 1; }
     }
     int tw = mw + (nl == 1 ? BUB_LAW_SHORT : 0); if (tw > maxTW) tw = maxTW; if (tw < BUB_MINTEXT) tw = BUB_MINTEXT;
     if (!BUB_ONE_OLD) tw = maxTW;   // рамка всегда одной ширины
@@ -2049,6 +2118,19 @@ int uiProfTake(char *out, int n) {   // строка UIT (среднее мс н
   memset(pfTyUs, 0, sizeof pfTyUs); memset(pfTyN, 0, sizeof pfTyN); memset(pfTagUs, 0, sizeof pfTagUs); pfSetupUs = pfItemsUs = pfFlushUs = pfFrames = pfItemsN = 0;
   if (l < n - 1) { out[l++] = '\n'; out[l] = 0; }
   return l;
+}
+// №1035 (Роб, сверка с PS2: дом Симпсонов и Kwik-E-Mart, кадры build/twins/o4/v17_house2 и v11_kwik_fwd): в помещениях радар как в оригинале — рамка-кольцо (и шапка счётчика погони, она отдельным тегом) остаётся,
+// карта, значки, клин цели, стрелка героя и фон круга исчезают, круг прозрачный, сквозь него видна сцена. Признак «в помещении» — тот же inRoom(), что переключает комнатную камеру; выход на улицу возвращает карту в тот же кадр.
+// RADAR1035_OLD=1 / файл radar1035old / «flag radar1035 0» — как в TEST72 (в комнате карта у двери в городе)
+#ifndef RADAR1035_OLD
+#define RADAR1035_OLD 0
+#endif
+static int radarIndoor1035, radar1035Old = RADAR1035_OLD;
+void uiRadarIndoor(int on) { radarIndoor1035 = on; }
+void uiRadar1035Set(int old) { radar1035Old = old; }
+static int radarRimIdx(const UiScreen *sc) {   // рамка-кольцо — последний элемент радара экрана (Hud.pag: карта, фон, клин, стрелка, значки, затем рамка)
+  static const UiScreen *c; static int r = -1; if (c == sc) return r;
+  c = sc; r = -1; for (unsigned i = 0; i < sc->count; i++) if (items[sc->first + i].tag == UI_T_RADAR) r = (int)i; return r;
 }
 static void drawScreen(int sidx, int selected) {
   if (!H || (unsigned)sidx >= H->nscreen || typoShot >= 2) return;
@@ -2220,6 +2302,7 @@ static void drawScreen(int sidx, int selected) {
       if (!hudHomeOn || hudHomeA <= 0.f) continue;
       if (hudHomeA < 1.f) { xf.on = 1; xf.s = 1.f; xf.a = hudHomeA; xf.cx = xf.cy = 0.f; }
     }
+    if (!uiTextLate1004Old && !uiBubble1040 && it->type == T_TEXT && ((sidx == UI_SCREEN_MESSAGE && mboxK < .999f) || (sidx == UI_SCREEN_TUTORIAL && tutK < .999f))) continue;   // №1004: текст окна сообщения и подсказки не растёт с рамкой — появляется, когда рамка раскрылась
     if (sidx == UI_SCREEN_MESSAGE && (mboxK < .999f || mboxA < 1.f)) { xf.on = 1; xf.s = mboxK; xf.a = mboxA; xf.cx = mboxCx; xf.cy = mboxCy; }   // №639
     if (sidx == UI_SCREEN_TUTORIAL && tutK < .999f) { xf.on = 1; xf.s = tutK; xf.a = 1.f; xf.cx = 240.f; xf.cy = 136.f; }   // №516: подсказка Барта растёт из центра экрана
     if (hud && popKind(it->tag) >= 0 && !(animOff & UI_ANIM_NOPOP)) {   // всплывание / угасание группы от её центра
@@ -2233,6 +2316,11 @@ static void drawScreen(int sidx, int selected) {
         if (c > 1.f) c = 1.f;
         float e = 1.f - (1.f - c) * (1.f - c);                     // ease-out
         if (c < 1.f) { xf.on = 1; xf.s = 1.f; xf.a = e; xf.cx = xf.cy = 0.f; if (it->type == T_TEXT) bubSlideNow = (int)((float)UI_BUB_CONTENT_SLIDE * (1.f - e) + .5f); }
+      } else
+      if (!uiTextLate1004Old && !uiBubble1040 && it->type == T_TEXT && (popKind(it->tag) == UI_POP_PILL || popKind(it->tag) == UI_POP_BOX) && (s_ != 1.f || a_ < 1.f)) {   // №1004: текст пузыря не растёт и не сжимается с рамкой
+        if (!on || s_ != 1.f) continue;                            // рамка раскрывается или уходит — текста нет
+        float c = (popAgeOf(it->tag, 1) - UI_TL1004_DELAY) / UI_TL1004_FADE; if (c <= 0.f) continue; if (c > 1.f) c = 1.f;
+        xf.on = 1; xf.s = 1.f; xf.a = a_ * c; xf.cx = xf.cy = 0.f;   // затем проявляется на месте, конечной раскладкой, без сдвига
       } else
       if (s_ != 1.f || a_ < 1.f) {
         const float *p = pv[it->tag & 31];
@@ -2288,6 +2376,7 @@ static void drawScreen(int sidx, int selected) {
     // заглушка CamAndSet (3dFE.pag, tools/ui_export.py): прямоугольник во весь экран под рамкой ТВ
     if (!scrMode && !menuBackdrop && sidx == UI_SCREEN_MAIN && it->type == T_RECT && it->x <= 0 && it->y <= 0 && it->w >= 480 && it->h >= 272) continue;
     if (it->field == UI_F_SPEED || it->field == UI_F_SPEED_UNIT) continue;   // Роб 27.09: в оригинале спидометра нет
+    if (radarIndoor1035 && !radar1035Old && hud && it->tag == UI_T_RADAR && (int)(it - &items[sc->first]) != radarRimIdx(sc)) continue;   // №1035: в помещении карта, значки, клин, стрелка и фон круга не рисуются — остаётся рамка-кольцо
     st.items++;
     // фитиль экрана загрузки: сдвиг вправо на долю загрузки (tools/load_export.py fuse_shift — то же округление)
     int fuse = (it->flags & F_FUSE) ? (int)floorf(fieldv[UI_F_PROGRESS] * (1.f / 1000.f) * it->ang + .5f) : 0;
@@ -2421,6 +2510,7 @@ static void drawScreen(int sidx, int selected) {
           // красный гейт tests/menu/item_pulse.py падает по ширине (не пульсирует), а не по отсутствию строк
           int still_ = MENU_PULSE_OLD || (!MENU_MAIN_PULSE_OLD && MENU_PULSE924_OLD && sidx == UI_SCREEN_MAIN && !scrMode);
           float sc_ = still_ ? 1.f : menuPulse(menuPulseMs) / (MENU_PULSE_MID + MENU_PULSE_AMP);   // правило порта: наибольший — строка порта
+          if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s);   // №1012: плашка стоит, пульсирует только текст
           if (!still_) { xf.on = 1; xf.a = subFadeA; xf.s = sc_; xf.cx = it->x + it->w * .5f; xf.cy = (float)(it->y + gDy) + it->h * .5f; }
           lastSpr[0] = lastSpr[1] = 1e9f; lastSpr[2] = lastSpr[3] = -1e9f;
           drawTextItem(it, s, col); xf.on = 0;
@@ -2435,10 +2525,11 @@ static void drawScreen(int sidx, int selected) {
             const UiFont *f_ = itemFont(it, curScreen); int tw = lineWidth(f_, s, (int)strlen(s)), right = it->x + floordiv(it->w - tw, 2) + tw;
             int sh = right - (cl - TITLE_COINS_GAP), room = it->x + floordiv(it->w - tw, 2) - TITLE_COINS_LEFT;
             if (sh > room) sh = room;
-            if (sh > 0) { UiItem t2 = *it; t2.x = (short)(t2.x - sh); drawTextItem(&t2, s, col); break; }
+            if (sh > 0) { UiItem t2 = *it; t2.x = (short)(t2.x - sh); if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(&t2, s); drawTextItem(&t2, s, col); break; }
           }
+          if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s);   // №1012: страницы OPTIONS (PICTURE, SOUND, CAMERA, GAME) идут этой веткой
           drawTextItem(it, s, col);
-        } else drawTextItem(it, s, col);
+        } else { if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s); drawTextItem(it, s, col); }   // №1012
         break;
       }
       case T_NUM:
@@ -2557,7 +2648,7 @@ int uiDrawMessageBox(const char *text) {
   snprintf(mboxText, sizeof mboxText, "%s", text);
   mboxK = mboxA = 1.f;
   if (!BUBBLE_UNIFORM_OLD) {   // №639: как пузырь задания (№638): 0,25 → 1 за 8 шагов по 1/50 с, прозрачность 0,3 → 1 за 0,06 с; центр — центр самой большой плашки экрана
-    float t = (now - mboxT0) * 1e-6f; mboxK = uiBubScale(t); mboxA = t < 0.06f ? 0.3f + 0.7f * t / 0.06f : 1.f;
+    float t = (now - mboxT0) * 1e-6f; mboxK = uiBubScale(t); mboxA = (t < 0.06f && !uiBubble1040) ? 0.3f + 0.7f * t / 0.06f : 1.f;
     const UiScreen *sc = &screens[UI_SCREEN_MESSAGE]; int ba = 0; mboxCx = 240.f; mboxCy = 136.f;
     for (unsigned i = 0; i < sc->count; i++) { const UiItem *b = &items[sc->first + i];
       if ((b->type == T_RECT || b->type == T_IMG) && b->w * b->h > ba) { ba = b->w * b->h; mboxCx = b->x + b->w * .5f; mboxCy = b->y + b->h * .5f; } }
@@ -2804,10 +2895,22 @@ static int hideDy(const UiScreen *sc, int sidx, const UiItem *it) {   // сдв�
 int uiPadRepeated;
 static int padRepOld = REPEAT706_OLD;
 void uiPadRepeatOld(int on) { padRepOld = on; }
+// №1057 (Роб 27.10: «зажать L и R, и оно будет постепенно кликать вправо-влево, докликать до своей тачки»): в будке (42 машины) повторяются и L R наравне с ◄ ►,
+// пауза короче (0,30 с) и шаг 0,11 с — до своей машины доходит за пару секунд, звук листания ещё не трещит. Включает вызывающий на кадр (uiPadRepeatLR(1) перед uiPadRepeat);
+// BOOTHLR1057_OLD=1 / файл boothlr1057old / flag boothlr1057 0 — прежнее (только ◄ ► с общими паузой 0,4 и шагом 0,12)
+#ifndef UI_REP_DELAY_LR
+#define UI_REP_DELAY_LR 300000u
+#endif
+#ifndef UI_REP_EVERY_LR
+#define UI_REP_EVERY_LR 110000u
+#endif
+static int padLR;
+void uiPadRepeatLR(int on) { padLR = on; }
 unsigned uiPadRepeat(unsigned buttons, unsigned hit) {
   static unsigned key, tNext, tLast;
-  unsigned dirs = padRepOld ? (PSP_CTRL_UP | PSP_CTRL_DOWN) : (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT),
-           delay = padRepOld ? 350000u : UI_REP_DELAY, every = padRepOld ? 90000u : UI_REP_EVERY, now = sceKernelGetSystemTimeLow();
+  int lr = padLR && !padRepOld;
+  unsigned dirs = padRepOld ? (PSP_CTRL_UP | PSP_CTRL_DOWN) : (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT | (lr ? PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER : 0u)),
+           delay = padRepOld ? 350000u : lr ? UI_REP_DELAY_LR : UI_REP_DELAY, every = padRepOld ? 90000u : lr ? UI_REP_EVERY_LR : UI_REP_EVERY, now = sceKernelGetSystemTimeLow();
   uiPadRepeated = 0;
   if (!padRepOld && (unsigned)(now - tLast) > UI_REP_GAP) key = 0;
   if (!padRepOld && !REP_HITCH_OLD && key && (unsigned)(now - tLast) > UI_REP_HITCH) tNext = now + delay;   // долгий кадр — пауза повтора заново
@@ -2940,8 +3043,10 @@ static void uiDrawInner(void) {
   drawScreen(UI_SCREEN_HUD, -1);
 }
 void uiDraw(void) {
+  if (traceBits & UI_TRACE_POP) { static unsigned p_[2]; unsigned d0 = uiWrapN1040[0] - p_[0], d1 = uiWrapN1040[1] - p_[1]; p_[0] = uiWrapN1040[0]; p_[1] = uiWrapN1040[1]; if (d0 || d1 || bubAge < 0.6f) uiLogf("WRAP1040 age=%.3f calls=%u calls0=%u\n", bubAge, d0, d1); }   // №1040 служебно: сколько раз за кадр считался перенос
   if (UI_PROF_OLD) { uiDrawInner(); return; }
   unsigned t0 = sceKernelGetSystemTimeLow(); uiDrawInner(); unsigned us = sceKernelGetSystemTimeLow() - t0;
+  if ((uiDrawLog1040 || (traceBits & UI_TRACE_POP)) && bubAge < 0.6f) uiLogf("UIDRAW1040 age=%.3f us=%u draws=%d verts=%d\n", bubAge, us, st.draws, st.verts);   // №1040 служебно: цена кадра интерфейса во время появления
   static unsigned lastLog;
   if (us > UI_PROF_US && t0 - lastLog > 1000000u) {
     lastLog = t0;

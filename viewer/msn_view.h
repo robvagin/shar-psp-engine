@@ -127,6 +127,7 @@ unsigned mvMissionRows(void);
 int  mvMissionSelectWant(int *level, int *row);
 int  mvMissionSelectStartRow(int row);
 int  mvMissionSelectOld(void);
+void mvMsLR1058Set(int old);   // №1058: 1 — уровень в Mission Select только ◄ ► (как в TEST73); 0 — ещё L R
 int  mvBriefLoading(void);                  // №626: 1 — брифинг ещё под газетой LOADING (карточки нет): время для прогрева мира
 int  mvBriefing(void);                       // 1 — брифинг миссии на экране (мир стоит, как пауза): uiDrawBriefing вместо uiDraw
 void mvBriefingInput(unsigned hit);          // X — продолжить (после LOADING, правка 52); △ на карточке ничего не делает
@@ -136,6 +137,9 @@ Shop *mvShop(void);                          // лавка продавцов у
 // Правка Роба 40 — камеры из данных миссий:
 // камера старта фазы (viewer/game_msn.h gameMsnStartCam): 1 — заявка (имя фазы SelectMission и камеры), одна на фазу
 int mvStartCam(const char **phase, const char **cam);
+// №1047 (Роб: «сначала чёрные полоски, наезд, и ПОТОМ пузырь с текстом»): цель этапа (пузырь) не показывается, пока идёт наезд и полосы на экране; mvCamBusy ставит main_loop.h
+// (1 — наезд играет или полосы ещё не ушли), mvBubblePump — каждый кадр: отложенную цель показать, когда полос нет. Без наезда — как раньше
+extern int (*mvCamBusy)(void); void mvBubblePump(void);
 // камера разговора (viewer/convcam.h): 1 — идёт разговор, план реплики из данных (SetConversationCam, SetCamBestSide) или
 // по правилу порта: глаз, взгляд, вертикальный FOV. prevEye — глаз камеры до разговора (сторона без SetCamBestSide);
 // blocked(от, до) — луч упирается в коллизию (план за стеной не берётся: другой план того же говорящего, иначе прежний,
@@ -163,5 +167,6 @@ void mvStartFirstIfIdle(void);               // №943: миссий нет (с�
 void mvServiceSelect(int mission);          // служебное: миссия по номеру пакета (бонус — как разговор с персонажем)
 void mvServiceUi(const char *flag, float a);  // служебное: uistack N, uiov (рамки оверлеев), uifit / uifitplant (тексты в рамке)
 #endif
+void mvForceArrow(int on, float x, float y, float z, float h);   // №1025 служебно: набор стрелок в точке без миссии
 extern unsigned mvMkUs[5];   // №849 служебно: части mvDrawMarkers (мкс)
 extern unsigned mvRouteCalcUs, mvRouteDrawUs;   // №849 служебно

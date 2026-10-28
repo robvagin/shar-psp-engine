@@ -1,0 +1,15 @@
+# №1052: будка L1 (144.04 / 81.77): низкий вид со стороны, Гомер убран; 4 кадра
+scene booth
+wait 3
+foot 144.5 90.5 3.1416
+wait 2
+camrel 2.5 0.9 -5.0 -2.96 -0.5 -3.7
+wait 0.6
+shot c00
+wait 0.3
+shot c01
+wait 0.3
+shot c02
+wait 0.3
+shot c03
+end

@@ -1,0 +1,46 @@
+# №1042: горизонт (силуэты, цвета фасадов №997) на дальнем виде L1: DRAW DISTANCE 150 и 250 м
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L1
+flag golevel 1
+wait 40
+flag player
+flag service 1
+flag hzoff1042 0
+foot 222 162 0
+wait 3
+flag ddfloor 150
+wait 3
+scene V150
+camrel 0 10 0 0 -0.06 1
+wait 1.2
+shot d150_v0
+camrel 0 10 0 1 -0.06 0
+wait 1.2
+shot d150_v1
+camrel 0 10 0 0 -0.06 -1
+wait 1.2
+shot d150_v2
+camrel 0 10 0 -1 -0.06 0
+wait 1.2
+shot d150_v3
+cam off
+flag ddfloor 250
+wait 3
+scene V250
+camrel 0 10 0 0 -0.06 1
+wait 1.2
+shot d250_v0
+camrel 0 10 0 1 -0.06 0
+wait 1.2
+shot d250_v1
+camrel 0 10 0 0 -0.06 -1
+wait 1.2
+shot d250_v2
+camrel 0 10 0 -1 -0.06 0
+wait 1.2
+shot d250_v3
+cam off
+end

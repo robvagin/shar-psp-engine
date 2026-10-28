@@ -1,0 +1,19 @@
+# №1034 общее правило: бак L5 тип 12 / ящик L7 тип 2 (не скамейки) тоже твёрдые для Гомера пешком: идёт в предмет с +x, обязан упереться (flag bench1034 1)
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene B_GO5
+flag golevel 5
+wait 40
+flag stop
+flag player
+flag benchlog 1
+scene B_new_5
+flag bench1034 1
+foot 123.4 -33.3 4.712
+wait 2.5
+shot new_start
+stick 0 -1 2.5
+wait 3
+shot new_walk
+end

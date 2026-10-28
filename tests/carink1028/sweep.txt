@@ -1,0 +1,70 @@
+# №1028: перебор ракурсов вокруг своей машины L1
+scene C_L1
+flag cfgdefaults 1
+flag repair
+wait 5
+flag carink1028 0
+cam 216.07 6.63 174.25 3.90 -2.60 -2.25 55
+wait 1.2
+shot az150_d45_old
+flag carink1028 1
+cam 216.07 6.63 174.25 3.90 -2.60 -2.25 55
+wait 1.2
+shot az150_d45_new
+flag carink1028 0
+cam 214.34 8.03 175.25 5.63 -4.00 -3.25 55
+wait 1.2
+shot az150_d65_old
+flag carink1028 1
+cam 214.34 8.03 175.25 5.63 -4.00 -3.25 55
+wait 1.2
+shot az150_d65_new
+flag carink1028 0
+cam 216.07 6.63 169.75 3.90 -2.60 2.25 55
+wait 1.2
+shot az210_d45_old
+flag carink1028 1
+cam 216.07 6.63 169.75 3.90 -2.60 2.25 55
+wait 1.2
+shot az210_d45_new
+flag carink1028 0
+cam 214.34 8.03 168.75 5.63 -4.00 3.25 55
+wait 1.2
+shot az210_d65_old
+flag carink1028 1
+cam 214.34 8.03 168.75 5.63 -4.00 3.25 55
+wait 1.2
+shot az210_d65_new
+flag carink1028 0
+cam 217.72 6.63 175.90 2.25 -2.60 -3.90 55
+wait 1.2
+shot az120_d45_old
+flag carink1028 1
+cam 217.72 6.63 175.90 2.25 -2.60 -3.90 55
+wait 1.2
+shot az120_d45_new
+flag carink1028 0
+cam 216.72 8.03 177.63 3.25 -4.00 -5.63 55
+wait 1.2
+shot az120_d65_old
+flag carink1028 1
+cam 216.72 8.03 177.63 3.25 -4.00 -5.63 55
+wait 1.2
+shot az120_d65_new
+flag carink1028 0
+cam 217.72 6.63 168.10 2.25 -2.60 3.90 55
+wait 1.2
+shot az240_d45_old
+flag carink1028 1
+cam 217.72 6.63 168.10 2.25 -2.60 3.90 55
+wait 1.2
+shot az240_d45_new
+flag carink1028 0
+cam 216.72 8.03 166.37 3.25 -4.00 5.63 55
+wait 1.2
+shot az240_d65_old
+flag carink1028 1
+cam 216.72 8.03 166.37 3.25 -4.00 5.63 55
+wait 1.2
+shot az240_d65_new
+end

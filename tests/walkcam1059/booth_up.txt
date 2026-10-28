@@ -1,0 +1,17 @@
+wait 12
+flag cfgdefaults 1
+flag player
+flag camlog
+flag msn
+flag testdmg
+scene BO_up
+wait 3
+foot 144.5 83.0 3.1416
+wait 1.5
+press triangle 0.2
+wait 1.5
+press cross 0.2
+wait 0.3
+press up 9
+wait 10
+end

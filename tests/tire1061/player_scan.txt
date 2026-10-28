@@ -1,0 +1,35 @@
+wait 3
+flag golevel @N@
+wait 25
+scene carwheel
+flag cfgdefaults 1
+flag toon 0
+flag flat912 0
+flag repair
+wait 2
+flag mipconst 3
+camrel 6 1.3 0 -1 -0.1 0 55
+wait 1.2
+shot s0
+camrel -6 1.3 0 1 -0.1 0 55
+wait 1.2
+shot s1
+camrel 0 1.3 6 0 -0.1 -1 55
+wait 1.2
+shot s2
+camrel 0 1.3 -6 0 -0.1 1 55
+wait 1.2
+shot s3
+camrel 4 1.3 4 -0.7 -0.1 -0.7 55
+wait 1.2
+shot s4
+camrel -4 1.3 4 0.7 -0.1 -0.7 55
+wait 1.2
+shot s5
+camrel 4 1.3 -4 -0.7 -0.1 0.7 55
+wait 1.2
+shot s6
+camrel -4 1.3 -4 0.7 -0.1 0.7 55
+wait 1.2
+shot s7
+end

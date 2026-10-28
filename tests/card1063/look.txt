@@ -1,0 +1,24 @@
+# №1063: карточка card17 L1 (407,99; 4,24; -413,09) фиксированной камерой (cam x y z вектор) с 10, 5 и 2 м; по два кадра через 0,2 с (пульс). Красный: flag card1063old 1 (первой строкой)
+wait 12
+flag cfgdefaults 1
+flag camdet 1
+flag camlog
+scene card
+foot 407.99 -430 0 4.6
+wait 2
+cam 408 5.0 -403.1 0 -0.05 -1
+wait 1.5
+shot d10_0
+wait 0.2
+shot d10_1
+cam 408 4.9 -408.1 0 -0.05 -1
+wait 1.5
+shot d5_0
+wait 0.2
+shot d5_1
+cam 408 4.7 -411.1 0 -0.03 -1
+wait 1.5
+shot d2_0
+wait 0.2
+shot d2_1
+end

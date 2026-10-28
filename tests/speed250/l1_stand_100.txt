@@ -1,0 +1,16 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1_load
+wait 12
+flag stop
+flag player
+wait 3
+flag drawdist 100
+scene F_FLAT_L1A
+foot 338.1 103 0
+wait 8
+scene F_FLAT_L1S
+foot 227 161.1 1.571
+wait 8
+end

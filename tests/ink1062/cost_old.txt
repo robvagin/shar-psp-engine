@@ -1,0 +1,54 @@
+# №1062 цена: езда 18 с на каждом уровне (L4 как F_L4_CR0/CR1: goto 214.9 172.3 -3.0), PHSEC и TOONLINES до/после. Старое: flag ink1062old 1 первой строкой
+flag ink1062old 1
+wait 12
+flag cfgdefaults 1
+scene CS_L1
+flag repair
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+scene CS_L3
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 3
+wait 40
+flag repair
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+scene CS_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+flag repair
+wait 3
+flag crmove 0
+goto 214.9 172.3 -3.0
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+scene CS_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 40
+flag repair
+wait 3
+flag drive 18
+wait 19
+flag stop
+wait 1
+end

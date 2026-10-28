@@ -1,0 +1,30 @@
+wait 12
+flag cfgdefaults 1
+flag golevel 1
+wait 40
+flag toon 1
+wait 4
+flag flat912 1
+scene G_ON
+foot 295.5 166 3.14
+wait 22
+flag trfgoh 4
+flag trfhome 1.2
+wait 3
+flag inksep1009 0
+wait 1.2
+shot o_h12
+flag inksep1009 1
+wait 0.6
+shot n_h12
+flag trfhome 2.2
+wait 3
+flag inksep1009 0
+wait 1.2
+shot o_h22
+flag inksep1009 1
+wait 0.6
+shot n_h22
+flag eyeon 0
+wait 1
+end

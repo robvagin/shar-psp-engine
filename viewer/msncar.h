@@ -185,6 +185,7 @@ extern int mcBotRamOld;   // правка 347: 1 — бот-таран торм�
 // *offroad = 1, если точка g дальше 30 м от полос (едет к ней напрямую)
 void mcPlanAvoid(const short *r, int n);   // служебное (гейт tests/aicar/roadplan.c)
 extern int mcRoadPlanOld;
+extern int mcPolice723Old;   // №723: 1 — полиция подъезжает к стоящему игроку вплотную (как до правки); 0 — не ближе 27 м, как PS2
 extern int mcAiSubstepOld;   // 1 — подшаги ИИ-машин всегда полные (AI_SUBSTEP_OLD)   // 1 — прежний поиск пути planRoadsOld (ROADPLAN_OLD)
 int mcPlan(const Traffic *tr, float x, float y, float z, float h, const float g[3], int shortcuts, float out[][3], int cap, int *offroad);
 int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]);   // RESET CAR по дорогам: точка и курс на оси ближней полосы по ходу; 0 — нет

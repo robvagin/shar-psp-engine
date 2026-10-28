@@ -1,0 +1,6 @@
+scene g646
+flag brtrace
+flag msn
+wait 3
+shot a_talk
+end

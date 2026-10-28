@@ -1,0 +1,69 @@
+# №1050: заезд на ходу в структуру L5 J3-7 (стартовые точки и курсы)
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene R_GO5
+flag golevel 5
+wait 40
+flag stop
+scene R_a
+goto 108 -410 1.571
+flag repair
+wait 1.5
+shot a0
+flag autostraight 4
+wait 1
+shot a1
+wait 1
+shot a2
+wait 1
+shot a3
+wait 1.2
+shot a4
+flag stop
+scene R_b
+goto 112 -424 1.200
+flag repair
+wait 1.5
+shot b0
+flag autostraight 4
+wait 1
+shot b1
+wait 1
+shot b2
+wait 1
+shot b3
+wait 1.2
+shot b4
+flag stop
+scene R_c
+goto 120 -398 2.000
+flag repair
+wait 1.5
+shot c0
+flag autostraight 4
+wait 1
+shot c1
+wait 1
+shot c2
+wait 1
+shot c3
+wait 1.2
+shot c4
+flag stop
+scene R_d
+goto 104 -418 0.900
+flag repair
+wait 1.5
+shot d0
+flag autostraight 4
+wait 1
+shot d1
+wait 1
+shot d2
+wait 1
+shot d3
+wait 1.2
+shot d4
+flag stop
+end

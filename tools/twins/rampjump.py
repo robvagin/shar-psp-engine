@@ -108,7 +108,7 @@ def main():
             cmds = [*D.axis('l', 'x', 0.0), f'pad cross {1 if v < vt else 0}', 'pad circle 0']
             if f - t0 > a.after: break
         if a.png and phase != 'дорога' and f % 2 == 0: cmds.append(f"png {o.out / 'png' / f'f{f:05d}.png'}")
-        tsv.write(f"{f}\t{x:.3f}\t{y:.3f}\t{z:.3f}\t{math.degrees(h):.2f}\t{v:.3f}\t{s['vy']:.3f}\t{s['cmy']:.3f}\t{phase}\t{along:.2f}\t{math.degrees(math.asin(max(-1.0, min(1.0, s["ny"])))):.2f}\n")
+        tsv.write(f"{f}\t{x:.3f}\t{y:.3f}\t{z:.3f}\t{math.degrees(h):.2f}\t{v:.3f}\t{s['vy']:.3f}\t{s['cmy']:.3f}\t{phase}\t{along:.2f}\t{math.degrees(math.asin(max(-1.0, min(1.0, s['ny'])))):.2f}\n")
         if f > 20000: break
         o.send(*cmds); s = o.step()
     tsv.close(); o.end(); print(f'фаза {phase}, кадр {o.frame} → {o.out}')

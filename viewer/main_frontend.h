@@ -6,6 +6,7 @@
 // Уровень (резидентная часть, текстуры, коллизия, секции пропов) читается один раз на заставке и живёт до выхода.
 // Город вокруг спавна грузится после меню со шкалой (cellsRing), при выходе в меню выгружается (cellsDropAll), а
 // состояние игры заново берётся из данных уровня (newGame): куча в меню одна и та же на каждом круге (tools/menu_check.py).
+static void boothBase1052(StateProps *s);   // №1052 (main_levels.h)
 static int mainOpt = -1;   // пункт OPTIONS главного меню (menu.shr)
 static int mainLoad = -1, mainResume = -1;   // LOAD GAME / RESUME GAME (сохранения, viewer/savemenu.h)
 static int menuOn, toMenu, mainNew = -1, loadShot; static float loadShotAt, feShotAt;   // снимки экранов загрузки: «flag loadshot/feshot [с]» — держать до стольких секунд часов экрана (гейт кадров огня/анимации: в эмуляторе загрузка мгновенна); spStInit (память состояний стейтпропов) — у Game G
@@ -51,6 +52,25 @@ static int msNewsPend;
 #ifndef MS_OPEN_OLD
 #define MS_OPEN_OLD 0
 #endif
+// №1065 (журналы TEST74–77, окно Оптимизация; Роб 28.10: «переход на L4 без газеты»): load.shr (≈1,08 МБ, куски до 1 МБ) открывался на смене уровня без проверки результата — при отказе
+// выделения (-3) оставался чёрный кадр без газеты (см. «нет пакета — чёрный кадр» ниже). Теперь: отказ -> место (cellsMakeRoom через mem1060Pre) и один повтор; на смене уровня, если не помогло,
+// предыдущий уровень выгружается ДО газеты (куча пуста) и открытие повторяется. То же с банком звука (sfx.sab ≈ 2,1 МБ, TEST77 L5 остался без звука: levelLoad теперь открывает ui.shr и звук
+// первыми после выгрузки уровня, пока куча пуста; sndLevel при отказе не выставляется). MEMLOAD1065_OLD=1 / файл memload1065old / «flag memload1065 0» — прежнее
+#ifndef MEMLOAD1065_OLD
+#define MEMLOAD1065_OLD 0
+#endif
+static int memLoad1065 = !MEMLOAD1065_OLD;
+static int scrFail1065;   // служебное «flag scrfail1065 N»: следующие N открытий load.shr отказывают (-3) — проверка повтора без тесной кучи
+static int scrOpen1065(const char *site) {
+  char fn[256]; sibling(fn, "load.shr");
+  int rc = scrFail1065 > 0 ? (scrFail1065--, uiScrClose(), -3) : uiScrOpen(fn);
+  if (!memLoad1065 || rc != -3) return rc;
+  unsigned f0 = heapFreeBytes(), b0 = memMaxBlock ? memMaxBlock() : 0;
+  mem1060Pre(1u << 20, "load.shr");
+  int rc2 = scrFail1065 > 0 ? (scrFail1065--, uiScrClose(), -3) : uiScrOpen(fn);
+  if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "SCROPEN1065 site=%s rc=%d->%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", site, rc, rc2, f0 / 1048576.f, heapFreeBytes() / 1048576.f, b0 / 1048576.f, memMaxBlock ? memMaxBlock() / 1048576.f : 0.f, smkT); smkWrite(l_); }
+  return rc2;
+}
 static int msOpenFail;   // служебное «flag msopenfail N»: следующие N попыток открыть пакет MISSION SELECT отказывают (-3) — проверка повторов и запасного списка (гейт tests/menu896)
 static int msOpenTry(const char *fn) { if (msOpenFail > 0) { msOpenFail--; uiScrClose(); return -3; } return uiScrOpen(fn); }
 static int msPackOpen(const char *fn) {
@@ -74,6 +94,7 @@ static int svcFile(void) { char fn[256]; sibling(fn, "service"); SceUID h = sceI
 // load.shr — загрузка уровня (Loading.scr) и меню (LoadingFE.scr). Нет пакета — чёрный кадр: своего не рисуем.
 // Кадр: чёрный фон + экран открытого пакета; progress 0..1000 — фитиль, часы — секунды с scrT0 (кадры огня/анимации).
 // vsync 0 — между чтениями файлов (как прежняя шкала: загрузка не ждёт развёртку)
+extern int memFailRingGet(unsigned i, unsigned *bytes, unsigned *ra);
 static int newsLvRed;   // №663: красный контроль гейта «газета своего уровня» (flag newslvred 1): газета всегда уровня 1
 #define LEVEL_IDX (newsLvRed ? 0 : gameLevel - 1)   // газета экрана загрузки уровня (кадр 0..6 пакета load.shr)
 static unsigned scrT0; static int scrLastProg; static float scrLastT;   // для строки SCRSHOT (сверка гейтом со снимком)
@@ -101,6 +122,8 @@ static int loadBlinkOff, loadBlinkLast = -1, loadBlinkN;   // служебное
 #ifndef TITLE_DITHER_OLD
 #define TITLE_DITHER_OLD 0
 #endif
+// №1060б: экран загрузки, который рисуют loadBegin / loadFrame / loadEnd: UI_LOAD_LEVEL (газета уровня) или UI_LOAD_FE (LoadingFE: Itchy & Scratchy, фитиль к бомбе — как при выходе из игры в меню); ставит mem1060.h на время «освободить → загрузить → вернуть»
+static int ldScr1060 = UI_LOAD_LEVEL;
 static int ldOn;   // №833: объявлено ниже (загрузка уровня идёт) — scrFrame выбирает векторные лучи только на экране загрузки уровня
 static void scrFrame(int screen, int progress, int vsync, void **fbp) {
   scrLastProg = progress; scrLastT = (sceKernelGetSystemTimeLow() - scrT0) * 1e-6f;
@@ -275,13 +298,13 @@ static void loadBegin(void **fbp) {   // Loading.scr открыт: газета 
   ldOn = 1; ldShown = 0; ldFuseF = 0.f; ldFuseLast = 0; ldFuseJump = ldFuseCalls = 0; ldStepT = 0; scrT0 = ldT0 = sceKernelGetSystemTimeLow();
   unsigned prev = ldT0; float gap = 0.f; int n = 0;
   for (;;) {
-    float t = ldSec(); if (t >= LOAD_SPIN_S) break;
+    float t = ldSec(); if (t >= (ldScr1060 == UI_LOAD_LEVEL ? LOAD_SPIN_S : 0.f)) break;   // №1060б: LoadingFE без влёта газеты
     newsFly(t / LOAD_SPIN_S); feStingerPoll();
     if (ldLag) sceKernelDelayThread(120000);
-    scrFrame(UI_LOAD_LEVEL, 0, 1, fbp); n++;
+    scrFrame(ldScr1060, 0, 1, fbp); n++;
     unsigned now = sceKernelGetSystemTimeLow(); float g = (now - prev) * 1e-3f; prev = now; if (g > gap) gap = g;
   }
-  uiScrNews(0.f, 1.f, 1.f);
+  if (ldScr1060 == UI_LOAD_LEVEL) uiScrNews(0.f, 1.f, 1.f);
   loadFuseIoNote = loadWaitNote; loadFuseIoBegin(loadReadPump);
   if (ldSlowUs) loadFuseIoSlow(ldSlowUs, 1u << 30);   // №775: «flag ldslow N» — медленная карта на всю загрузку (сбрасывает loadEnd → fuseProbeFlush)
   ldReadT0 = sceKernelGetSystemTimeLow(); ldFrames = ldSkips = 0;   // правка 336: отсюда — чтение (журнал LOADREAD в loadEnd)
@@ -300,7 +323,7 @@ static void loadFrame(int permille, void **fbp) {   // загрузка уров
     if (smkOn && !loadFuseIoPumping() && ldFrameLast && now - ldFrameLast > 150000u) { char s_[80]; snprintf(s_, sizeof s_, "LOADGAP ms=%u at=%d t=%.2f\n", (now - ldFrameLast) / 1000u, permille, scrLastT); smkWrite(s_); }
     ldFrameLast = now; }
   ldFbp = fbp; ldPermLast = permille;
-  scrFrame(UI_LOAD_LEVEL, ldProgress(permille), 0, fbp);
+  scrFrame(ldScr1060, ldProgress(permille), 0, fbp);
   fuseProbeGrab();
 }
 static void loadPump(void) {
@@ -357,9 +380,9 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "LOADREAD ms=%u frames=%d skip=%d min_ms=%d t=%.1f\n",   // правка 336: время чтения
                                    (sceKernelGetSystemTimeLow() - ldReadT0) / 1000u, ldFrames, ldSkips, LOAD_FRAME_MIN_MS, smkT); smkWrite(s_); }
   ldWarmStep_ = 0;
-  while (ldOn && ldShown < 1000) { scrFrame(UI_LOAD_LEVEL, ldProgress(1000), 1, fbp); newsShotTick(); loadWarmStep(); }   // №538: простой показа (до 3 с) — прогрев листов клеток и B1 вокруг старта
+  while (ldOn && ldShown < 1000) { scrFrame(ldScr1060, ldProgress(1000), 1, fbp); newsShotTick(); loadWarmStep(); }   // №538: простой показа (до 3 с) — прогрев листов клеток и B1 вокруг старта
   if (!LOAD_NEWS_MUSIC_OLD && !loadNewsMusicOld && ldOn) { float left0 = feNewsMusicLeft(), held = 0.f; unsigned h0 = sceKernelGetSystemTimeLow();
-    while (ldOn && feNewsMusicLeft() > 0.05f && ldSec() < LOAD_NEWS_MUSIC_CAP_S) { scrFrame(UI_LOAD_LEVEL, 1000, 1, fbp); newsShotTick(); loadWarmStep(); }
+    while (ldOn && feNewsMusicLeft() > 0.05f && ldSec() < LOAD_NEWS_MUSIC_CAP_S) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); }
     held = (sceKernelGetSystemTimeLow() - h0) * 1e-3f;
     if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "NEWSMUS left0=%.2f held_ms=%.0f left=%.2f ld=%.2f t=%.1f\n", left0, held, feNewsMusicLeft(), ldSec(), smkT); smkWrite(s_); } }
   // LOAD_UNTIL_CELLS (слово дирижёра 15.10, TEST18: после газеты 2,0 вместо 3,5 с в первые секунды мира собиралось 109 и 18 клеток в секунду, пропуски кадров): газета держится, пока очередь
@@ -377,7 +400,7 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
 #endif
 #define LOAD_STALL_S 0.4f
     int ldLast = ldPend0; float ldLastT = ldSec();
-    while (ldOn && ldSec() < LOAD_MAX_S && loadWarmPending() > 0) { scrFrame(UI_LOAD_LEVEL, 1000, 1, fbp); newsShotTick(); loadWarmStep(); ldPendFr++;
+    while (ldOn && ldSec() < LOAD_MAX_S && loadWarmPending() > 0) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); ldPendFr++;
       int pn_ = loadWarmPending(); if (pn_ < ldLast) { ldLast = pn_; ldLastT = ldSec(); } else if (!LOAD_STALL_OLD && ldSec() - ldLastT > LOAD_STALL_S) break; }
     if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADCELLS pending0=%d left=%d extra_ms=%.0f frames=%d t=%.1f\n", ldPend0, loadWarmPending(), (ldSec() - ldPendT0) * 1000.f, ldPendFr, smkT); smkWrite(s); }
   }
@@ -566,7 +589,7 @@ static int cellsRing(int bar, void **fbp) { return cellsRingAt(spawnP, bar, fbp)
 static void msnTeleport(float x, float y, float z, void **fbp) {
   lqn = 0; __asm__ volatile("" ::: "memory");
   { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
-  { char fn[256]; sibling(fn, "load.shr"); uiScrOpen(fn); scrTvOver = 0; }   // экран загрузки оригинала (Loading.scr) — на время чтения
+  scrOpen1065("teleport"); scrTvOver = 0;   // экран загрузки оригинала (Loading.scr) — на время чтения (№1065: отказ -> место и повтор)
   float c[3] = {x, y, z}; int n = cellsRingAt(c, 1, fbp); stInit = 0;
   ldWarmC[0] = x; ldWarmC[1] = y; ldWarmC[2] = z; ldWarmOn = 1;
   loadEnd(fbp); SCR_CLOSE();
@@ -676,6 +699,7 @@ static int phoneNear(void) {
 static float phoneCamT = -1.f, phoneCamCar[3];
 static const MsnCam *phoneAnim; static int phoneAnimK = -1, phoneCamOn, phonePlant; static float phoneAnimT = -1.f, phoneFovY;
 static float camBT = -1.f, camBDur, camBE[3], camBL[3];   // правки 166/167: плавный переход камеры от позы (глаз, точка взгляда)
+static int benchLog1034;   // №1034: flag benchlog
 static int camBRel, camLogOn;   // 1 — поза начала в осях машины игрока, переход по экспоненте (camBDur — постоянная времени)
 static int camIrisCut;   // правка 333: посадка ирисом (car_in) — ирис раскрывается сразу на камере машины, без перехода 167 (запись PS2 869,8 с); выход — с переходом, как у записи 1085,8–1086,1 с
 static float camBFov, camBU; static int camBFovOn, footFovOld;   // угол кадра в начале перехода (0 — без смены угла), доля перехода этого кадра
@@ -905,6 +929,9 @@ static void bbSample(const char *ev) {
            foot ? "foot " : "", inRoom() ? "room " : "", phoneViewOn() ? "phone " : "", shopViewOn() ? "shop " : "", mvCars() ? "msncars" : "");
   bbCellN = bbCellMax = bbCellSlow = 0; bbIoR0 = msioReads; bbIoW0 = msioWaits; msioMaxWaitUs = 0;   // правки 252/259: чтения карты за секунду, ожиданий очереди, худшее ожидание
   if (smkOn) { char t[BB_LINE + 8]; snprintf(t, sizeof t, "BB %s", s); smkWrite(t); }   // замер-тур: вся история ящика в smoke.txt (кольцо — 40 с)
+  if (smkOn && !MEMLOAD1065_OLD) { static unsigned mfLog_; unsigned mfb_, mfra_;   // №1065: размер и вызывающий каждого нового отказа (адрес по ELF: tools/crash_addr.py)
+    while (mfLog_ < memFailsNow() && memFailRingGet(mfLog_, &mfb_, &mfra_)) { char t[140]; snprintf(t, sizeof t, "MEMFAILSZ n=%u bytes=%u ra=%08x heap=%.2f blk=%.2f t=%.1f\n", mfLog_ + 1, mfb_, mfra_, heapFreeBytes() / 1048576.f, memMaxBlockMB(), bbClock); smkWrite(t); mfLog_++; }
+    if (mfLog_ < memFailsNow()) mfLog_ = memFailsNow(); }
 }
 static int bbCompose(const char *head) {   // шапка + кольцо -> bbOut (BB_FILE байт, хвост — пробелы и перевод строки)
   char h[1536]; int n = snprintf(h, sizeof h, "%s n=%u t=%.0f EBOOT %s %s kexc %d vol %d %dK fpu %x>%x\n# t(с) событие уровень место x y z · куча МБ: свободно, наибольший кусок · клетки в памяти, "
@@ -1935,8 +1962,28 @@ static void msncamLoad(void) {   // камеры уровня gameLevel: у 2–
   sceIoClose(f); if (nmcam < 0) nmcam = 0;
   phoneAnim = msncamFind(mcam, nmcam, "phone", 0);   // правка 166: облёт будки (phonecamera.p3d)
 }
+// №1041 (Роб, TEST72 на PSP: «наезды подъезжают откуда-то издалека, лагают»): камеры старта с диска начинаются в 40–77 м от места игрока (m0 L1 70 м, m3 77 м; у PS2 те же 70 м, но Роб хочет короткий наезд).
+// Теперь анимация идёт не с первого кадра, а с первого, где глаз не дальше CAMIN1041_FAR (30 м) от игрока по горизонтали: остаётся последний отрезок с торможением; у камер, что и так
+// стартуют ближе, ничего не меняется. На выходе из наезда игровая камера включается не склейкой (3 тяжёлых кадра пересчёта вида: build 11–13 мс против 5–6 на Маке), а плавным переходом
+// от последней позы наезда за CAMIN1041_BLEND секунд (как посадка в машину). CAMIN1041_OLD=1 / файл camin1041old / flag camin1041 0 — как было
+#ifndef CAMIN1041_OLD
+#define CAMIN1041_OLD 0
+#endif
+#define CAMIN1041_FAR 30.f
+#define CAMIN1041_BLEND .7f
+static int camIn1041 = !CAMIN1041_OLD;
+static int camBusy1047(void) { return camIn1041 && (mcPlay != 0 || lbOpen > 0.f); }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
 static void msncamPlay(const MsnCam *c) {
   mcPlay = c; mcT = 0.f;
+  if (camIn1041 && c->nfr > 2 && c->fps > 1.f) {
+    float ref[3] = {homer.x, homer.y, homer.z}; if (!onFoot()) { ref[0] = car.x; ref[1] = car.y; ref[2] = car.z; }
+    float dur = (c->nfr - 1) / c->fps, e[3], l[3], u[3], fy;
+    for (float t = 0.f; t < dur; t += 1.f / c->fps) {
+      msncamPose(c, t, e, l, u, &fy);
+      float dx = e[0] - ref[0], dz = e[2] - ref[2];
+      if (dx * dx + dz * dz <= CAMIN1041_FAR * CAMIN1041_FAR) { mcT = t; break; }
+    }
+  }
   if (smkOn && trOn) { trLeft = TR_FRAMES; trDetail = trDetailOn; trPhase(BBP_MSN); }   // куски по строке держали кадр 5 с (сторож писал STALL) — только по флагу   // след зависания 259: кадры камеры миссии — по фазам в trace.txt
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "MSNCAM start m%d %s phase=%s frames=%u t=%.1f\n", c->mission, c->name, c->phase, c->nfr, smkT); smkWrite(s); }
 }
@@ -1985,7 +2032,7 @@ static void newGame(void) {
   ldStep("ng-coins");
   if (haveSP) {
     rfSpReset();   // render_fast О2: радиусы типов — от нового SPR1
-    spFree(&sprops); haveSP = haveProps && props.spr && spInit(&sprops, props.spr, props.sprSize) == 0;
+    spFree(&sprops); haveSP = haveProps && props.spr && spInit(&sprops, props.spr, props.sprSize) == 0; if (haveSP) boothBase1052(&sprops);   // №1052
     if (haveSP) { for (unsigned k = 0; k < spFxNameCount(&sprops); k++) spFxBind(&sprops, k, fxFind(spFxName(&sprops, k)));
                   sprops.nativeBreakFx = props.typeFx && fxReady(); }
   }
@@ -2006,7 +2053,7 @@ static void newGame(void) {
   ldStep("pre-traffic"); if (haveTraffic) trafficReset(&traffic, &world);   // стоящие машины на места, трафик и пешеходы — заново вокруг спавна
   if (ldOn || audioDefer) ldAudio = 1;   // правка 20: под экраном загрузки звучит стингер газеты — атмосфера и музыка уровня после него (loadEnd)
   else levelAudioStart();
-  ldStep("pre-msn"); msnartRoom = cellsMakeRoom; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; msnStart();
+  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = cellsMakeRoom; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; msnStart();
   // NPC_ASYNC (видео TEST17: «подгрузка NPC роняет FPS до 11»): mvPump означает «идёт экран загрузки», а здесь он ставился один раз и жил до конца игры, поэтому фоновое
   // чтение моделей персонажей (msn_view.c modelFor/modelPrefetch, коммит 85ac58e4) не срабатывало ни в одном туре: все MSNNPC load шли синхронно в кадре (44–82 мс на
   // файл, 40 загрузок за тур, ни одной с async=1). Теперь после старта уровня насос снимается: дальше модели читаются в фоне, NPC до готовности не рисуется.
@@ -2064,7 +2111,7 @@ static void feVoiceEvent(int event, int index, int segment) {
 }
 static void feLoadShown(int screen, const char *packName, void **fbp) {   // вход в меню: куча (MENU), потом гостиная
   menuMem(++nMenu); feU0 = (unsigned)mallinfo().uordblks;   // куча сверяется без пакетов экранов (они на время показа)
-  if (!strcmp(packName, "load")) { char fn[256]; sibling(fn, "load.shr"); uiScrOpen(fn); scrTvOver = 0; }   // LoadingFE — только на время чтения
+  if (!strcmp(packName, "load")) { scrOpen1065("fe"); scrTvOver = 0; }   // LoadingFE — только на время чтения (№1065: отказ -> место и повтор)
   feScr = screen >= 0 && uiScrReady() ? screen : -1; feScrPack = packName; feFbp = fbp; scrT0 = sceKernelGetSystemTimeLow();
   if (feScr >= 0) scrFrame(feScr, 0, 1, fbp);
   { char fn[256]; sibling(fn, "fe.shr"); feReadHook = feHook; feLoad(fn); feReadHook = 0; }   // гостиная: только на время меню
@@ -2146,6 +2193,7 @@ static void idleFlag(const SmokeCmd *sc) {   // флаги простоя — г
   else if (!strcmp(sc->name, "demotv")) demoTv = 1;         // правка 153: контроль — демо в рамке-телевизоре, как было
   else if (!strcmp(sc->name, "noiris")) transitOff(1);      // правка 154: контроль — выход в меню без ириса
   else if (!strcmp(sc->name, "musold")) musOld = 1;         // правка 155: контроль — звук уровня без удержания
+  else if (!strcmp(sc->name, "fehero1021")) feHero1021 = sc->a != 0.f;   // №1021-герои: Гомер меню — путём игры (1) / как в TEST71 (0)
   else if (!strcmp(sc->name, "uitypo")) uiTypoShot((int)sc->a);   // правка 312: снимок фона твик-панели (1 без текста, 2 без интерфейса)
 }
 // ролик простоя: 1 — прерван кнопкой (*key, *pressAt — время первого нажатия сценария в ролике), 0 — доигран или его нет

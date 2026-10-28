@@ -31,6 +31,8 @@ void tonePal(unsigned char *pal);  // 256 записей RGBA на месте (�
 void toneColorRGB(unsigned char *c);   // №785: один цвет RGB(A) той же цепочкой, что запись палитры (без стягивания к среднему текстуры): цвета вершин купола неба
 void toneColorRGBNT(unsigned char *c);   // №954: цвет RGB(A) цепочкой тона без шагов мультика (палитра неба-текстуры); слой неба-градиент переходит к toneColorRGB к верху
 unsigned toneKey(void);           // №785: ключ текущей настройки тона (мультик, насыщенность, гамма, контраст) — пересчитать то, что тонировано по нему
+void toneSet1026(int on);   // №1026: вывески (notoon) проходят шаги мультика и контраст
+int tone1026Get(void);
 void toneSetStat(const unsigned char *st);   // №754: перед tonePal/toneRedo* — средний цвет текстуры и доля рисунка {r, g, b, k·255}; 0 — нет (палитра не стягивается)
 void toneSetToon(int on);
 void toneToonTex(int pct);        // №773/№777: доля родного рисунка текстуры в мультике, одна для всех: 0 — ровная заливка, 100 — как есть (по умолчанию 35); сменить — toneApplyAll

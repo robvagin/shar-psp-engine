@@ -1,0 +1,36 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L5
+flag golevel 5
+wait 40
+flag stop
+flag player
+wait 3
+scene BO0_new
+flag boothmem1051 1
+flag boothhog 0
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b0_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO15_new
+flag boothmem1051 1
+flag boothhog 15
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b15_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+end

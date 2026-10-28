@@ -1,0 +1,18 @@
+# №1043: ключ-гаечный (wrencheye 5, wrenchgo 7) как в туре: flag inkfar1043 1 (новое) / 0 (было)
+scene start
+wait 3
+flag cfgdefaults 1
+scene IK_L1
+flag repair
+wait 3
+flag wrencheye 5
+flag wrenchgo 7
+wait 8
+shot wr_new
+flag inkfar1043 0
+wait 2
+shot wr_old
+flag inkfar1043 1
+wait 3
+shot wr_new2
+end

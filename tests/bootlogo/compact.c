@@ -15,7 +15,8 @@ int main(int argc, char **argv) {
   int an = 0, bn = 0; unsigned char *a = read_all(argv[1], &an), *b = read_all(argv[2], &bn);
   if (!a || !b) return 2;
   BootMarks x, y; int nx = bootMarksParse(a, an, &x), ny = bootMarksParse(b, bn, &y);
-  if (nx != 24 || ny != nx || x.v != 2 || y.v != 3) { printf("FAIL parse old=%d/v%d new=%d/v%d\n", nx, x.v, ny, y.v); return 1; }
+  // 24 знака; №1010: +1 тег El Barto L6 (elbarto6) рядом с прежним
+  if (nx < 24 || nx > 25 || ny != nx || x.v != 2 || y.v != 3) { printf("FAIL parse old=%d/v%d new=%d/v%d\n", nx, x.v, ny, y.v); return 1; }
   int mismatch = 0, codex = 0, claude = 0;
   for (int k = 0; k < nx; k++) {
     BootMark *u = &x.m[k], *v = &y.m[k];

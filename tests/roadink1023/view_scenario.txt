@@ -1,0 +1,37 @@
+# №1023: контур асфальта в мультике: L1 (фиолетовый асфальт), за рулём на улице и пешком у бордюра
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+flag toon 1
+wait 1
+goto 113.0 158.1 1.5708
+wait 3
+press triangle
+wait 4
+shot a_car0
+camrel 0 3.5 -9 0 -0.2 1
+wait 1
+shot a_car1
+camrel 2.5 1.2 -2 0 -0.05 1
+wait 1
+shot a_low
+camrel -4 5 -14 0.15 -0.35 1
+wait 1
+shot a_high
+scene T_L5
+flag golevel 5
+wait 40
+flag flat912 1
+foot -154.9 -482.05 0.024
+wait 3
+camrel 0 3.5 -9 0 -0.2 1
+wait 1
+shot l5_a
+camrel 3 1.6 -3 0.3 -0.05 1
+wait 1
+shot l5_b
+camrel -4 5 -14 0.15 -0.35 1
+wait 1
+shot l5_c
+end

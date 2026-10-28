@@ -224,7 +224,7 @@ void skinPlaceTilt(ScePspFMatrix4 *w, float x, float y, float z, float heading, 
 extern int skinSunPct, skinAmbPct;
 extern int skinToon;
 static inline int skinToonEnabled(void) { return SHAR_TOON_AVAILABLE && skinToon; }
-// №675 (Роб 17.10 «режим мультик заебись»): в мультике контур приглушённый (≈70 % чёрного, как в старых Симпсонах: фон проходит на 30 %), на глазах обводки нет,
+// №675 (Роб 17.10 «режим мультик отлично»): в мультике контур приглушённый (≈70 % чёрного, как в старых Симпсонах: фон проходит на 30 %), на глазах обводки нет,
 // тени-пятна слабее (TOON_SHADOW_PCT %), контур и у мелких предметов мира (пропы). -DSKIN_TOON_V675_OLD=1 — прежнее (чёрный контур, обводка глаз, тени как были, мир без контура)
 #ifndef SKIN_TOON_V675_OLD
 #define SKIN_TOON_V675_OLD 0

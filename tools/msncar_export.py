@@ -88,13 +88,18 @@ def main():
     # правка Роба 450 (10.10): будка показывает машины-награды ВСЕХ уровней (viewer/phone_view.c, вариант Б) — модели и ходовые чужих уровней
     # должны быть и в этом пакете. Только уровни до текущего включительно: машина более позднего уровня ещё не могла быть получена. Свой defaultcar уровня не дублируется (это машина игрока уровня). SHR_PHONE_ALL_OLD=1 — как было (вариант А)
     extra = []   # дописывается в самый конец списка (ниже): предохранитель размера отбрасывает именно их
+    # №1056 (Роб 27.10: на L3 выбрал в будке машину Барта с L6, приехала машина Лизы): defaultcar более позднего уровня (bart_v L6, homer_v L7 …)
+    # галерея показывает и открывает по сохранению (phone_view.c ownedOther: уровень defaultcar <= достигнутого), а модели в пакете текущего
+    # уровня не было (условие выше «defaultcar только до текущего уровня»); без модели движок молча вызывает свою машину (PHONECAR nomodel).
+    # Теперь defaultcar всех семи уровней — в пакет каждого уровня (кроме своего). SHR_PHONE_DEFCARS_OLD=1 — прежнее
+    defall = os.environ.get('SHR_PHONE_DEFCARS_OLD') != '1'
     if os.environ.get('SHR_PHONE_ALL_OLD') != '1':
         own_def = {ra[0].lower() for ra in (
             [x.strip().strip('"') for x in mm.group(1).split(',')] for mm in re.finditer(r'BindReward\s*\(([^)]*)\)', rtxt))
             if len(ra) >= 5 and ra[2] == 'car' and ra[4].isdigit() and int(ra[4]) == a.level and ra[3] == 'defaultcar'}
         for mm in re.finditer(r'BindReward\s*\(([^)]*)\)', rtxt):
             ra = [x.strip().strip('"') for x in mm.group(1).split(',')]
-            if len(ra) >= 5 and ra[2] == 'car' and ra[4].isdigit() and 1 <= int(ra[4]) <= 7 and (ra[3] != 'defaultcar' or int(ra[4]) <= a.level) \
+            if len(ra) >= 5 and ra[2] == 'car' and ra[4].isdigit() and 1 <= int(ra[4]) <= 7 and (ra[3] != 'defaultcar' or defall or int(ra[4]) <= a.level) \
                     and (os.environ.get('SHR_PHONE_LEVELS_OLD') != '1' or int(ra[4]) <= a.level) and ra[0].lower() not in own_def \
                     and ra[0].lower() not in [x.lower() for x in names + extra]:
                 extra.append(ra[0])

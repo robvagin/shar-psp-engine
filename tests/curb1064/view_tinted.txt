@@ -1,0 +1,38 @@
+wait 3
+flag curbtint 1
+flag golevel 1
+wait 30
+scene curb
+flag cfgdefaults 1
+flag camdet 1
+flag toon 1
+flag flat912 1
+flag repair
+wait 4
+press triangle 0.2
+wait 3
+camrel 0 1.0 0 0.000 -0.12 1.000 60
+wait 1.3
+shot v0
+camrel 0 1.0 0 0.707 -0.12 0.707 60
+wait 1.3
+shot v1
+camrel 0 1.0 0 1.000 -0.12 0.000 60
+wait 1.3
+shot v2
+camrel 0 1.0 0 0.707 -0.12 -0.707 60
+wait 1.3
+shot v3
+camrel 0 1.0 0 0.000 -0.12 -1.000 60
+wait 1.3
+shot v4
+camrel 0 1.0 0 -0.707 -0.12 -0.707 60
+wait 1.3
+shot v5
+camrel 0 1.0 0 -1.000 -0.12 -0.000 60
+wait 1.3
+shot v6
+camrel 0 1.0 0 -0.707 -0.12 0.707 60
+wait 1.3
+shot v7
+end

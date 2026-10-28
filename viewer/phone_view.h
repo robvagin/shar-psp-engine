@@ -13,6 +13,9 @@ void phoneViewWarmOld(int old);
 int  phoneViewOn(void);
 int  phoneViewTick(Shop *s, float dt);           // -> PHONEV_EV_CLOSE, когда экран погас
 void phoneViewInput(Shop *s, unsigned hit);
+extern int boothLR1057Old;   // №1057: 1 — в будке зажатые L R не повторяются (как в TEST73)
+extern int boothLR1038Old;   // №1038: 1 — выбор машины в будке только ◄ ► (как в TEST73); 0 — ещё L и R
+
 void phoneViewDraw3D(void);
 int phoneViewHusk(int *r);   // №557: прямоугольник картинки (px), если в будке сейчас показывается 3D-остов; 0 — нет
 void phoneViewHusk3DForce(int on);   // №569: принудительный показ 3D-остова в будке (для тестов / flag phonehusk3d)

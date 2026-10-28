@@ -1,0 +1,1 @@
+№1066 гейт: tools/emu_run.sh tests/defaults1066/menu.txt n EBOOT (тур-EBOOT, SET=test77tour): чистый запуск без settings.bin — кадры pic/toon = фото Роба (IMG_8006/8007); OVL со settings.bin ver 14 (156/150/Soft/45/50, Curbs Tinted) — его значения; FLAGS=defaults1066old — прежние умолчания (красный).

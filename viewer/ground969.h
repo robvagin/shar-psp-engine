@@ -14,7 +14,8 @@
 #define GD_CLS_GRASS 1
 #define GD_CLS_WALK 2
 #define GD_CLS_CURB 3
-#define GD_NCLS 3
+#define GD_CLS_FLOOR 4   // №1030: остальная земля (песок, глина, дорожки): та же нежная бумага вместо общего пятнистого шума №912
+#define GD_NCLS 4
 #define GD_W 64
 #define GD_L 7
 typedef struct { float pitch, amp; } GdPar;   // тайл в метрах и размах яркости (доля): 1 − amp · n, n в 0..1

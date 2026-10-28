@@ -32,6 +32,23 @@ typedef struct { float u, v; unsigned c; float x, y, z; } MsaVert;              
 int (*msnartVecBeam)(const float p[3], const float X[3], const float Y[3], unsigned abgr);
 int (*msnartBeam995)(const float ufo[3], float ex, float ey, float ez);   // №995 (lightsprite.h beam995Draw)   // №805 (lightsprite.h vecBeamHook)
 int (*msnartGlowGlint)(const char *, const float *, float, unsigned, unsigned, float, float, float, float);   // №839 (spritelight.h glowGlintHook)
+// №1025 (Роб 26.10: «зелёные стрелки на полу: убрать блики, пусть будут обычные зелёные стрелки на дороге и следуют подъёму и спаду дороги»): набор стрелок пути (darrow/warrow: три квада-картинки через 4 м вдоль курса
+// и три квада-свечения со сложением тех же суставов) — свечения не рисуются совсем (ни картинкой, ни векторным бликом), каждая стрелка кладётся на коллизию своей точки: высота и нормаль под центром квада (как тень
+// машины №973), оси квада проецируются на плоскость дороги (длина та же). Прежнее — набор на самую высокую точку коллизии под ним, ровно по горизонту (msn_view.c drawRouteArrow). ARROWS1025_OLD=1 / «flag arrows1025 0» /
+// файл arrows1025old рядом с EBOOT — как было
+#ifndef ARROWS1025_OLD
+#define ARROWS1025_OLD 0
+#endif
+int msnartArrow1025 = !ARROWS1025_OLD;
+// №1052 (Роб 27.10: «в будке внизу осталось размытое мигание, у нас только векторное свечение»; дирижёр: найти по данным и не рисовать): у значка телефона (phone_icon) есть
+// пятно <рисунок>_shadow с blend 2 (сложение, текстура-размытое пятно): по правилу №793 «_shadow» из блика исключён, и оно рисовалось картинкой — сиреневое пятно на тротуаре под будкой
+// миссии (на L1 0,3 с мигания). Правило по рисунку и режиму, не по координатам: квад «_shadow» со сложением не рисуется; вычитающие тени (blend 3) остаются. BOOTHDECAL1052_OLD=1 / файл boothdecal1052old — как было
+#ifndef BOOTHDECAL1052_OLD
+#define BOOTHDECAL1052_OLD 0
+#endif
+int msnartDecal1052 = !BOOTHDECAL1052_OLD;
+int (*msnartGroundN)(float x, float z, float yHi, float yLo, float *y, float *n3);   // высота и нормаль коллизии под точкой (main_render.h mvGroundNHook); NULL — стрелки как раньше
+static int msaIsRoadArrow(const char *n) { return !strcasecmp(n, "darrow") || !strcasecmp(n, "warrow"); }
 static int msaIsShadow(const char *n) { size_t l = strlen(n); return l > 7 && !strcasecmp(n + l - 7, "_shadow"); }
 #ifndef GLOW_GLINT_OLD
 #define GLOW_GLINT_OLD 0
@@ -490,6 +507,27 @@ void msnartDraw(const char *name, const float *pos, float ex, float ey, float ez
       X[0] = dz / l * w; X[1] = 0; X[2] = -dx / l * w;
       Y[0] = -(dy / dl) * (dx / l) * h; Y[1] = l / dl * h; Y[2] = -(dy / dl) * (dz / l) * h;
     }
+    if (msnartArrow1025 && msnartGroundN && msaIsRoadArrow(d->name)) {   // №1025: стрелка пути — без бликов, по поверхности дороги
+      if (q->blend == 2) continue;
+      if (qm == 0) {   // результат (высота центра, оси квада) кэшируется по положению и осям: набор стоит на месте, пока путь не пересчитан (раз в ROUTE_DT)
+        static struct { unsigned k[4]; float y, X[3], Y[3]; int ok, used; } ac[12]; static int an;
+        unsigned k4[4]; memcpy(&k4[0], &p[0], 4); memcpy(&k4[1], &p[2], 4); memcpy(&k4[2], &X[0], 4); memcpy(&k4[3], &Y[2], 4); int hit = -1;
+        for (int e = 0; e < 12; e++) if (ac[e].used && !memcmp(ac[e].k, k4, sizeof k4)) { hit = e; break; }
+        if (hit < 0) {
+          int e = an++ % 12; memcpy(ac[e].k, k4, sizeof k4); ac[e].used = 1; ac[e].ok = 0; hit = e;
+          float yv, n3[3];
+          if (msnartGroundN(p[0], p[2], p[1] + 4.f, p[1] - 8.f, &yv, n3) && n3[1] > .5f) {
+            float nl = sqrtf(n3[0] * n3[0] + n3[1] * n3[1] + n3[2] * n3[2]); if (nl > 1e-4f) { n3[0] /= nl; n3[1] /= nl; n3[2] /= nl; }
+            float XX[3] = {X[0], X[1], X[2]}, YY[3] = {Y[0], Y[1], Y[2]}, *AX[2] = {XX, YY};
+            for (int e2 = 0; e2 < 2; e2++) { float *V = AX[e2], l0 = sqrtf(V[0] * V[0] + V[1] * V[1] + V[2] * V[2]), dn = V[0] * n3[0] + V[1] * n3[1] + V[2] * n3[2];
+              for (int i = 0; i < 3; i++) V[i] -= dn * n3[i];
+              float l1 = sqrtf(V[0] * V[0] + V[1] * V[1] + V[2] * V[2]); if (l1 > 1e-5f) for (int i = 0; i < 3; i++) V[i] *= l0 / l1; }
+            float lift = yv + .05f;   // плоскость через землю под центром; ни один угол не тонет: поднимаем на недостачу самого низкого угла (бордюр, гребень)
+            for (int c = 0; c < 4; c++) { float sx = (c & 1) ? 1.f : -1.f, sy = (c & 2) ? 1.f : -1.f, cg, qx = p[0] + sx * XX[0] + sy * YY[0], qz = p[2] + sx * XX[2] + sy * YY[2];
+              if (msnartGroundN(qx, qz, yv + 3.f, yv - 3.f, &cg, n3)) { float need = cg + .03f - (yv + sx * XX[1] + sy * YY[1]); if (need > lift - yv) lift = yv + need; } }
+            ac[e].y = lift; memcpy(ac[e].X, XX, sizeof XX); memcpy(ac[e].Y, YY, sizeof YY); ac[e].ok = 1; } }
+        if (ac[hit].ok) { p[1] = ac[hit].y; memcpy(X, ac[hit].X, sizeof X); memcpy(Y, ac[hit].Y, sizeof Y); } } }
+    if (msnartDecal1052 && q->blend == 2 && msaIsShadow(d->name)) continue;   // №1052: размытое пятно сложением под значком телефона
     if (gg_ && q->blend == 2) {   // №839: свечение — в векторный блик (рисуется один раз после квадов)
       float w_ = tr[0] > tr[1] ? tr[0] : tr[1]; unsigned c_ = abgr(tr[2], tr[3], tr[4], 1.f);
       if (w_ > ggW) { ggW2 = ggW; ggC2 = ggC1; ggW = w_; ggC1 = c_; ggA = tr[5]; memcpy(ggP, p, sizeof ggP); } else if (w_ > ggW2) { ggW2 = w_; ggC2 = c_; }

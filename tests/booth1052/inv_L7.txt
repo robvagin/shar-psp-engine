@@ -1,0 +1,20 @@
+# №1052: инвентарь свечения (GLOWTOP) L7
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L7
+flag golevel 7
+wait 40
+flag player
+flag service 1
+flag addstat 1
+scene P_start7
+foot 214.9 172.3 0
+wait 3.5
+shot g_start7
+scene P_booth7
+foot 144.5 84.5 3.1416
+wait 3.5
+shot g_booth7
+end

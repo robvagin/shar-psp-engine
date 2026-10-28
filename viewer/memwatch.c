@@ -11,7 +11,11 @@ void *__real_realloc(void *p, size_t n);
 void *__real_memalign(size_t al, size_t n);
 
 volatile unsigned memFails, memFailLast, memFailBig;   // отказы: сколько всего, размер последнего и самого крупного, байт
-static void miss(size_t n) { memFails++; memFailLast = (unsigned)n; if (n > memFailBig) memFailBig = (unsigned)n; }
+// №1065: размер и адрес вызывающего каждого отказа (первые 16) — строка MEMFAILSZ в смоуке (main_frontend.h); адрес по ELF: tools/crash_addr.py
+#define MF_RING 16u
+static struct { unsigned bytes, ra; } memFailRing[MF_RING];
+static void miss(size_t n, unsigned ra) { if (memFails < MF_RING) { memFailRing[memFails].bytes = (unsigned)n; memFailRing[memFails].ra = ra; } memFails++; memFailLast = (unsigned)n; if (n > memFailBig) memFailBig = (unsigned)n; }
+int memFailRingGet(unsigned i, unsigned *bytes, unsigned *ra) { if (i >= memFails || i >= MF_RING) return 0; *bytes = memFailRing[i].bytes; *ra = memFailRing[i].ra; return 1; }
 
 // Правка 252 (03.10, зависание всей PSP у особняка, эмулятор не повторяет): служебная сборка -DMEM_SCRIBBLE=1 (и
 // -Wl,--wrap=free) заливает каждое новое и освобождённое выделение байтом 0xFF — как «грязная» память настоящей PSP (эмулятор
@@ -35,10 +39,10 @@ static struct { void *p; unsigned n, ra; } lt[LT_N];
 static void ltAdd(void *p, size_t n, unsigned ra) { if (!p) return; unsigned h = ((unsigned)p >> 4) * 2654435761u >> 15; for (unsigned k = 0; k < LT_N; k++) { unsigned i = (h + k) & (LT_N - 1); if (!lt[i].p || lt[i].p == (void *)1) { lt[i].p = p; lt[i].n = (unsigned)n; lt[i].ra = ra; return; } } }
 static void ltDel(void *p) { if (!p) return; unsigned h = ((unsigned)p >> 4) * 2654435761u >> 15; for (unsigned k = 0; k < LT_N; k++) { unsigned i = (h + k) & (LT_N - 1); if (lt[i].p == p) { lt[i].p = (void *)1; return; } if (!lt[i].p) return; } }
 void __wrap_free(void *p) { ltDel(p); __real_free(p); }
-void *__wrap_malloc(size_t n) { void *p = __real_malloc(n); if (!p && n) miss(n); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
-void *__wrap_calloc(size_t a, size_t b) { void *p = __real_calloc(a, b); if (!p && a && b) miss(a * b); ltAdd(p, a * b, (unsigned)__builtin_return_address(0)); return p; }
-void *__wrap_realloc(void *q, size_t n) { ltDel(q); void *p = __real_realloc(q, n); if (!p && n) miss(n); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
-void *__wrap_memalign(size_t al, size_t n) { void *p = __real_memalign(al, n); if (!p && n) miss(n); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_malloc(size_t n) { void *p = __real_malloc(n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_calloc(size_t a, size_t b) { void *p = __real_calloc(a, b); if (!p && a && b) miss(a * b, (unsigned)__builtin_return_address(0)); ltAdd(p, a * b, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_realloc(void *q, size_t n) { ltDel(q); void *p = __real_realloc(q, n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_memalign(size_t al, size_t n) { void *p = __real_memalign(al, n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); ltAdd(p, n, (unsigned)__builtin_return_address(0)); return p; }
 #define LT_R 4096u
 static int getenv_lt = 1;
 static struct { unsigned ra, bytes, cnt; } ltPrev[LT_R], ltCur[LT_R];
@@ -59,10 +63,10 @@ void lt696Dump(void (*w)(const char *), const char *tag) {
   for (unsigned k = 0; k < nr; k++) ltPrev[k] = ltCur[k]; np = nr;
 }
 #else
-void *__wrap_malloc(size_t n) { void *p = __real_malloc(n); if (!p && n) miss(n); SCRIB(p, n); return p; }
-void *__wrap_calloc(size_t a, size_t b) { void *p = __real_calloc(a, b); if (!p && a && b) miss(a * b); return p; }
-void *__wrap_realloc(void *q, size_t n) { void *p = __real_realloc(q, n); if (!p && n) miss(n); return p; }
-void *__wrap_memalign(size_t al, size_t n) { void *p = __real_memalign(al, n); if (!p && n) miss(n); SCRIB(p, n); return p; }
+void *__wrap_malloc(size_t n) { void *p = __real_malloc(n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); SCRIB(p, n); return p; }
+void *__wrap_calloc(size_t a, size_t b) { void *p = __real_calloc(a, b); if (!p && a && b) miss(a * b, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_realloc(void *q, size_t n) { void *p = __real_realloc(q, n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); return p; }
+void *__wrap_memalign(size_t al, size_t n) { void *p = __real_memalign(al, n); if (!p && n) miss(n, (unsigned)__builtin_return_address(0)); SCRIB(p, n); return p; }
 #endif
 
 // Наибольший кусок, который куча отдаст одним выделением, байт (с точностью 16 КБ): проба __real_malloc — в счёт отказов не

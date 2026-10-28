@@ -1,0 +1,125 @@
+# №1028 приёмка: своя машина L1, TEST71 (flag carink1028 0) и 80 см (1)
+scene C_L1
+flag cfgdefaults 1
+flag repair
+wait 5
+flag carink1028 0
+wait 1.5
+shot incar_old
+flag carink1028 1
+wait 1.5
+shot incar_new
+flag carink1028 0
+cam 213.0 7.2 177.0 7 -3 -5 55
+wait 1.2
+shot rs_old
+flag carink1028 1
+cam 213.0 7.2 177.0 7 -3 -5 55
+wait 1.2
+shot rs_new
+flag carink1028 0
+cam 220.0 4.8 181.0 0 -0.2 -1 55
+wait 1.2
+shot side_old
+flag carink1028 1
+cam 220.0 4.8 181.0 0 -0.2 -1 55
+wait 1.2
+shot side_new
+flag carink1028 0
+cam 220.0 15.0 172.5 0 -1 0.02 55
+wait 1.2
+shot top_old
+flag carink1028 1
+cam 220.0 15.0 172.5 0 -1 0.02 55
+wait 1.2
+shot top_new
+flag carink1028 0
+cam 211.0 4.8 172.0 1 -0.2 0 55
+wait 1.2
+shot end_old
+flag carink1028 1
+cam 211.0 4.8 172.0 1 -0.2 0 55
+wait 1.2
+shot end_new
+flag carink1028 0
+cam 216.07 6.63 174.25 3.90 -2.60 -2.25 55
+wait 1.2
+shot az150_d45_old
+flag carink1028 1
+cam 216.07 6.63 174.25 3.90 -2.60 -2.25 55
+wait 1.2
+shot az150_d45_new
+flag carink1028 0
+cam 214.34 8.03 175.25 5.63 -4.00 -3.25 55
+wait 1.2
+shot az150_d65_old
+flag carink1028 1
+cam 214.34 8.03 175.25 5.63 -4.00 -3.25 55
+wait 1.2
+shot az150_d65_new
+flag carink1028 0
+cam 216.07 6.63 169.75 3.90 -2.60 2.25 55
+wait 1.2
+shot az210_d45_old
+flag carink1028 1
+cam 216.07 6.63 169.75 3.90 -2.60 2.25 55
+wait 1.2
+shot az210_d45_new
+flag carink1028 0
+cam 214.34 8.03 168.75 5.63 -4.00 3.25 55
+wait 1.2
+shot az210_d65_old
+flag carink1028 1
+cam 214.34 8.03 168.75 5.63 -4.00 3.25 55
+wait 1.2
+shot az210_d65_new
+flag carink1028 0
+cam 217.72 6.63 175.90 2.25 -2.60 -3.90 55
+wait 1.2
+shot az120_d45_old
+flag carink1028 1
+cam 217.72 6.63 175.90 2.25 -2.60 -3.90 55
+wait 1.2
+shot az120_d45_new
+flag carink1028 0
+cam 216.72 8.03 177.63 3.25 -4.00 -5.63 55
+wait 1.2
+shot az120_d65_old
+flag carink1028 1
+cam 216.72 8.03 177.63 3.25 -4.00 -5.63 55
+wait 1.2
+shot az120_d65_new
+flag carink1028 0
+cam 217.72 6.63 168.10 2.25 -2.60 3.90 55
+wait 1.2
+shot az240_d45_old
+flag carink1028 1
+cam 217.72 6.63 168.10 2.25 -2.60 3.90 55
+wait 1.2
+shot az240_d45_new
+flag carink1028 0
+cam 216.72 8.03 166.37 3.25 -4.00 5.63 55
+wait 1.2
+shot az240_d65_old
+flag carink1028 1
+cam 216.72 8.03 166.37 3.25 -4.00 5.63 55
+wait 1.2
+shot az240_d65_new
+flag carink1028 1
+press triangle 0.3
+wait 3
+flag carink1028 0
+wait 1.5
+shot foot_old
+flag carink1028 1
+wait 1.5
+shot foot_new
+flag carink1028 1
+press triangle 0.3
+wait 0.15
+shot board_a
+wait 0.15
+shot board_b
+wait 2
+shot board_c
+end

@@ -1,0 +1,52 @@
+scene g646
+flag msn
+wait 2
+flag wrap1037 0
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 1
+wait 1.2
+shot plow_old
+flag wrap1037 1
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 1
+wait 1.2
+shot plow_new
+flag wrap1037 0
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 2
+wait 1.2
+shot duff_old
+flag wrap1037 1
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 2
+wait 1.2
+shot duff_new
+flag wrap1037 0
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 3
+wait 1.2
+shot zombie_old
+flag wrap1037 1
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 3
+wait 1.2
+shot zombie_new
+flag wrap1037 0
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 4
+wait 1.2
+shot pizza_old
+flag wrap1037 1
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037 4
+wait 1.2
+shot pizza_new
+end

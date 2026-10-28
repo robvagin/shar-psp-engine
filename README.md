@@ -19,28 +19,23 @@ No game files are included, and none will be.
 - [Tests](tests/README.md): how every fix is checked
 - [All documents](docs/index.md)
 
-## What's new in build 71
+## What's new in build 78
 
-October 26, 2026. Since the first release on October 22:
+October 28, 2026. Since build 71 (October 26):
 
-- Camera settings: HEIGHT and DISTANCE on the pause CAMERA page, five steps each, for driving and on foot
-- Mission cards slide in with the hand without flashing first; message bubbles appear together with their text
-- Street lamps keep only their light cones, without glowing ellipses on the floor; the UFO on level 7 shines a cone of light down
-- Sparkles on gags and pickups are softer, and traffic outlines stay clean when seen from above
-- The Simpsons house icon shows in the corner only where the original mission calls for it
-- Distant city silhouettes take the hue of the buildings they stand for
-- Level 7 can be finished: the UFO and its tractor beam are in the world, so the "drive into the beam and get out" stages complete
-- On a real PSP-2000 an automated tour plays all 16 cutscenes and runs the ending to the credits
-- Cartoon mode is now the base look. Flat-color textures became vector fills, grass and sidewalks carry a fine paper-like grain, sidewalks are a cool gray. Curbs keep their original colors and the corner pieces match them; overly saturated warm ground is toned down a little. The original asphalt and road markings stay, a little lighter
-- Lights and sparkles are vector shapes: windows, neon, street lamps, and interaction sparkles shaped like a card diamond; coins get three small sparkles
-- Traffic and parked cars keep their original textures
-- The sky is a gradient dome. Distant landmarks, roads and bridges stay on screen
-- Wheels spin on every car, traffic included. Damage smoke matches the PS2 original
-- Poles and lamp posts fall like on the PS2: whole, pivoting at the base, with fall times measured on the original; on levels 4 to 7 many more of them can be knocked down
-- Car shadows sit on the ground and follow slopes
-- On foot, the stick keeps your course when the game moves the camera, and the camera no longer jumps into a parked car
-- Menus and mission icons no longer carry over into the next level
-- More free memory on five of the seven levels; city driving is a little faster
+- Phone booth opens every time, even when memory is tight, and lists the default car of every level, so the car you pick is the car that arrives. L and R flip through cars (hold to repeat); Mission Select changes level with L and R
+- On foot the camera turns the way the PS2 game turns it, and the stick keeps your heading when the camera changes (leaving the booth, mission starts, camera cuts)
+- Level loading: the interface and the sound bank load first after a level is freed, and the newspaper loading screen no longer disappears when memory is short: the game frees the old level and tries again. Transitions between levels and the booth no longer need a big free block, and unloading cells during streaming no longer stalls a frame
+- Tires are black on every car, near and far; the player's car gets its own wheel texture on levels 1 and 3 to 7
+- Cartoon mode keeps ink only where you interact: the hero, pedestrians, every car, the phone booth and props you hit or use. Houses, roads and the asphalt edge are no longer outlined
+- Settings: new row CURBS on the PICTURE page. Original draws the curb with the game's own texture; Tinted is the earlier painted curb (it applies from the next level load). Defaults for a fresh save now match the author's PSP menus: Textures On, Saturation 1.28, Contrast 1.30, Eye Lines Off, Texture Detail 80%, Old TV 20%, Draw Distance 250 m. Existing saves are untouched
+- Far distance: Draw Distance 250 m raises the city limit and the haze that looked like a white wall is gone; a ring of baked panoramas beyond the city edge is back for a pilot set of zones (levels 1, 3 and 6)
+- Mission cards glow with the original's soft round light instead of a texture square
+- Police keep 27 m from a standing player like on the PS2, and the wanted meter falls at once during a chase (no 3 s pause)
+- Ramps and jump zones: the entrance rails of the big level 5 ramp no longer stop the car dead; thin gate-style jump zones launch the car like the PS2 (the level 5 fire escape); the fence rule at roof edges follows a PS2 recording
+- Jumps near fences on levels 2 to 7: fence links that used to count as the map edge are now inner fences, so a car in flight no longer hits an invisible wall
+- Green road arrows follow the slope without glow; the "Vote Quimby" van speaks near you; poles and lamp posts fall from a bumper push
+- Message bubbles appear in one step with their text; the camera cut at the start of a mission stays within 30 m of you
 
 ## Build
 

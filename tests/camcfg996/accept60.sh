@@ -3,7 +3,7 @@
 #   Нужны OVL с pmenu.shr нового вида (tools/menu_export.py) и SET (набор тура). Прогоны эмулятора: A — камера (пешком и в машине), B — старый settings.bin (ver 10) + смена строк в меню + запись, C — чтение записанного.
 #   Мера A (журнал CAMU996): пешком Height — отступ глаза над ступнями 1,69 / 2,04 / 2,38 / 2,73 / 3,07 (±0,06), Distance — 4,52 / 5,48 / 6,45 / 7,42 / 8,39 (±0,08); середина = как TEST70 (6,450 и 2,380);
 #   в машине расстояния Distance относятся как .70 / .85 / 1 / 1,15 / 1,30 (±0,05), высота растёт с шагом; у стен (W3, W4, W6) на краю (High + Far) стена держит камеру (расстояние до Гомера меньше 6,7 м при 8,39 желаемых, лучи в стену есть), глаз за стеной или над пустотой — 0 кадров.
-#   Мера B/C: в старом файле (ver 10, 88 байт) громкость 700/800/900/1000 и Ink прочитаны, Height и Distance = Normal; после смены в меню и выхода файл содержит High / Near, и прогон C читает их обратно.
+#   Мера B/C: в старом файле (ver 10, 88 байт) громкость 700/800/900/1000 и Ink прочитаны, Height и Distance = Normal; после смены в меню и выхода файл (ver 12, 100 байт, №1003: в конце Height, Distance, Car Shadows) содержит High / Near и Car Shadows Off, и прогон C читает их обратно.
 #   «red» — красный контроль: прогон A с файлом camcfg996old (множители всегда 1) -> шаги не меняют камеру -> FAIL. Последняя строка PASS / FAIL
 D=$(cd "$(dirname "$0")" && pwd); I=$(cd "$D/../.." && pwd); RUN=${RUN:-$I/tools/emu_run.sh}; export OUT=${OUT:-/tmp/camcfg996_out}; export EMU_OWNER=${EMU_OWNER:-Мультик}; export EMU_MINE=${EMU_MINE:-2}
 export OVL=${OVL:-/tmp/c996/ovl}; export SET=${SET:-$HOME/Downloads/shar-psp-integ/build/test70tour/PSP/GAME/SHARTEST15}
@@ -85,8 +85,8 @@ if ob:
     l = ob[-1]; chk(l[6] == '4' and l[7] == '0', 'после смены в меню: Height %s (High = 4), Distance %s (Near = 0)' % (l[6], l[7]))
 else: chk(False, 'B: нет строк OPT в журнале')
 try:
-    sbd = open(sb, 'rb').read(); ver, h_, d_ = struct.unpack_from('<i', sbd, 4)[0], struct.unpack_from('<i', sbd, len(sbd) - 8)[0], struct.unpack_from('<i', sbd, len(sbd) - 4)[0]
-    chk(len(sbd) == 96 and ver == 11 and (h_, d_) == (4, 0) and sbd[8:12] == struct.pack('<i', 700), 'записанный файл: %d байт, ver %d, Height %d, Distance %d, громкость сохранена' % (len(sbd), ver, h_, d_))
+    sbd = open(sb, 'rb').read(); ver, h_, d_, cs_ = struct.unpack_from('<i', sbd, 4)[0], struct.unpack_from('<i', sbd, len(sbd) - 12)[0], struct.unpack_from('<i', sbd, len(sbd) - 8)[0], struct.unpack_from('<i', sbd, len(sbd) - 4)[0]   # ver 12 (№1003): в конце Height, Distance, Car Shadows
+    chk(len(sbd) == 100 and ver in (12, 13) and (h_, d_) == (4, 0) and cs_ == 0 and sbd[8:12] == struct.pack('<i', 700), 'записанный файл: %d байт, ver %d, Height %d, Distance %d, Car Shadows %d, громкость сохранена' % (len(sbd), ver, h_, d_, cs_))
 except Exception as e: chk(False, 'записанный файл не найден (%s)' % e)
 if oc: chk(oc[0][6] == '4' and oc[0][7] == '0' and oc[0][1] == '700', 'C: записанный файл прочитан обратно: Height %s, Distance %s, громкость %s' % (oc[0][6], oc[0][7], oc[0][1]))
 else: chk(False, 'C: нет строк OPT в журнале')

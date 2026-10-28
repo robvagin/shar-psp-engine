@@ -1,0 +1,45 @@
+# №1042: даль 250 м (PICTURE DRAW DISTANCE 250) на L1 L2 L5 L7, вид вдоль улицы
+scene start
+wait 3
+flag ddfloor 250
+scene FR_L1
+flag repair
+goto 220 172 4.206
+wait 7
+shot FR_L1_a
+wait 3
+shot FR_L1_b
+scene FR_L2_load
+flag golevel 2
+wait 22
+flag ddfloor 250
+scene FR_L2
+flag repair
+goto 152 -38.44 3.543
+wait 7
+shot FR_L2_a
+wait 3
+shot FR_L2_b
+scene FR_L5_load
+flag golevel 5
+wait 22
+flag ddfloor 250
+scene FR_L5
+flag repair
+goto -154.9 -482.05 1.126
+wait 7
+shot FR_L5_a
+wait 3
+shot FR_L5_b
+scene FR_L7_load
+flag golevel 7
+wait 22
+flag ddfloor 250
+scene FR_L7
+flag repair
+goto 214.73 172.41 3.709
+wait 7
+shot FR_L7_a
+wait 3
+shot FR_L7_b
+end

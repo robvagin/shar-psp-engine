@@ -1,0 +1,114 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L5
+flag golevel 5
+wait 40
+flag stop
+flag player
+wait 3
+scene BO0_old
+flag boothmem1051 0
+flag boothhog 0
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b0_old
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO0_new
+flag boothmem1051 1
+flag boothhog 0
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b0_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO4_old
+flag boothmem1051 0
+flag boothhog 4
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b4_old
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO4_new
+flag boothmem1051 1
+flag boothhog 4
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b4_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO7_old
+flag boothmem1051 0
+flag boothhog 7
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b7_old
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO7_new
+flag boothmem1051 1
+flag boothhog 7
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b7_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO10_old
+flag boothmem1051 0
+flag boothhog 10
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b10_old
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+scene BO10_new
+flag boothmem1051 1
+flag boothhog 10
+wait 1.5
+foot 105.4 -331.0 0
+wait 3
+press triangle 0.2
+wait 3
+shot b10_new
+press triangle 0.2
+wait 2.5
+flag boothhog 0
+wait 2
+end

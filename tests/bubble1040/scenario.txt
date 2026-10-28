@@ -1,0 +1,30 @@
+scene g646
+flag msn
+wait 2
+flag bubble1040 0
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037q 1
+wait 0.016
+shot o0
+wait 0.02
+shot o1
+wait 0.02
+shot o2
+wait 0.02
+shot o3
+wait 2
+flag bubble1040 1
+flag uipopmsg 0
+wait 2.5
+flag uimsg1037q 1
+wait 0.016
+shot n0
+wait 0.02
+shot n1
+wait 0.02
+shot n2
+wait 0.02
+shot n3
+wait 2
+end

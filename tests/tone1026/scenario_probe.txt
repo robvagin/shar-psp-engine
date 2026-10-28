@@ -1,0 +1,49 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene C_L1
+flag golevel 1
+wait 40
+scene K_START
+flag repair
+wait 3
+goto 220 172 1.5708
+wait 3
+flag stop
+flag hzcachetone 136
+wait 3
+scene V_s136_coin
+flag coincam 2.5
+wait 1.5
+shot coin_s136
+scene V_s136_sign
+foot 10.0 640.5 0
+wait 3
+cam 16.1 10.1 645.7 -0.612 -0.3 -0.515
+wait 2
+shot sign_s136
+flag hzcachetone 0
+wait 3
+scene V_s0_coin
+flag coincam 2.5
+wait 1.5
+shot coin_s0
+scene V_s0_sign
+foot 10.0 640.5 0
+wait 3
+cam 16.1 10.1 645.7 -0.612 -0.3 -0.515
+wait 2
+shot sign_s0
+flag hzcachetone 250
+wait 3
+scene V_s250_coin
+flag coincam 2.5
+wait 1.5
+shot coin_s250
+scene V_s250_sign
+foot 10.0 640.5 0
+wait 3
+cam 16.1 10.1 645.7 -0.612 -0.3 -0.515
+wait 2
+shot sign_s250
+end

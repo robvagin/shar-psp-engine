@@ -41,6 +41,11 @@ int main(void) {
   check("погоня: удары машины подряд — оба", fabsf(heat - (.6f - .012f)) < .004f, heat * 100.f, 58.8f);
   run(1.f, 6.f);
   check("погоня: спад 6/с сразу, без паузы", fabsf(heat - (.588f - .06f)) < .004f, heat * 100.f, 52.8f);
+  // №723: вход в погоню — нарушение (не защёлкнута) добило шкалу, потом защёлка: у PS2 спад 6/с идёт сразу (tw_v8_stand: 99,78 → 0 за 17,6 с), пауза 3 с только вне погони
+  fresh(); heat = .95f; gameHnrOffense(&G, HNR_CAR_WRECK); G.hnrLatched = 1; run(1.f, 6.f);
+  check("вход в погоню: спад 6/с сразу, без паузы 3 с", fabsf(heat - .94f) < .004f, heat * 100.f, 94.f);
+  fresh(); heat = .95f; gameHnrOffense(&G, HNR_CAR_WRECK); run(1.f, 3.f);
+  check("вне погони: пауза 3 с цела", near(heat, 1.f), heat * 100.f, 100.f);
   // не считается: комната, арест, выключено сценарием
   fresh(); G.hnrRoom = 1; gameHnrOffense(&G, HNR_PED_HIT); check("в комнате — нет", near(heat, 0.f), heat * 100.f, 0.f);
   fresh(); G.hnrBusted = 1.f; gameHnrOffense(&G, HNR_PED_HIT); check("во время ареста — нет", near(heat, 0.f), heat * 100.f, 0.f);

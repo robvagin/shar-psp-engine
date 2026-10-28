@@ -33,6 +33,8 @@ r mk_bpp   "$PY" tools/bootmarks.py --verify "$OUT/bad_bpp.bin"
 r mk_extra "$PY" tools/bootmarks.py --check "$OUT/bad_extra.bin"
 g mk_verify "$PY" tools/bootmarks.py --verify
 g mk_check  "$PY" tools/bootmarks.py --check
+r mk1010_old env ELBARTO1010_OLD=1 "$PY" tools/bootmarks.py --check   # №1010: файл с родным тегом L6 ≠ сборке без него -> FAIL
+r mk1010b_old env ELBARTO1010B_OLD=1 "$PY" tools/bootmarks.py --check   # №1010б: серый растянутый тег ≠ сборке «1:1 красным» -> FAIL
 r packed_size_old "$PY" tests/bootlogo/compact_size.py "$OUT/bootmarks-old-bmk2.bin" "$OUT/bootmarks-old-bmk2.bin"
 g packed_size "$PY" tests/bootlogo/compact_size.py build/bootmarks.bin "$OUT/bootmarks-old-bmk2.bin"
 g short_bmk3 bash tests/bootlogo/short_bmk3.sh

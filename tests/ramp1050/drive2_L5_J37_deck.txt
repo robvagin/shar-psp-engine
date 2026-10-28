@@ -1,0 +1,72 @@
+# №1050: заезд на трамплин с площадки (NE) к кромке (SW), L5 J3-7
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene R_GO5
+flag golevel 5
+wait 40
+flag stop
+scene R_e
+goto 146 -415 3.927
+flag repair
+wait 1.5
+shot e0
+flag autostraight 4
+wait 0.5
+shot e1
+wait 0.5
+shot e2
+wait 0.5
+shot e3
+wait 0.5
+shot e4
+wait 0.5
+shot e5
+wait 0.5
+shot e6
+wait 0.5
+shot e7
+flag stop
+scene R_f
+goto 142 -411 3.927
+flag repair
+wait 1.5
+shot f0
+flag autostraight 4
+wait 0.5
+shot f1
+wait 0.5
+shot f2
+wait 0.5
+shot f3
+wait 0.5
+shot f4
+wait 0.5
+shot f5
+wait 0.5
+shot f6
+wait 0.5
+shot f7
+flag stop
+scene R_g
+goto 150 -409 3.600
+flag repair
+wait 1.5
+shot g0
+flag autostraight 4
+wait 0.5
+shot g1
+wait 0.5
+shot g2
+wait 0.5
+shot g3
+wait 0.5
+shot g4
+wait 0.5
+shot g5
+wait 0.5
+shot g6
+wait 0.5
+shot g7
+flag stop
+end

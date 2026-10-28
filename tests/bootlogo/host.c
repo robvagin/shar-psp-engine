@@ -184,7 +184,7 @@ int main(void) {
   BootSys e = s; e.ntex = e.nchunk = e.pvsW = e.colTri = e.trfModel = e.sfxRes = e.nMovie = 0;   // нет файлов — строк данных нет
   for (int y = 0; y < BUI_H; y++) for (int xx = 0; xx < BUI_W; xx++) scr[y][xx] = BUI_BG;
   bootSeqDraw(0, &e, sput, 0); bootSeqDraw(len, &e, sput, 0);
-  int emptyRows = 0; for (int row = BSQ_ROW0 + 7; row < BSQ_ROW0 + 14; row++) { int lit = 0; for (int xx = BUI_X0; xx < BUI_TEXT_R; xx++) lit += scr[BUI_Y0 + row * BUI_CH + 3][xx] != BUI_BG; emptyRows += lit == 0; }
+  int emptyRows = 0, sh988_ = BOOT_WORK_OLD || BOOT_AI988_OLD ? 0 : 1; for (int row = BSQ_ROW0 + 7 + sh988_; row < BSQ_ROW0 + 14 + sh988_; row++)   /* №988: строка AI сдвигает блок данных на ряд ниже */ { int lit = 0; for (int xx = BUI_X0; xx < BUI_TEXT_R; xx++) lit += scr[BUI_Y0 + row * BUI_CH + 3][xx] != BUI_BG; emptyRows += lit == 0; }
   printf("данные: строк с числами %d из 7, без файлов пустых строк %d из 7 (одна — «Loading»), текст в колонке знаков: %d px\n", dataRows, emptyRows, spill);
   int dataBad = dataRows != 7 || emptyRows < 6 || spill;
   printf("кадров %d, клеток %d (%dx%d по %d px), пикселей знака %d (%dx%d)\n", frames, blocks, BOOTANIM_BW, BOOTANIM_BH, BOOTANIM_CELL, px, BOOTLOGO_W, BOOTLOGO_H);

@@ -1,0 +1,43 @@
+wait 3
+flag golevel 1
+wait 30
+scene menu
+flag cfgdefaults 1
+goto 170 172 1.5708
+wait 3
+press start
+wait 1
+press up
+wait .4
+press up
+wait .4
+press cross
+wait .8
+press cross
+wait .8
+press down
+wait .4
+press down
+wait .4
+press down
+wait .4
+press down
+wait .4
+press down
+wait .4
+press down
+wait .4
+press down
+wait .4
+shot q0
+press right
+wait .5
+shot q1
+press triangle
+wait .6
+press triangle
+wait .6
+press triangle
+wait 1.5
+shot q2
+end

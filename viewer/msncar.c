@@ -948,6 +948,16 @@ static void control(const MsnCars *m, McCar *c, const McEnv *e, const float goal
 #endif
 #define POLICE_STAND_MIN 93.7f
 #define POLICE_STAND_V 1.f
+// №723 (Роб 17.10, видео IMG_7280 4:53: «полицейская машина въезжает на газон»). Записи PS2 (build/ps2ref/answers: b3_moving, b3_fine80, tw_v8_stand; расчёт tests/police723): к СТОЯЩЕМУ игроку у PS2 полиция
+// выезжает с дороги в 45 м и подъезжает не ближе 27 м (b3_moving: 27 м на кадре 225, дальше держится 39–46 м, раз в ~11 с возвращается к месту появления; b3_fine80 на возвышении — 28,5 м; у дороги — 55 м, №430).
+// После №430 порт подъезжал к стоящему игроку вплоть до 13 м и въезжал в двор на 31 м от оси дороги (PS2 — не дальше 28 м). Правило: игрок за рулём стоит (< POLICE_STAND_V) — полиция останавливается так, чтобы
+// остановка (тормозной путь 8 м/с², как выше) не оказалась ближе POLICE_PS2_STAND = 27 м; стоящего дальше — по-прежнему догоняет (№430). Едущего игрока и пешего Гомера не касается.
+// POLICE_PS2STAND_OLD=1 / flag police723 0 — как было (красный tests/police723)
+#ifndef POLICE_PS2STAND_OLD
+#define POLICE_PS2STAND_OLD 0
+#endif
+#define POLICE_PS2_STAND 27.f
+int mcPolice723Old = POLICE_PS2STAND_OLD;
 static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
   Car *k = &c->car; CarInput in = {0.f, 0.f, 0.f, 0.f};
   // цель этого кадра: точка пути или игрок
@@ -969,6 +979,10 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
         float close = -(k->vel[0] * dx + k->vel[2] * dz) / l;
         if (!POLICE_KEEPOFF_OLD && close > 0.f && l - close * close / 16.f - close * .25f < POLICE_STAND_MIN) have = 0;
       }
+    }
+    if (c->police && !POLICE_CHASE_OLD && !mcPolice723Old && have && e->player && e->driving && hypotf(e->player->vel[0], e->player->vel[2]) < POLICE_STAND_V) {   // №723: к стоящему не ближе 27 м
+      float dx = k->x - e->ppos[0], dz = k->z - e->ppos[2], l = sqrtf(dx * dx + dz * dz) + 1e-3f, close = -(k->vel[0] * dx + k->vel[2] * dz) / l;
+      if (l - (close > 0.f ? close * close / 16.f + close * .25f : 0.f) < POLICE_PS2_STAND) have = 0;
     }
   } else if (m->nwp && !c->finished) {
     int T = total(m);

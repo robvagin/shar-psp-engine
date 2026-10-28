@@ -11,6 +11,7 @@
 #include "carfill930.h"   // №930: куски машин трафика заливкой (мультик)
 #include "pfetch.h"
 #include "flatdiag.h"
+#include "pano917io.h"   // №917: кольцо-панорама дали — загрузка (читает загрузчик клеток); рисует pano917.h после ленты
 #include "main_stream.h"
 #include "main_camera.h"
 #include "main_render.h"
@@ -28,5 +29,6 @@
 #include "spritelight.h"
 #include "oldtv.h"       // №800: «старый телевизор» (строка Old TV на странице CARTOON)
 #include "coinspr.h"   // монеты спрайтами одной пачкой (Роб 17.10)    // №658: тени спрайтами одним модулем (flag shadowspr 1)
+#include "mem1060.h"   // №1060: будка всегда (сцена, пересборка кучи, возврат)
 #include "main_loop.h"
 #endif

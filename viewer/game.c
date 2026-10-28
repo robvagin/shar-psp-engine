@@ -299,6 +299,7 @@ void gameAfterCar(Game *g, const GamePad *p, float dt) {
   XS_LAP(7, xt_, xw_);
   if (haveProps) propsUpdate(&props, &world, &car, dt); XS_LAP(8, xt_, xw_);
   if (haveSP) {   // стейтпропы: машина состояний, удары машины, монеты; частицы — пресеты в fx.c
+    sprops.nearP[1][0] = haveHomer ? homer.x : car.x; sprops.nearP[1][1] = haveHomer ? homer.z : car.z;   // №1000
     spUpdate(&sprops, &world, &car, haveCoins ? &coins : NULL, dt);
     // правка Роба 135.1: звук — на событие удара (машина, пинок/стомп Гомера: очередь spSndPop), не на любую смену состояния:
     // авто-переход (куст-шар встаёт сам через 1.3 с), возврат на место, обломок — без звука. spSt — как было (NEW GAME)
@@ -418,8 +419,15 @@ void gameRespawn(Game *g, float ex, float ez, float dt, int (*seen)(void *, floa
 #define HNR_DECAY_DELAY 3.f   // с без наездов до начала спада (запись PS2: последний наезд 25:59 -> спад с 26:02)
 #endif
 #define HNR_SCALE 100.f       // ед. на полной шкале (docs/gameplay.md §6, числа исполняемого файла PAL: удар машины +5, проп +7.5 …)
+// №723 (Роб: «как PS2 целиком»): у PS2 в погоне шкала спадает 6,0 ед./с БЕЗ паузы (knowledge/facts/ps2-hnr-meter.yaml: «запись 100 сразу включает погоню; в погоне спад 6,0/с без паузы»; tw_v8_stand: 99,78 → 0 за 17,6 с,
+// b3_chase и v111 естественная: 15,9 с), пауза 3 с после нарушения — только вне погони. Порт: нарушение, добившее шкалу до 100 ДО защёлки погони (main_frontend.h hnrPursuit), обнуляло hnrCalm, и первые 3 с погони шкала
+// стояла на месте (погоня до нуля 19–20 с вместо 16–17). Теперь в защёлке погони пауза не ждётся. HNR_CHASE_PAUSE_OLD=1 / gameHnrChasePauseOld = 1 / файл hnrpause723old / flag hnrpause723 0 — как было
+#ifndef HNR_CHASE_PAUSE_OLD
+#define HNR_CHASE_PAUSE_OLD 0
+#endif
+int gameHnrChasePauseOld = HNR_CHASE_PAUSE_OLD;
 void gameHnrRate(Game *g, float dt, float rate) {   // спад rate ед./с через HNR_DECAY_DELAY с без наездов
-  hnrCalm += dt; if (hnrCalm > HNR_DECAY_DELAY) hnrHeat = fmaxf(0.f, hnrHeat - rate / HNR_SCALE * dt);
+  hnrCalm += dt; if (hnrCalm > HNR_DECAY_DELAY || (g->hnrLatched && !gameHnrChasePauseOld)) hnrHeat = fmaxf(0.f, hnrHeat - rate / HNR_SCALE * dt);
 }
 // Правка Роба 112 (30.09, «сверяйся с оригиналом напрямую»): обычный спад — SetHitAndRunDecay уровня (L1 3.0) на шкале 100: полная
 // шкала гаснет за ~33 с. Замер записи PS2 (tools/ps2ref/hnr_track.py, жёлтый указатель на ободе радара, ход ~300°): спад 5–9.5°/с,

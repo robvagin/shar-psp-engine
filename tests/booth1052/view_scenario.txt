@@ -1,0 +1,33 @@
+# №1052: будка L1 (R1P2, 144.04 / 81.77): низкий вид на основание будки, 12 кадров по 0,15 с (мигающее свечение внизу)
+scene booth
+flag msn
+wait 3
+foot 144.5 84.5 3.1416
+wait 2
+camrel 0 1.0 1.0 0 -0.15 -1
+wait 0.5
+shot b00
+wait 0.15
+shot b01
+wait 0.15
+shot b02
+wait 0.15
+shot b03
+wait 0.15
+shot b04
+wait 0.15
+shot b05
+wait 0.15
+shot b06
+wait 0.15
+shot b07
+wait 0.15
+shot b08
+wait 0.15
+shot b09
+wait 0.15
+shot b10
+wait 0.15
+shot b11
+cam off
+end

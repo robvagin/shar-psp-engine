@@ -37,7 +37,16 @@ typedef struct {
   unsigned pal[16];           // ABGR
   const unsigned char *bits;  // строки подряд; 2 бита: 4 пикселя в байте, 4 бита: 2 пикселя; старшие биты — левый
   char name[15];
+  unsigned ink;               // №1010: краска тега (ABGR из 4 последних байт поля имени записи); 0 — цвет палитры
 } BootMark;
+// №1010 (Роб 26.10: El Barto на заставке — родной, красным, с мусорного бака L6 из самой игры): в файле знаков два тега режима 6 — прежний 'elbarto'
+// (файл Роба 04.10) и 'elbarto6' (текстура бака l6_dump.p3d с диска, tools/bootmarks.py); рисуется один: 'elbarto6' своей краской, если он есть.
+// ELBARTO1010_OLD=1 / файл elbarto1010old рядом с EBOOT (bootElbarto1010Old) — прежний тег прежним цветом. Пиксели тега — только в build/bootmarks.bin, не в коде
+#ifndef ELBARTO1010_OLD
+#define ELBARTO1010_OLD 1   // Роб 26.10 23:0x: «El Barto верни тот, что был до этого» — прежний тег по умолчанию
+#endif
+static int bootElbarto1010Old = ELBARTO1010_OLD;
+#define BMK_TAG6_NAME "elbarto6"
 typedef struct { int n, slotW, slotH, v, scale; BootMark m[BMK_MAX]; } BootMarks;   // v: 1 — BMK1, 2 — BMK2; scale — пиксель знака квадратом scale×scale
 
 static unsigned bmkRd16(const unsigned char *p) { return p[0] | p[1] << 8; }
@@ -71,6 +80,7 @@ static int bootMarksParse(const unsigned char *b, int len, BootMarks *out) {
     if (b[p + 4] != bpp || m->w < 1 || m->h < 1 || m->mode >= BMK_NMODE) return -1;
     if (tag ? (m->w > BMK_TAG_MAXW || m->h > BMK_TAG_MAXH) : (m->w * sc > sw || m->h * sc > sh)) return -1;
     for (int i = 0; i < 14; i++) m->name[i] = (char)b[p + 6 + i]; m->name[14] = 0;
+    m->ink = m->mode == 6 ? bmkRd32(b + p + 16) : 0u;   // №1010: краска тега — байты 10..13 поля имени (у прежних файлов нули)
     for (int i = 0; i < 16; i++) m->pal[i] = i < npal ? (v == 3 ? shared[i] : bmkRd32(b + p + 20 + 4 * i)) : m->pal[0];
     p += rec; m->bits = b + p; p += bpp == 1 ? (m->w * m->h + 7) / 8 : bpp == 2 ? (m->w * m->h + 3) / 4 : (m->w * m->h + 1) / 2;
     if (p > len - 4) return -1;
@@ -169,7 +179,7 @@ static void bootTagFrame(const BootMark *m, int t, int ox, int oy, void (*put)(v
       int i = bmkPix(m, x, y); if (!i) continue;
       float at = (float)x / (float)m->w + ((float)(bmkHash(x, y) & 1023) / 1023.f - .5f) * 2.f * BMK_TAG_JIT;
       if (at > p) continue;
-      unsigned c = m->pal[i];
+      unsigned c = m->ink && !bootElbarto1010Old ? m->ink : m->pal[i];   // №1010: тег L6 — цветом краски с бака
       if (p < 1.3f && p - at < BMK_TAG_WET) c = bootAnimMix(c, 0xFFFFFFFFu, .45f * (1.f - (p - at) / BMK_TAG_WET));
       for (int sy = 0; sy < BMK_TAG_PX; sy++) for (int sx = 0; sx < BMK_TAG_PX; sx++) { put(u, ox + x * BMK_TAG_PX + sx, oy + y * BMK_TAG_PX + sy, c); bootMarkPuts++; }
     }

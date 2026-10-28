@@ -43,6 +43,12 @@ typedef struct { float cx, cz, y0, h; unsigned np, off, p0, p1; } HzLm;
 #define HZ_LM928_OLD 0
 #endif
 static int hzLmOn = 1;   // №928: ориентиры дали (до 16 на уровень, автоотбор tools/landmark_pick.sh) одним вызовом и только впереди; «flag hzlm 0» — без ориентиров (A/B гейта); HZ_LM928_OLD=1 — прежний путь (по вызову на ориентир)
+// №1042 (Роб 26.10, TEST72 на PSP: «вдалеке белая стена», «цветовые силуэты домов не получились»; «за краем дальности только небо»): лента силуэтов горизонта (№887, цвета фасадов №997, карточки ориентиров) не рисуется и не загружается ни на одном уровне.
+// Даль даёт стрим настоящих домов (Оптимизация) и дальность по выбору игрока (Небо). HZOFF1042_OLD=1 / файл hzoff1042old рядом с EBOOT / «flag hzoff1042 0» — лента как в TEST72
+#ifndef HZOFF1042_OLD
+#define HZOFF1042_OLD 0
+#endif
+static int hzOff1042Old = HZOFF1042_OLD;
 static int horizonOn; static int hzTrace; static float hzCullD;   // №909 диагностика: «flag hztrace 1» — строка HZT на кадр (глаз, взгляд, радиус города, рисуемая клетка ленты)
 #ifndef FAR150_OLD
 #define FAR150_OLD 0
@@ -101,9 +107,17 @@ static int hzAct; static int hzBldCell = -1, hzBldSet; static unsigned hzBldK, h
 __attribute__((noinline)) static float hz913Cap(float ex, float ez, float dt) {   // №913: потолок радиуса города по зоне глаза (hzzone913.h); base — радиус ленты минус 4 м (130 у новых лент, 150 у прежних)
   float base = hz130On ? hzR - 4.f : 150.f; return hz913Step(&hz913St, hzZoneMode(&hzZ, ex, ez, base < 140.f ? 1 : 0), base, dt);   // 130 м по умолчанию — только с флагом far130 (слово дирижёра 24.10: Роб решает по новой цифре выигрыша); без него зона «130» держит 150, зоны 250 работают
 }
+// №1042 (Роб на PSP, TEST72: «поставил в настройках 250 м — ничего не видно; вдалеке большая белая стена»): строка PICTURE «Draw Distance» поднимала только ПОЛ регулятора (ddFloorOver), а потолок города вне зон 250 м
+// (№887/№913) оставался 150 м: при выбранных 200/250 город всё равно обрывался на 150, дальше шла лента на 154 м в дымке. Теперь потолок не ниже выбранного игроком (FAR1042_OLD=1 / файл far1042old / flag far1042 0 — прежний потолок);
+// лента силуэтов сама растягивается до drawDist + 4 (равномерный масштаб, строка ~377), туман города идёт от drawDist
+#ifndef FAR1042_OLD
+#define FAR1042_OLD 0
+#endif
+static int far1042On = !FAR1042_OLD;
 __attribute__((noinline)) static float hz913Apply(float dd, float ex, float ez, float dt, int ok, int hi) {   // потолок города: возвращает новую drawDist
   if (FAR150_OLD || !far150On || !hzN || hzR >= FAR150_D + 30.f) return dd;
   float cap = HZ913_OLD ? FAR150_D : hz913Cap(ex, ez, dt);
+  if (far1042On && ddFloorOver > cap) cap = ddFloorOver;   // №1042: Draw Distance 200/250 в настройках — город до выбранного, не до 150
   return ok && dd > cap && !hi ? cap : dd;
 }
 static void horizonFree(void) { if (!HZ_VB934_OLD) { free(hzVbBuf); hzVbBuf = 0; } hzDst = 0; hzHcl = 0; hzLmCol = 0; for (int q = 0; q < HZ_RSN; q++) hzRs[q].cell = -1; hzWsig = 0; hzWex = hzWey = hzWez = 1e9f; hzWR = 0.f; free(hzZData); hzZData = 0; memset(&hzZ, 0, sizeof hzZ); memset(&hz913St, 0, sizeof hz913St); hzSetCur = -1; free(hzData); hzData = 0; hzN = 0; hzC = 0; hzL = 0; hzNL = 0; hzCur = -1; hzBldCell = -1; hzLevel = -99; }
@@ -350,7 +364,7 @@ static void hzTraceEdge(const HzVtx *V, unsigned nc, int wr, float k, float dy, 
 static void horizonDraw(float ex, float ey, float ez) {
   unsigned t0_ = sceKernelGetSystemTimeLow();
   hzVerts = hzCalls = 0;   // счётчики кадра; hzNv — число вершин собранной ленты, живёт между кадрами
-  if (HORIZON_OLD || !horizonOn || inRoom() || clearChk) return;
+  if (HORIZON_OLD || !horizonOn || inRoom() || clearChk || !hzOff1042Old) return;   // №1042: ленты силуэтов горизонта (№887, цвета фасадов №997) нет ни на одном уровне; данные ленты не читаются (куча)
   if (hzLevel != gameLevel) horizonLoad(gameLevel);
   if (!hzN || geOver(GE_SOFT)) return;
   int best = 0, second = -1; float bd = 1e30f, bd2 = 1e30f;   // две ближайшие клетки: вторая нужна мировой ленте (подмес у границы)

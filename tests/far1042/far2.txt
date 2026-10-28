@@ -1,0 +1,58 @@
+# №1042/1043: вид вдоль улицы, 250 м: по умолчанию / без потолка 150 (far150 0) / без ленты (horizon 0)
+scene start
+wait 3
+scene FQ_L3_load
+flag golevel 3
+wait 22
+flag ddfloor 250
+scene FQ_L3
+flag repair
+goto -3.35 -5.57 2.758
+flag ddfloor 250
+wait 7
+shot FQ_L3_def
+flag far150 0
+wait 4
+shot FQ_L3_nocap
+flag far150 1
+flag horizon 0
+wait 3
+shot FQ_L3_nohz
+flag horizon 8
+flag far150 1
+scene FQ_L7_load
+flag golevel 7
+wait 22
+flag ddfloor 250
+scene FQ_L7
+flag repair
+goto 214.73 172.41 3.709
+flag ddfloor 250
+wait 7
+shot FQ_L7_def
+flag far150 0
+wait 4
+shot FQ_L7_nocap
+flag far150 1
+flag horizon 0
+wait 3
+shot FQ_L7_nohz
+flag horizon 8
+flag far150 1
+flag ddfloor 250
+scene FQ_L1
+flag repair
+goto 220 172 4.206
+flag ddfloor 250
+wait 7
+shot FQ_L1_def
+flag far150 0
+wait 4
+shot FQ_L1_nocap
+flag far150 1
+flag horizon 0
+wait 3
+shot FQ_L1_nohz
+flag horizon 8
+flag far150 1
+end

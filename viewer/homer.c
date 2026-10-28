@@ -592,7 +592,7 @@ static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
     // №947б: стик, ведомый дугой через центр (разворот бегом), даёт серию «смен угла» подряд; каждая брала бы вид, уже ушедший за курсом Гомера (камера идёт за ним), и ход уходил боком.
     // Вид берётся один раз на серию: пока с прошлого взятия не прошло STEER_SWEEP_T, новый угол только запоминается
     H->sweepT = fmaxf(0.f, H->sweepT - dt);
-    if (start_) { if (!homerFlipHold) H->frame = in->camYaw; H->heldX = mx; H->heldY = my; }   // №947б: перескок камеры у стены (игра) — кадр прежний
+    if (start_) { if (!homerFlipHold && !(H->flipLatch && !homerWalkCam1059Old)) H->frame = in->camYaw; H->heldX = mx; H->heldY = my; }   // №947б: перескок камеры у стены (игра) — кадр прежний
     else if (homerCtrl916Old && mag > .3f) {
       if (H->sweepT > 0.f) { H->heldX = mx; H->heldY = my; }   // серия: угол стика только запоминается
       else if (da_ > STEER_RECAP_A) { if (!homerCamBusy) { H->frame = in->camYaw; H->sweepT = STEER_SWEEP_T; } H->heldX = mx; H->heldY = my; }   // камера игры (homerCamBusy) — вид не берём
@@ -605,6 +605,20 @@ static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
 #define STEER_NEUTRAL_T .3f
   if (mag == 0.f) { if (homerCtrl916Old || (H->neutralT += dt) > STEER_NEUTRAL_T) { H->heldX = H->heldY = 0.f; } }
   else H->neutralT = 0.f;
+  // №1059 (Роб 27.10: «идёшь, камера меняется, а как адаптироваться, дезориентация небольшая; сверь с PS2»). Замер PS2 (tools/twins/walkcam1059.py, 7 прогонов, knowledge/facts/ps2-walk-camera-stick.yaml):
+  // пока камера игры в сценарном облёте (выход из машины) курс держится; когда камера следует за Гомером и встала, стик снова от ВИДА, постоянно: зажатый «влево» ведёт по кругу (ход − вид ≈ −76°
+  // вместо −90° из-за разгона), «вверх» после облёта сходится с видом за ≤ 0,5 с. Порт держал кадр от нажатия до отпускания: после облёта «влево» шёл прямо «вверх по экрану» (ход − вид 0° вместо −90°).
+  // Теперь пока стик зажат, кадр идёт за видом (homerViewYaw) со скоростью не выше WALKCAM1059_RATE (камера игрока L/R — сразу); в облёте (homerCamBusy) и 1,5 с после перескока у стены (homerFlipHold) кадр держится.
+  // WALKCAM1059_OLD=1 / файл walkcam1059old / flag walkcam1059old 1 — кадр держится до отпускания, как было
+  if (homerCamFlipN != H->flipSeen) { H->flipSeen = homerCamFlipN; if (!homerFlipBusyOld) H->flipLatch = 1; }   // перескок камеры у стены (игра): кадр держится, пока стик не отпущен (№947б, гейт ctrl920)
+  if (H->camTurn != 0.f) H->flipLatch = 1;   // игрок крутит камеру L/R (у PS2 такой кнопки пешком нет): курс держится, пока стик не отпущен или не сменил угол (№947б, гейт walk947 W_camhold)
+  if (mag == 0.f) { H->flipLatchT += dt; if (H->flipLatchT > STEER_NEUTRAL_T) H->flipLatch = 0; } else H->flipLatchT = 0.f;   // дрожь стика в ноль (0,1 с) не снимает; настоящее отпускание (> 0,3 с) снимает
+  if (in && !homerWalkCam1059Old && homerCtrl916Old && homerViewOk && mag > .1f && !(H->heldX == 0.f && H->heldY == 0.f) && !homerCamBusy && !homerFlipHold && !H->flipLatch) {
+    // кадр идёт за ВИДИМЫМ курсом камеры (передний вектор, как cam fwd PS2: при ходе точно на камеру он стоит, курс −177,8 → −177,2 за 90 кадров; желаемый camYaw опережает видимую камеру на ≈10°) первым порядком с запаздыванием
+    // WALKCAM1059_TAU: у PS2 курс запаздывает за вращающейся камерой на ≈7° при 36°/с (ход − вид 83°, не 90°) и сходится после облёта за 0,4–0,6 с; скорость не выше WALKCAM1059_RATE
+    float d_ = wrapPi(homerViewYaw - H->frame), mt_ = homerWalkCamRate * dt, k_ = 1.f - expf(-dt / homerWalkCamTau);
+    H->frame = wrapPi(H->frame + clampf(d_ * k_, -mt_, mt_));
+  }
   float dir = H->frame - atan2f(mx, my);
   float top = H->grounded ? ((in && in->dash) ? HOMER_RUN : HOMER_WALK) : HOMER_AIR_SPEED;   // ○ зажат — бег (ControllerPS2.pag)
   float target = mag * top;
@@ -1209,6 +1223,16 @@ int homerCtrl916Old = CTRL916_OLD;   // №916; с №947б 1 по умолча�
 #define HOMER_CAMCAR982_OLD 0
 #endif
 int homerCamCarOld = HOMER_CAMCAR982_OLD; float homerCamCarTop = -1e9f;
+#ifndef WALKCAM1059_OLD
+#define WALKCAM1059_OLD 0   // №1059 (вариант А, слово Роба 27.10): камера пешком по закону PS2 + кадр стика за видом; 1 / файл walkcam1059old / flag walkcam1059old 1 — как было в TEST74
+#endif
+#ifndef WALKCAM1059_TAU
+#define WALKCAM1059_TAU .2f   // с
+#endif
+#ifndef WALKCAM1059_RATE
+#define WALKCAM1059_RATE 5.2f   // рад/с (300°/с): догоняющая скорость кадра управления за видом (камера пешком по закону PS2 не быстрее 36°/с, запас — после облёта игры)
+#endif
+int homerWalkCam1059Old = WALKCAM1059_OLD, homerViewOk; float homerWalkCamTau = WALKCAM1059_TAU, homerWalkCamRate = WALKCAM1059_RATE, homerViewYaw;   // №1059: homerViewYaw — вид на экране (от глаза к герою), ставит main_loop.h
 int homerFlipHold, homerFlipBusyOld = HOMER_FLIPBUSY_OLD;   // №947б: 1 — перескок камеры у стены не замораживает курс управления
 int homerExitYawOld = HOMER_EXITYAW_OLD; int homerCtrlFreezeOld = HOMER_CTRL_FREEZE_OLD; float homerCtrlYaw; int homerCtrlOn, homerCamBusy;
 int homerCamWallOff;   // служебное (красный контроль tests/camera): камера пешком без обхода стен
@@ -1246,8 +1270,11 @@ static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], f
   }
   camD *= homerCamUserD; camE = homerCamLookH + (camE - homerCamLookH) * homerCamUserH;   // №996: Distance и Height страницы CAMERA (высота — отступ глаза над точкой взгляда)
   if (H->speed > .5f && homerOnFoot(H)) {
-    float d = wrapPi(H->h - H->camYaw);
-    H->camYaw = wrapPi(H->camYaw + d * fminf(1.f, dt * 1.6f * clampf(H->speed / 4.f, .3f, 1.f)));
+    float d = wrapPi(H->h - H->camYaw), sf_ = clampf(H->speed / 4.f, .3f, 1.f);
+    // №1059: PS2 (tools/twins/walkcam1059.py, ps2-walk-camera-stick): камера пешком держится на расстоянии r за героем, поэтому крутится с геометрической скоростью
+    // ω = (v / r) · sin(курс − вид): ходьба r 6,3 м даёт 36°/с, бег (v 8, r 6,9) — 66°/с, первая миссия (r 4,3–4,7) — 49–53°/с; ход точно на камеру (180°) — не крутится
+    if (!homerWalkCam1059Old) H->camYaw = wrapPi(H->camYaw + (H->speed / fmaxf(camD, 1.5f)) * sinf(d) * dt);
+    else H->camYaw = wrapPi(H->camYaw + d * fminf(1.f, dt * 1.6f * sf_));
   }
   else if (!homerCamHeroOld && homerOnFoot(H) && (H->state == HS_HURT || !H->grounded)) {   // правка 361: выброс, падение, отлёт — камера
     float hv = sqrtf(H->vx * H->vx + H->vz * H->vz);                                        // догоняет курс полёта Гомера, как курс шага

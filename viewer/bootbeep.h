@@ -54,11 +54,36 @@
 #ifndef BOOT_SND_VARIANT
 #define BOOT_SND_VARIANT 0                // по умолчанию в игре: A (громкий кулер); Роб выбирает на слух
 #endif
+// №1011 (Роб 26.10: «убрать шипение в начале загрузки, бесит; вместо него пищалка как спикер компьютера — 4 последние ударные ноты мелодии Симпсонов, в том же темпе,
+// пип-пип-пип-пип, и всё»): щелчок и кулер (белый шум) не звучат; вместо бипа POST — четыре ноты меандром PC-спикера тем же мягким НЧ и громкостью.
+// Высоты и моменты ЗАМЕРЕНЫ на звуке самой игры (диск, sound/music/simpsons_theme.rsd, 81,1 с, разбор только числами): последние четыре удара перед
+// финальным затуханием — начала 78,02 / 78,19 / 78,34 / 78,54 с (поток спектра, шаг 10 мс), все четыре на до-диезе 2-й октавы (пик 555–557 Гц, хрома C# 1,0;
+// у четвёртой квинта G# 0,26 — финальный аккорд); звучат 0,16 / 0,14 / 0,19 / 0,26 с до −10 дБ, четвёртая тянется в затухание.
+// Спикер: делитель таймера 8253 = 2152 -> 554,4 Гц (C#5). Начало — там же, где был бип POST (MEMORY OK, 1024 мс). Вся партитура ≈ 2,0 с (ход заставки 4,32 с).
+// BOOTSND1011_OLD=1 / файл bootsnd1011old рядом с EBOOT (bootSnd1011Old) — прежняя партитура: щелчок, кулер, бип POST
+#ifndef BOOTSND1011_OLD
+#define BOOTSND1011_OLD 0
+#endif
+#ifndef BOOT_TUNE_DIV
+#define BOOT_TUNE_DIV 2152                // делитель 8253: 1193182 / 2152 = 554,4 Гц (C#5); tests: 1193 (1000 Гц, прежний бип) -> FAIL
+#endif
+#define BOOT_TUNE_HZ ((float)BOOT_BEEP_PIT / (float)BOOT_TUNE_DIV)
+#ifndef BOOT_TUNE_LP
+#define BOOT_TUNE_LP 0.169f              // два полюса НЧ ~1,3 кГц: та же мягкость, что у бипа POST на 1000 Гц (3-я гармоника 1663 Гц гасится); tests: 0.55f -> FAIL
+#endif
+#define BOOT_TUNE_AT_MS 1024              // первая нота — на месте бипа POST
+#define BOOT_TUNE_N 4
+static const short bootTuneOnMs[BOOT_TUNE_N] = {0, 170, 320, 520};    // начала нот от первой, мс (замер: 0 / 0,17 / 0,32 / 0,52 с)
+static const short bootTuneDurMs[BOOT_TUNE_N] = {120, 120, 140, 420}; // звучание, мс: три коротких удара и длинный последний (со спадом)
+#define BOOT_TUNE_REL_MS 260              // спад последней ноты
+#define BOOT_TUNE_TAIL_MS 60              // тишина после партитуры
+static int bootSnd1011Old = BOOTSND1011_OLD;
 // маска голосов (для замеров по отдельности в tests/bootsnd)
 enum { BOOT_SND_M_CLICK = 1, BOOT_SND_M_FAN = 2, BOOT_SND_M_BLADE = 4, BOOT_SND_M_BEEP = 8, BOOT_SND_M_ALL = 15 };
 
 typedef struct {
   int i, n, mask, beepAt, stopAt;     // номер сэмпла, длина, голоса, начало бипа, остановка (-1 — нет)
+  int tune;                           // №1011: 1 — четыре ноты темы вместо щелчка, кулера и бипа POST
   float fanGain, bladeGain;           // громкость шума кулера и тона лопастей
   float phBlade, phBeep, lp1, lp2, b1, b2, prevNoise;
   unsigned rng;
@@ -72,6 +97,21 @@ static void bootSndInit(BootSnd *s, int variant) {
   s->beepAt = BOOT_BEEP_RATE / 1000 * bootSndBeepMs(variant);
   s->fanGain = fan[variant]; s->bladeGain = blade[variant];
   s->phBlade = s->phBeep = s->lp1 = s->lp2 = s->b1 = s->b2 = s->prevNoise = 0.f; s->rng = 0x2545F491u;
+  s->tune = !bootSnd1011Old;
+  if (s->tune) { s->beepAt = BOOT_BEEP_RATE / 1000 * BOOT_TUNE_AT_MS;
+    s->n = s->beepAt + BOOT_BEEP_RATE / 1000 * (bootTuneOnMs[BOOT_TUNE_N - 1] + bootTuneDurMs[BOOT_TUNE_N - 1] + BOOT_TUNE_TAIL_MS); }
+}
+// №1011: огибающая ноты партитуры в сэмпле ib от начала первой ноты (0 — тишина); края 4 мс, у последней — спад BOOT_TUNE_REL_MS (квадрат)
+static float bootTuneEnv(int ib) {
+  for (int k = 0; k < BOOT_TUNE_N; k++) {
+    int a = BOOT_BEEP_RATE / 1000 * bootTuneOnMs[k], d = BOOT_BEEP_RATE / 1000 * bootTuneDurMs[k], j = ib - a;
+    if (j < 0 || j >= d) continue;
+    float e = j < BOOT_BEEP_EDGE ? (float)j / BOOT_BEEP_EDGE : 1.f;
+    int left = d - j, rel = k == BOOT_TUNE_N - 1 ? BOOT_BEEP_RATE / 1000 * BOOT_TUNE_REL_MS : BOOT_BEEP_EDGE;
+    if (left < rel) { float r = (float)left / rel; e *= k == BOOT_TUNE_N - 1 ? r * r : r; }
+    return e;
+  }
+  return 0.f;
 }
 static void bootSndStop(BootSnd *s) { if (s->stopAt < 0) s->stopAt = s->i; }   // затухание за один кусок
 static float bootSndNoise(BootSnd *s) {   // xorshift32 -> [-1, 1)
@@ -90,6 +130,15 @@ static int bootSndFill(BootSnd *s, short *out, int n) {
     int i = s->i; float v = 0.f;
     if (i >= s->n || (s->stopAt >= 0 && i >= s->stopAt + BOOT_SND_CHUNK)) { out[j] = 0; continue; }
     made++;
+    if (s->tune) {   // №1011: только ноты спикера — без щелчка и кулера
+      float env = i >= s->beepAt ? bootTuneEnv(i - s->beepAt) : 0.f, sq = 0.f;
+      if (env > 0.f) { s->phBeep += BOOT_TUNE_HZ / BOOT_BEEP_RATE; if (s->phBeep >= 1.f) s->phBeep -= 1.f; sq = (s->phBeep < .5f ? 1.f : -1.f) * env; } else s->phBeep = 0.f;
+      s->b1 += (sq - s->b1) * BOOT_TUNE_LP; s->b2 += (s->b1 - s->b2) * BOOT_TUNE_LP;
+      if (s->mask & BOOT_SND_M_BEEP) v = s->b2 * BOOT_BEEP_AMP * 1.05f;
+      if (s->stopAt >= 0) v *= 1.f - (float)(i - s->stopAt) / BOOT_SND_CHUNK;
+      int q = (int)v; if (q > 32767) q = 32767; if (q < -32768) q = -32768;
+      out[j] = (short)q; continue;
+    }
     float t = (float)i / BOOT_BEEP_RATE, nz = bootSndNoise(s);
     // 1) щелчок кнопки, удар корпуса и реле
     if (i < BOOT_BEEP_RATE / 20 && (s->mask & BOOT_SND_M_CLICK)) {

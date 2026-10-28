@@ -1,0 +1,33 @@
+# №1043 чёрные провода: L1 (214.56, -442.41) пешком, взгляд вниз/вдаль: по умолчанию / toonlines 0 / ink978 0
+scene start
+wait 3
+flag cfgdefaults 1
+scene IK_L1
+flag repair
+foot 214.56 -442.41 -2.2239
+wait 8
+cam 214.56 3.5 -442.41 0.45 -0.85 0.25 75
+wait 2
+shot dn_def
+flag toonlines 0
+wait 2
+shot dn_nolines
+flag toonlines 1
+flag ink978 0
+wait 2
+shot dn_noink
+flag ink978 1
+wait 1
+cam 214.56 3.5 -442.41 0.8 -0.05 0.55 75
+wait 2
+shot far_def
+flag toonlines 0
+wait 2
+shot far_nolines
+flag toonlines 1
+flag ink978 0
+wait 2
+shot far_noink
+flag ink978 1
+wait 1
+end

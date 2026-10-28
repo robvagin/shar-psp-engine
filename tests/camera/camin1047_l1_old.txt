@@ -1,0 +1,40 @@
+# №1047: порядок «полосы -> наезд -> полосы ушли -> пузырь» на L1 (msnsel 3, камера mission1cam); кадры каждые 0,5 с
+flag startcam 1
+flag cfgdefaults 1
+flag camin1041 0
+scene T_c1
+flag msn
+wait 8
+flag repair
+wait 2
+scene T_ms3
+flag msnsel 3
+wait 0.5
+shot b00
+wait 0.5
+shot b01
+wait 0.5
+shot b02
+wait 0.5
+shot b03
+wait 0.5
+shot b04
+wait 0.5
+shot b05
+wait 0.5
+shot b06
+wait 0.5
+shot b07
+wait 0.5
+shot b08
+wait 0.5
+shot b09
+wait 0.5
+shot b10
+wait 0.5
+shot b11
+wait 0.5
+shot b12
+wait 0.5
+shot b13
+end

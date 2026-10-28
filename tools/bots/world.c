@@ -243,7 +243,8 @@ static void hkHomer(void *u, const HomerEvent *e) {   // как homerEvFx в mai
 }
 static void hkCoin(void *u) { ((BotWorld *)u)->st.coins++; }
 
-int bwNew(BotWorld *w) {   // как newGame в main.c (пункт 12а), без звука и частиц
+int bwNew(BotWorld *w) {
+  { const char *e_ = getenv("TRFCOST1001B"); if (e_) trfCost1001b = atoi(e_); }   // №1001б: TRFCOST1001B=0 — прежний обход препятствий в pathGap (для «до/после»)   // как newGame в main.c (пункт 12а), без звука и частиц
   memset(w, 0, sizeof *w);
   w->haveCol = haveColData; w->lift = carLift;
   if (w->haveCol) carInit(&w->car, carPOk == 1 ? &carP : NULL, &col, spawn[0], spawn[1], spawn[2], spawn[3]);

@@ -1,9 +1,9 @@
 # Status
 
-Where the port stands against the original PS2 game, as of October 26, 2026 (build 71). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of October 28, 2026 (build 78). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
-- **Latest hardware tour:** a scripted run of 33 scenes across all 7 levels (build "TEST62", second run). The final build ("TEST64") is on the PSP but has not been measured yet, so the numbers below belong to the previous build.
+- **Latest hardware tour:** the scripted 52-scene tour across all 7 levels finished on build "TEST77" (October 28) with 0 read errors and one refused allocation (the level 5 sound bank, handled in build 78). The detailed numbers below still belong to build "TEST62". Build 78 ("TEST78") is on the PSP and has not been toured yet; the author played build 77 by hand and reported the issues fixed here.
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What works, what is partial, what is missing
@@ -27,18 +27,21 @@ Where the port stands against the original PS2 game, as of October 26, 2026 (bui
 | Cutscenes (16 videos) | all 16 open and play on a PSP-2000 in the automated hardware tour (build 69), and in the emulator | emulator, hardware |
 | Ending, save after the last mission, credits | the automated tour reaches the credits and returns to the menu on a PSP-2000 (build 69) and in the emulator; not yet played to the end by hand | emulator, hardware |
 | Poles and lamp posts when hit | works: fall like the PS2 (whole, pivoting at the base), fall time within 0.3 s of PS2 recordings at four speeds on level 1; other levels and large trees not recorded on the PS2 | emulator vs PS2 recording |
-| Player-character cars, damage, smoke, wheels | partial: tuned against PS2 recordings for two vehicles only | hardware (level 1), emulator |
-| Police and Hit & Run | partial: verified on hardware in early builds, not in recent tours | emulator |
+| Player-character cars, damage, smoke, wheels | partial: tuned against PS2 recordings for two vehicles only; tires are black on all cars (emulator frames) | hardware (level 1), emulator |
+| Police and Hit & Run | partial: distance to a standing player (27 m) and chase meter timing follow PS2 recordings (emulator); hardware not rechecked | emulator |
 | Traffic and pedestrians | partial: density and variety not compared with PS2 | hardware, emulator |
 | On foot: run, jump, kick, enter and exit cars, interiors | works on level 1; interiors on levels 2 to 7 not re-verified | hardware (L1), emulator |
 | Collectibles: cards, wasps, gags | partial: all 7 levels have data, level 1 verified | hardware (L1), emulator |
-| Phone booth, shop, wardrobe | works on level 1; levels 2 to 7 partial | hardware (L1), emulator |
+| Phone booth, shop, wardrobe | works: opens every time; any car of any level can be called (emulator matrix of 42 cars on levels 1 to 7); level 1 also on hardware | hardware (L1), emulator |
 | Dialogue voice | level 1 verified; levels 2 to 7 not listened to | ear on L1 |
 | Subtitles | missing: the disc data has none | n/a |
 | Repeat a finished race | missing (audit, October 16) | code |
 | Cinema mission on level 3 | missing (audit, October 16) | code |
 | Reset Car | removed on purpose | author decision |
-| Cartoon mode (ink outlines, flat fills, the show's palette) | works; on by default, can be switched off in Settings | hardware |
+| Cartoon mode (ink outlines, flat fills, the show's palette) | works; on by default; ink only on the hero, pedestrians, cars, booth and props; Settings: Textures, Curbs, line width, eye lines, ink, texture detail, old TV | hardware, emulator |
+| Level loading under low memory | the loading screen and the sound bank survive a refused allocation (retry after freeing the old level); checked in the emulator with a memory-starved scenario, not on hardware | emulator |
+| Settings defaults | a fresh save matches the author's PSP menus (see README) | emulator menu frames |
+| Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | untested (PSP-1000 cannot run it: not enough RAM) | n/a |
 
 ## Hardware numbers (PSP-2000, tour build TEST62)
@@ -61,10 +64,13 @@ Where the port stands against the original PS2 game, as of October 26, 2026 (bui
 - Far-distance flicker is not solved. The fix for it hid the horizon on one level, so it is switched off in the final build.
 - A "go home" icon was reported once after a level change; it could not be reproduced. Since build 69 every level change closes open menus and clears the previous mission icon, and the game logs the icon state for the next report.
 - Long play sessions on hardware have not been tested for memory fragmentation. Early builds hung after many level changes; the known leaks are closed.
+- Changing CURBS applies on the next level load: rebuilding the flat fills while playing shifted the sidewalk colour on level 1 (cause not found).
+- Level 6 mission 4: one report of the mission car standing near the observatory where it cannot drive out. The disc data and the emulator place it by the phone booth below; not reproduced (build 78).
+- A cell can take 2 to 5 s to load right after a teleport in the tour or a mission transition (seen once on levels 5 and 2 in the build 76 tour, no visible gap); cause not found.
 
 ## Not verified
 
-PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
+Build 78 on hardware (tour and by hand); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
 
 ## Reports
 

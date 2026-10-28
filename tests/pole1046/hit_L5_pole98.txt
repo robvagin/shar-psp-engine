@@ -1,0 +1,75 @@
+# №1046: наезд передом на L5 красный столб 98 (F3-2): газ 2,4 с; кадры каждые 0,1 с
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L5
+flag golevel 5
+wait 40
+flag repair
+wait 3
+goto -124.8 -489.9 0.0
+wait 2.5
+flag autostraight 2.4
+wait 0.9
+flag sphits
+shot f00
+wait 0.1
+flag sphits
+shot f01
+wait 0.1
+flag sphits
+shot f02
+wait 0.1
+flag sphits
+shot f03
+wait 0.1
+flag sphits
+shot f04
+wait 0.1
+flag sphits
+shot f05
+wait 0.1
+flag sphits
+shot f06
+wait 0.1
+flag sphits
+shot f07
+wait 0.1
+flag sphits
+shot f08
+wait 0.1
+flag sphits
+shot f09
+wait 0.1
+flag sphits
+shot f10
+wait 0.1
+flag sphits
+shot f11
+wait 0.1
+flag sphits
+shot f12
+wait 0.1
+flag sphits
+shot f13
+wait 0.1
+flag sphits
+shot f14
+wait 0.1
+flag sphits
+shot f15
+wait 0.1
+flag sphits
+shot f16
+wait 0.1
+flag sphits
+shot f17
+wait 0.1
+flag sphits
+shot f18
+wait 0.1
+flag sphits
+shot f19
+wait 0.1
+end

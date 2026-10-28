@@ -26,7 +26,9 @@ static void cellFinish(int i, void *m) {
     if (d->r.flags & F_STRIP) {   // К4: полосы (stripdraw.h); STRIPS_OLD=1 — развернуть в список при загрузке
       const StripHdr *h = (const StripHdr *)b; const unsigned vs_ = (d->r.flags & F_V12) ? 12u : 16u, po_ = (d->r.flags & F_V12) ? 6u : 8u;
       if (flatVNoise && flatOn && d->r.owner == 0) flatVertexNoise(d, (unsigned char *)b + 16, h->nsvN);
+      if (zn7On && zpMul && d->r.owner == 0 && k < zpNpc) zpVertex(d, (unsigned char *)b + 16, h->nsvN, zpMul + (size_t)k * 4);
       d->v = (Vert *)(b + 16); d->idx = (unsigned short *)(b + 16 + (size_t)h->nsvN * vs_); d->fidx = (unsigned short *)((const unsigned char *)d->idx + ((h->nsN * 2u + 3u) & ~3u) + (size_t)h->nsvF * vs_);
+      if (zn7On && zpMul && d->r.owner == 0 && k < zpNpc && h->nsvF) zpVertex(d, (unsigned char *)stripFarV(d), h->nsvF, zpMul + (size_t)k * 4);   // №1007б: дальние вершины
       d->unr = 0; d->ggBatch = 0;
       if (STRIPS_OLD) {   // список в куче (unr), как до полос
         unsigned nN = stripExpand((const unsigned char *)d->v, d->idx, h->nsN, vs_, 0), nF = stripExpand(stripFarV(d), d->fidx, h->nsF, vs_, 0);
@@ -50,6 +52,7 @@ static void cellFinish(int i, void *m) {
     if (d->r.flags & F_NOIDX) {
       d->idx = d->fidx = 0; if (smkOn && flatDump) fdPiece(d, (const unsigned char *)b);
       if (flatVNoise && flatOn && d->r.owner == 0) flatVertexNoise(d, (unsigned char *)b, (unsigned)d->r.ni);
+      if (zn7On && zpMul && d->r.owner == 0 && k < zpNpc) zpVertex(d, (unsigned char *)b, (unsigned)(d->r.ni + d->r.nf), zpMul + (size_t)k * 4);   // №1007б: ближняя и дальняя версии подряд
       if (!GG_BATCH_OLD && d->r.owner == 0 && d->r.ni <= 65535) {
         unsigned nn=ggBatchStorage(d->r.ni),nf=ggBatchStorage(d->r.nf),vs=(d->r.flags&F_V12)?12:16,po=(d->r.flags&F_V12)?6:8;
         d->ggBatch=cpAlloc((nn+nf)*sizeof(GgBatch));
@@ -117,6 +120,31 @@ static int visBox(const float *b, float ox, float oy, float oz); static float bo
 // state: 0 -> 1 ставит только загрузчик, 2/3 -> 0 только главный поток — гонок нет.
 #define LQ_N 12   // очередь загрузчика: 8 в обычной езде, до 12 на скорости (STREAM_AHEAD)
 static volatile short lq[LQ_N]; static volatile int lqn, loaderBusy;
+// №1051 (будка всегда открывается: описание — у boothRoom1051 ниже)
+#ifndef BOOTHMEM1051_OLD
+#define BOOTHMEM1051_OLD 0
+#endif
+#define BOOTH1051_R1 50.f
+#define BOOTH1051_HOLD_R 45.f
+static int boothMem1051 = !BOOTHMEM1051_OLD, stBoothHold1051;
+// №1042 (Роб, L6 C6-9 у дома: «впереди не прогружает, не видно конца причала; сделай, чтобы впереди грузилось, как будто я ничего не делал»): очередь ставила
+// вперёд только по скорости (стоя и пешком взгляд не учитывался), видимая клетка ближе дальности шла лишь «чуть раньше» остальных, а при нехватке кучи уходила самая дальняя,
+// не глядя, впереди она или сзади. Теперь: (1) клетки в конусе взгляда камеры (±45°) получают приоритет и радиус загрузки +40 м и стоя; (2) видимая незагруженная клетка ближе
+// STA1042_HEAD м — всегда голова очереди; (3) на ходу упреждение не меньше STA1042_MINAHEAD м по курсу; (4) при нехватке кучи (MEMTRIM, место под крупное) первыми уходят
+// дальние, боковые и задние: клетка в конусе взгляда считается ближе на STA1042_KEEP м, позади — дальше на 40 м. STREAMAHEAD1042_OLD=1 / файл streamahead1042old / flag streamahead1042 0 — как было
+#ifndef STREAMAHEAD1042_OLD
+#define STREAMAHEAD1042_OLD 0
+#endif
+#define STA1042_HEAD 120.f
+#define STA1042_MINAHEAD 40.f
+#define STA1042_KEEP 100.f
+#define STA1042_CONE .707f   // косинус половины конуса взгляда (45°)
+static int streamAhead1042 = !STREAMAHEAD1042_OLD; static unsigned sta1042Head, sta1042Cone;   // счётчики: клеток-голов очереди, клеток в конусе, взятых раньше
+// положение клетки относительно взгляда: 1 — в конусе (с запасом по радиусу клетки), -1 — позади (дальше назад), 0 — сбоку
+static int sta1042Side(const Cell *c, float x, float z, float lx, float lz) {
+  float dx = c->cx - x, dz = c->cz - z, hl = sqrtf(dx * dx + dz * dz) + .01f, al = (dx * lx + dz * lz) / hl, r = c->rad / hl;
+  return al > STA1042_CONE - r ? 1 : al < -.2f - r ? -1 : 0;
+}
 static volatile unsigned accN, accLatSum, accLatMax, accSlow;   // Загрузка 3: учёт подгрузки раз в секунду (loadAccStep), свои счётчики — ящик обнуляет bbCell* сам
 static volatile unsigned bbCellN, bbCellMax, bbCellSlow;   // исследование 03.10 П2: клеток за секунду, худшая задержка мс, дольше 100 мс
 static unsigned slowIoKBs;   // служебное (файл slowio рядом с EBOOT): имитация медленной карты памяти, КБ/с
@@ -293,6 +321,7 @@ static int loaderThread(SceSize a, void *b) {
                        stLoadUs += sceKernelGetSystemTimeLow() - t0; stLoads += (unsigned)ringN; }
         __asm__ volatile("" ::: "memory"); ringState = 2; loaderBusy = 0;
       }
+      if (pnoReq >= 0) pano917Serve();   // №917: слот кольца-панорамы
       if (marksReqTail != marksReqHead) marksServe();   // №912: мелочь разметки ближних клеток
       int n = lqn, i = -1;
       for (int k = 0; k < n && k < LQ_N; k++) { int j = lq[k]; if (j >= 0 && j < (int)ncell && cl[j].state == 0) { i = j; break; } }
@@ -383,6 +412,26 @@ static unsigned cellFailT, cellRetries;   // правка 103: последня�
 #define MEM_HYST (1u << 20)
 #define MEM_CHECK_US 250000u
 static unsigned stCand;   // клеток в радиусе загрузки ещё не взято в работу (очередь ожидания) — на последнем кадре stream()
+// №1060 (скорость при дали 250 м, тур TEST73 на PSP: MEMTRIM сработал 67 раз против 0 в TEST71, по 44–87 клеток за один кадр stream() — кадры 28–54 мс; у L4_CR1 86 из 503 кадров дольше 45 мс, p95 61,8 мс):
+// выгрузка дальних клеток при тесной куче растягивается на кадры, MEMTRIM1060_STEP клеток за кадр (те же клетки в том же порядке — дальше дальности + 20 м, их не видно; картинка та же), пока
+// не вернётся MEM_RESERVE + MEM_HYST. MEMTRIM1060_OLD=1 / файл memtrim1060old рядом с EBOOT / flag memtrim1060 0 — всё разом, как было
+#ifndef MEMTRIM1060_OLD
+#define MEMTRIM1060_OLD 0
+#endif
+#ifndef MEMTRIM1060_STEP
+#define MEMTRIM1060_STEP 4
+#endif
+static int memTrimPend1060, memTrim1060 = !MEMTRIM1060_OLD; static unsigned memTrimAcc1060;
+// №1060в (разбор тура TEST75 на L4: MEMTRIM1060 крутил «выгрузил — тут же загрузил»: выгружено 7079 клеток в 6 непрерывных эпизодах (3056 за один в 973_L4 при 1138 клетках уровня) против 3157 в 58 всплесках у TEST74, загрузок клеток
+// в секунду +24…28 на L4, stream() +1,1 мс за кадр): эпизод кончался по ИЗМЕРЕННОЙ куче каждый кадр, а загрузчик сразу занимал освобождённое — условие не наступало. Теперь (1) эпизод кончается по оценке байт, посчитанной на его старте
+// и накопленной между кадрами (как прежний всплеск: got += размер клетки), кучу внутри эпизода не перемеряет; (2) клетки, выгруженные в этом эпизоде, загрузчик не берёт, пока эпизод идёт — каждая выгружается не больше одного раза за эпизод.
+// MEMTRIM2_OLD=1 / файл memtrim2old рядом с EBOOT / flag memtrim2 0 — как MEMTRIM1060 (перемер каждый кадр); отдельно от MEMTRIM1060_OLD
+#ifndef MEMTRIM2_OLD
+#define MEMTRIM2_OLD 0
+#endif
+static int memTrim2 = !MEMTRIM2_OLD; static unsigned memTrimGot2;
+#define MT2_MAX 4096u
+static unsigned char memTrimSet2[MT2_MAX], memTrimCnt2[MT2_MAX]; static unsigned memTrimEpN2;   // клетки эпизода (метка «не грузить») и сколько раз каждая выгружена за эпизод (служебно, строка MEMTRIM2)
 static unsigned memChkT, memFreeNow = ~0u, memTrims, memTrimBytes; static int memTight;
 static int memPrefetchRoom(unsigned need) { return memFreeNow == ~0u || memFreeNow >= MEM_RESERVE + need; }   // ревизия 1.1: чтение моделей впрок (msn_view.c mvHeapRoom) не съедает резерв стриминга
 static float stVx, stVz, stPx, stPz; static unsigned stT; static int stInit, oldStream;   // oldStream: служебное сравнение со старым (1 клетка за кадр, 150/200 м)
@@ -499,24 +548,36 @@ static int stream(float x, float y, float z) {
   float aheadMax = STREAM_AHEAD_OLD ? 90.f : STREAM_AHEAD15_OLD || !memRoom ? 160.f : 240.f, spd = sqrtf(stVx * stVx + stVz * stVz), dirx = spd > 4.f ? stVx / spd : 0.f, dirz = spd > 4.f ? stVz / spd : 0.f;
   if (al > aheadMax) { ax *= aheadMax / al; az *= aheadMax / al; }
   if (!oldStream) qmax = !STREAM_AHEAD_OLD && spd > 12.f ? LQ_N : 8;   // 8 в обычной езде, 12 на скорости
+  float lkx = 0.f, lkz = 0.f, lkl = sqrtf(stFx * stFx + stFz * stFz); if (streamAhead1042 && !oldStream && lkl > 1e-3f) { lkx = stFx / lkl; lkz = stFz / lkl; }   // №1042: взгляд камеры (горизонтально)
+  if (streamAhead1042 && !oldStream && spd > 4.f && al < STA1042_MINAHEAD) { ax = dirx * STA1042_MINAHEAD; az = dirz * STA1042_MINAHEAD; }   // №1042: на ходу заглядываем не ближе 40 м
   float px = x + ax, pz = z + az;
-  if (!oldStream && now - memChkT > MEM_CHECK_US) {   // резерв кучи (замер железа 30.09, см. MEM_RESERVE)
+  if (!oldStream && (now - memChkT > MEM_CHECK_US || memTrimPend1060)) {   // резерв кучи (замер железа 30.09, см. MEM_RESERVE); №1060: недоделанная выгрузка — в каждом кадре
     memChkT = now; memFreeNow = heapFreeBytes(); memTight = memFreeNow < MEM_RESERVE;
-    if (memTight) {
-      unsigned want = MEM_RESERVE + MEM_HYST, got = memFreeNow; int n = 0;
+    if (memTight || memTrimPend1060) {
+      unsigned want = MEM_RESERVE + MEM_HYST, got = memFreeNow; int n = 0; const int nmax = memTrim1060 ? MEMTRIM1060_STEP : 1 << 20;
+      if (memTrim2 && memTrimPend1060) got = memTrimGot2;   // №1060в: продолжение эпизода — оценка байт с его старта, куча внутри эпизода не перемеряется
+      memTrimPend1060 = 0;
       while (got < want) {
+        if (n >= nmax) { memTrimPend1060 = 1; break; }   // №1060: остаток — в следующих кадрах
         int far = -1; float fd = drawDist + 20.f;
         for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state != 2) continue;
-          float d = cellDist(c, x, y, z); if (d > fd) { fd = d; far = (int)i; } }
+          float d = cellDist(c, x, y, z); if (lkl > 1e-3f && streamAhead1042) { int sd_ = sta1042Side(c, x, z, lkx, lkz); d += sd_ > 0 ? -STA1042_KEEP : sd_ < 0 ? 40.f : 0.f; }   // №1042
+          if (d > fd) { fd = d; far = (int)i; } }
         if (far < 0) break;
         unsigned cf0 = cpChunksFreed, csz = cl[far].size; memTrimBytes += csz; unloadCell(&cl[far]); n++;
+        if ((unsigned)far < MT2_MAX) { memTrimSet2[far] = 1; if (memTrimCnt2[far] < 255) memTrimCnt2[far]++; }
         got += CELLPOOL_OLD || csz > CP_DIRECT ? csz : (cpChunksFreed - cf0) * CP_CHUNK;   // пул: место вернулось в кучу только вместе с освободившимся куском
       }
-      memTrims += (unsigned)n;
-      if (smkOn && n) { char s[112]; snprintf(s, sizeof s, "MEMTRIM freed=%d heap=%.2f t=%.1f\n", n, heapFreeBytes() / 1048576.f, smkT); smkWrite(s); }
+      memTrimGot2 = got;
+      memTrims += (unsigned)n; memTrimAcc1060 += (unsigned)n;
+      if (smkOn && memTrimAcc1060 && !memTrimPend1060) { char s[112]; snprintf(s, sizeof s, "MEMTRIM freed=%d heap=%.2f t=%.1f\n", (int)memTrimAcc1060, heapFreeBytes() / 1048576.f, smkT); smkWrite(s); }
+      if (!memTrimPend1060) { unsigned dup_ = 0, tot_ = 0, mx_ = 0; for (unsigned k_ = 0; k_ < MT2_MAX && k_ < ncell; k_++) if (memTrimCnt2[k_]) { tot_++; if (memTrimCnt2[k_] > 1) dup_++; if (memTrimCnt2[k_] > mx_) mx_ = memTrimCnt2[k_]; }
+        if (smkOn && tot_) { char s2_[128]; snprintf(s2_, sizeof s2_, "MEMTRIM2 on=%d cells=%u unique=%u dup=%u maxper=%u t=%.1f\n", memTrim2, memTrimAcc1060, tot_, dup_, mx_, smkT); smkWrite(s2_); }
+        memset(memTrimSet2, 0, sizeof memTrimSet2); memset(memTrimCnt2, 0, sizeof memTrimCnt2); memTrimAcc1060 = 0; }
     }
   }
   if (memTight && loadD > drawDist + 20.f) loadD = drawDist + 20.f;   // мало памяти: впрок не грузим
+  if (stBoothHold1051 && boothMem1051) loadD = BOOTH1051_HOLD_R;   // №1051: открыта будка — город не подгружаем, пока она закрывает экран
   // Правка Роба 103 («не прогрузился кусок карты»): клетка без памяти (state 3) раньше оставалась дырой, пока игрок не отъедет за
   // DROP_DIST (~400 м). Теперь не чаще раза в CELL_RETRY с: загруженные клетки дальше дальности + 20 м (их не видно) — в кучу,
   // неудачные — снова в очередь загрузчика. Первыми освобождаются самые дальние: сброс всех невидимых разом освобождает и соседние
@@ -563,13 +624,18 @@ static int stream(float x, float y, float z) {
       float lim = dropD + c->rad + (!STREAM_AHEAD_OLD && !STREAM_AHEAD15_OLD && memRoom && !oldStream ? 40.f : 0.f);
       if (d2 > lim * lim && q2 > lim * lim) unloadCell(c);
     } else if (c->state == 0) {
+      if (memTrim2 && memTrimPend1060 && i < MT2_MAX && memTrimSet2[i]) { c->reqT = 0; continue; }   // №1060в: клетку, выгруженную в этом эпизоде, загрузчик не берёт, пока эпизод идёт
       float lim = loadD + c->rad; int rqm = rqOn && rqMk[i];
+      int sd1042 = lkl > 1e-3f && streamAhead1042 ? sta1042Side(c, x, z, lkx, lkz) : 0; if (sd1042 > 0) lim += 40.f;   // №1042: клетка в конусе взгляда — радиус загрузки +40 м и стоя
       if (rqm && lim < RQ_REACH_M + c->rad) lim = RQ_REACH_M + c->rad;   // №864: клетка впереди по дороге — берём дальше обычного радиуса
       if (d2 >= lim * lim && q2 >= lim * lim) { c->reqT = 0; continue; }   // П2: ушла из радиуса — запрос снят
       stCand++;
       float d = sqrtf(d2) - c->rad, q = sqrtf(q2) - c->rad + 15.f, sc = d < q ? d : q;
       if (rqm) { sc -= RQ_BONUS_M; rqQueued++; }
       if (!oldStream && d < drawDist && visBox(c->bb, 0, 0, 0)) sc -= 60.f;   // уже должна быть видна — первой
+      if (streamAhead1042 && !oldStream) { int vis_ = d < drawDist && visBox(c->bb, 0, 0, 0);
+        if (vis_ && d < STA1042_HEAD) { sc -= 1000.f; sta1042Head++; }   // №1042: видимая ближе 120 м — голова очереди
+        else if (sd1042 > 0) { sc -= 40.f; sta1042Cone++; } }   // №1042: в конусе взгляда — раньше остальных, и стоя
       if (!STREAM_AHEAD_OLD && spd > 4.f) { float al_ = (c->cx - x) * dirx + (c->cz - z) * dirz; sc += al_ > -c->rad ? -STREAM_FWD_M : (al_ < -c->rad - 20.f ? STREAM_FWD_M : 0.f); }   // впереди по ходу — раньше, сзади — позже
       if (nb == qmax && sc >= bs[nb - 1]) continue;
       int j = nb < qmax ? nb++ : nb - 1;
@@ -588,16 +654,32 @@ static int stream(float x, float y, float z) {
 }
 // №637: цельный кусок под крупное одноразовое выделение (запись art миссии, комната): далёкие клетки (дальше дальности + 20 м, их не видно) уходят
 // по одной, самая дальняя первой, пока самый большой свободный кусок не станет >= need (не больше 120 клеток за вызов). Только главный поток
+// №1060: общий приём «освободить → загрузить → вернуть» (описание — viewer/mem1060.h). Здесь его низ, доступный раньше всех: ступень «все клетки» под закрытым экраном
+#ifndef MEM1060_OLD
+#define MEM1060_OLD 0
+#endif
+static int mem1060 = !MEM1060_OLD;
+static int ldOn;   // main_frontend.h: идёт загрузка уровня (экран загрузки закрывает мир)
+static int viewBusyNow(void);   // main_frontend.h: будка, лавка или гардероб закрывают мир
+static int cellsDropBeyond(float r);
 static int cellsMakeRoom(unsigned need) {
   if (!memMaxBlock) return 0;
   int n = 0; unsigned best = memMaxBlock(), mark = 0;   // не помогает (дробят долгоживущие блоки, не клетки) — бросить после 24 клеток без роста, чтобы не гонять перечитывание впустую
   while (best < need && n < 120) {
     int far = -1; float fd = drawDist + 20.f;
     for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state != 2) continue;
-      float d = cellDist(c, eyeX, eyeY, eyeZ); if (d > fd) { fd = d; far = (int)i; } }
+      float d = cellDist(c, eyeX, eyeY, eyeZ); if (streamAhead1042 && (stFx != 0.f || stFz != 0.f)) { float l_ = sqrtf(stFx * stFx + stFz * stFz); int sd_ = sta1042Side(c, eyeX, eyeZ, stFx / l_, stFz / l_); d += sd_ > 0 ? -STA1042_KEEP : sd_ < 0 ? 40.f : 0.f; }   // №1042
+      if (d > fd) { fd = d; far = (int)i; } }
     if (far < 0) break;
     unloadCell(&cl[far]); n++;
     unsigned b = memMaxBlock(); if (b > best) { best = b; mark = (unsigned)n; } else if ((unsigned)n - mark >= 24u) break;
+  }
+  if (mem1060 && memMaxBlock() < need && (ldOn || viewBusyNow())) {   // №1060: далёких клеток не хватило, а мир закрыт экраном (газета, будка, лавка, гардероб) — все клетки уходят в кучу, стрим вернёт их сам
+    unsigned f0_ = heapFreeBytes(), b0_ = memMaxBlock();
+    lqn = 0; __asm__ volatile("" ::: "memory");
+    { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
+    int all_ = cellsDropBeyond(-1.f); n += all_;
+    if (smkOn) { char s[160]; snprintf(s, sizeof s, "MEM1060 all need=%.1f dropped=%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", need / 1048576.f, all_, f0_ / 1048576.f, heapFreeBytes() / 1048576.f, b0_ / 1048576.f, memMaxBlock() / 1048576.f, smkT); smkWrite(s); }
   }
   if (smkOn) { char s[112]; snprintf(s, sizeof s, "MAKEROOM need=%.1f freed=%d blk=%.2f t=%.1f\n", need / 1048576.f, n, memMaxBlock() / 1048576.f, smkT); smkWrite(s); }
   return memMaxBlock() >= need;
@@ -609,12 +691,43 @@ static int cellsMakeRoom(unsigned need) {
 #define PHONE_ROOM842_OLD 0
 #endif
 static int phoneFailTest;   // №842 тест: «flag phonefail N»
+// №1060 служебное («flag boothstarve N»): потребитель уровня, который забирает всё освобождённое, оставляя кучу не больше N МБ свободной (модель долгоживущих блоков кроме клеток: движок их сам не отдаёт).
+// Отдаёт всё при выгрузке уровня (levelUnload) — как отдавали бы они. Гейт tests/mem1060: красный контроль (выключатель) доходит до «unavailable», зелёный — пересборкой
+static float starve1060 = -1.f;
+static void heapLeft(float mb);   // main_levels.h
 static int cellsDropBeyond(float r) {
   int n = 0;
   for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state != 2) continue;
     if (cellDist(c, eyeX, eyeY, eyeZ) > r) { unloadCell(c); n++; } }
+  if (n && starve1060 >= 0.f) heapLeft(starve1060);
   return n;
 }
+// №1060: перед крупным выделением на закрытом экране (ролик, комната, бонус-игра): наибольшего блока хватает — ничего (цена ноль); нет — далёкие клетки по одной, затем все. 1 — место есть
+static int mem1060Pre(unsigned need, const char *who) {
+  if (!mem1060 || !memMaxBlock || memMaxBlock() >= need) return 1;
+  unsigned f0 = heapFreeBytes(), b0 = memMaxBlock(); int ok = cellsMakeRoom(need);
+  if (smkOn) { char s[160]; snprintf(s, sizeof s, "MEM1060 pre %s need=%.1f ok=%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", who, need / 1048576.f, ok, f0 / 1048576.f, heapFreeBytes() / 1048576.f, b0 / 1048576.f, memMaxBlock() / 1048576.f, smkT); smkWrite(s); }
+  return ok;
+}
+// №1051 (Роб, TEST72 на PSP, L5 J4-7: «почему телефонная будка unavailable? Всё лагает, почему оно всё держит в памяти»): при дальности 250 м (FAR1042) и стриме вперёд (№1042) куча занята клетками,
+// и пакет будки (3,1 МБ несколькими кусками) не влезал, а одна попытка №842 («клетки дальше 50 м») шла уже ПОСЛЕ неудачи и догружалась стримом назад. Теперь будка открывается всегда: ещё до первой
+// попытки дальние клетки уходят в кучу (дальше BOOTH1051_R1 м), на время будки радиус подгрузки малый (BOOTH1051_HOLD_R м), не вышло — ступенями: дальше 20 м, потом все чужие клетки; сначала место, потом
+// проверка «unavailable». Закрыли будку — стрим догружает клетки сам. BOOTHMEM1051_OLD=1 / файл boothmem1051old / flag boothmem1051 0 — как было (№842, одна попытка после неудачи)
+static void bbNote(const char *line);   // main_frontend.h
+static unsigned boothHogN1051; static void *boothHog1051[256];   // служебное (flag boothhog МБ): занять кучу блоками по 256 КБ — имитация нехватки памяти для гейта
+static void boothHog1051Set(int mb) { while (boothHogN1051) free(boothHog1051[--boothHogN1051]); for (int i = 0; i < mb * 4 && i < 256; i++) { void *m = malloc(256u << 10); if (!m) break; memset(m, 1, 256u << 10); boothHog1051[boothHogN1051++] = m; } }
+static void boothMem1051Log(const char *what, int dropped, unsigned f0, unsigned b0) {
+  char s_[200]; snprintf(s_, sizeof s_, "BOOTH1051 %s level=%d dropped=%d free=%.2f->%.2f blk=%.2f->%.2f dd=%.0f t=%.1f\n", what, gameLevel, dropped, f0 / 1048576.f, heapFreeBytes() / 1048576.f, b0 / 1048576.f, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, drawDist, smkT);
+  if (smkOn) smkWrite(s_); bbNote(s_);
+}
+// ступень 0 — до первой попытки: дальше 50 м; 1 — дальше 20 м; 2 — все чужие клетки. Возвращает число выгруженных
+static int boothRoom1051(int stage) {
+  unsigned f0 = heapFreeBytes(), b0 = memMaxBlock ? memMaxBlock() : 0; stBoothHold1051 = 1;
+  int n = cellsDropBeyond(stage == 0 ? BOOTH1051_R1 : stage == 1 ? 20.f : -1.f);
+  boothMem1051Log(stage == 0 ? "pre" : stage == 1 ? "stage1" : "stage2", n, f0, b0);
+  return n;
+}
+static void boothRelease1051(void) { stBoothHold1051 = 0; }
 // служебное: сколько клеток города в кадре (ближе дальности видимости) ещё не загружено — это и есть «дыры»
 static int stMissNow, stMissMax, stMissFrames, stFrames; static float stWorkSum, stWorkMax; static unsigned stRamMax;
 static void streamMiss(void) {
@@ -710,12 +823,22 @@ static void streamStat(float work) {
 // и туман менялся при повороте камеры. Для дальних кусков (> 50 м) масштабируем near/far тумана на cos угла
 // до центра куска: туман ≈ f(расстояния), на границе отсечения — 100% в любом месте кадра. +1 команда GE на кусок.
 static float fogK = -1.f;
+// №1042 (Роб: «никаких белых стен, никакого тумана, никакого тумана цвета неба»): туман города выключен полностью — какой бы ни была дымка (прежняя fogcityold, подложка земли, радиальный туман дальних кусков),
+// город рисуется от глаза до края дальности в полном цвете, без смешивания с цветом неба; слой дальних дорог №934 тоже без дымки. FOGCITY1042_OLD=1 / файл fogcity1042old / «flag fogcity1042 0» — как до правки
+#ifndef FOGCITY1042_OLD
+#define FOGCITY1042_OLD 0
+#endif
+static int fogCity1042On = !FOGCITY1042_OLD;
 static void fogBase(void) { fogK = 1.f;
+  if (fogCity1042On && farProbe != 1) { sceGuFog(1e6f, 2e6f, fogCol); return; }   // №1042: туман города выключен
+  if (pano917Cap) { sceGuFog(1e6f, 2e6f, fogCol); return; }   // №917б: кадр бота дальнего кольца — без дымки
   if(!farProbe && groundCoverFog(&groundCover)){sceGuFog(drawDist*.75f,drawDist*fogSoft,FOG_COVER_RGB());return;}
   if (farProbe == 2 || (!fogCityOld && farProbe != 1)) { sceGuFog(1e6f, 2e6f, fogCol); return; }
   sceGuFog(drawDist * (oldFog ? .52f : FOG_NEAR), drawDist * fogSoft, fogCol); }
 static void fogRadial(Piece *d, int far) {
+  if (pano917Cap) return;   // №917б: без дымки (fogBase уже поставил)
   int cover=!farProbe && groundCoverFog(&groundCover);
+  if (fogCity1042On && farProbe != 1) return;   // №1042: туман города выключен, команда на кусок не нужна
   if (!cover && !fogCityOld && farProbe != 1) return;   // правка 411: дымки нет — команда на кусок не нужна
   if (farProbe == 1 || farProbe == 2) { if (fogK != -2.f) { fogK = -2.f;   // правка 411, служебное: маска / без дымки
       if (farProbe == 1) sceGuFog(farProbeD, farProbeD + .01f, FARPROBE_KEY); else sceGuFog(1e6f, 2e6f, fogCol); } return; }

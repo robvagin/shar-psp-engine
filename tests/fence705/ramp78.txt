@@ -1,0 +1,35 @@
+# №705 ч.2: L5, машина с газом из x=78 (примерно 22-24 м/с на рампе J4-5), снимок раз в 0,5 с: pos x y z; крыша = y > 17 при x < 26. flag jzgate705 0 - прежняя зона прыжка
+scene start
+wait 6
+scene L5_load
+flag golevel 5
+wait 25
+flag cfgdefaults 1
+scene RAMP
+goto 78 4.9 4.712
+wait 2
+flag repair
+wait 1
+flag camin 1
+flag autostraight 9
+wait 0.5
+shot a1
+wait 0.5
+shot a2
+wait 0.5
+shot a3
+wait 0.5
+shot a4
+wait 0.5
+shot a5
+wait 0.5
+shot a6
+wait 0.5
+shot a7
+wait 0.5
+shot a8
+wait 0.5
+shot a9
+wait 0.5
+shot a10
+end

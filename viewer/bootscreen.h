@@ -257,6 +257,7 @@ static void bootMarksLoad(const char *name) {
 }
 static void bootBegin(const char *argv0, const char *marksFile) {
   if (!bootFirstDone) bootFirst(argv0);
+  if (bootHas("elbarto1010old")) bootElbarto1010Old = 1;   // №1010: прежний тег El Barto (файл Роба), прежним цветом
   bootMarksLoad(marksFile);
   if (bootHas("bootslow")) { sceKernelDelayThread(500000); bootTFirst = sceKernelGetSystemTimeLow(); }   // отрицательный контроль
   bootShotsOn = bootHas("bootframes");
@@ -266,6 +267,7 @@ static void bootBegin(const char *argv0, const char *marksFile) {
   s.vramK = (int)(sceGeEdramGetSize() / 1024);
   bootDataScan(&s, bootRd, bootDirCount, 0);   // правка 203: настоящие числа данных игры — до первой строки проверок
   s.memK = (int)((bootHeapFree() + sceKernelTotalFreeMemSize()) / 1024); s.beepHz = BOOT_BEEP_HZ;
+  if (bootHas("bootsnd1011old")) bootSnd1011Old = 1;   // №1011: прежняя партитура (щелчок, кулер, бип POST)
   if (bootHas("nobeep")) { bootBeepCh = -1; bootSndDone = 1; } else bootBeep();
   s.batt = scePowerIsBatteryExist() ? scePowerGetBatteryLifePercent() : -1; if (s.batt > 100) s.batt = 100;
   { int i = 0; for (; argv0 && argv0[i] && argv0[i] != ':' && i < 6; i++) s.media[i] = (char)toupper((unsigned char)argv0[i]);
@@ -297,8 +299,8 @@ static void bootBegin(const char *argv0, const char *marksFile) {
 // длина n, если не остановлен), stop — остановлен START, synth_us — самый долгий кусок синтеза
 static void bootReport(char *s, int n) {
   int k = snprintf(s, n, "BOOTMARKS n=%d bytes=%d\n", bootMarkN, bootMarkBytes); if (k < 0 || k >= n) return; s += k; n -= k;
-  snprintf(s, n, "BOOTSND hz=%d var=%c ms=%d n=%d beep_at=%d ch=%d out=%d rc=%d stop=%d done=%d synth_us=%d\nBOOTSEQ frames=%d len=%d skip=%d\nBOOTT first_ms=%d end_ms=%d\n",
-           BOOT_BEEP_HZ, bootSndName[BOOT_SND_VARIANT], BOOT_SND_MS, BOOT_SND_N, bootSndBeepMs(BOOT_SND_VARIANT), bootBeepCh, bootBeepOut, bootBeepRc,
+  snprintf(s, n, "BOOTSND hz=%d var=%c tune=%d ms=%d n=%d beep_at=%d ch=%d out=%d rc=%d stop=%d done=%d synth_us=%d\nBOOTSEQ frames=%d len=%d skip=%d\nBOOTT first_ms=%d end_ms=%d\n",
+           bootSnd1011Old ? BOOT_BEEP_HZ : (int)(BOOT_TUNE_HZ + .5f), bootSndName[BOOT_SND_VARIANT], !bootSnd1011Old, BOOT_SND_MS, BOOT_SND_N, bootSndBeepMs(BOOT_SND_VARIANT), bootBeepCh, bootBeepOut, bootBeepRc,
            bootSndStopped, bootSndDone, bootSndUs, bootFrames, bootSeqLen(), bootSkip,
            (int)((bootTFirst - bootTMain) / 1000), (int)((bootTEnd - bootTMain) / 1000));
 }

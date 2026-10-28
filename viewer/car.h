@@ -142,7 +142,7 @@ typedef struct {
 } Car;
 
 #ifndef CULL_SPHERE_OLD
-#define CULL_SPHERE_OLD 1   // TEST17 (слово Роба/дирижёра 15.10: отрисовка как в 1721 f32c8c31): прежний радиус; 0 — полная сфера кузова №546
+#define CULL_SPHERE_OLD 0   // №544/546 включены по умолчанию (слово Роба 27.10: машины, что бьют игрока, видны всегда; грузовик не пропадает у края кадра; выключили без слова Роба 15.10); прежнее -DCULL_SPHERE_OLD=1 / -DNEAR_CAR_DRAW_OLD=1; TEST17 (слово Роба/дирижёра 15.10: отрисовка как в 1721 f32c8c31): прежний радиус; 0 — полная сфера кузова №546
 #endif
 
 // №546: полная 3D ограничивающая сфера машины с запасом 1.5 м (длинные грузовики glastruc/schoolbu/garbage не режутся на кромке)
@@ -221,6 +221,9 @@ static inline int carBoomed(const Car *c) { return c->destroyed && c->deadT >= C
 #endif
 static inline int carShowHusk(const Car *c) { return CAR_HUSK_AFTER_BOOM_OLD ? c->destroyed : carBoomed(c); }
 static inline int carHuskDrives(const Car *c) { return !CAR_HUSK_OLD && c->huskDrive && carBoomed(c); }
+// №1050: диагностика остановок (car.c carDbg1050, flag carcon1050): контакты кузова и колёс на последнем подшаге
+typedef struct { int revert, tries, bn, wn; float bdepth; unsigned char btype[8]; unsigned bidx[8]; float bnx[8], bnz[8], bd[8]; unsigned wref[8]; float wn3[8][3], wdepth[8]; } CarDbg1050;
+extern CarDbg1050 carDbg1050; extern int carDbgOn1050;
 void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt);
 extern unsigned carNanFixes;   // правка 252: сколько раз машину с NaN/inf вернули на надёжное место (чёрный ящик, поле fpe)
 // кузов в формате colPushCar/colProbeCar для текущего положения
@@ -278,4 +281,5 @@ static inline void carRamDamage(Car *k, float before) {
   if (k->damage < 1.f) k->destroyed = 0;
 }
 
+extern int carJumpZoneGateOld;   // №705 ч.2: 1 — окно разгона зоны прыжка без расширения тонких зон (как в TEST73); 0 — полудлина вдоль въезда не меньше JUMP_ZONE_MIN_ALONG
 #endif

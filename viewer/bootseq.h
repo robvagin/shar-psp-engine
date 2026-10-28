@@ -87,6 +87,9 @@ static void bootSeqMarksDraw(int n, BuiPut put, void *u) {
     const BootMark *m = &bootSeqMarks->m[k]; int t = n - (BSQ_MARK0 + BSQ_MARK_STEP * k);
     if (m->mode >= 7) continue;   // 397: кадр покоя рисует свой знак
     if (m->mode == 6) {   // правка 264: тег El Barto — после последнего знака, в правом нижнем углу правой части, «распылением»
+      { int has6 = 0; for (int j = 0; j < bootSeqMarks->n; j++) has6 |= bootSeqMarks->m[j].mode == 6 && !strcmp(bootSeqMarks->m[j].name, BMK_TAG6_NAME);
+        int is6 = !strcmp(m->name, BMK_TAG6_NAME), use6 = has6 && !bootElbarto1010Old;   // №1010: один тег из двух — родной L6, если он есть
+        if (is6 != use6) continue; }
       int t0 = BSQ_MARK0 + BSQ_MARK_STEP * (nreg ? nreg - 1 : 0) + BMK_LEN + 4; t = n - t0;
       if (n < bootSeqLen() && (t < 0 || t >= BMK_TAG_LEN)) continue;
       if (n >= bootSeqLen() || t >= BMK_TAG_LEN) t = BMK_TAG_LEN - 1;
@@ -158,26 +161,32 @@ static void bsqK(char *b, int n, const char *pre, int v, const char *post) {   /
 #define BOOT_WORK_OLD 0
 #endif
 #define BOOT_W_DISC 18754
-#define BOOT_W_RUNS 3543   // TEST71: 3455 (TEST70) + 87 журналов smoke.txt с 26.10 14:12 (правки №989–997 в окнах, тур TEST70) + 1 тур TEST70 на PSP; счёт — нижняя граница
+#define BOOT_W_RUNS 4434   // TEST78: 4394 (TEST77) + 38 журналов smoke.txt после сборки TEST77 (28.10 14:15, №1065–1067, ревизия) + 2 тура на PSP (TEST76, TEST77); счёт — нижняя граница
 #define BOOT_W_PS2REC 130
 #define BOOT_W_HOURS 51   // TEST70 (№988): пересчёт 26.10 — сумма последнего « t=» по 2287 журналам smoke.txt на диске (без копий): smoke 43,3 ч, туры PSP 7,5 ч, эмулятор 0,5 ч; нижняя граница
-#define BOOT_W_FIXES 997   // TEST71: номер последней строки ПРАВКИ_РОБА.md
-#define BOOT_W_BUILDS 71
+#define BOOT_W_FIXES 1067   // TEST78: номер последней строки ПРАВКИ_РОБА.md
+#define BOOT_W_BUILDS 78
 // №988 (Роб 26.10: «вся инфа, сколько мы сожгли токенов»): журналы Claude Code этого проекта 26.09–26.10 (~/.claude/projects/*shar*, ответы без повторов):
 // 66 сессий, 51 882 ответа, 18,69 млрд токенов (из них 18,48 млрд — чтение кэша, написано 34,5 млн); журналы старше 30 дней стёрты — нижняя граница.
 // Строка встаёт после FIXES; чтобы «Loading…» осталась над «Press START», убран пустой ряд перед ней. BOOT_AI988_OLD=1 — как TEST69
 #ifndef BOOT_AI988_OLD
 #define BOOT_AI988_OLD 0
 #endif
+// №1027 (Роб 26.10 ночь: «вначале написано BIOS, GONE Makers, но наш движок называется SHAR PSP; пусть там не BIOS, а именно SHAR PSP, и ссылка на GitHub — связать все детали»):
+// первая строка — «SHAR PSP engine, build N», нижняя — github.com/robvagin/shar-psp-engine (вместо кода сборки). Копирайт GONE Makers остаётся второй строкой. BOOTNAME1027_OLD=1 — как в TEST71
+#ifndef BOOTNAME1027_OLD
+#define BOOTNAME1027_OLD 0
+#endif
 #define BOOT_W_TOKENS_DM 187   // десятые доли миллиарда: 18,7 млрд
 #define BOOT_W_SESSIONS 66
 static void bootSeqDraw(int n, const BootSys *s, BuiPut put, void *u) {
   char b[80], c[40];
   if (n <= 0) {   // первый кадр: производитель и копирайт слева вверху, подсказка и идентификатор внизу — как у BIOS сразу при включении
-    bsqLine(put, u, 0, BUI_HI, "GONE Makers BIOS v1.02");
-    bsqLine(put, u, 1, BUI_KEY, BOOT_WORK_OLD ? "(C) 2026 GONE Makers Co. PSP-2000" : "(C) 2026 GONE Makers Co.");
+    if (BOOTNAME1027_OLD) bsqLine(put, u, 0, BUI_HI, "GONE Makers BIOS v1.02");
+    else { char t_[48]; snprintf(t_, sizeof t_, "SHAR PSP engine, build %d", BOOT_W_BUILDS); bsqLine(put, u, 0, BUI_HI, t_); }   // №1027: не BIOS, а наш движок
+    bsqLine(put, u, 1, BUI_KEY, BOOT_WORK_OLD ? "(C) 2026 GONE Makers Co. PSP-2000" : BOOTNAME1027_OLD ? "(C) 2026 GONE Makers Co." : "PSP port of Simpsons Hit & Run");   // №1027: вторая строка тоже про SHAR PSP (знак GONE Makers справа)
     bsqLine(put, u, BUI_ROW_FOOT - 1, BUI_KEY, "Press START to skip");
-    bsqLine(put, u, BUI_ROW_FOOT, BUI_DIM, BOOT_WORK_OLD ? "10/03/26-PSP2000-GONEMAKERS-SHAR-01" : "10/26/26-GONEMAKERS-SHAR-PORT-71");
+    bsqLine(put, u, BUI_ROW_FOOT, BUI_DIM, BOOT_WORK_OLD ? "10/03/26-PSP2000-GONEMAKERS-SHAR-01" : BOOTNAME1027_OLD ? "10/26/26-GONEMAKERS-SHAR-PORT-72" : "github.com/robvagin/shar-psp-engine");   // №1027: внизу — где лежит код
   }
   if (BOOT_GONE_MARK) {   // знак справа вверху: первый проход, пауза, второй проход, покой
     int p1 = BSQ_P0 + BSQ_PAUSE;

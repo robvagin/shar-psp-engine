@@ -1,0 +1,34 @@
+scene C_BOOT
+flag cfgdefaults 1
+flag tonejobold 1
+wait 6
+scene C_L1
+flag golevel 1
+wait 30
+scene S_L1
+flag repair
+wait 3
+goto 220 172 1.5708
+wait 4
+flag stop
+flag tone1026 1
+wait 3
+shot l1_new
+flag tone1026 0
+wait 3
+shot l1_old
+scene C_L7
+flag golevel 7
+wait 30
+scene S_L7
+flag repair
+wait 3
+flag stop
+wait 3
+flag tone1026 1
+wait 3
+shot l7_new
+flag tone1026 0
+wait 3
+shot l7_old
+end

@@ -1,0 +1,11 @@
+scene X_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene X_P4
+flag golevel 4
+wait 4
+scene X_P7
+flag golevel 7
+wait 4
+end

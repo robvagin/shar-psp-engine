@@ -1,0 +1,20 @@
+# №1052: основание будки: вид вплотную, L1 будка у (144,0; 81,8)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L1
+flag golevel 1
+wait 40
+flag player
+flag service 1
+foot 146.04 84.77 3.1416
+wait 3
+cam 147.04 4.98 84.77 -0.7 -0.2 -0.7
+wait 0.8
+shot base
+cam 148.54 6.08 86.27 -0.65 -0.38 -0.65
+wait 0.8
+shot base2
+cam off
+end

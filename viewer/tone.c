@@ -75,6 +75,16 @@ static int toonTexPct = 35;
 #ifndef TOON_WIN_K
 #define TOON_WIN_K .90f
 #endif
+// №1026 (Роб 26.10: «билборды, картинки на вывесках, не поддаются цветокору; и монеты тоже, и подобные элементы»): вывески, плакаты и картинки в списке notoon.txt шли мимо шагов мультика (пресет «Мультик 90-х») и мимо
+// контраста из меню — в них действовали только насыщенность и гамма. Теперь они проходят ту же цветокоррекцию, что город: пресет мультика, контраст, насыщенность, гамма; картинка при этом НЕ стягивается к среднему
+// цвету (надпись остаётся читаемой). Облака неба и купол (бит 8, main_levels.h) — как были. Спрайт монеты, спрайты ключа и телефона и текстуры машин палитры уже проходят (palTone при загрузке и при смене
+// настроек, журнал COINRETONE / TONE1026); здесь добавлены только вывески. TONE1026_OLD=1 / файл tone1026old / «flag tone1026 0» — вывески как были
+#ifndef TONE1026_OLD
+#define TONE1026_OLD 0
+#endif
+static int tone1026On = !TONE1026_OLD;
+void toneSet1026(int on) { tone1026On = on != 0; }
+int tone1026Get(void) { return tone1026On; }
 void toneToonTex(int pct) { toonTexPct = pct < 0 ? 0 : pct > 100 ? 100 : pct; }
 int toneToonTexPct(void) { return toonTexPct; }
 // №777 (Роб: «настроить насыщенность, контрастность»): контраст палитр вокруг середины (128) последним шагом кривой, в обоих режимах; 100 — как есть, 50..200
@@ -266,12 +276,13 @@ static void toneLutInit(void) {
 }
 void toneColorRGB(unsigned char *c) { if (!c) return; toneLutInit(); entryNoToon = 0; entryFoliage = 0; toneEntry(c); }
 void toneColorRGBNT(unsigned char *c) { if (!c) return; toneLutInit(); entryNoToon = 1; entryFoliage = 0; toneEntry(c); entryNoToon = 0; }   // №954: как toneColorRGB, но без шагов мультика — так красится палитра текстуры неба (бит 1 tstat[4], №786)
-unsigned toneKey(void) { return (unsigned)toonOn | (unsigned)satPct << 1 | (unsigned)gammaPct << 10 | (unsigned)contrastPct << 19 | (TONE_TOON90_OLD ? 1u << 28 : 0u) | (TONE_WIN892_OLD ? 1u << 29 : 0u); }
+unsigned toneKey(void) { return (unsigned)toonOn | (unsigned)satPct << 1 | (unsigned)gammaPct << 10 | (unsigned)contrastPct << 19 | (TONE_TOON90_OLD ? 1u << 28 : 0u) | (TONE_WIN892_OLD ? 1u << 29 : 0u) | (tone1026On ? 1u << 30 : 0u); }
 void tonePal(unsigned char *c) {
   if (!c) return;
   toneLutInit();
-  entryNoToon = toneSt && (toneSt[4] & 1); entryFoliage = toneSt && (toneSt[4] & 2) && !entryNoToon;   // №786: облака неба и вывески — без шагов мультика (бит 1); №825: листва (бит 2)
-  if (toonOn && !entryNoToon && !TONE_TOON90_OLD && !TONE_FLAT_OLD && toneSt && toneSt[3]) {   // №754: рисунок текстуры отступает, цвет доминирует (исходные цвета, до кривой)
+  int sign1026_ = tone1026On && toneSt && (toneSt[4] & 1) && !(toneSt[4] & (8 | 4));   // №1029: земля (асфальт, разметка, всё дорожное) — не вывеска, тон как в TEST71   // №1026: вывеска (notoon, не небо) — шаги мультика и контраст как у города, но без стяжки к среднему
+  entryNoToon = toneSt && (toneSt[4] & 1) && !sign1026_; entryFoliage = toneSt && (toneSt[4] & 2) && !entryNoToon;   // №786: облака неба и вывески — без шагов мультика (бит 1); №825: листва (бит 2)
+  if (toonOn && !entryNoToon && !sign1026_ && !TONE_TOON90_OLD && !TONE_FLAT_OLD && toneSt && toneSt[3]) {   // №754: рисунок текстуры отступает, цвет доминирует (исходные цвета, до кривой)
     float k = TONE_TEX_UNIFORM_OLD ? toneSt[3] / 255.f : toonTexPct / 100.f; unsigned char *q = c;
     if (!TOON_FILL865_OLD && !TONE_TEX_UNIFORM_OLD) {   // №865: земля (дорога, асфальт, трава) — с рисунком; почти однотонные стены — заливкой
       if (toneSt[4] & 4) { if (k < TOON_GROUND_K) k = TOON_GROUND_K; }
@@ -279,6 +290,7 @@ void tonePal(unsigned char *c) {
     float lm = .299f * toneSt[0] + .587f * toneSt[1] + .114f * toneSt[2]; int keepDark = !TONE_WIN892_OLD && k > 0.f && !(toneSt[4] & (2 | 4));   // №892: не земля и не листва
     for (int i = 0; i < 256; i++, q += 4) {
       float kk = k;
+      if (toneSt[4] & 32) { float ddr = q[0] - (float)toneSt[0], ddg = q[1] - (float)toneSt[1], ddb = q[2] - (float)toneSt[2]; if (ddr * ddr + ddg * ddg + ddb * ddb > 3600.f) continue; }   // №1029: статистика донора (№999) тянет только записи цвета самой дороги: жёлтая разметка и белые полосы остаются как были
       if (keepDark) { float dd = lm - (.299f * q[0] + .587f * q[1] + .114f * q[2]); if (dd > TOON_WIN_D0) kk = k + (TOON_WIN_K - k) * clamp01((dd - TOON_WIN_D0) / TOON_WIN_RAMP); }   // глубокое тёмное (стекло окон, двери) — рисунок держится сильнее общей доли
       for (int j = 0; j < 3; j++) q[j] = clamp8(toneSt[j] + (q[j] - (float)toneSt[j]) * kk);
     }

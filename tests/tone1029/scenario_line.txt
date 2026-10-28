@@ -1,0 +1,33 @@
+scene C_BOOT
+flag cfgdefaults 1
+flag tonejobold 1
+wait 6
+scene C_L1
+flag golevel 1
+wait 30
+scene S_L1
+foot 239.6 480.4 0
+wait 3
+cam 239.6 3.0 480.4 -0.55 -0.5 -0.55
+wait 3
+flag xwalk999 0
+wait 3
+shot l1_old
+flag xwalk999 1
+wait 3
+shot l1_new
+scene C_L7
+flag golevel 7
+wait 30
+scene S_L7
+foot 71.1 -275.8 0
+wait 3
+cam 71.1 5.0 -275.8 -0.55 -0.5 -0.55
+wait 3
+flag xwalk999 0
+wait 3
+shot l7_old
+flag xwalk999 1
+wait 3
+shot l7_new
+end

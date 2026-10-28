@@ -95,7 +95,7 @@ static void roomClose(void) {   // блоб комнаты — обратно в
   toneBlkDel(rg.mem); free(rg.pc); free(rgTex); free(rg.mem); nrcam = 0; rcs.cur = -1; roomCamOn = 0;
   rg.pc = 0; rgTex = 0; rgNtex = 0; rg.mem = 0; rg.npc = 0; rg.room = -1; bound = -2;
 }
-static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0; }   // RESET CAR / NEW GAME: Гомер снова в городе
+static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0; e1002N = 14; }   // RESET CAR / NEW GAME: Гомер снова в городе
 // canEnter для roomsStep: прочитать и разобрать блоб комнаты. 0 — не открыть (Гомер остаётся на улице)
 static int roomOpen(void *u, int room) {
   (void)u; bbOp("room+", rooms.room[room].name, 1);   // правка 103: самописец — ящик на карте ДО чтения комнаты
@@ -173,6 +173,7 @@ static void msnRoomSync(void) {
   if (i < 0) { if (rs.room >= 0 || rg.mem) { roomLeave(); snprintf(s, sizeof s, "ROOM ev=msnout t=%.1f\n", smkT); smkWrite(s); } return; }
   if (rs.room == i && rg.mem) return;
   if (rs.room >= 0 || rg.mem) roomClose();
+  mem1060Pre(1536u << 10, "room");   // №1060: пакет комнаты (до 0,8 МБ в туре TEST73) — цельным блоком; не хватает — далёкие клетки города
   if (!roomOpen(0, i)) { roomStateInit(&rs); G.pHomerWorld = 0; return; }
   rs.room = i; rs.exitArmed = 0; rs.doorArmed = 1; rs.lastDoor = -1;
   for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == i) { rs.lastDoor = d; break; }
@@ -188,6 +189,7 @@ static void roomLog(int ev) {   // smoke.txt: вход/выход, куча до
   else snprintf(s, sizeof s, "ROOM ev=exit room=%s n=%d heap=%u t=%.1f pos=%.2f,%.2f,%.2f h=%.3f\n",
                 d->room >= 0 ? rooms.room[d->room].name : "?", roomN, heapFreeBytes(), smkT, homer.x, homer.y, homer.z, homer.h);
   smkWrite(s);
+  if (ev == ROOM_EV_ENTER && rs.room >= 0) { char e_[120]; snprintf(e_, sizeof e_, "ROOMEXIT1002 room=%s exit=%.2f,%.2f,%.2f start=%.2f,%.2f,%.2f\n", rooms.room[rs.room].name, rooms.room[rs.room].exit[0], rooms.room[rs.room].exit[1], rooms.room[rs.room].exit[2], rooms.room[rs.room].start[0], rooms.room[rs.room].start[1], rooms.room[rs.room].start[2]); smkWrite(e_); }
 }
 static int rdTexKey(int tex) { if (tex >= RTEX0) tex -= RTEX0; return tex < 0 || tex > 510 ? 511 : tex; }   // правка 498: номер текстуры комнаты (RTEX0 + номер в блобе) -> ключ сортировки
 static void roomDraw(void) {   // куски комнаты: пирамида видимости, ближняя версия; полупрозрачное — в очередь tq

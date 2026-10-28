@@ -1557,7 +1557,7 @@ def build_items(screen):
         objective_text_centre(items)
         hnr_like_original(items)
         action_label(items)
-    if screen in ('pause', 'pausemsn') and os.environ.get('UI_PLACE_CODE') == '1':   # №598: только для EBOOT с полем PLACE (viewer/ui.h); без него — прежний вывод uiText
+    if screen in ('pause', 'pausemsn') and os.environ.get('UI_PLACE_CODE') != '0':   # №598: элемент PlaceCode с полем PLACE (движок №598 есть в каждой сборке с TEST30). №1044: по умолчанию ВКЛЮЧЕНО — без переменной ship.sh собирал ui.shr без кода клетки, и код рисовался запасным шрифтом msx (Роб: «код в вонючем шрифте, у нас Bart vs the Space Mutants»); UI_PLACE_CODE=0 — прежний вывод uiText
         pause_place_code(items)
     if screen == 'message' and os.environ.get('UI_MSGBOX_FIT_OLD') != '1':
         # Правка 500 (аудит панели 10.10, сцена 26): текст окна сообщения жался к верху рамки (рамка текста — одна строка 16 ед. от y 144), а «✕ Accept» стоял на
