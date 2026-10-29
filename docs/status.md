@@ -3,7 +3,7 @@
 Where the port stands against the original PS2 game, as of October 28, 2026 (build 78). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
-- **Latest hardware tour:** the scripted 52-scene tour across all 7 levels finished on build "TEST77" (October 28) with 0 read errors and one refused allocation (the level 5 sound bank, handled in build 78). The detailed numbers below still belong to build "TEST62". Build 78 ("TEST78") is on the PSP and has not been toured yet; the author played build 77 by hand and reported the issues fixed here.
+- **Latest hardware tour:** the scripted 52-scene tour across all 7 levels finished on build 78 ("TEST78", October 29) with 0 read errors, 0 refused allocations, sound on all 14 level loads and the loading screen on every level change. It runs with the new default settings (textures on, texture detail 80%), so its frame times are not comparable one to one with earlier tours. The detailed numbers below still belong to build "TEST62".
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What works, what is partial, what is missing
@@ -39,7 +39,7 @@ Where the port stands against the original PS2 game, as of October 28, 2026 (bui
 | Cinema mission on level 3 | missing (audit, October 16) | code |
 | Reset Car | removed on purpose | author decision |
 | Cartoon mode (ink outlines, flat fills, the show's palette) | works; on by default; ink only on the hero, pedestrians, cars, booth and props; Settings: Textures, Curbs, line width, eye lines, ink, texture detail, old TV | hardware, emulator |
-| Level loading under low memory | the loading screen and the sound bank survive a refused allocation (retry after freeing the old level); checked in the emulator with a memory-starved scenario, not on hardware | emulator |
+| Level loading under low memory | the loading screen and the sound bank survive a refused allocation (retry after freeing the old level), proven in the emulator with a memory-starved scenario; the build 78 hardware tour had no refused allocation, sound on all 14 level loads and the loading screen on every change | emulator, hardware tour |
 | Settings defaults | a fresh save matches the author's PSP menus (see README) | emulator menu frames |
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | untested (PSP-1000 cannot run it: not enough RAM) | n/a |
@@ -70,7 +70,7 @@ Where the port stands against the original PS2 game, as of October 28, 2026 (bui
 
 ## Not verified
 
-Build 78 on hardware (tour and by hand); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
+Build 78 played by hand on hardware; the low-memory retry path on hardware; a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
 
 ## Reports
 
