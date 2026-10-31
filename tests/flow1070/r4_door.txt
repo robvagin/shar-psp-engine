@@ -1,0 +1,18 @@
+# №1076: L1, вход в дом Симпсонов дверью (△ у двери 212.5 168.5) — персонажи комнаты дочитываются при тёмном экране (NPCWAIT1076 room=), не на глазах
+flag menu
+flag lvset 1
+wait 1.5
+press cross
+wait 70
+foot 212.5 168.5 0.8
+wait 2
+press triangle
+wait 0.5
+shot d_0.5s
+wait 0.5
+shot d_1s
+wait 1
+shot d_2s
+wait 3
+shot d_5s
+end

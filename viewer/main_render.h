@@ -2046,6 +2046,11 @@ static void mcrPreStart(const char *name) {   // начать фоновое ч�
   slot->e = e; slot->fd = f; slot->b = b; slot->size = u[1]; slot->age = 0;
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "MCR pre %.15s bytes=%u t=%.1f\n", (const char *)d, u[1], smkT); smkWrite(s); }
 }
+static int mcrWarmAll(void) {   // №1076: на экране загрузки — модели всех машин миссии этапа сразу (не дочитывать на глазах после загрузки); -> сколько не прочитано
+  const MsnCars *m = mcrCars(); int miss = 0; if (!m) return 0;
+  for (int i = 0; i < m->n; i++) if (m->c[i].on && trModelOf(m->c[i].name) < 0) { mcrForceLoad = 1; if (!mcrGet(m->c[i].name)) miss++; mcrForceLoad = 0; }
+  return miss;
+}
 static void mcrSync(void) {   // кадр: модели машин, которых в миссии больше нет, — в кучу; новые — в память (до рисования)
   for (int k = 0; k < MCR_MAX; k++) if (mcr[k].blob && !mcrUsed(mcr[k].name) &&
       (policeModelWarmOld || !mvIsPolice(mcr[k].name))) mcrDrop(k);
@@ -2300,7 +2305,7 @@ static int pvsList(float x, float z, unsigned short **out) {
   if (gx < 0 || gz < 0 || gx >= pvsW || gz >= pvsH) return -1;
   unsigned *e = pvsEnt + 2 * (gz * pvsW + gx);
   if (e[1] == 0xFFFFFFFFu) return -1;
-  *out = pvsPool + e[0]; return (int)e[1];
+  *out = pvsChN ? (unsigned short *)pvsChAt(pvsChP, pvsChB, pvsChN, e[0]) : pvsPool + e[0]; return (int)e[1];   // №1068: пул кусками
 }
 // PVS по курсу (pvs2.h): для горячей клетки глаза — список сектора курса камеры вместо списка клетки; взгляд круто вниз/вверх (горизонтальная часть < 0,5) — полный список
 static int pvsListS(float x, float z, const float *fn, unsigned short **out) {

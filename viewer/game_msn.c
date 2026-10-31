@@ -40,10 +40,26 @@ static void putHomer(Game *g, const MsnPlace *at) {
 static int gmResumeStart;
 void gameMsnResumeStart(int on) { gmResumeStart = on; }
 int gameMsnDeferStart;   // №943: 1 — msn_level_start (resumeAt) не стартует первую сюжетную: ждёт выбранную строку MISSION SELECT (main_levels.h menuStartGame)
+// №1073 (Роб 31.10, повтор №1067: «опять машина ставится туда, где она не может выехать… у Барта на шестом уровне… площадка просмотровая и вот лестница»;
+// «машина должна ставиться в начале миссии, чаще всего возле телефона и будки… не может быть правило, что она ставится возле именно персонажа»). Причина: правило
+// выше переносило машину к герою с любого расстояния. L6 m4 через MISSION SELECT: машина у будки K3-4 в 36 м и на 3,9 м ниже уезжала наверх, на смотровую
+// площадку у обсерватории, откуда выезда нет. Правило по месту машины в данных (замер эмулятора, вход MISSION SELECT, tests/flow1070): ближе 10 м на том же ярусе —
+// к герою, как раньше (гараж АЭС L1 m4: 6,9 м за колонной); другой ярус (выше/ниже больше 1,5 м: смотровая, комната дома L7 m1 — 23 м по высоте) или 10–60 м
+// (своё место миссии, будка L6 m4 — 32 м) — машина остаётся на локаторе данных; дальше 60 м на том же ярусе (L5 m7 — 297 м: место машины в другом конце города)
+// — к герою, как раньше. CAR_NEAR1073_OLD=1 / flag carnearold 1 — как до правки
+#ifndef CAR_NEAR1073_OLD
+#define CAR_NEAR1073_OLD 0
+#endif
+int gameMsnCarNearOld = CAR_NEAR1073_OLD;
+void (*gameMsnNote)(const char *line);
 static void carNearHomer(Game *g) {
   Car *c = g->pCar; Homer *H = g->pHomer; ColWorld *w = g->pWorld;
   float ox = c->x, oy = c->y, oz = c->z, oh = c->h, dx = ox - H->x, dz = oz - H->z;
   if (dx * dx + dz * dz <= 3.5f * 3.5f) return;
+  if (!gameMsnCarNearOld && (fabsf(oy - H->y) > 1.5f || (dx * dx + dz * dz > 10.f * 10.f && dx * dx + dz * dz <= 60.f * 60.f))) {
+    if (gameMsnNote) { char t[96]; snprintf(t, sizeof t, "CARNEAR1073 keep d=%.1f dy=%.1f car=%.1f,%.1f,%.1f", sqrtf(dx * dx + dz * dz), oy - H->y, ox, oy, oz); gameMsnNote(t); }
+    return;
+  }
   static const float R[3] = {3.4f, 4.2f, 5.0f}; static const float A[8] = {0.f, .6f, -.6f, 1.05f, -1.05f, 1.6f, -1.6f, 3.1416f};
   float bx = 0.f, bz = 0.f, by = 0.f, bs = 1e30f; int have = 0;
   for (int pass = 0; pass < 2 && !have; pass++)

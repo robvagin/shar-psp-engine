@@ -197,6 +197,8 @@ int main(int argc, char **argv) {
   { char fn[256]; SceIoStat st_; sibling(fn, "neonarch957old"); if (sceIoGetstat(fn, &st_) >= 0) neonArch957 = 0; }   // №957б
   { char fn[256]; SceIoStat st_; sibling(fn, "pool990old"); if (sceIoGetstat(fn, &st_) >= 0) pool990 = 0; }   // №990: эллипсы под фонарями как в TEST70
   { char fn[256]; SceIoStat st_; sibling(fn, "lvamem962old"); if (sceIoGetstat(fn, &st_) >= 0) lvaMem962Old = 1; }   // №962: куски уровня в запас участка lva (main_stream.h)
+  { char fn[256]; SceIoStat st_; sibling(fn, "pvschunkold"); if (sceIoGetstat(fn, &st_) >= 0) pvsChunkOld = 1; }   // №1068: PVS1 кусками (main_levels.h pvsLoadChunks)
+  { char fn[256]; SceIoStat st_; sibling(fn, "sndslotold"); if (sceIoGetstat(fn, &st_) >= 0) audioSlotOld(1); }   // №1069: банк звука каждый раз из кучи, как в TEST79 (audio.c)
   { char fn[256]; SceIoStat st_; sibling(fn, "beam995old"); if (sceIoGetstat(fn, &st_) >= 0) beam995 = 0; }   // №995: билборды луча тарелки как в TEST70
   { char fn[256]; SceIoStat st_; sibling(fn, "boss967old"); if (sceIoGetstat(fn, &st_) >= 0) gameBoss967Old = 1; }   // №967: тарелка L7 и луч, цель destroyboss (game_msn.c)
   { char fn[256]; SceIoStat st_; sibling(fn, "lvatail962bold"); if (sceIoGetstat(fn, &st_) >= 0) lvaTail962bOld = 1; }   // №962б: резерв под COL1/PRP2 по готовности чтения, как было
@@ -547,7 +549,9 @@ int main(int argc, char **argv) {
       else if (pauseSub >= 0) pauseSubInput(hit);       // OPTIONS паузы (pmenu.shr): Sound / Settings
       else if (lsOpen) { if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE | PSP_CTRL_START)) { lsOpen = 0; uiPopHookFire(UI_EV_BACK); } }   // LEVEL PROGRESS: Back
       else if (vcOpen) vcInput(hit);                     // VIEW CARDS (pextra.shr)
-      else if (ms == 2) { SCR_CLOSE(); uiPause(0); if (!MS_NEWS_OLD) msNewsPend = MS_NEWS_WAIT + 1; }   // миссия выбрана: в игру (№893: газета всегда)
+      else if (ms == 2) { SCR_CLOSE(); uiPause(0); if (!MS_NEWS_OLD) msNewsPend = MS_NEWS_WAIT + 1;   // миссия выбрана: в игру (№893: газета всегда)
+        if (!msFlowOld) { msSetupWait = 0; msLateWin = 0; msMusPend = 1; sndMusicRelease(); sndMusic(SND_MUS_OFF);   // №1070: музыка прежней миссии и места — сразу
+          if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "MSFLOW1070 select t=%.1f\n", smkT); smkWrite(s_); } } }
       else if (ms == 3) { int lv, row; SCR_CLOSE(); uiPause(0);   // правка 348: миссия другого уровня — тот уровень (ниже, levelAdvance)
                           if (mvMissionSelectWant(&lv, &row) && msLevelOpen(lv)) { toLevel = lv; msPendRow = row; msPendDev = msDevSession; } }
       else if (!ms) { act = uiPauseInput(hit); if (act == UI_P_MISSION_SELECT) { char fn[256]; pausePackFile(fn, "pextra.shr");
@@ -932,6 +936,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "loadreadhang")) loadFuseIoHang((int)sc.a);   // №LOADWAIT: тест — первые N чтений главного при экране загрузки «не завершаются»
         else if (!strcmp(sc.name, "ldslow")) ldSlowUs = (unsigned)sc.a;   // №775: медленная карта на экранах загрузки (мкс на кусок чтения)
         else if (!strcmp(sc.name, "fragheap")) fragHeapMB = (unsigned)sc.a;
+        else if (!strcmp(sc.name, "pvschunkold")) pvsChunkOld = sc.a != 0.f;   // №1068: красный контроль — PVS1 одним куском из кучи
+        else if (!strcmp(sc.name, "pvscapsim")) lvaSoftCapSim = (unsigned)(sc.a * 1048576.f);   // №1068 тест: куча отказывает мягким кускам больше N МБ
         else if (!strcmp(sc.name, "heapleft")) heapLeft(sc.a);   // Б TEST57 тест: куча занята, пока свободно не станет N МБ (на железе L5 после №912: 6,6–7,9 МБ — у границы 7 МБ ворот REGPRE)
         else if (!strcmp(sc.name, "fragmenu")) fragMenuMB = (unsigned)sc.a;   // №841 тест: куча раздроблена до N МБ перед гостиной меню
         else if (!strcmp(sc.name, "fefail")) feFailTest = (int)sc.a;
@@ -944,6 +950,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "boothmem1051")) boothMem1051 = sc.a != 0.f;   // №1051: 0 — будка как в TEST72 (одна попытка после неудачи)
         else if (!strcmp(sc.name, "memload1065")) memLoad1065 = sc.a != 0.f;   // №1065: 0 — прежнее (газета без проверки, ui и звук после игрока)
         else if (!strcmp(sc.name, "sndfail1065")) { sndFail1065 = (int)sc.a; sndFail1065Sim = sndFail1065 > 0; }   // №1065 служебно: следующие N открытий банка звука отказывают
+        else if (!strcmp(sc.name, "sndslotold")) audioSlotOld(sc.a != 0.f);   // №1069: красный контроль — банк звука из кучи на каждом уровне, как было
+        else if (!strcmp(sc.name, "sndcapsim")) audioBankCapSim((unsigned)(sc.a * 1048576.f));   // №1069 тест: банк звука из кучи больше N МБ не выделяется
         else if (!strcmp(sc.name, "scrfail1065")) scrFail1065 = (int)sc.a;   // №1065 служебно: следующие N открытий load.shr отказывают
         else if (!strcmp(sc.name, "mem1060")) mem1060 = sc.a != 0.f;   // №1060: 0 — будка как в №1051
         else if (!strcmp(sc.name, "mem1060rebuild")) mem1060Rebuild = sc.a != 0.f;
@@ -1439,6 +1447,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "mipconst")) { mipConst = (int)sc.a; bound = -2; curLvlMode = -1; }   // служебно: уровень мипа N (-1 выкл.)
         else if (!strcmp(sc.name, "mipauto")) mipAuto = sc.a != 2.f;   // отрицательный контроль правки 77/88; «mipauto 2» — выкл.   // отрицательный контроль правки 76
         else if (!strcmp(sc.name, "tutnow")) tutCalmOff = 1;
+        else if (!strcmp(sc.name, "npcwaitold")) npcWaitOld = sc.a != 0.f;   // №1076: красный контроль (экран загрузки не ждёт персонажей)
+        else if (!strcmp(sc.name, "msflowold")) msFlowOld = sc.a != 0.f;   // №1070–1072: красный контроль (смена миссии как до правки)
+        else if (!strcmp(sc.name, "carnearold")) gameMsnCarNearOld = sc.a != 0.f;   // №1073: красный контроль (машина миссии к герою с любого расстояния)
         else if (!strcmp(sc.name, "msnresetold")) gameMsnResetAlways = 1;   // отрицательный контроль правки 61   // отрицательный контроль правки 60
         else if (!strcmp(sc.name, "shopvoff")) { shopViewPlant(1); smkWrite("SHOPV plant off\n"); }   // отрицательный контроль пункта 6: без экрана покупки
         else if (!strcmp(sc.name, "briefold")) { mvBriefOld(1); uiBriefMixedCase(1); }   // отрицательный контроль правки 52: прежняя карточка
@@ -1855,15 +1866,21 @@ int main(int argc, char **argv) {
 #endif
       // №612 (видео TEST17): карточка миссии уезжает с рукой ДО ириса старта — телепорт ждёт конца выезда (≤ 0,45 с), событие остаётся в очереди
       { float tp[3]; int tele = (BRIEF_EXIT_HOLD_OLD || !uiBriefExitBusy()) && mvTeleported(tp);
-        if (!tele && msNewsPend && !uiBriefExitBusy() && --msNewsPend <= 1) {   // №893: миссия MISSION SELECT перенос не дала — газета на месте игрока
+        if (msLateWin > 0) msLateWin--;
+        if (!tele && msNewsPend && !uiBriefExitBusy() && (msFlowOld || !mvMsnSetup() || ++msSetupWait > MS_SETUP_CAP) && --msNewsPend <= 1) {   // №893: миссия MISSION SELECT перенос не дала — газета на месте игрока (№1072: не раньше конца подготовки фазы)
+          if (!msFlowOld) msLateWin = MS_LATE_WIN;
           int drv_ = !haveHomer || homerDriving(&homer);
           tp[0] = drv_ ? car.x : homer.x; tp[1] = drv_ ? car.y : homer.y; tp[2] = drv_ ? car.z : homer.z; tele = 1; msNewsPend = 1;
           if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNEWS fallback at %.1f %.1f t=%.1f\n", tp[0], tp[2], smkT); smkWrite(s_); } }
         if (tele) {   // сценарий переставил игрока: камера заново; далеко (или выбор MISSION SELECT, №893) — город с экрана загрузки
-          int always = msNewsPend > 0; msNewsPend = 0;
+          int always = msNewsPend > 0 || (!msFlowOld && msLateWin > 0); msNewsPend = 0; msLateWin = 0;   // №1072: поздний перенос того же выбора — тоже с загрузкой
           frames += transitClose(&fbp0, "msn") / (longView ? 2 : 1); chase.init = 0; smkSettle();   // ирис закрывается, город читается, ирис раскрывается
           float dx = tp[0] - eyeX, dz = tp[2] - eyeZ; if (always || dx * dx + dz * dz > 80.f * 80.f) msnTeleport(tp[0], tp[1], tp[2], &fbp0);
           if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNEWS always=%d far=%d t=%.1f\n", always, dx * dx + dz * dz > 80.f * 80.f, smkT); smkWrite(s_); }
+          if (msMusPend) { msMusPend = 0;   // №1070: после экрана загрузки — звук старта (пешком) или езда; миссия с музыкой — её начало заново
+            int foot_ = haveHomer && onFoot();
+            if (sndMusicOwned()) mvMusicResume(); else if (foot_) { sndMusic(SND_MUS_OFF); feStinger("level_intro"); } else sndMusic(SND_MUS_FREEROAM);
+            if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "MSFLOW1070 music owned=%d foot=%d t=%.1f\n", sndMusicOwned(), foot_, smkT); smkWrite(s_); } }
           msnRoomSync(); } }   // фаза в комнате (SetDynaLoadData «…@») — вход в неё; в городе — выход
       { const char *ph, *cn; if (mvStartCam(&ph, &cn)) msncamStartPhase(ph, cn); }   // правка 40: фаза с камерой старта, игрок поставлен — «наезд»
       if (haveTraffic && !inRoom()) {   // этап 5: после машины игрока и Гомера (в комнате город стоит); камера прошлого кадра — спавн и удаление вне кадра

@@ -255,6 +255,8 @@ int gameShopOpen(const GameMsn *m);
 void gameMsnSetSkinTarget(int (*fn)(float px, float py, float pz, float out[3]));   // метка этапа buyskin: ближайший гардероб/дверь (NULL — метки нет)
 void gameShopInput(GameMsn *m, const GamePad *p);   // кнопки лавки (вид, пока экран лавки поверх мира): ◄ ► X ○ △
 void gameMsnFreezeCar(const GameMsn *m, CarInput *in);  // во время отсчёта: газ, тормоз, руль 0, ручник
+extern int gameMsnCarNearOld;   // №1073: 1 — машина миссии к герою с любого расстояния (как до правки)
+extern void (*gameMsnNote)(const char *line);   // №1073: строка в журнал (msn_view.c ставит logf_), NULL — молча
 extern int gameMsnResetAlways;           // правка 61: отрицательный контроль (1 — переносить и после пройденной миссии)
 extern int gamePoliceDmgOld;   // правка 280: 1 — полицейская получает полный урон машин миссий (прежнее)
 extern int gameTalkCarOld;   // правка 305: 1 — машина переносится на место разговора из данных (прежнее, красный)

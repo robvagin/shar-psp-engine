@@ -1,0 +1,49 @@
+# №1075/№1076: вход в дом Симпсонов дверью (как tests/rooms/emu_holes.txt), снимки сразу после входа и вокруг телевизора (корпус 495,6–500,5 x, 396,7–401,0 z, верх −18,83)
+scene start
+wait 3
+scene house_door
+foot 228.94 180.5 0 3.83
+wait 3
+press up 0.3
+press circle 0.3
+wait 1
+press triangle
+wait 0.4
+shot door_0.4s
+wait 0.6
+shot door_1s
+wait 1
+shot door_2s
+scene tv0
+foot 494.0 395.5 0 -19.50
+wait 2
+shot tv0
+scene tv1
+foot 494.0 402.5 0 -19.50
+wait 2
+shot tv1
+scene tv2
+foot 497.5 403.0 0 -19.50
+wait 2
+shot tv2
+scene tv3
+foot 501.5 403.0 0 -19.50
+wait 2
+shot tv3
+scene tv4
+foot 502.0 399.0 0 -19.50
+wait 2
+shot tv4
+scene tv5
+foot 498.0 394.5 0 -19.50
+wait 2
+shot tv5
+scene tv6
+foot 492.5 399.0 0 -19.50
+wait 2
+shot tv6
+scene tv7
+foot 499.0 406.0 0 -19.50
+wait 2
+shot tv7
+end

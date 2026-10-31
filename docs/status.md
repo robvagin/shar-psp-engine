@@ -1,9 +1,9 @@
 # Status
 
-Where the port stands against the original PS2 game, as of October 28, 2026 (build 78). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of October 31, 2026 (build 81). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
-- **Latest hardware tour:** the scripted 52-scene tour across all 7 levels finished on build 78 ("TEST78", October 29) with 0 read errors, 0 refused allocations, sound on all 14 level loads and the loading screen on every level change. It runs with the new default settings (textures on, texture detail 80%), so its frame times are not comparable one to one with earlier tours. The detailed numbers below still belong to build "TEST62".
+- **Latest hardware tour:** the scripted 52-scene tour across all 7 levels finished on build 80 ("TEST80", October 30) with 0 read errors, 0 late audio buffers, sound on all 14 level loads and one refused allocation in the level 7 ending scene (the tour went on to the end). Build 81 is on the author's PSP and has not been toured yet. It runs with the new default settings (textures on, texture detail 80%), so its frame times are not comparable one to one with earlier tours. The detailed numbers below still belong to build "TEST62".
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What works, what is partial, what is missing
@@ -40,6 +40,7 @@ Where the port stands against the original PS2 game, as of October 28, 2026 (bui
 | Reset Car | removed on purpose | author decision |
 | Cartoon mode (ink outlines, flat fills, the show's palette) | works; on by default; ink only on the hero, pedestrians, cars, booth and props; Settings: Textures, Curbs, line width, eye lines, ink, texture detail, old TV | hardware, emulator |
 | Level loading under low memory | the loading screen and the sound bank survive a refused allocation (retry after freeing the old level), proven in the emulator with a memory-starved scenario; the build 78 hardware tour had no refused allocation, sound on all 14 level loads and the loading screen on every change | emulator, hardware tour |
+| Mission Select, loading and pop-in | a mission change inside a level restarts the music and always shows the loading screen; the loading screen waits for the mission characters, nearby bonus characters and mission cars, so nothing appears after it opens; the mission car keeps its own spot unless you stand close on the same ground or are more than 60 m away. Old code fails the same check: music 0 of 2, car on the ledge, 6 late loads | emulator (green and red builds) |
 | Settings defaults | a fresh save matches the author's PSP menus (see README) | emulator menu frames |
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | untested (PSP-1000 cannot run it: not enough RAM) | n/a |
@@ -65,12 +66,12 @@ Where the port stands against the original PS2 game, as of October 28, 2026 (bui
 - A "go home" icon was reported once after a level change; it could not be reproduced. Since build 69 every level change closes open menus and clears the previous mission icon, and the game logs the icon state for the next report.
 - Long play sessions on hardware have not been tested for memory fragmentation. Early builds hung after many level changes; the known leaks are closed.
 - Changing CURBS applies on the next level load: rebuilding the flat fills while playing shifted the sidewalk colour on level 1 (cause not found).
-- Level 6 mission 4: one report of the mission car standing near the observatory where it cannot drive out. The disc data and the emulator place it by the phone booth below; not reproduced (build 78).
+- Simpsons' living room: a thin gap at the top back corner of the TV lets the room show through on hardware; not seen in the emulator, waiting for a photo from the PSP.
 - A cell can take 2 to 5 s to load right after a teleport in the tour or a mission transition (seen once on levels 5 and 2 in the build 76 tour, no visible gap); cause not found.
 
 ## Not verified
 
-Build 78 played by hand on hardware; the low-memory retry path on hardware; a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
+Build 81 on hardware (tour and by hand); the low-memory retry path on hardware; a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits on hardware; every cutscene on hardware; the bonus game on hardware.
 
 ## Reports
 

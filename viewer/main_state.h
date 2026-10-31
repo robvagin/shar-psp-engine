@@ -483,6 +483,11 @@ static float ddFloorHard(void) { return ddFloorOver > 0.f ? ddFloorOver : (DD_FL
 static float ddFloorLong(void) { if (ddFloorOver > 0.f) return ddFloorOver; return (!DD_FLOOR_FAR_OLD && (farPlainD > 0.f || !DD_FLOOR200_OLD)) ? DD_FLOOR_FAR : DD_FLOOR_LONG; }   // пол регулятора дальности: у уровня с дальними версиями выше
 static float pvsRange = PVS_RANGE;   // дальность, до которой списки PVS1 уровня полны (читается из файла)
 static unsigned *pvsEnt; static unsigned short *pvsPool; static float pvsOx, pvsOz, pvsCell; static int pvsW, pvsH;
+#include "pvschunk.h"   // №1068: пул PVS1 кусками, если в запас участка lva не влез (L1/L4)
+#ifndef PVSCHUNK_OLD
+#define PVSCHUNK_OLD 0   // 1 / файл pvschunkold рядом с EBOOT / «flag pvschunkold 1» — как до правки: PVS1 одним куском из кучи
+#endif
+static int pvsChunkOld = PVSCHUNK_OLD; static unsigned short *pvsChP[PVSCH_MAX]; static unsigned pvsChB[PVSCH_MAX + 1]; static int pvsChN;   // pvsChN 0 — пул одним блоком (pvsPool)
 static unsigned rfPbUs, rfUiUs;   // RFAST: время блока запекания B1 (b1_us), интерфейса (ui_us)
 // Прогрев на хвосте экрана загрузки (№538, ЗАДАНИЕ_ЗАГРУЗКА_ВПРОК): показ идёт не меньше LOAD_MIN_S (3,5 с), чтение ~0,64 с — ~3 с простоя. Вокруг точки старта (ldWarmC) строятся листы целых клеток
 // и запекание B1, чтобы после снятия ириса этого не делать на глазах. LOAD_WARM_OLD=1 (бит 14 bisect) — как до правки

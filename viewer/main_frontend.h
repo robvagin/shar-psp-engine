@@ -45,6 +45,18 @@ static int msPendRow = -1, msPendDev, msDevSession;
 #endif
 #define MS_NEWS_WAIT 6   // кадров ждём перенос миссии (он приходит в кадре выбора или следующем), потом газета на месте игрока
 static int msNewsPend;
+// №1070–1072, №1074 (Роб 31.10 на TEST80: «музыка не заново стартует, когда меняешь миссию»; «на том же уровне… просто звучок»; «прелоадер то показывается, то не
+// показывается… просто тебя шлепает в другое место»; «чтобы всегда были ресеты звука»). Смена миссии в MISSION SELECT на том же уровне — одно правило, как маленькая
+// загрузка уровня: 1) музыка прежней миссии и места (клуб) снимается сразу при выборе; после экрана загрузки — звук старта level_intro пешком (как на старте уровня),
+// в машине — музыка свободной езды; миссия, которая уже ведёт музыку, начинает её заново (_start); 2) экран загрузки ждёт, пока новая миссия поставит игрока: пока у
+// миссии открыто окно подготовки фазы (mvMsnSetup), запасной вариант «газета на месте игрока» не срабатывает (не дольше MS_SETUP_CAP кадров), а перенос, пришедший
+// позже запасного (MS_LATE_WIN кадров), всё равно идёт с экраном загрузки, а не прыжком. MS_FLOW1070_OLD=1 / flag msflowold 1 — как до правки
+#ifndef MS_FLOW1070_OLD
+#define MS_FLOW1070_OLD 0
+#endif
+#define MS_SETUP_CAP 90   // кадров (~1,5–3 с) ждать конца подготовки фазы
+#define MS_LATE_WIN 90    // кадров после запасной газеты, когда поздний перенос ещё считается выбором MISSION SELECT
+static int msFlowOld = MS_FLOW1070_OLD, msMusPend, msSetupWait, msLateWin;
 // №894 (Роб 23.10: «Mission Select в паузе открылся в чужой рамке: листать ◄ ► нельзя, виден только текущий уровень, шрифт чужой и кривой»): это запасной список
 // (msn_view.c mvMissionSelect: нет пакета экрана — selRows 0): пакет pextra.shr не открылся (чтение / память после череды загрузок и переносов), результат uiScrOpen
 // не проверялся, повторов не было. Теперь: до 3 повторов с освобождением (готовый пакет будки, ожидание загрузчика, пауза), каждая неудача — строка в журнал и
@@ -404,6 +416,20 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
       int pn_ = loadWarmPending(); if (pn_ < ldLast) { ldLast = pn_; ldLastT = ldSec(); } else if (!LOAD_STALL_OLD && ldSec() - ldLastT > LOAD_STALL_S) break; }
     if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADCELLS pending0=%d left=%d extra_ms=%.0f frames=%d t=%.1f\n", ldPend0, loadWarmPending(), (ldSec() - ldPendT0) * 1000.f, ldPendFr, smkT); smkWrite(s); }
   }
+  // №1076 (Роб 31.10: «ошибки после экрана загрузки… Дедушка… внутри дома Симпсонов подгружается позже, чем появляется вся хата… загрузка слишком быстрая… чтобы она
+  // точно себя перепроверяла перед тем, как открывает экран»). Причина (журнал эмулятора tests/flow1070): модели персонажей этапа читаются фоном и доходят ПОСЛЕ
+  // экрана загрузки (Лиза в доме L7, Фринк, Красти, Ленни — на каждой смене уровня и миссии), на PSP карта памяти медленнее — персонаж появляется на глазах.
+  // Правило: экран загрузки не снимается, пока у миссии есть персонажи, чья модель ещё читается (mvNpcPending), не дольше NPC_WAIT_MAX_S; кадры экрана идут
+  // как обычно (огонь и газета не стоят). NPC_WAIT1076_OLD=1 / flag npcwaitold 1 — как до правки
+#ifndef NPC_WAIT1076_OLD
+#define NPC_WAIT1076_OLD 0
+#endif
+#define NPC_WAIT_MAX_S 3.f
+  if (!NPC_WAIT1076_OLD && !npcWaitOld) { int nc_ = mcrWarmAll();   // машины миссии этапа — тоже здесь (hype_v L6, oblit_v L5 дочитывались после загрузки)
+    if (smkOn) { char s[80]; snprintf(s, sizeof s, "CARWAIT1076 left=%d t=%.1f\n", nc_, smkT); smkWrite(s); } }
+  if (!NPC_WAIT1076_OLD && !npcWaitOld) { int np0 = mvNpcPending(), na0 = mvAmbMissing(), fr_ = 0; float t0_ = ldSec();   // и бонусные рядом (Дедушка в доме L1)
+    while (ldOn && (mvNpcPending() > 0 || mvAmbMissing() > 0) && ldSec() - t0_ < NPC_WAIT_MAX_S) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); fr_++; }
+    if (smkOn) { char s[128]; snprintf(s, sizeof s, "NPCWAIT1076 pending0=%d near0=%d left=%d/%d ms=%.0f frames=%d t=%.1f\n", np0, na0, mvNpcPending(), mvAmbMissing(), (ldSec() - t0_) * 1000.f, fr_, smkT); smkWrite(s); } }
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADSHOW ms=%.0f min_ms=%.0f spin_ms=%.0f fast=%d t=%.1f\n", ldSec() * 1000.f,
                                      LOAD_MIN_S * 1000.f, LOAD_SPIN_S * 1000.f, ldFast, smkT); smkWrite(s); }
   ldOn = 0; ldBase = 0; ldWarmOn = 0;

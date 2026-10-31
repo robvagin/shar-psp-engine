@@ -238,6 +238,7 @@ static void lvaReset(void) { lvaUsed = lvaLast = 0; }   // уровень выг
 #define LVAMEM962_OLD 0
 #endif
 static int lvaMem962Old = LVAMEM962_OLD; static unsigned lvaSoftBytes, lvaSoftMiss;   // служебно: сколько байт легло в запас, сколько раз не влезло
+static unsigned lvaSoftCapSim;   // №1068 тест («flag pvscapsim N», только сценарий): мягкое выделение из кучи больше N МБ отказывает — как на PSP, где после смен уровня наибольший кусок 2,6 МБ (эмулятор так не дробится)
 static unsigned lvaTailReserve(int tailBg) {   // сколько ещё должен занять загрузчик в участке под COL1/PRP2, пока главный поток кладёт PVS1/PV2S в запас
   if (!tailBg) return 8u << 20;
   if (lvaTail962bOld) return (tailCol ? 0u : tailColSz) + (tailProp ? 0u : (2u << 20)) + (64u << 10);
@@ -245,16 +246,18 @@ static unsigned lvaTailReserve(int tailBg) {   // сколько ещё долж
 }
 typedef struct { unsigned n, res, used; int ts, al, hit; } LvaSoftRec;   // служебно (№962б): каждый запрос в запас — размер, резерв, занято, состояние хвоста, занял ли загрузчик COL1/PRP2, попал ли
 static LvaSoftRec lvaSoftRec[8]; static int lvaSoftRecN;
-static void *lvaAllocSoft(unsigned n, unsigned reserve, int tailBg) {   // tailBg >= 0: резерв считается здесь, в момент запроса (загрузчик мог занять COL1/PRP2 после того, как вызывающий его прикинул), иначе заданный reserve
+static void *lvaAllocSoftEx(unsigned n, unsigned reserve, int tailBg, int heapOk) {   // tailBg >= 0: резерв считается здесь, в момент запроса (загрузчик мог занять COL1/PRP2 после того, как вызывающий его прикинул), иначе заданный reserve; heapOk 0 (№1068) — не влезло в участок: 0, кучу не трогаем
 #ifdef TAILSLOW_MS
   for (int w_ = 0; w_ < 100 && tailState == 1 && !tailColAl; w_++) sceKernelDelayThread(2000);   // только стенд №962б: на PSP загрузчик успевает занять место под COL1 раньше разбора PVS, в эмуляторе нет
 #endif
   if (tailBg >= 0) reserve = lvaTailReserve(tailBg);
   LvaSoftRec *rc_ = lvaSoftRecN < 8 ? &lvaSoftRec[lvaSoftRecN++] : 0; if (rc_) { rc_->n = n; rc_->res = reserve; rc_->used = lvaUsed; rc_->ts = tailState; rc_->al = tailColAl * 2 + tailPropAl; rc_->hit = 0; }
-  if (!lvaMem962Old && lvaBase && lvaRoom(n + reserve)) { void *p = lvaAlloc(n); if (p && lvaOwns(p)) { lvaSoftBytes += n; if (rc_) rc_->hit = 1; return p; } if (p) return p; }
+  if (!lvaMem962Old && lvaBase && lvaRoom(n + reserve)) { void *p = lvaAlloc(n); if (p && lvaOwns(p)) { lvaSoftBytes += n; if (rc_) rc_->hit = 1; return p; } if (p) { if (heapOk) return p; free(p); } }
   if (!lvaMem962Old) lvaSoftMiss++;
-  return memalign(64, n);
+  if (heapOk && lvaSoftCapSim && n > lvaSoftCapSim) return 0;   // №1068 тест: куча «раздроблена» — крупный кусок не дают
+  return heapOk ? memalign(64, n) : 0;
 }
+static void *lvaAllocSoft(unsigned n, unsigned reserve, int tailBg) { return lvaAllocSoftEx(n, reserve, tailBg, 1); }
 // №PFETCH (аудит времени загрузки 16.10): целые файлы traffic.shr (1,4 МБ) и fx.shr (0,5 МБ) читает загрузчик следом за COL1/PRP2, пока главный поток считает; трафик и частицы берут готовый буфер
 // (pfTake в main_levels.h) и разбирают на прежнем месте — данные те же байты, порядок разбора прежний. PFETCH_OLD=1 / файл pfetchold рядом с EBOOT — читают сами, как раньше
 #ifndef PFETCH_OLD

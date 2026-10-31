@@ -97,6 +97,10 @@ int mvSummon(void);                           // правка 62: будка —
 void mvSetInterior(const char *name);        // КРЮЧОК КОМНАТ: имя интерьера как в скриптах ("KwikEMart"), NULL — город
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)); // №376: комната по настоящему полу SHI1, а не высоте города
 int  mvTeleported(float pos[3]);             // 1 — сценарий переставил игрока (старт/повтор/выбор миссии): камера, экран загрузки
+int  mvAmbMissingAt(float x, float y, float z);   // №1076: то же у точки (вход в комнату — у её старта)
+int  mvAmbMissing(void);                     // №1076: бонусных/фоновых рядом с игроком без модели (и двигает их чтение)
+int  mvNpcPending(void);                     // №1076: сколько персонажей миссии ещё ждут модель (экран загрузки ждёт их)
+int  mvMsnSetup(void);                       // №1072: 1 — у миссии открыто окно подготовки фазы (перенос игрока ещё может прийти)
 void mvSetGround(int (*f)(float x, float z, float yHi, float yLo, float *out));   // №606: высота коллизии под точкой (main: colGround); без вызова стрелка стоит как раньше
 void mvSetGov(int on);   // L3 причал: кадр в перегрузке (frameGov) — дальние персонажи миссии не рисуются дальше NPC_GOV_DIST
 void mvSetVis(int (*f)(const float bb[6]));   // правка 500: отсечение персонажей по кадру (trVis из main); без вызова — рисуются все

@@ -19,7 +19,17 @@ No game files are included, and none will be.
 - [Tests](tests/README.md): how every fix is checked
 - [All documents](docs/index.md)
 
-## What's new in build 78
+## What's new in build 81
+
+October 31, 2026. Since build 78 (October 28):
+
+- Mission Select inside the same level now works like a real mission change: the music restarts with the level intro, and the loading screen shows every time and stays up until the move is done, even when you switch fast
+- The mission car waits at its own spot (usually by the phone booth). It is moved next to you only when you stand close on the same ground or are far away, so it no longer lands on a ledge it cannot drive off (level 6, mission 4 by the observatory)
+- The loading screen stays up until the characters of the mission, the bonus characters nearby and the mission cars are loaded. Nothing pops in after the picture opens (Grandpa in the Simpsons' house); the dark screen at a house door waits the same way
+- The level sound bank has one fixed place in memory for the whole game, sized for the largest bank, so a level never loses its sound after many level changes (level 5 used to go silent)
+- The visibility table of levels 1 and 4 loads in small pieces when memory is tight, so the level always gets it
+
+### Build 78
 
 October 28, 2026. Since build 71 (October 26):
 
@@ -78,8 +88,8 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About four weeks, 69 test builds and 27 full tours on a real PSP. 985 playtest notes, logged and worked through one by one.
-Over 3,000 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
+About four weeks, 81 test builds and 39 full tours on a real PSP. 1,076 playtest notes, logged and worked through one by one.
+Over 4,400 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
 ## Reporting bugs

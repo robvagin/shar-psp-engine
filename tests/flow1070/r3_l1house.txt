@@ -1,0 +1,14 @@
+# №1076: NEW GAME L1 (дом Симпсонов, бонусный Дедушка bm1_grampa_sd) — что читается после экрана загрузки; снимки первых секунд игры
+flag menu
+flag lvset 1
+wait 1.5
+press cross
+wait 0.3
+shot g_0.3s
+wait 0.7
+shot g_1s
+wait 2
+shot g_3s
+wait 5
+shot g_8s
+end

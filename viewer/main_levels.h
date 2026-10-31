@@ -450,7 +450,8 @@ static void levelUnload(void) {   // всё, что держит набор ур
   haveCol = 0; colMem = 0; memset(&world, 0, sizeof world);  chaseView = 0;   // №639: вид по SELECT не переходит на другой уровень
   haveCarVis = 0; doorHinge = -1; lvlCarOk = -9;   // машина следующего уровня — из его CAR1
   lvlLightOk = -9; skinLightLevel(0, 0, 0, 0);       // свет следующего уровня — из его CAR1 (пока — свет уровня 1)
-  if (!lvLeak) { lvaFree(pvsEnt); lvaFree(pv2Mem); }   // №962: могут лежать в запасе участка lva
+  if (!lvLeak) { lvaFree(pvsEnt); lvaFree(pv2Mem); for (int i_ = 0; i_ < pvsChN; i_++) free(pvsChP[i_]); }   // №962: могут лежать в запасе участка lva; №1068: куски пула — из кучи
+  pvsChN = 0;
   pv2Mem = 0; memset(&pv2, 0, sizeof pv2); pv2Cur = pv2CurCell = -1;
   lspReset();   // аудит Сборки: таблица света не переживает смену уровня
   dalFree(); dripFree();   // №877, №770
@@ -807,6 +808,33 @@ static void opq863Apply(const unsigned char *tab) {
   sceIoClose(f);
   if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "OPQ863 level=%d sig=%d list=%u pieces=%u tris_near=%u tris_far=%u cityopq=%d pieces_unblend=%u tris_unblend=%u\n", gameLevel, h[1] == pvs2Sig(tab, npc), n, opqFarN, tris, trisF, cityOpqOn, cityOpqN, cityOpqTris); smkWrite(s_); }
 }
+// №1068: PVS1 не влез в запас участка lva (L1/L4) — таблица клеток (≈ 26 КБ) и пул кусками ≤ 256 КБ из кучи (viewer/pvschunk.h) вместо одного блока 2,2–2,6 МБ.
+// fd стоит на таблице клеток PVS1 (сразу за заголовком 32 Б). Разрезать нельзя (формат не тот) — один блок из кучи, как до правки. Не вышло — уровень без PVS, как раньше
+static void pvsLoadChunks(SceUID fd, unsigned nent, unsigned npool, unsigned sz) {
+  unsigned eb = nent * 8u, b[PVSCH_MAX + 1]; int k = 0, got = 0, bad = 0;
+  unsigned pos = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_CUR); float hb0 = smkOn ? heapFreeBytes() / 1048576.f : 0.f, bk0 = smkOn ? memMaxBlockMB() : 0.f;
+  unsigned *ent = (unsigned *)memalign(64, eb ? eb : 64);
+  if (ent && sceIoRead(fd, ent, eb) == (int)eb) k = pvsChPlan(ent, nent, npool, PVSCH_U16, b);
+  if (k > 0) {
+    while (got < k) {
+      unsigned cb = (b[got + 1] - b[got]) * 2u; unsigned short *p = (unsigned short *)memalign(64, cb);
+      if (!p) { bad = 1; break; }
+      pvsChP[got++] = p;
+      if (sceIoRead(fd, p, cb) != (int)cb) { bad = 1; break; }
+    }
+    if (bad) { for (int i = 0; i < got; i++) free(pvsChP[i]); free(ent); ent = 0; }
+    else { pvsEnt = ent; pvsPool = pvsChP[0]; for (int i = 0; i <= k; i++) pvsChB[i] = b[i]; pvsChN = k; }
+  } else if (ent) {   // план не сложился — как до правки: один блок
+    free(ent); ent = 0; sceIoLseek32(fd, pos, PSP_SEEK_SET);
+    void *m = lvaSoftCapSim && sz > lvaSoftCapSim ? 0 : memalign(64, sz);
+    if (m && sceIoRead(fd, m, sz) == (int)sz) { pvsEnt = m; pvsPool = (unsigned short *)((char *)m + eb); } else free(m);
+  }
+  if (smkOn) { unsigned sum_ = 2166136261u;   // FNV-1a пула по порядку номеров (проверка tests/pvschunk1068: та же сумма из level.shr)
+    if (pvsEnt && pvsChN) { for (int j = 0; j < pvsChN; j++) for (unsigned s = 0; s < pvsChB[j + 1] - pvsChB[j]; s++) sum_ = (sum_ ^ pvsChP[j][s]) * 16777619u; }
+    else if (pvsEnt) for (unsigned s = 0; s < npool; s++) sum_ = (sum_ ^ pvsPool[s]) * 16777619u;
+    char s_[220]; snprintf(s_, sizeof s_, "PVSCHUNK level=%d nent=%u npool=%u chunks=%d got=%d ok=%d one=%d sum=%08x heap=%.2f blk=%.2f\n", gameLevel, nent, npool, k, got,
+                           pvsEnt != 0, pvsEnt && !pvsChN, sum_, hb0, bk0); smkWrite(s_); }
+}
 static void levelLoad(void **fbp) {
   lvaInit();   // №775: участок под три крупных куска уровня — при первой загрузке игры (куча ещё чистая), дальше тот же
   if (fragHeapMB) { fragHeap(fragHeapMB << 20); fragHeapMB = 0; }   // №775 тест: «flag fragheap N» — один раз, перед игроком уровня
@@ -913,9 +941,11 @@ static void levelLoad(void **fbp) {
         pvsOx = pf[0]; pvsOz = pf[1]; pvsCell = pf[2]; pvsW = pu[0]; pvsH = pu[1];
         if (!PVS_FAR_OLD && pu[3] >= 115 && pu[3] <= 1000) pvsRange = (float)pu[3];   // правка 497: дальность списков из заголовка (0 — 115)
         unsigned sz = pvsW * pvsH * 8 + pu[2] * 2;
-        void *m = lvaAllocSoft(sz, 0, tailBg);   // №962: запас участка, если COL1/PRP2 уже или заведомо влезут
+        void *m = lvaAllocSoftEx(sz, 0, tailBg, pvsChunkOld);   // №962: запас участка, если COL1/PRP2 уже или заведомо влезут; №1068: не влез — кусками, не одним блоком кучи
         if (m && sceIoRead(fd, m, sz) == (int)sz) { pvsEnt = m; pvsPool = (unsigned short *)((char *)m + pvsW * pvsH * 8); }
         else if (m) lvaFree(m);
+        else if (!pvsChunkOld) pvsLoadChunks(fd, (unsigned)(pvsW * pvsH), pu[2], sz);
+        if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "PVSLOAD level=%d bytes=%u ok=%d chunks=%d arena=%d old=%d\n", gameLevel, sz, pvsEnt != 0, pvsChN, pvsEnt && lvaOwns(pvsEnt), pvsChunkOld); smkWrite(s_); }   // №1068
         if (!PVS_SECTOR_OLD && pvsEnt) {   // PV2S (tools/pvs2.py): PVS по курсу в горячих клетках, отдельный файл pv2s.shr рядом с уровнем (как lmap.shr); нет файла / подпись другого экспорта — PVS1 как был
           char fn2_[256]; levelFile(fn2_, "pv2s.shr"); SceUID f2_ = sceIoOpen(fn2_, PSP_O_RDONLY, 0);
           if (f2_ >= 0) { unsigned h2[8] = {0};

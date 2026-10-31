@@ -168,6 +168,18 @@ typedef struct {
 typedef char chk_mix[FRAMES == MIX_FRAMES && NVOICE == MIX_NVOICE && NSTREAM == MIX_NSTREAM && NSEG == MIX_NSEG && WIN == MIX_WIN ? 1 : -1];
 
 static unsigned char *bank; static const SabHdr *H;
+// №1069 (Роб 30.10, тур TEST79: у Апу не было звука — L5 sfx.sab 2 131 776 Б одним куском, а наибольший кусок кучи после смены уровня
+// 1,91 МБ при свободных 22,5; тот же отказ в TEST77). Банк звука — в постоянном месте: выделяется один раз при первом audioInit (звук
+// уровня 1 при запуске игры, куча ещё цельная) размером с наибольший банк уровней; смена уровня читает новый банк в то же место. Банк больше
+// места — место заново из кучи (как прежде). SNDSLOT_OLD=1 / файл sndslotold / «flag sndslotold 1» — как до правки: банк каждый раз из кучи
+#ifndef SNDSLOT_OLD
+#define SNDSLOT_OLD 0
+#endif
+#define SAB_SLOT_BYTES (2112u << 10)   // 2 162 688 Б: наибольший sfx.sab L1–L7 и бонуса — 2 154 944 (L2), вверх до 64 КБ
+static int slotOld = SNDSLOT_OLD; static unsigned char *slot; static unsigned slotCap, bankCapSim;
+void audioSlotOld(int on) { slotOld = on; }
+void audioBankCapSim(unsigned bytes) { bankCapSim = bytes; }   // тест «flag sndcapsim N»: банк из кучи больше N байт не выделяется — как на PSP после смен уровня
+static void *bankAlloc(unsigned n) { return bankCapSim && n > bankCapSim ? 0 : amalloc(n); }
 static const SabRes *R; static const unsigned short *VAR; static const SabFile *F; static const SabCar *car;
 // Authored aliases (witchcar_v_skid) share blank.rsd's file index in SAB.
 static int blankFile = -1;
@@ -1007,7 +1019,9 @@ int audioInit(const char *dir) {
   AFile f = afOpen(p);
   if (!AF_OK(f)) return fail("sfx.sab not found");
   unsigned sz = afSize(f);
-  bank = amalloc(sz);
+  if (!slotOld && (!slot || sz > slotCap)) {   // №1069: место под банк — один раз; банк больше места — место заново
+    free(slot); slotCap = sz > SAB_SLOT_BYTES ? sz : SAB_SLOT_BYTES; if (!(slot = bankAlloc(slotCap))) slotCap = 0; }
+  bank = !slotOld && slot ? slot : bankAlloc(sz);   // места нет (куча не дала) — банк из кучи, как прежде
   if (!bank || afRead(f, 0, bank, (int)sz) != (int)sz) { afClose(f); return fail("sfx.sab read error / no memory"); }
   afClose(f);
 #ifndef AUDIO_HOST
@@ -1103,7 +1117,8 @@ void audioShutdown(void) {
   for (int s = 0; s < NSTREAM; s++) free(streams[s].ring);
   memset(streams, 0, sizeof streams);
   free(T); T = 0; ntrack = 0;
-  free(bank); bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0;
+  if (bank != slot) free(bank);   // №1069: постоянное место банка остаётся на следующий уровень
+  bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0;
 }
 
 int audioSoundCount(void) { return H ? (int)H->nres : 0; }

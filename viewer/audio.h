@@ -35,6 +35,10 @@ typedef struct {
 // Returns 0 on success, <0 if a file is missing/invalid (the game can run silent; all calls stay safe).
 int  audioInit(const char *dir);
 void audioShutdown(void);
+// №1069: банк sfx.sab живёт в постоянном месте (одно выделение на всю игру). audioSlotOld(1) — как до правки: из кучи на каждый уровень.
+// audioBankCapSim(N) — тест: выделение банка из кучи больше N байт отказывает (раздробленная куча PSP; эмулятор так не дробится), 0 — выкл
+void audioSlotOld(int on);
+void audioBankCapSim(unsigned bytes);
 const char *audioError(void);
 
 // ids: look up once at load time, keep the int.

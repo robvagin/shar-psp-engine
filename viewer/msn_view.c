@@ -458,6 +458,14 @@ static void ambSlots(float x, float y, float z, float cameraOffset, float speed,
   }
   if (miss >= 0) { NpcAnim *a = animFor(npcKey(&M.npc[miss]), 1, 1); logf_("MSN npc %s kind=%d model=%s\n", M.npc[miss].name, M.npc[miss].kind, a ? "yes" : "no"); }
 }
+int mvAmbMissingAt(float x, float y, float z) {   // №1076: бонусные и фоновые персонажи в пределах видимости точки без модели (Дедушка в доме L1); есть — двигает их чтение
+  if (!active) return 0;
+  int want[NMODEL_AMB], nw = gameMsnAmbWantRange(&M, x, y, z, NPC_DRAW_DISTANCE, NMODEL_AMB, want), miss = 0;
+  for (int j = 0; j < nw; j++) if (!animFor(npcKey(&M.npc[want[j]]), 0, 0)) miss++;
+  if (miss) { ambElapsed = NPC_PREFETCH_PERIOD; ambSlots(x, y, z, 0.f, 0.f, 0.f); }
+  return miss;
+}
+int mvAmbMissing(void) { if (!active) return 0; MsnWorld w; gameMsnWorld(&M, &w); return mvAmbMissingAt(w.player.x, w.player.y, w.player.z); }
 static void presentationCb(void *u, const char *bitmap) {   // SetPresentationBitmap: картинка брифинга, грузится сейчас (фоном)
   (void)u; const char *b = strrchr(bitmap, '/'), *b2 = strrchr(bitmap, '\\'); if (b2 > b) b = b2; b = b ? b + 1 : bitmap;
   int n = 0; while (b[n] && b[n] != '.' && n < (int)sizeof H.present - 1) { H.present[n] = b[n]; n++; } H.present[n] = 0;
@@ -758,8 +766,9 @@ static void abMode(void *u, int on) {
 static void abLog(void *u, const char *s) { (void)u; if (logFn) logFn(s); }
 static const MsnAudioBackend audioBackend = {0, abTrack, abSec, abPlay, abPlaying, abMusic, abRelease, abMode, abLog};
 
+static void mvGameNote(const char *line) { logf_("%s\n", line); }   // №1073: строки game_msn.c (CARNEAR1073) в журнал
 int mvInit(const char *ebootPath, int level) {
-  ambElapsed = 0.f;
+  ambElapsed = 0.f; gameMsnNote = mvGameNote;
   brBriefed = 0;   // правка 52: первая карточка уровня — с загрузкой
   strncpy(dir, ebootPath, sizeof dir - 1); char *sl = strrchr(dir, '/'); if (sl) sl[1] = 0; else dir[0] = 0;
   char art[sizeof dir + 8]; if (level > 1) snprintf(art, sizeof art, "%sl%d/", dir, level); else snprintf(art, sizeof art, "%s", dir);   // msnart.shr: 2–7 — в l<N>/
@@ -969,6 +978,7 @@ int mvWantsAction(void) { return active && !H.failed && gameMsnWantsAction(&M); 
 void mvSetInterior(const char *name) { M.interior = name; }
 static const char *(*npcRoomAt)(float x, float y, float z);
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)) { npcRoomAt = roomAt; }
+int mvMsnSetup(void) { return active && M.inSetup; }   // №1072: окно подготовки фазы открыто — перенос игрока ещё может прийти
 int mvTeleported(float out[3]) {   // сценарий переставил игрока с прошлого вызова: где он теперь
   if (!active || M.teleports == seenTeleports) return 0;
   seenTeleports = M.teleports;
@@ -1008,6 +1018,7 @@ static void mvPrefetchPoll(void) {
     } else i++;
   }
 }
+int mvNpcPending(void) { mvPrefetchPoll(); return nNpcPend; }   // №1076: персонажей миссии, чья модель ещё читается (опрос заодно завершает готовые)
 void mvTick(int action, float dt) {
   mvPrefetchPoll();   // разбор тура 12: фоновое чтение моделей персонажей этапа
   if (!active) return;

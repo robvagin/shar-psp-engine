@@ -97,6 +97,11 @@ static void roomClose(void) {   // блоб комнаты — обратно в
 }
 static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0; e1002N = 14; }   // RESET CAR / NEW GAME: Гомер снова в городе
 // canEnter для roomsStep: прочитать и разобрать блоб комнаты. 0 — не открыть (Гомер остаётся на улице)
+// №1076: экран загрузки и тёмный экран двери ждут персонажей (main_frontend.h loadEnd, roomOpen ниже). NPC_WAIT1076_OLD=1 / flag npcwaitold 1 — как до правки
+#ifndef NPC_WAIT1076_OLD
+#define NPC_WAIT1076_OLD 0
+#endif
+static int npcWaitOld;
 static int roomOpen(void *u, int room) {
   (void)u; bbOp("room+", rooms.room[room].name, 1);   // правка 103: самописец — ящик на карте ДО чтения комнаты
   unsigned t0 = sceKernelGetSystemTimeLow(), h0 = smkOn ? heapFreeBytes() : 0;
@@ -147,6 +152,11 @@ static int roomOpen(void *u, int room) {
   rg.room = room; rg.mem = m; rg.pc = pp; rg.npc = np; rg.size = sz; rgTex = tx; rgNtex = ntx; bound = -2;
   rg.clear = rdU(m + 20); rg.amb = rdU(m + 24); rg.nlit = (int)rdU(m + 28); rcs.cur = -1; rcs.in = 0; memset(rcs.inT, 0, sizeof rcs.inT); rcs.newWins = !roomCamStickyOld; rcs.switchOld = roomCamSwitchOld;   // правка 186; файл roomcamswitchold — задержка 172 до школы
   for (int i = 0; i < rg.nlit; i++) { memcpy(rg.lit[i], m + 32 + 16 * i, 12); rg.litc[i] = rdU(m + 32 + 16 * i + 12); }
+  // №1076: комната читается при закрытом экране (дверь) — персонажи миссии и бонусные у её старта (Дедушка в доме L1) дочитываются здесь же, а не на глазах
+  // после открытия; не дольше 1,5 с (тёмный экран держится чуть дольше). Служебное flag npcwaitold 1 — как до правки
+  if (!NPC_WAIT1076_OLD && !npcWaitOld) { unsigned w0 = sceKernelGetSystemTimeLow(); int n0 = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]), nl = n0;
+    while (nl > 0 && sceKernelGetSystemTimeLow() - w0 < 1500000u) { sceKernelDelayThread(5000); nl = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]); }
+    if (smkOn && n0) { char s_[96]; snprintf(s_, sizeof s_, "NPCWAIT1076 room=%s pending0=%d left=%d ms=%u\n", rooms.room[room].name, n0, nl, (sceKernelGetSystemTimeLow() - w0) / 1000u); smkWrite(s_); } }
   rg.ms = (sceKernelGetSystemTimeLow() - t0) / 1000.f; rg.heap0 = h0; rg.heap1 = smkOn ? heapFreeBytes() : 0;
   return 1;
 }

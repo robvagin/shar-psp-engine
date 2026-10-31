@@ -161,11 +161,11 @@ static void bsqK(char *b, int n, const char *pre, int v, const char *post) {   /
 #define BOOT_WORK_OLD 0
 #endif
 #define BOOT_W_DISC 18754
-#define BOOT_W_RUNS 4434   // TEST78: 4394 (TEST77) + 38 журналов smoke.txt после сборки TEST77 (28.10 14:15, №1065–1067, ревизия) + 2 тура на PSP (TEST76, TEST77); счёт — нижняя граница
+#define BOOT_W_RUNS 4485   // TEST81: 4469 (TEST80) + 15 прогонов эмулятора 31.10 (переходы №1070–1076: повторы хода Роба, зелёный/красный, приёмка) + 1 тур TEST80 на PSP
 #define BOOT_W_PS2REC 130
 #define BOOT_W_HOURS 51   // TEST70 (№988): пересчёт 26.10 — сумма последнего « t=» по 2287 журналам smoke.txt на диске (без копий): smoke 43,3 ч, туры PSP 7,5 ч, эмулятор 0,5 ч; нижняя граница
-#define BOOT_W_FIXES 1067   // TEST78: номер последней строки ПРАВКИ_РОБА.md
-#define BOOT_W_BUILDS 78
+#define BOOT_W_FIXES 1076   // TEST81: номер последней строки ПРАВКИ_РОБА.md
+#define BOOT_W_BUILDS 81
 // №988 (Роб 26.10: «вся инфа, сколько мы сожгли токенов»): журналы Claude Code этого проекта 26.09–26.10 (~/.claude/projects/*shar*, ответы без повторов):
 // 66 сессий, 51 882 ответа, 18,69 млрд токенов (из них 18,48 млрд — чтение кэша, написано 34,5 млн); журналы старше 30 дней стёрты — нижняя граница.
 // Строка встаёт после FIXES; чтобы «Loading…» осталась над «Press START», убран пустой ряд перед ней. BOOT_AI988_OLD=1 — как TEST69
