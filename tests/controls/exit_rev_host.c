@@ -9,7 +9,7 @@ static int run(float v, float *tExit, float *vMin) {
   if (gameOnFoot(&W.G)) { printf("FAIL: Гомер не за рулём\n"); return 0; }
   carSetSpeed(&W.car, -v); *tExit = -1.f; *vMin = 1e9f;
   for (int f = 0; f < 360; f++) {
-    bwStep(&W, f == 2 ? GP_TRIANGLE : 0, 0, 0); float s = fabsf(W.car.v); if (s < *vMin) *vMin = s;
+    bwStep(&W, (v >= 8.34f ? f >= 2 : f == 2) ? GP_TRIANGLE : 0, 0, 0);   /* сверка g10-flow: выше 30 км/ч △ держат */ float s = fabsf(W.car.v); if (s < *vMin) *vMin = s;
     if (gameOnFoot(&W.G)) { *tExit = f / 60.f; return 1; }
   }
   return 0;

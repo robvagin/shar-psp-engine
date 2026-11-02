@@ -11,7 +11,7 @@ StaticEntity 0x3F00000, граф сцены 0x120100 и экземпляры Ins
 Источник — только диск Роба (read-only): скелет 0x4500, PTRN/PVIS 0x121000, меши 0x10000, билборды 0x17002,
 объёмы CollisionObject 0x7010000 внутри сущности, action-локаторы 0x3000005 вида 9 (объект, сустав, тип действия,
 TriggerVolume). Опоры: prp2_export.py (стейтпропы SPR1: скелет, позы по кадрам, объёмы), p3dlocs.py (локаторы),
-hit-and-run-web/tools (MIT). Утёкший код SHAR не использовался.
+hit-and-run-web/tools (MIT).
 
 Что куда:
   * части, которые не двигаются (у объекта нет дорожек PTRN и PVIS) и являются мешами -> город (клетки/PVS/LOD, как все
@@ -59,7 +59,14 @@ import p3dlocs                                  # noqa: E402
 
 ANIM_COLL, ANIM = 0x3f00008, 0x3f0000c
 FAMILIES = {ANIM_COLL: 'AnimCollision', ANIM: 'Anim'}
-ACTIONS = {'PlayAnim': 1, 'AutoPlayAnim': 2, 'ToggleOnOff': 3, 'AutomaticDoor': 4, 'Doorbell': 5}
+ACTIONS = {'PlayAnim': 1, 'AutoPlayAnim': 2, 'ToggleOnOff': 3, 'AutomaticDoor': 4, 'Doorbell': 5,
+           'PlayOnce': 6}   # круг 5 (g07b, P05-18): PlayOnce — как PlayAnim, но первое △ навсегда снимает триггер; на диске один: L4 l4r4b «library» switch_1
+# сверка g12-data P05-7 (02.11.2026): последнее слово данных action-локатора — признак «следовать за суставом» (триггер выключателя и стоянка едут
+# вместе с суставом): 1 у шести локаторов на диске (звонок Quimby DB_quimby на l1r3, l1z4, l4r3, l4z4; платформа Splatfrom7Trans AutoPlayAnim на
+# l1z6, l4z6), у остальных 434 — 0. В запись ANM1 (80 Б): H после tk — бит 1 «следует за суставом», H после nfr — номер сустава действия + 1
+# (0 — нет данных). Читает движок (viewer/animobj.c, окно g11-objects). AO_FOLLOW_OLD=1 — оба поля 0 (прежний файл)
+AO_FOLLOW_OLD = __import__('os').environ.get('AO_FOLLOW_OLD') == '1'
+AO_FOLLOW = {}   # имя объекта -> последнее слово данных action-локатора (заполняет action_locators)
 CLUSTER = 30.0          # м по xz: части дальше — отдельный экземпляр SPR1 (отсечение по центру экземпляра)
 BILL_CENTER_OLD = __import__('os').environ.get('AO_BILL_CENTER_OLD') == '1'   # красный контроль: тип из одних билбордов — в начале координат
 BILL_FRAMES_OLD = __import__('os').environ.get('AO_BILL_FRAMES_OLD') == '1'   # красный контроль: квады BQG при стоящих суставах — на кадре 0
@@ -135,6 +142,8 @@ def action_locators(files):
             locs, _ = p3dlocs.read_locators(f, rel)
             L = next((l for l in locs if l.name == name), None)
             trig = L.triggers[0] if L is not None and L.triggers else None
+            pl_ = c.data[p + 8:p + 8 + ln * 4]
+            if len(pl_) >= 8: AO_FOLLOW.setdefault(strs[0], struct.unpack_from('<I', pl_, len(pl_) - 4)[0])
             out.setdefault(strs[0], (ACTIONS[strs[2]], strs[1], trig, name))
     return out
 
@@ -188,7 +197,12 @@ class AnimObjects:
         JW = PX.rest_world(joints)
         meshes = {N(c) for c in w.children if c.id == 0x10000}
         bbs = PX.billboards(w)
-        o = dict(name=name, family=fam, file=f.stem, action=action, trig=trig, loc=locname, types=[], nfr=nfr, fps=fps or 30.0,
+        fol_ = 0; fol_j = 0
+        if action and not AO_FOLLOW_OLD and AO_FOLLOW.get(name) == 1:   # P05-7: триггер следует за суставом action-локатора
+            fol_ = 1
+            try: fol_j = 1 + [j_['name'] for j_ in CE.load_skeleton(w)].index(joint_name)
+            except (ValueError, ImportError): fol_j = 0
+        o = dict(name=name, family=fam, file=f.stem, action=action, trig=trig, loc=locname, follow=fol_, fjoint=fol_j, types=[], nfr=nfr, fps=fps or 30.0,
                  loop=loop, vols=[], moving=moving)
         # ---- рисунок
         spr_parts = []
@@ -370,8 +384,8 @@ class AnimObjects:
             trig, tk, tc, th, ta = o['trig'], 0, (0, 0, 0), (0, 0, 0), np.eye(3).reshape(-1)
             if trig is not None:
                 isr, c, h, axes = trig; tk = 2 if isr else 1; tc, th = c, h; ta = np.asarray(axes, np.float64).reshape(-1)
-            orecs.append(struct.pack('<4HBBHHHf3f3f9f', fi, len(o['types']), fv, len(o['vols']), o['action'], tk, 0,
-                                     o['nfr'], 0, float(o['fps']), *tc, *th, *ta))
+            orecs.append(struct.pack('<4HBBHHHf3f3f9f', fi, len(o['types']), fv, len(o['vols']), o['action'], tk, o.get('follow', 0),
+                                     o['nfr'], o.get('fjoint', 0), float(o['fps']), *tc, *th, *ta))
         head = b'ANM1' + struct.pack('<5I8x', 1, len(orecs), len(vrecs), 32, 32 + 80 * len(orecs))
         out = head + b''.join(orecs) + b''.join(vrecs)
         assert all(len(r) == 80 for r in orecs) and all(len(r) == 72 for r in vrecs)

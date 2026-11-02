@@ -26,17 +26,29 @@ static const struct { int msg; const char *voice[2]; const char *name; } TUT[TUT
   [TUT_GAG]       = {5,  {"v_gag_1_tu_brt_l1t1"},         "gag"},        // FIND ALL GAGS (правило порта)
   [TUT_TIMETRIAL] = {20, {"v_timetrial_1_tu_brt_l1t1"},   "timetrial"},  // WIN THE TIME TRIAL RACE TO EARN EXTRA COINS (правило порта)
   [TUT_UNLOCKED]  = {16, {"v_rewardps2_1_tu_brt_l1t1"},   "unlocked"},   // 14:17 UNLOCKED CAR / GO TO PHONE BOOTH TO ACCESS THIS VEHICLE AT ANY TIME
-  [TUT_PHONE]     = {9,  {0},                             "phone"},      // PRESS @ TO USE TELEPHONE BOOTH. (TUTORIAL_009; реплики Барта на диске нет — текст, правило порта: у будки)
+  [TUT_PHONE]     = {9,  {0},                             "phone"},
+  [TUT_FOREIGN]   = {10, {"v_incarps2_1_tu_brt_l1t1"},    "foreign"},    // TUTORIAL_010 «PRESS @ TO GET INTO THE CAR.» — реплику берём ту же, что у «в свою» (текст почти совпадает; отдельной записи нет)      // PRESS @ TO USE TELEPHONE BOOTH. (TUTORIAL_009; реплики Барта на диске нет — текст, правило порта: у будки)
 };
 // подсказки «рядом с …» (машина, дверь, значок гонки / бонуса / заезда, ходьба) повторяются каждый кадр, пока условие есть
 #define NEAR_MASK (1u << TUT_WALK | 1u << TUT_GETIN | 1u << TUT_INSIDE | 1u << TUT_RACE | 1u << TUT_BONUS | 1u << TUT_TIMETRIAL | 1u << TUT_PHONE)
 #define TUT_NOVOICE_S 2.f   // нет реплики (пакета звука нет): Continue через столько секунд — правило порта
-#define TUT_MIN_S .6f       // Continue не раньше: случайное X сразу после события не закрывает подсказку — правило порта
-#define TUT_GAP_S .5f       // между подсказками подряд (запись 2:27 -> 2:29: «ломай» закрыта, через миг — монеты) — правило порта
+// сверка g09b-menu круг 5 (P15-18): у оригинала подсказка выходит, как только HUD активен, следующая из очереди — сразу после закрытия предыдущей, без пауз. Были паузы порта
+// (0,5 между подсказками, 0,6 до первого Continue) — теперь 0. TUTPAUSE_OLD=1 — прежние паузы (вместе с TUT_CALM в main_frontend.h)
+#ifndef TUTPAUSE_OLD
+#define TUTPAUSE_OLD 0
+#endif
+#define TUT_MIN_S (TUTPAUSE_OLD ? .6f : 0.f)       // Continue не раньше: случайное X сразу после события не закрывает подсказку — правило порта
+#define TUT_GAP_S (TUTPAUSE_OLD ? .5f : 0.f)       // между подсказками подряд (запись 2:27 -> 2:29: «ломай» закрыта, через миг — монеты) — правило порта
 
 static int forceMsg = -1;   // служебное «flag tutmsg N» (правка 267): показать строку N библии, -1 — нет
 static int levelOn, userOn = 1, cur = -1, noVoice, vi, voiceT = -1, savedMode = -1, anyVoice, busy;
 static unsigned shown, queued;
+// сверка g07b-msnview (P15-11): очередь подсказок идёт в порядке наступления событий (первое пришло — первое показано), одна за раз.
+// Было: по номеру подсказки (младший бит первым). TUT_QORDER_OLD=1 — прежнее
+#ifndef TUT_QORDER_OLD
+#define TUT_QORDER_OLD 0
+#endif
+static unsigned qOrd[TUT_COUNT], qCtr;   // qOrd[e] — порядковый номер прихода события e в очередь
 static float t, gap, later[TUT_COUNT];
 #ifndef TUT_EXIT_OLD
 #define TUT_EXIT_OLD 0   // 1 — счёт ухода пузыря в tutTick, как до ревизии 3.1
@@ -96,10 +108,22 @@ static void show(int ev) {
   voiceNext();
   logf2("on");
 }
+// круг 5 (g07b, P15-10): подсказка «в чужую машину». TUT_FOREIGN_OLD=1 — угон подсказок не касается, «газ» показывается на любую посадку (прежнее)
+#ifndef TUT_FOREIGN_OLD
+#define TUT_FOREIGN_OLD 0
+#endif
+static int fgnSkipGas;   // посадка после угона: «газ» привязан к своей машине игрока
+void tutForeignCar(void) {
+  if (TUT_FOREIGN_OLD) return;
+  fgnSkipGas = 1;
+  if (!(shown >> TUT_GETIN & 1u) && ready(TUT_GETIN)) { shown |= 1u << TUT_FOREIGN; tutEvent(TUT_GETIN); }
+  else tutEvent(TUT_FOREIGN);
+}
 void tutEvent(int ev) {
+  if (ev == TUT_GAS && !TUT_FOREIGN_OLD && fgnSkipGas) { fgnSkipGas = 0; return; }   // сел в угнанную — «газ» не показываем
   if (!ready(ev)) return;
   if (cur >= 0 || gap > 0.f || busy) {   // подсказка на экране (или разговор): событие — следующей (монеты после «ломай», 2:29);
-    if (!(NEAR_MASK >> ev & 1u)) queued |= 1u << ev;   // «рядом с …» не копится — придёт само, пока игрок там
+    if (!(NEAR_MASK >> ev & 1u)) { if (!(queued >> ev & 1u)) qOrd[ev] = ++qCtr; queued |= 1u << ev; }   // «рядом с …» не копится — придёт само, пока игрок там
     return;
   }
   show(ev);
@@ -110,7 +134,11 @@ void tutTick(float dt) {
   if (cur >= 0 || busy) return;
   if (gap > 0.f) { gap -= dt; if (gap > 0.f) return; gap = 0.f; }
   for (int e = 0; e < TUT_COUNT; e++) if (later[e] > 0.f && (later[e] -= dt) <= 0.f) { later[e] = 0.f; tutEvent(e); }
-  for (int e = 0; e < TUT_COUNT && cur < 0; e++) if (queued >> e & 1u) { queued &= ~(1u << e); if (ready(e)) show(e); }
+  if (TUT_QORDER_OLD) { for (int e = 0; e < TUT_COUNT && cur < 0; e++) if (queued >> e & 1u) { queued &= ~(1u << e); if (ready(e)) show(e); } return; }
+  while (cur < 0 && queued) {   // сверка g07b P15-11: самое раннее по приходу
+    int best = -1; for (int e = 0; e < TUT_COUNT; e++) if ((queued >> e & 1u) && (best < 0 || qOrd[e] < qOrd[best])) best = e;
+    queued &= ~(1u << best); if (ready(best)) show(best);
+  }
 }
 int tutInput(unsigned hit, float wallDt, int *disabled) {
   if (disabled) *disabled = 0;
@@ -138,3 +166,5 @@ int tutDrawExit(float wallDt) {   // №516: после закрытия; 0 — 
   float k; if (exitMsg < 0 || !uiTutExitScale(exitT, &k)) return 0;
   uiTutorialScale(k); int r = uiDrawTutorial(exitMsg, exitCont); uiTutorialScale(1.f); return r;
 }
+// сверка g10b-loop (P13:17), точка вызова для main_loop.h: подсказка на экране и её реплика ещё звучит (START в этот момент открывает паузу)
+int tutVoiceBusy(void) { return cur >= 0 && voiceT >= 0 && sndVoicePlaying(voiceT); }

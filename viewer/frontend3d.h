@@ -61,6 +61,7 @@ extern int feGlowTest;     // гейт (smoke flag feglow N): подсветка
 enum { FE_GO = 0, FE_BACK = 1, FE_ROUND = 2 };   // туда / обратно / туда и сразу обратно (неготовый пункт)
 int   feFlight(int item, int *hasBack);   // 1: в данных есть перелёт к предмету пункта item (*hasBack: и обратный)
 int   feFly(int item, int mode);          // запуск перелёта (FE_*); 0 — такого перелёта в данных нет (камера не двигается)
+int   feFlyRange(int a, int b);            // сверка g09b-menu: перелёт по кадрам данных a..b (подэкраны OPTIONS, наезд после титульного); 0 — кадров нет
 int   feFlying(void);                     // 1, пока перелёт идёт (feDraw двигает время)
 void  feHome(void);                       // камера сразу в главный вид (кадр меню), перелёт остановлен
 float feFrame(void);                      // текущий кадр таймлайна (для смоука)

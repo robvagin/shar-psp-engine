@@ -40,6 +40,8 @@ CLIPS = [
     # водителя ndr (homer.cho: «in car animations borrowed from ndr»: in_car_idle_driver -> ndr_in_car_idle, turn_left_driver ->
     # ndr_turn_left ...) из art/chars/ndr_a.p3d — тело на 17 см дальше от руля, руки на руле; hom_in_car_idle — поза пассажира
     'ndr_in_car_idle', 'ndr_turn_left', 'ndr_turn_right', 'ndr_accelerate', 'ndr_decelerate', 'ndr_crash',
+    # круг 2, g04-homer (СВЕРКА P05-1): радость за рулём — малая и большая победа водителя, и взгляд назад (стрелка вниз в машине); клипы набора
+    # ndr (в homer.cho: in_car_victory_small/large_driver, look_back_driver). HOMER_CLIPS_OLD=1 — без них (как было)
     # hit / electrocuted (wasp beam) / fall
     'hom_flail', 'hom_get_up',
     # world interaction, rewards, car roof
@@ -50,6 +52,10 @@ CLIPS = [
     'hom_dialogue_thinking', 'hom_dialogue_hands_on_hips', 'hom_dialogue_hands_in_air', 'hom_dialogue_shaking_fist',
     'hom_dialogue_scratch_head', 'hom_dialogue_yes', 'hom_dialogue_no', 'hom_dialogue_cross_arms',
     'hom_dialogue_open_arm_hand_gesture', 'hom_dialogue_shake_hand_in_air',
+    # сверка g04-homer круг 5: клипы, на которые .cho Гомера ссылается чужими именами — уворот при взрыве машины (dodge -> npd_dodge, art/chars/npd_a.p3d),
+    # взгляд назад и покачивание (look_back_driver / sway_*_driver -> ndr_*), махание водителя (wave_driver / wave_goodbye_driver -> ndr_wave*),
+    # радость за рулём (in_car_victory_*_driver -> ndr_in_car_victory_*)
+    'npd_dodge', 'ndr_look_back', 'ndr_sway_left', 'ndr_sway_right', 'ndr_wave', 'ndr_wave_goodbye', 'ndr_in_car_victory_large', 'ndr_in_car_victory_small',
 ]
 
 
@@ -60,6 +66,13 @@ CLIPS = [
 # («in car animations borrowed from ndr and nps anim sets» в каждом .cho). Длинные idle обычного костюма — <имя>_idle0..2 .cho
 # (у Гомера hom_idle_scratch / check_shoes / chili). Пакет игрока: tools/homer_export.py --level N -> l<N>/player.shr
 PLAYERS = ('homer', 'bart', 'lisa', 'marge', 'apu')
+
+if __import__('os').environ.get('HOMER_CLIPS_OLD') != '1':
+    CLIPS += ['ndr_in_car_victory_small', 'ndr_in_car_victory_large', 'ndr_look_back']
+    # круг 2, g04-homer (P05 Д3): дверь пассажира — те же клипы без суффикса _driver (посадка и выход, обычные и «_high»)
+    CLIPS += ['hom_get_into_car_open_door', 'hom_get_into_car', 'hom_get_into_car_close_door', 'hom_get_out_of_car_open_door', 'hom_get_out_of_car',
+              'hom_get_out_of_car_close_door', 'hom_get_into_car_open_door_high', 'hom_get_into_car_high', 'hom_get_into_car_close_door_high',
+              'hom_get_out_of_car_open_door_high', 'hom_get_out_of_car_high', 'hom_get_out_of_car_close_door_high']
 
 
 def level_player(level):
@@ -118,7 +131,7 @@ def main():
     need = {}
 
     def load_needed(root, joints):
-        allc = orig(root, joints) + orig(ce.read(ce.GAME / 'art/chars/ndr_a.p3d'), joints)   # + набор водителя ndr (правки 220/231)
+        allc = orig(root, joints) + orig(ce.read(ce.GAME / 'art/chars/ndr_a.p3d'), joints) + orig(ce.read(ce.GAME / 'art/chars/npd_a.p3d'), joints)   # + набор водителя ndr (правки 220/231) и прохожего npd (dodge, круг 5)
         byname = {c['name']: c for c in allc}
         pre = next((c['name'][:-len('loco_idle_rest')] for c in allc if c['name'].endswith('_loco_idle_rest')), None)
         if not pre: raise SystemExit(f'{char}: no *_loco_idle_rest clip')

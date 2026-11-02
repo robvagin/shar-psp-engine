@@ -1,6 +1,7 @@
 // Стейтпропы и обломки: реализация (см. stateprops.h, docs/props_spec.md). Чистый C99, float, без malloc в кадре.
 #include "stateprops.h"
 #include "propbreak.h"
+#include "sverka_shared.h"
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -31,6 +32,43 @@ _Static_assert(sizeof(SpInst) == 32, "SpInst");
 // -DSP_HIT_MINAXIS=1 — прежнее (красный гейта tests/smash/run.sh)
 #ifndef SP_HIT_MINAXIS
 #define SP_HIT_MINAXIS 0
+#endif
+
+// ---- сверка с исходником, окно g11-objects (02.11.2026): выключатели строк отчётов СВЕРКА_ПОЛНАЯ/P11_объекты_мира, P12, P16, P18. Все *_SV_OLD=1 — поведение TEST81
+#ifndef SPIMP_SV_OLD
+#define SPIMP_SV_OLD 0      // P16 Д6, P11-09: удар машины засчитывается по импульсу (масса машины x сближение > SP_HIT_IMPULSE), а не по скорости сближения 2 м/с
+#endif
+#define SP_HIT_IMPULSE 100.f
+#ifndef SPFEATHER_SV_OLD
+#define SPFEATHER_SV_OLD 0  // P11-09: касание не-ломаемого (типы 2, 3, 10) подаёт FEATHER_TOUCH до проверки силы
+#endif
+#ifndef SPBUSH_SV_OLD
+#define SPBUSH_SV_OLD 1     // P11-08: куст-шар (тип 2) твёрдый, как стена. ВЫКЛЮЧЕНО до слова Роба: канон 27.09 п.4 «мягкая реакция с возможностью выехать», правка 173 (кусты насквозь). 0 — твёрдый
+#endif
+#ifndef SPKILL_SV_OLD
+#define SPKILL_SV_OLD 0     // P11-20: вызов KILL_SPEED гасит скорость самого предмета, не машины (у стейтпропа скорости нет: машину не гасим)
+#endif
+#ifndef SPCOIN_SV_OLD
+#define SPCOIN_SV_OLD 0     // P18 Д1: код 11 «монеты вперёд» = пять монет за вызов, имя SPAWN_25_COINS_Z только подпись; Hit & Run выключен — монет нет (P11-06)
+#endif
+#ifndef SPRAD_SV_OLD
+#define SPRAD_SV_OLD 0      // P16-21, P18 Д6: вызов 8 RADIATE_FORCE (статуи Иедедайи) — толчок вверх 200 / масса в шаре 1,5 м
+#endif
+// смещение точки толчка от начала статуи Иедедайи (L2 и L5: начало (136,46; 8,04; −36,50), голова (135,03; 13,48; −37,39))
+#define SP_RAD_DX -1.30f
+#define SP_RAD_DY 5.16f
+#define SP_RAD_DZ -1.41f
+#ifndef SPLIE_SV_OLD
+#define SPLIE_SV_OLD 0      // P11-07, P12-02/04, P11-17: сбитое лежит до перезагрузки зоны; разбитый ломаемый/двигаемый не возвращается; тип 10 после удара уходит из мира вне вида
+#endif
+#ifndef SPHNRHIT_SV_OLD
+#define SPHNRHIT_SV_OLD 0   // P18 Д5: при выключенном H&R вместо монет — ещё одно событие HIT
+#endif
+#ifndef SPBOOM_SV_OLD
+#define SPBOOM_SV_OLD 0     // P11-05, P11-Д1: взрыв машины (svBoom) бьёт стейтпропы в радиусе
+#endif
+#ifndef SPPHASE_SV_OLD
+#define SPPHASE_SV_OLD 0    // P11-19, P12-11: каждый экземпляр стартует с случайным сдвигом анимации 0..10 с
 #endif
 
 static unsigned sprng = 777u;
@@ -122,6 +160,7 @@ int spInitResident(StateProps *sp, const void *section, unsigned size, int detac
   for (unsigned i = 0; i < ninst; i++) { if (sp->inst[i].type >= ntype) return -6; jtot += sp->type[sp->inst[i].type].nJoint; }
   // память: экземпляры, суставы, слоты (fxSys 2 Б + fxJoint 1 Б на слот; до 29.09 — ntype × 32, у типов до 32 слотов так же),
   // начала слотов типов (ntype + 1)
+  sp->touchInst = -1;
   sp->mem = calloc(1, (size_t)ninst * sizeof(SpRun) + (size_t)jtot * 12 * sizeof(float) + (size_t)(ntype + 1) * 4 + (size_t)nslot * 3 + 16);
   if (!sp->mem) return -7;
   sp->run = (SpRun *)sp->mem;
@@ -137,13 +176,19 @@ int spInitResident(StateProps *sp, const void *section, unsigned size, int detac
     r->alive = 1; r->colOn = r->col2On = 1; r->state = 0; r->t = 0; r->callDone = 0; r->burst = 1;
     const SpState *S = &sp->state[sp->type[I->type].firstState];
     r->poseF = S->poseMin;
+    // сверка g11, P11-19 и P12-11: оригинал даёт каждому стейтпропу при создании случайный сдвиг анимации 0..10 с (качающиеся деревья, вывески, крутящиеся предметы идут в разных фазах).
+    // Было: все с кадра 0, в такт. Только циклы без вызовов и автоперехода (одноразовые позы и окна частиц не трогаем); сдвиг — хеш номера экземпляра (детерминированно). SPPHASE_SV_OLD=1 — как было
+    if (!SPPHASE_SV_OLD && S->poseMode == 2 && !S->nCall && S->autoTo == 0xFF && !I->tag) {
+      unsigned hq = (i + 1u) * 2654435761u; hq ^= hq >> 15; hq *= 2246822519u; hq ^= hq >> 13;
+      r->t = (float)(hq & 0xFFFFu) * (10.f / 65536.f);
+    }
   }
   return 0;
 }
 
 int spInit(StateProps *sp, const void *section, unsigned size) { return spInitResident(sp, section, size, 0); }
 
-void spFree(StateProps *sp) { if (sp->run) for (unsigned i = 0; i < sp->ninst; i++) free(sp->run[i].jm0); free(sp->mem); memset(sp, 0, sizeof *sp); }   // №923: jm0 — отдельные выделения
+void spFree(StateProps *sp) { free(sp->follow); free(sp->followOk); free(sp->followT0); if (sp->run) for (unsigned i = 0; i < sp->ninst; i++) free(sp->run[i].jm0); free(sp->mem); memset(sp, 0, sizeof *sp); }   // №923: jm0 — отдельные выделения
 
 static const SpType *TY(const StateProps *sp, unsigned i) { return &sp->type[sp->inst[i].type]; }
 static const SpState *ST(const StateProps *sp, unsigned i) { return &sp->state[TY(sp, i)->firstState + sp->run[i].state]; }
@@ -223,6 +268,17 @@ void spRespawnStep(StateProps *sp, float ex, float ez, float dt,
   for (unsigned i = 0; i < sp->ninst; i++) {
     SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i); const SpInst *I = &sp->inst[i];
     const SpState *S = &sp->state[T->firstState];
+    // сверка g11, P11-17 и P11-Д6 (Н): тип 10 (фонари, светофоры, столбы) после удара остаётся в физике и, как только выходит из пирамиды видимости игрока, удаляется из мира до
+    // перезагрузки зоны (без таймера); P11-07 и P12-02/04 (С): разбитый ломаемый/двигаемый (типы 3 и 4) лежит разбитым до перезагрузки зоны, возврата «5 с вне вида дальше 60 м» нет
+    // (бит в сохранение — savegame.c окна g10a, см. журнал). SPLIE_SV_OLD=1 — возврат через 5 с, как в TEST81
+    if (!SPLIE_SV_OLD && !I->tag && !T->kind && !r->noRespawn) {
+      if (T->cls == 10 && r->alive && (r->state != 0 || r->fall)) {
+        float c0[3], rad0; spBounds(sp, i, c0, &rad0);
+        if (!seen(user, c0[0], c0[1], c0[2], rad0)) { r->alive = 0; r->colOn = r->col2On = 0; r->noRespawn = 1; }
+        r->away = 0.f; continue;
+      }
+      if ((T->cls == 3 || T->cls == 4) && r->state != 0 && (!r->alive || !r->colOn)) { r->away = 0.f; continue; }
+    }
     // Миссионные теги, эффекты-обломки, самовосстанавливающиеся кусты и активные
     // начальные состояния не относятся к обычным разрушенным объектам улицы.
     if (r->noRespawn || I->tag || T->kind || T->cls == 2 || S->nCall ||
@@ -241,6 +297,19 @@ void spRespawnStep(StateProps *sp, float ex, float ez, float dt,
   }
 }
 
+void spZoneReload(StateProps *sp) {
+  for (unsigned i = 0; i < sp->ninst; i++) {
+    SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i); const SpInst *I = &sp->inst[i];
+    const SpState *S = &sp->state[T->firstState];
+    int removed10 = T->cls == 10 && !r->alive && !I->tag;   // удалённый после удара высокий предмет (noRespawn ставило выпадение из вида)
+    if (!removed10 && (r->noRespawn || I->tag || T->kind || T->cls == 2 || S->nCall ||
+        (r->state == 0 && r->alive && r->colOn && r->col2On) || (!spOnceOld && spOnce(sp, i)))) continue;
+    r->x = I->x; r->y = I->y; r->z = I->z; quatR(I->q, r->R); r->fall = 0;
+    r->alive = r->colOn = r->col2On = 1; r->cool = r->away = 0.f; r->noRespawn = 0;
+    enter(sp, i, 0);
+  }
+}
+
 int spEvent(StateProps *sp, unsigned i, int ev) {
   if (i >= sp->ninst || !sp->run[i].alive) return 0;
   const SpState *S = ST(sp, i);
@@ -251,6 +320,7 @@ int spEvent(StateProps *sp, unsigned i, int ev) {
       enter(sp, i, E->to);
       if (ev == SP_EV_HIT || ev == SP_EV_STOMP || ev == SP_EV_VEHICLE_HIT || ev == SP_EV_DESTROYED) {
         sp->hnrHits++;   // правка 112: удар игрока
+        if (sp->hitInstN < 16) sp->hitInst[sp->hitInstN++] = (uint16_t)i;   // сверка g11 круг 2 (P03-11)
         // правка 135.1: звук объекта лежит в CollisionEffect (0x3000600) его сущности — звук столкновения, не анимации
         // (данные диска, art/l*.p3d); авто-переход SPR1 ударом не является. ПРАВИЛО ПОРТА по данным
         // (удар, не сменивший состояние, звука не давал и раньше)
@@ -375,17 +445,28 @@ static void doCall(StateProps *sp, unsigned i, const SpCall *C, const ColWorld *
     case SP_OP_COLA: sp->cola++; break;
     case SP_OP_KILLSPEED: sp->killSpeed = 1; break;
     case SP_OP_COINS: case SP_OP_COINS_Z: {
+      // сверка g11, P18-Д1 (С), P11-06 (С): колбэки оригинал выбирает по числовому коду, имя в данных — подпись: код 11 («монеты вперёд») — пять монет за вызов, даже если имя
+      // SPAWN_25_COINS_Z (автоматы l2_vending: 3 вызова x 5 = 15, а не 75); вызовы 1, 5, 10, 15, 20 монет при выключенном Hit & Run (sp->hnrOff) монет не дают, код 11 даёт всегда.
+      // Ящик (звук car_hit_crate: +1 монета к каждому вызову при выключенном H&R) — признака в данных SPR1 нет, см. журнал. SPCOIN_SV_OLD=1 — как было
+      int n = C->arg;
+      if (!SPCOIN_SV_OLD) {
+        if (C->op == SP_OP_COINS_Z) n = 5;
+        else if (sp->hnrOff) n = (sp->crateLike && sp->crateLike(sp->radUser, i)) ? C->arg + 1 : 0;   // круг 3 (g11): ящик при выключенном Hit & Run даёт на монету больше записанного
+      }
       float c[3]; centerW(sp, i, c);
       float fl = r->y, g;
       if (world && colGround(world, c[0], c[2], c[1] + 1.f, r->y - 4.f, &g, 0)) fl = g;
       c[1] += 0.3f;
-      sp->coins += C->arg;
-      if (!coins) break;
-      if (C->op == SP_OP_COINS) coinsDrop(coins, C->arg, c[0], c[1], c[2], fl);
+      sp->coins += n;
+      // сверка g11 круг 2 (P18 Д5): при выключенном Hit & Run вызов монет (кроме кода 11) вместо монет подаёт предмету ещё одно событие HIT (состояние идёт по цепочке дальше); ящикам +1 монета —
+      // признака ящика в SPR1 нет (см. журнал круга 1). SPHNRHIT_SV_OLD=1 — только без монет
+      if (!SPHNRHIT_SV_OLD && !SPCOIN_SV_OLD && sp->hnrOff && C->op == SP_OP_COINS && !(sp->crateLike && sp->crateLike(sp->radUser, i))) r->hitPend = 1;
+      if (!coins || n <= 0) break;
+      if (C->op == SP_OP_COINS) coinsDrop(coins, n, c[0], c[1], c[2], fl);
       else {   // вдоль локальной +Z пропа (лицо автомата: стекло l1_vendingShape3 на +Z в осях объекта)
         float dx = r->R[6], dz = r->R[8], l = sqrtf(dx * dx + dz * dz);
         if (l < 1e-3f) { dx = 0; dz = 1; l = 1; }
-        coinsDropDir(coins, C->arg, c[0], c[1], c[2], fl, dx / l, dz / l, SP_ZCONE);
+        coinsDropDir(coins, n, c[0], c[1], c[2], fl, dx / l, dz / l, SP_ZCONE);
       }
     } break;
     case SP_OP_BREAK: {   // барьер 0x3F0000F (tools/prp2_export.py _add_animphys): обломок строки ATC — тип kind 1 с этим номером
@@ -408,7 +489,14 @@ static void doCall(StateProps *sp, unsigned i, const SpCall *C, const ColWorld *
       }
 #endif
     } break;
-    default: break;   // RADIATE_FORCE, FIRE_ENERGY_BOLT — на уровне 1 не встречаются
+    case SP_OP_RADIATE:
+      // сверка g11, P16-21 и P18-Д6 (Н): вызов 8 стоит в состоянии 1 статуй Иедедайи (l2z1, l5z1) и срабатывает при входе в него (после удара): всем подвижным предметам, кроме игрока, в шаре 1,5 м от
+      // фиксированной точки мира (135,16; 13,20; 37,91 в осях оригинала, у нас z зеркален) — скорость вверх 200 / масса строки ATC (оторвать голову статуи, скамейки остаются). Точка в данных
+      // вызова не лежит (оригинал держит её в коде), числа взяты из отчёта. Величина — по записи PS2 не проверена (масса 1000 даёт 0,2 м/с, единицы могут быть другие). SPRAD_SV_OLD=1 — ничего
+      // Круг 3 (g11): точка толчка — относительно самой статуи (смещение от её начала, вверх к голове), а не абсолютные координаты мира; полностью в данные (рядом с вызовом 8) её переносит экспорт — окно g12
+      if (!SPRAD_SV_OLD && sp->radiate) sp->radiate(sp->radUser, r->x + SP_RAD_DX, r->y + SP_RAD_DY, r->z + SP_RAD_DZ, 1.5f, 200.f);
+      break;
+    default: break;   // FIRE_ENERGY_BOLT — на уровне 1 не встречаются
   }
 }
 
@@ -423,7 +511,9 @@ static void runCalls(StateProps *sp, unsigned i, const ColWorld *world, Coins *c
       r->callDone |= (uint16_t)(1u << k);
       doCall(sp, i, C, world, coins);
       if (!r->alive) return;
+      if (r->hitPend) { r->hitPend = 0; spEvent(sp, i, SP_EV_HIT); st = -1; break; }   // сверка g11 круг 2 (P18 Д5): состояние сменилось, продолжаем с нового
     }
+    if (st < 0) continue;   // сверка g11 круг 2: состояние сменилось событием HIT — разбор с начала
     // авто-переход
     if (S->autoTo != 0xFF && r->t >= S->autoTime) { enter(sp, i, S->autoTo); if (r->state != st) continue; }
     return;
@@ -486,6 +576,40 @@ static void poleFallStep(SpRun *r, float dt) {
                   ax * az * t,      -ax * s, c + az * az * t };  // столбец 2
   mulRR(Rr, r->fallR0, r->R);
 }
+// сверка g11, P11_объекты_мира Д1 (С) и P11-05: не ломаемые стейтпропы типов 3 и 10 (подвижные, падающие столбы и фонари) от пинка героя (сила 400, 45° вверх от курса), стомпа (800, радиус 2 м)
+// и взрыва машины (20000, радиус 20 м) получают, кроме событий, скорость сила / масса (масса из ATC, 100 если нуль) и входят в физику. У ломаемых (4) и статики (2) скорости нет. В движке у
+// стейтпропов нет тела с физикой: тип 10 (высокий) валится на шарнире у основания (poleFallStep, замер PS2 №968) с начальной скоростью от этого толчка; тип 3 без клипа остаётся на месте
+// (нужно тело — см. журнал). (dx, dz) — куда толкают. Возврат 1 — столб пошёл вниз. SPBOOM_SV_OLD=1 — функция ничего не делает
+int spImpulse(StateProps *sp, unsigned i, float dx, float dz, float force) {
+  if (SPBOOM_SV_OLD || i >= sp->ninst) return 0;
+  SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
+  if (r->fall || T->cls != 10 || T->kind || T->h[1] < 2.f || !r->alive || !r->colOn) return 0;
+  const SpState *S = ST(sp, i); if (S->poseMode != 0 && S->poseMax > S->poseMin) return 0;   // падение рисует сам клип
+  float l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) return 0;
+  float m = T->mass > 0.f ? T->mass : 100.f, v = force / m;
+  r->fall = 1; r->fallTh = 0.0174533f; r->fallW = propsPoleKick1046(v, SPF_W0, SPF_WK, SPF_V0); r->fallD[0] = dx / l; r->fallD[1] = dz / l; memcpy(r->fallR0, r->R, sizeof r->fallR0);
+  return 1;
+}
+int spFollowAdopt(StateProps *sp, const unsigned char *rec, unsigned n) {
+  free(sp->follow); free(sp->followOk); free(sp->followT0); sp->follow = sp->followOk = NULL; sp->followT0 = NULL; sp->nfollow = 0;
+  if (!rec || !n || !sp->type) return -1;
+  unsigned m = n < sp->ntype ? n : sp->ntype;   // экспорт без рисунка собирает то же начало списка типов; типы в конце (ключи, бочки, подборы) в файле отсутствуют
+  for (unsigned t = 0; t < m; t++) {
+    const unsigned char *r = rec + 16 * t; unsigned nj = r[1], nc = r[2] | (r[3] << 8), nfr = r[4] | (r[5] << 8);
+    if (nj != (unsigned)sp->type[t].nJoint || nc != (unsigned)sp->type[t].nCol || nfr != (sp->type[t].frames & 0xFFFFu)) return -1;
+  }
+  sp->follow = (uint8_t *)calloc(m, 1); sp->followOk = (uint8_t *)calloc(m, 1); sp->followT0 = (float *)calloc(m * 3, sizeof(float));
+  if (!sp->follow || !sp->followOk || !sp->followT0) { free(sp->follow); free(sp->followOk); free(sp->followT0); sp->follow = sp->followOk = NULL; sp->followT0 = NULL; return -1; }
+  int k = 0; sp->nfollow = m;
+  for (unsigned t = 0; t < m; t++) { sp->follow[t] = rec[16 * t]; k += sp->follow[t] != 0; }
+  return k;
+}
+void spLoop(StateProps *sp, unsigned i, float a, float b) {
+  if (i >= sp->ninst) return;
+  SpRun *r = &sp->run[i];
+  if (b > a) { r->loopOn = 1; r->loopA = a; r->loopB = b; } else r->loopOn = 0;
+  r->poseValid = 0;
+}
 static void stepInst(StateProps *sp, unsigned i, float dt, const ColWorld *world, Coins *coins) {
   SpRun *r = &sp->run[i];
   if (!r->alive) return;
@@ -496,11 +620,15 @@ static void stepInst(StateProps *sp, unsigned i, float dt, const ColWorld *world
 #define SP_SCAN_OLD 0
 #endif
   if (!SP_SCAN_OLD) { const SpState *S0 = ST(sp, i);   // состояние без вызовов, автоперехода, позы и частиц: ниже делать нечего, кроме сброса burst
-    if (!S0->nCall && S0->autoTo == 0xFF && !S0->poseMode && !S0->nFx) { r->burst = 0; return; } }
+    if (!S0->nCall && S0->autoTo == 0xFF && !S0->poseMode && !S0->nFx && !r->loopOn) { r->burst = 0; return; } }
   runCalls(sp, i, world, coins);
   if (!r->alive) return;
   const SpType *T = TY(sp, i); const SpState *S = ST(sp, i);
   float fps = T->fps ? (float)T->fps : 30.f;
+  if (r->loopOn) {   // сверка g11 круг 2 (P15-19): цикл вступления или окончания гэга
+    float f = r->loopA + fmodf(r->t * fps, r->loopB - r->loopA);
+    if (f != r->poseF) { r->poseF = f; r->poseValid = 0; }
+  } else
   if (S->poseMode) {
     int act; float f = ctrlFrame(r->t, fps, S->poseMode, S->poseMin, S->poseMax, S->poseSpeed, S->poseCycles, &act);
     if (f != r->poseF) { r->poseF = f; r->poseValid = 0; }
@@ -547,11 +675,13 @@ static void lastEntry(float ov, float a, float *bestT, float *impact) {
   if (a <= 1e-3f) return;
   float t = ov / a; if (t < *bestT) { *bestT = t; *impact = a; }
 }
+static float spColOff[3];   // круг 5 (g11): сдвиг объёма за суставом, в осях объекта; ноль — объём стоит в позе кадра 0
 static int spVRelax;   // №975: 1 — объём считается от земли (без проверки «над кузовом»): столб с базой в стене мира (см. carContact)
 static int spBaseExt;   // №975: 1 — вертикальный цилиндр (ствол) высокого предмета cls 10 тянется вниз до земли (см. carContact)
 static int hitVolume(const SpRun *r, const SpCol *C, const CarBox *cb, const float vel[3], float *nx, float *nz, float *depth, float *impact) {
   float c[3], a[3][3];
-  mulRv(r->R, C->c, c); c[0] += r->x; c[1] += r->y; c[2] += r->z;
+  { float cc[3] = {C->c[0] + spColOff[0], C->c[1] + spColOff[1], C->c[2] + spColOff[2]}; mulRv(r->R, cc, c); }
+  c[0] += r->x; c[1] += r->y; c[2] += r->z;
   for (int k = 0; k < 3; k++) mulRv(r->R, C->a + 3 * k, a[k]);
   float ey = 0.f;
   int circle = C->kind == 1 || (C->kind == 2 && fabsf(a[1][1]) > 0.9f);
@@ -618,6 +748,22 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
   float dx = c[0] - cb->x, dz = c[2] - cb->z, rr = rad + cb->hl + cb->hw;
   if (dx * dx + dz * dz > rr * rr) return;
   int touched = 0; float bn[2] = {0, 0}, bd = 0.f, bimp = 0.f;
+  // круг 5 (g11, P11 Д2 / P12-12): объём типа со следованием едет за суставом (только сдвиг, без поворота): текущая позиция сустава минус позиция в кадре 0. SPFOLLOW_SV_OLD=1 — объёмы стоят
+#ifndef SPFOLLOW_SV_OLD
+#define SPFOLLOW_SV_OLD 0
+#endif
+  spColOff[0] = spColOff[1] = spColOff[2] = 0.f;
+  if (!SPFOLLOW_SV_OLD && sp->follow && sp->inst[i].type < sp->nfollow && sp->follow[sp->inst[i].type]) {
+    unsigned t_ = sp->inst[i].type, j_ = sp->follow[t_] - 1u;
+    if (j_ < T->nJoint) {
+      if (!sp->followOk[t_]) {   // сдвиг сустава в кадре 0: один раз по первому подошедшему экземпляру (ключи могут быть ещё не подгружены — тогда повтор позже)
+        float keep = r->poseF; r->poseF = 0.f; r->poseValid = 0; spPose(sp, i);
+        if (r->poseValid) { memcpy(&sp->followT0[3 * t_], r->jm + j_ * 12 + 9, 12); sp->followOk[t_] = 1; }
+        r->poseF = keep; r->poseValid = 0;
+      }
+      if (sp->followOk[t_]) { spPose(sp, i); if (r->poseValid) for (int q_ = 0; q_ < 3; q_++) spColOff[q_] = r->jm[j_ * 12 + 9 + q_] - sp->followT0[3 * t_ + q_]; }
+    }
+  }
   spBaseExt = !spPoleBaseOld && T->cls == 10 && T->h[1] >= 2.f;
   for (unsigned k = 0; k < T->nCol; k++) {
     const SpCol *C = &sp->col[T->firstCol + k];
@@ -666,6 +812,10 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
     spVRelax = 0;
   }
   if (!touched) return;
+  sp->touchInst = (int)i; sp->touchSpeed = 0.f;   // сверка g11 круг 2 (P06-23)
+  // сверка g11, P11-09 (Н): первое касание не-ломаемого стейтпропа (типы 2, 3, 10) подаёт FEATHER_TOUCH до проверки силы, на каждое срабатывание контакта (кулдаун SP_COOL);
+  // HIT и VEHICLE_HIT — только при импульсе выше SP_HIT_IMPULSE. SPFEATHER_SV_OLD=1 — как было (FEATHER не подаётся)
+  if (!SPFEATHER_SV_OLD && r->cool <= 0.f && (T->cls == 2 || T->cls == 3 || T->cls == 10)) spEvent(sp, i, SP_EV_FEATHER);
   float vn = car->vel[0] * bn[0] + car->vel[2] * bn[1];   // < 0 — едем в проп
 #if SP_HIT_MINAXIS
   float closing = -vn;     // прежнее: сближение по оси наименьшего перекрытия в плане
@@ -696,18 +846,29 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #ifndef SP_FENCE_MASS
 #define SP_FENCE_MASS 3750.f
 #endif
-  if (r->cool <= 0.f && closing >= SP_HIT_SPEED && (SP_HARDFENCE_OLD || T->cls != 11 || car->p.mass >= SP_FENCE_MASS)) {
+  // сверка g11, P16 Д6 (Н): порог удара машины — по импульсу (масса машины x сближение > SP_HIT_IMPULSE, около 0,07 м/с для 1500 кг), а не по скорости сближения 2 м/с (SP_HIT_SPEED).
+  // Запасной DESTROYED у ударов машины оставлен: отчёт P18 Д11 прямо называет цепочку DESTROYED, STOMP, HIT для ломающихся, а P16 Д6 просит его убрать — строки противоречат, см. журнал.
+  // SPIMP_SV_OLD=1 — порог 2 м/с
+  // Круг 3 (g11, проверка по исходнику): ломающийся предмет (тип 4) отвечает на любое касание машиной, без порога; без обработчика «удар машиной» ему подряд подаются разрушение, стомп и удар (каждое
+  // событие меняет состояние по очереди). У остальных порог по импульсу, цепочка «удар машиной, иначе обычный удар», запасного разрушения нет. SPIMP_SV_OLD=1 — общая цепочка с порогом 2 м/с
+  const int breakable = T->cls == 4;
+  int impOk = SPIMP_SV_OLD ? closing >= SP_HIT_SPEED : (breakable || closing * car->p.mass > SP_HIT_IMPULSE);
+  if (r->cool <= 0.f && impOk && (SP_HARDFENCE_OLD || T->cls != 11 || car->p.mass >= SP_FENCE_MASS)) {
     // событие машины: первое, что обрабатывает текущее состояние (гипотеза §6: VEHICLE_HIT -> HIT -> DESTROYED)
     r->hv[0] = car->velPre[0]; r->hv[1] = car->velPre[2];   // №923: куда ехала машина к удару (до стены кадра) — туда летят осколки
-    if (spEvent(sp, i, SP_EV_VEHICLE_HIT) || spEvent(sp, i, SP_EV_HIT) || spEvent(sp, i, SP_EV_DESTROYED)) {
+    int evAny;
+    if (SPIMP_SV_OLD) evAny = spEvent(sp, i, SP_EV_VEHICLE_HIT) || spEvent(sp, i, SP_EV_HIT) || spEvent(sp, i, SP_EV_DESTROYED);
+    else if (breakable) { evAny = spEvent(sp, i, SP_EV_VEHICLE_HIT); if (!evAny) { evAny = spEvent(sp, i, SP_EV_DESTROYED); evAny |= spEvent(sp, i, SP_EV_STOMP); evAny |= spEvent(sp, i, SP_EV_HIT); } }
+    else evAny = spEvent(sp, i, SP_EV_VEHICLE_HIT) || spEvent(sp, i, SP_EV_HIT);
+    if (evAny) {
       sp->hits++;
       runCalls(sp, i, world, coins);   // вызовы с временем 0 — сразу (коллизия уходит в этом же кадре)
       poleFallStart(sp, i, car, bn);   // №975
       int broken = !r->alive || !r->colOn;
       if (PROP_BREAK_PASS_OLD || !broken) {
         float k = SP_SMASH_LOSS * T->mass / (car->p.mass + T->mass) * vPol;
-        if (T->cls != 2) { car->vel[0] *= 1.f - k; car->vel[2] *= 1.f - k; }
-        if (sp->killSpeed) car->vel[0] = car->vel[2] = 0.f;
+        if (T->cls != 2 || !SPBUSH_SV_OLD) { car->vel[0] *= 1.f - k; car->vel[2] *= 1.f - k; }
+        if (sp->killSpeed && SPKILL_SV_OLD) car->vel[0] = car->vel[2] = 0.f;   // сверка g11 P11-20: KILL_SPEED гасит скорость предмета, не машины
       }
       sp->killSpeed = 0;   // consume this object's callback, never the next impact
     }
@@ -720,7 +881,10 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #ifndef SP_REACT_PASS_OLD
 #define SP_REACT_PASS_OLD 0
 #endif
-  if (T->cls == 2 || !r->alive || !r->colOn || (!SP_REACT_PASS_OLD && r->state != 0)) return;   // куст-шар (cls 2) — насквозь, с тряской (гипотеза §9.3)
+  // сверка g11, P11-08 (С): куст-шар (тип 2) — жёсткое неподвижное тело, машина сталкивается с ним как со стеной, контакт не отменяется (удар с импульсом больше 100 даёт HIT/VEHICLE_HIT — куст трясётся и
+  // возвращается через 1,3 с). SPBUSH_SV_OLD=1 (по умолчанию, ждём слова Роба) — насквозь с тряской
+  int bushSolid = !SPBUSH_SV_OLD && T->cls == 2;
+  if ((T->cls == 2 && SPBUSH_SV_OLD) || !r->alive || !r->colOn || (!SP_REACT_PASS_OLD && r->state != 0 && !bushSolid)) return;   // куст-шар (cls 2) — насквозь, с тряской (гипотеза §9.3)
   // целый проп — как стена: вытолкнуть кузов и погасить скорость в проп
   car->x += bn[0] * bd; car->z += bn[1] * bd; cb->x += bn[0] * bd; cb->z += bn[1] * bd;
   vn = car->vel[0] * bn[0] + car->vel[2] * bn[1];
@@ -764,7 +928,7 @@ unsigned spNearStat[2];   // отчёт smoke SPNEAR: спящих в после
 static int spSleepable(const StateProps *sp, unsigned i) {
   const SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i); const SpState *S = ST(sp, i);
   return r->alive && T->kind == 0 && T->nState <= 1 && !T->nBill && !T->pvisMask && S->poseMode && !S->nCall && S->autoTo == 0xFF && !S->nFx
-      && !r->fall && !r->burst && r->cool <= 0.f && !r->jm0 && r->liftK == 0.f && !sp->inst[i].tag;
+      && !r->fall && !r->burst && !r->loopOn && r->cool <= 0.f && !r->jm0 && r->liftK == 0.f && !sp->inst[i].tag;
 }
 static void spNearWake(SpRun *r) {
 #ifdef SPNEAR1000_RED
@@ -773,9 +937,34 @@ static void spNearWake(SpRun *r) {
   if (!r->slMix) for (unsigned k = 0; k < r->slN; k++) r->t += r->slD0; else r->t += r->slSum;
   r->slN = 0;
 }
+// сверка g11, P11-05 и P11-Д1: взрыв машины (sverka_shared.h svBoom, заполняет car.c окна g01) бьёт стейтпропы, чья рамка пересекает сферу взрыва: события по силе (больше 400 — DESTROYED и HIT,
+// больше 800 ещё STOMP; цепочка до первого принявшего состояния), у типа 10 ещё падение от центра взрыва. Читатель хранит свой последний seq
+static unsigned boomSeqSp;
+static void boomStep(StateProps *sp, const ColWorld *world, Coins *coins) {
+  if (SPBOOM_SV_OLD || svBoom.seq == boomSeqSp) return;
+  boomSeqSp = svBoom.seq;
+  if (svBoom.radius <= 0.f) return;
+  unsigned h0 = sp->hnrHits;
+  for (unsigned i = 0; i < sp->ninst; i++) {
+    SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
+    if (!r->alive || !r->colOn || T->kind) continue;
+    float c[3], rad; spBounds(sp, i, c, &rad);
+    float dx = c[0] - svBoom.x, dy = c[1] - svBoom.y, dz = c[2] - svBoom.z, rr = svBoom.radius + rad;
+    if (dx * dx + dy * dy + dz * dz > rr * rr) continue;
+    int hit = 0;
+    if (svBoom.force > 800.f) hit = spEvent(sp, i, SP_EV_STOMP);
+    if (!hit && svBoom.force > 400.f) hit = spEvent(sp, i, SP_EV_DESTROYED);
+    if (!hit) hit = spEvent(sp, i, SP_EV_HIT);
+    if (hit) runCalls(sp, i, world, coins);
+    spImpulse(sp, i, dx, dz, svBoom.force);
+  }
+  if (!svBoom.byPlayer) { sp->hnrHits = h0; if (sp->hitInstN > h0) sp->hitInstN = h0 < 16 ? h0 : 16; }   // шкала Hit & Run — только за взрыв, устроенный игроком
+}
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt) {
   if (dt <= 0.f) return;
   if (dt > 0.1f) dt = 0.1f;
+  sp->touchInst = -1;
+  boomStep(sp, world, coins);
   if (spNear1000 && sp->nearOn && car) {
     float p[3][2] = {{sp->nearP[0][0], sp->nearP[0][1]}, {sp->nearP[1][0], sp->nearP[1][1]}, {car->x, car->z}}; unsigned ns = 0;
     for (unsigned i = 0; i < sp->ninst; i++) { SpRun *r = &sp->run[i];

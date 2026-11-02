@@ -5,13 +5,18 @@
 #include <math.h>
 #include "world.h"
 static BotWorld W;
-static int run(float v, int cancel, float *tExit, float *vMin) {
+// сверка g10-flow (02.11.2026, СВЕРКА_ГОМЕР 5.4): выше 30 км/ч △ держат (mode 0: держит до выхода), ниже — достаточно нажать; отмена: mode 1 — отпустил △ на f=20,
+// mode 2 — газ (R) с f=20. Нажатие после старта на f=2
+static int run(float v, int mode, float *tExit, float *vMin) {
   bwNew(&W); for (int f = 0; f < 30; f++) bwStep(&W, 0, 0, 0);
   gameReset(&W.G); for (int f = 0; f < 30; f++) bwStep(&W, 0, 0, 0);   // Гомер за рулём (как RESET CAR)
   if (gameOnFoot(&W.G)) { printf("FAIL: Гомер не за рулём\n"); return 0; }
   carSetSpeed(&W.car, v); *tExit = -1.f; *vMin = 1e9f;
   for (int f = 0; f < 360; f++) {
-    unsigned b = (f == 2 || (cancel && f == 20)) ? GP_TRIANGLE : 0;
+    unsigned b = 0;
+    if (v >= 8.34f) { if (f >= 2 && !(mode == 1 && f >= 20)) b |= GP_TRIANGLE; }   // быстрее 30 км/ч — держать
+    else if (f == 2) b |= GP_TRIANGLE;
+    if (mode == 2 && f >= 20) b |= GP_R;
     bwStep(&W, b, 0, 0); float s = fabsf(W.car.v); if (s < *vMin) *vMin = s;
     if (gameOnFoot(&W.G)) { *tExit = f / 60.f; return 1; }
   }
@@ -22,14 +27,17 @@ int main(int argc, char **argv) {
   setvbuf(stdout, NULL, _IONBF, 0);
   if (bwData(argv[1], argv[2], argv[3])) { printf("FAIL: данные мира\n"); return 1; }
   int fails = 0; float t, vm;
-  float vs[3] = {10.f, 20.f, 30.f};
-  for (int i = 0; i < 3; i++) {
+  float vs[4] = {5.f, 10.f, 20.f, 30.f};
+  for (int i = 0; i < 4; i++) {
     int out = run(vs[i], 0, &t, &vm);
-    printf("CHECK exit  %s  %.0f м/с: △ на ходу — %s за %.2f с (мин. скорость %.1f)\n", out && t < 6.f ? "OK  " : "FAIL", vs[i], out ? "вышел" : "НЕ вышел", t, vm);
-    if (!(out && t < 6.f)) fails++;
+    printf("CHECK exit  %s  %.0f м/с: △ на ходу — %s за %.2f с (мин. скорость %.1f)\n", out && t < 8.f ? "OK  " : "FAIL", vs[i], out ? "вышел" : "НЕ вышел", t, vm);
+    if (!(out && t < 8.f)) fails++;
   }
   { int out = run(20.f, 1, &t, &vm);
-    printf("CHECK cancel %s △ ещё раз до остановки — %s\n", !out ? "OK  " : "FAIL", out ? "всё равно вышел" : "едет дальше");
+    printf("CHECK cancel %s отпустил △ выше 30 км/ч — %s\n", !out ? "OK  " : "FAIL", out ? "всё равно вышел" : "отмена, едет дальше");
+    if (out) fails++; }
+  { int out = run(5.f, 2, &t, &vm);
+    printf("CHECK gas    %s газ после △ — %s\n", !out ? "OK  " : "FAIL", out ? "всё равно вышел" : "выход отменён газом");
     if (out) fails++; }
   printf("RESULT %s провалов %d\n", fails ? "FAIL" : "PASS", fails);
   return fails ? 1 : 0;

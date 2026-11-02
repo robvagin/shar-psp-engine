@@ -55,7 +55,38 @@ int roomCamsParse(RoomCam *c, int max, const unsigned char *b, unsigned size) {
 #ifndef ROOM_FOOT_R
 #define ROOM_FOOT_R 0.f
 #endif
+#ifndef ROOMCAM_FLAGS_SV_OLD
+#define ROOMCAM_FLAGS_SV_OLD 0
+#endif
+int roomCamAllows(const RoomCam *c, int inCar, float speed) {   // сверка g06 (g06-camera:1,2,9,37): допуск по битам данных
+#if ROOMCAM_FLAGS_SV_OLD
+  (void)c; (void)inCar; (void)speed; return 1;
+#else
+  if (!strcmp(c->name, "z3_ufocam")) return 1;   // сверка g06 круг 2 (P08 Д9): зона z3_ufocam включается без всех проверок (скорость, машина или пешком, тип камеры)
+  int zoneCarSv, zoneFootSv;
+  if (c->type == 0) { int d = c->data; if (d == 3) return 0; zoneCarSv = d & 1; zoneFootSv = d & 2; }
+  else { int z = (int)(c->axisPlay[2] + .5f); zoneCarSv = z & 1; zoneFootSv = z & 8; }
+  if (zoneCarSv && zoneFootSv) return 0;
+  if (zoneCarSv) return inCar && speed >= ROOMCAM_CAR_V;
+  if (zoneFootSv) return !inCar;
+  return 1;
+#endif
+}
+int roomCamCut(const RoomCam *c) {
+  if (c->type == 0) return c->cut != 0 || c->posLag >= .999f;
+  return ((int)(c->axisPlay[2] + .5f) & 2) != 0 || c->axisPlay[0] >= .999f;
+}
+float roomCamFovFromH(float hdeg) { return 2.f * atanf(tanf(hdeg * (3.14159265f / 360.f)) * .75f) * (180.f / 3.14159265f); }
+float roomCamFovCar(const RoomCam *c, float dist, float *cur, float dt) {
+  float mx = c->fov > 1.f ? c->fov : 90.f, mn = 20.f;
+  if (mn > mx) mn = mx;
+  float want = c->type == 1 || dist <= 10.f ? mx : dist >= 25.f ? mn : mx + (mn - mx) * (dist - 10.f) / 15.f;
+  if (!(*cur > 0.f) || c->type == 1) *cur = want;
+  else *cur += (want - *cur) * (1.f - powf(1.f - .022f, dt * 60.f));
+  return roomCamFovFromH(*cur);
+}
 static int camHas(const RoomCam *c, const float p[3]) {   // ноги Гомера — точкой (камеры делят пол комнаты триггерами)
+  if (!roomCamAllows(c, 0, 0.f)) return 0;   // сверка g06: пешком не показываем «только для машины» (и «никому»)
   for (int k = 0; k < c->ntrig; k++) if (roomTrigIn(&c->trig[k], p[0], p[1], p[2], ROOM_FOOT_R)) return 1;
   return 0;
 }
@@ -133,6 +164,38 @@ float roomRailParam(const RoomCam *c, float t, const float p[3]) {
   }
   return t;
 }
+// сверка g06 (g06-camera:22; P08 Д7): поведение Distance — камера стоит там, где горизонтальное расстояние до цели ровно MaxRadius (из двух пересечений — ближайшее к прежней позиции;
+// не пересекает — ближайшая к цели точка рельса). MinRadius камеру не двигает (это ближняя плоскость). Ход по рельсу не быстрее 0,25 отрезка сплайна за обновление (1/60 с),
+// поэтому при скачке цели камера едет. ROOMCAM_RAILSV_OLD=1 — прежнее кольцо [MinRadius, MaxRadius]
+#ifndef ROOMCAM_RAILSV_OLD
+#define ROOMCAM_RAILSV_OLD 0
+#endif
+float roomRailParamDt(const RoomCam *c, float t, const float p[3], float dt) {
+#if ROOMCAM_RAILSV_OLD
+  (void)dt; return roomRailParam(c, t, p);
+#else
+  float A, B; railSpan(c, &A, &B);
+  float ref = t >= 0.f ? t : (c->reverse ? B : A), R = c->maxR, best = -1.f, bd = 1e30f, acc = 0.f;
+  for (int k = 0; k + 1 < c->npts; k++) {
+    const float *a = c->pts[k], *b = c->pts[k + 1];
+    float dx = b[0] - a[0], dz = b[2] - a[2], ey = b[1] - a[1], l = sqrtf(dx * dx + ey * ey + dz * dz);
+    float al = dx * dx + dz * dz, be = 2.f * (dx * (a[0] - p[0]) + dz * (a[2] - p[2])), ga = (a[0] - p[0]) * (a[0] - p[0]) + (a[2] - p[2]) * (a[2] - p[2]) - R * R;
+    if (al > 1e-10f) {
+      float disc = be * be - 4.f * al * ga;
+      if (disc >= 0.f) { float sq = sqrtf(disc);
+        for (int r = 0; r < 2; r++) { float u = (-be + (r ? sq : -sq)) / (2.f * al), tt = acc + u * l;
+          if (u >= 0.f && u <= 1.f && tt >= A - 1e-4f && tt <= B + 1e-4f && fabsf(tt - ref) < bd) { bd = fabsf(tt - ref); best = tt; } } }
+    }
+    acc += l;
+  }
+  if (best < 0.f) { best = roomRailClosest(c, p); if (best < A) best = A; if (best > B) best = B; }
+  if (t < 0.f) return best;
+  float seg = 1.f, a2 = 0.f;   // длина отрезка сплайна под прежним положением
+  for (int k = 0; k + 1 < c->npts; k++) { const float *a = c->pts[k], *b = c->pts[k + 1]; float l = sqrtf((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]) + (b[2] - a[2]) * (b[2] - a[2])); seg = l; if (t <= a2 + l) break; a2 += l; }
+  float lim = .25f * seg * (dt > 0.f ? dt * 60.f : 1.f), d = best - t;
+  return t + (d > lim ? lim : d < -lim ? -lim : d);
+#endif
+}
 // цель рельса (правка 138, Роб 01.10 «ракурсы камер внутри помещений — как в оригинале»): TargetOffset в осях РЕЛЬСА в точке
 // камеры t — x вбок (side = fw × up в координатах движка), y вверх, z вдоль рельса (к следующей точке); fw — горизонтальная
 // касательная ломаной. Экспорт (tools/interior_export.py) пишет смещение с отражённым z (как точки мира), здесь z
@@ -204,7 +267,7 @@ static float camVolAt(const RoomCam *c, const float p[3]) {   // объём то
   for (int k = 0; k < c->ntrig; k++) if (roomTrigIn(&c->trig[k], p[0], p[1], p[2], ROOM_FOOT_R)) { float q = trigVol(&c->trig[k]); if (q < v) v = q; }
   return v;
 }
-int roomCamStep(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY) {
+static int roomCamStepOld(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY) {
   int i;
   if (s->newWins && n <= ROOM_CAMS && !s->switchOld) {
     // №138/186/229 (близнецы 17.10: школа, DMV, Moe's, дом L4, комната Барта, Observatory, Android's): выбор камеры по триггерам.
@@ -260,5 +323,86 @@ switched:
     for (int k = 0; k < 3; k++) { s->eye[k] += (e[k] - s->eye[k]) * kp; s->look[k] += (l[k] - s->look[k]) * kt; }
   }
   s->cur = i; memcpy(eye, s->eye, 12); memcpy(look, s->look, 12); *fovY = roomCamFovY(&c[i]);
+  return i;
+}
+
+// ---- сверка g06 (02.11.2026): выбор камеры и переходы как у оригинала (g06-camera:16,19,25,36; P08 Д4, 14) ----
+// Выбор по объёмам (Д4): вход Гомера в объём камеры включает её сразу, последняя вошедшая побеждает (прежняя запоминается в стеке); выход из объёма активной камеры возвращает ту, что была
+// до неё, если она ещё держит Гомера, иначе камеру ходьбы. Без «меньший объём» и без задержки 1 с (правки 138/172/186/229 — прежнее, ROOMCAM_SEL_SV_OLD=1).
+// Переход к камере (P08 14, P18-03): лимит 1,0 с при времени ×0,6 от реального (≈1,67 с), кривая 2t − t² от позы начала к движущейся цели; срез при CutInOut / скорости перехода 1,0,
+// у самой первой камеры (первый вход после загрузки уровня или комнаты) и когда позу ходьбы не передали. Выход: возврат к камере ходьбы обычным переходом (экспонента τ 0,15 с, около 0,45 с
+// до 95%), срез при CutInOut. Не сделано: ускорение перехода при беге быстрее максимальной скорости (скорость героя в функцию не передаётся)
+#ifndef ROOMCAM_SEL_SV_OLD
+#define ROOMCAM_SEL_SV_OLD 0
+#endif
+#ifndef ROOMCAM_HYPE_SV_OLD
+#define ROOMCAM_HYPE_SV_OLD 0   // 1 — зона hypecam не держит камеру (круг 2)
+#endif
+#ifndef ROOMCAM_TRANS_SV_OLD
+#define ROOMCAM_TRANS_SV_OLD 0
+#endif
+void roomCamRestart(RoomCamState *s) {   // №1085: стек, переход, выход и признак «первая камера» — заново; поза прошлого кадра не нужна
+  s->cur = -1; s->in = 0; s->nstk = 0; s->firstDone = 0; s->trOn = 0; s->exiting = 0; s->want = -1; s->wantT = 0.f; s->hasP = 0;
+}
+int roomCamStep(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY) {
+  return roomCamStepFrom(c, n, s, p, dt, eye, look, fovY, 0, 0);
+}
+int roomCamStepFrom(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY, const float baseE[3], const float baseL[3]) {
+  if (ROOMCAM_SEL_SV_OLD || n > 32 || n <= 0) return roomCamStepOld(c, n, s, p, dt, eye, look, fovY);
+  // №1085 (Роб: «при загрузке в миссию внутри дома камера сначала стоит позади героя, как на улице, потом едет вбок на комнатную»). Оригинал включает камеру срезом, если она первая после
+  // загрузки уровня или миссии, при входе в помещение и выходе, и когда миссия переставила героя; плавный переход 1 с — только на ходу между камерами. Признак «первая» у нас firstDone
+  // сбрасывался только при создании состояния, поэтому со второй загрузки всё шло переходом. Теперь: герой ушёл за кадр дальше 3 м (загрузка, перезапуск, перенос, дверь) —
+  // состояние начинается заново, первая камера срезом. CUT1085_OLD=1 — как в TEST82
+  if (!CUT1085_OLD) { if (s->hasP) { float dx = p[0] - s->lastP[0], dy = p[1] - s->lastP[1], dz = p[2] - s->lastP[2]; if (dx * dx + dy * dy + dz * dz > 9.f) roomCamRestart(s); }
+    memcpy(s->lastP, p, 12); s->hasP = 1; }
+  unsigned now = 0; for (int k = 0; k < n; k++) if (camHas(&c[k], p)) now |= 1u << k;
+  unsigned entered = now & ~s->in; s->in = now;
+  for (int pass = 0; pass < 32; pass++) {   // вошедшие в этот кадр — в стек; одновременно вошедшие: больший объём раньше, меньший сверху
+    int k = -1; float bv = -1.f;
+    for (int j = 0; j < n; j++) if ((entered & (1u << j)) && camVolAt(&c[j], p) > bv) { bv = camVolAt(&c[j], p); k = j; }
+    if (k < 0) break;
+    entered &= ~(1u << k);
+    int w = 0; for (int q = 0; q < s->nstk; q++) if (s->stk[q] != k) s->stk[w++] = s->stk[q];
+    s->nstk = w; if (s->nstk < 8) s->stk[s->nstk++] = k; else { for (int q = 1; q < 8; q++) s->stk[q - 1] = s->stk[q]; s->stk[7] = k; }
+  }
+  { int w = 0; for (int q = 0; q < s->nstk; q++) if (now & (1u << s->stk[q])) s->stk[w++] = s->stk[q]; s->nstk = w; }
+  int i = s->nstk > 0 ? s->stk[s->nstk - 1] : -1;
+  for (int q = 0; q < s->nstk && !ROOMCAM_HYPE_SV_OLD; q++) if (!strcmp(c[s->stk[q]].name, "hypecam")) i = s->stk[q];   // сверка g06 круг 2 (P08 Д9): пока Гомер в зоне hypecam, другую камеру выбрать нельзя
+  if (i < 0) {
+    if (s->cur >= 0) {   // вышел из последней камеры: срез при CutInOut, иначе плавный возврат к камере ходьбы
+      int cutOut = roomCamCut(&c[s->cur]) || !baseE || ROOMCAM_TRANS_SV_OLD;
+      s->cur = -1; s->trOn = 0;
+      if (!cutOut) { s->exiting = 1; s->exitT = 0.f; memcpy(s->exitE, s->outE, 12); memcpy(s->exitL, s->outL, 12); } else s->exiting = 0;
+    }
+    if (s->exiting && baseE) {
+      s->exitT += dt; float w = expf(-s->exitT / .15f);
+      if (w < .02f) s->exiting = 0;
+      else { for (int k = 0; k < 3; k++) { eye[k] = baseE[k] + (s->exitE[k] - baseE[k]) * w; look[k] = baseL[k] + (s->exitL[k] - baseL[k]) * w; } *fovY = 0.f; return -2; }
+    }
+    return -1;
+  }
+  float e[3], l[3]; roomCamIdeal(&c[i], p, e, l);
+  int sw = i != s->cur;
+  if (c[i].type == 1) { s->t = roomRailParamDt(&c[i], !sw ? s->t : -1.f, p, dt); roomRailAt(&c[i], s->t, e); railLook(&c[i], s->t, p, l); }
+  if (sw) {
+    float fromE[3], fromL[3]; int have = 0;
+    if (s->exiting) { float w = expf(-s->exitT / .15f); if (baseE) { for (int k = 0; k < 3; k++) { fromE[k] = baseE[k] + (s->exitE[k] - baseE[k]) * w; fromL[k] = baseL[k] + (s->exitL[k] - baseL[k]) * w; } have = 1; } s->exiting = 0; }
+    else if (s->cur >= 0) { memcpy(fromE, s->outE, 12); memcpy(fromL, s->outL, 12); have = 1; }
+    else if (baseE) { memcpy(fromE, baseE, 12); memcpy(fromL, baseL, 12); have = 1; }
+    int cut = ROOMCAM_TRANS_SV_OLD || !have || !s->firstDone || roomCamCut(&c[i]);
+    s->firstDone = 1; memcpy(s->eye, e, 12); memcpy(s->look, l, 12);
+    if (cut) s->trOn = 0; else { s->trOn = 1; s->trT = 0.f; memcpy(s->trFromE, fromE, 12); memcpy(s->trFromL, fromL, 12); }
+  } else {
+    float kp = c[i].type == 1 ? lagK(c[i].posLag, dt) : 1.f, kt = lagK(c[i].targetLag, dt);
+    for (int k = 0; k < 3; k++) { s->eye[k] += (e[k] - s->eye[k]) * kp; s->look[k] += (l[k] - s->look[k]) * kt; }
+  }
+  memcpy(eye, s->eye, 12); memcpy(look, s->look, 12);
+  if (s->trOn) {
+    s->trT += dt * .6f; float u = s->trT >= 1.f ? 1.f : s->trT, w = 2.f * u - u * u, d2 = 0.f;
+    for (int k = 0; k < 3; k++) { eye[k] = s->trFromE[k] + (s->eye[k] - s->trFromE[k]) * w; look[k] = s->trFromL[k] + (s->look[k] - s->trFromL[k]) * w; d2 += (eye[k] - s->eye[k]) * (eye[k] - s->eye[k]); }
+    if (u >= 1.f || d2 < .03f * .03f) s->trOn = 0;
+  }
+  memcpy(s->outE, eye, 12); memcpy(s->outL, look, 12);
+  s->cur = i; *fovY = roomCamFovY(&c[i]);
   return i;
 }

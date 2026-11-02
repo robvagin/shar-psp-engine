@@ -19,7 +19,21 @@ No game files are included, and none will be.
 - [Tests](tests/README.md): how every fix is checked
 - [All documents](docs/index.md)
 
-## What's new in build 81
+## What's new in build 83
+
+November 2, 2026. Since build 81 (October 31):
+
+- A full behavior pass against the original game: driving and on-foot physics, traffic and pedestrians, police and mission cars, the camera, missions and the moves between them, menus, sounds and loading. More than 900 points compared, each change behind a switch that restores the old behavior. What is ours for the PSP stays ours: fonts, layout, 16:9, camera angle, buttons
+- Every level has its own hero (Homer, Bart, Lisa, Marge, Apu, Bart, Homer), and each one now has the dodge, cheer and look-back moves
+- Police and the wanted meter follow the original timing on every level; mission cars, races and their catch-up behave like the PS2
+- Burnouts throw light dust on the road and dirt, grass or water spray by surface; the burning-car smoke comes only after a long burnout
+- Rooms: the gap next to the TV in the Simpsons' house is gone (rooms are drawn relative to the camera, like the city, so the PSP's graphics chip keeps its precision), and the first room camera after a load or a door is a straight cut, no fly-in from behind
+- The level 7 camera tilt stays outside, it no longer leans the room and talk cameras
+- Any car can push and break street props, traffic and mission cars included, and it costs almost nothing: only moving cars and props nearby are checked
+- Level loading is faster again: the baked traffic data is rebuilt with every data set, so the PSP no longer recomputes it at each load
+- In the car, look back with D-pad down
+
+### Build 81
 
 October 31, 2026. Since build 78 (October 28):
 
@@ -28,24 +42,6 @@ October 31, 2026. Since build 78 (October 28):
 - The loading screen stays up until the characters of the mission, the bonus characters nearby and the mission cars are loaded. Nothing pops in after the picture opens (Grandpa in the Simpsons' house); the dark screen at a house door waits the same way
 - The level sound bank has one fixed place in memory for the whole game, sized for the largest bank, so a level never loses its sound after many level changes (level 5 used to go silent)
 - The visibility table of levels 1 and 4 loads in small pieces when memory is tight, so the level always gets it
-
-### Build 78
-
-October 28, 2026. Since build 71 (October 26):
-
-- Phone booth opens every time, even when memory is tight, and lists the default car of every level, so the car you pick is the car that arrives. L and R flip through cars (hold to repeat); Mission Select changes level with L and R
-- On foot the camera turns the way the PS2 game turns it, and the stick keeps your heading when the camera changes (leaving the booth, mission starts, camera cuts)
-- Level loading: the interface and the sound bank load first after a level is freed, and the newspaper loading screen no longer disappears when memory is short: the game frees the old level and tries again. Transitions between levels and the booth no longer need a big free block, and unloading cells during streaming no longer stalls a frame
-- Tires are black on every car, near and far; the player's car gets its own wheel texture on levels 1 and 3 to 7
-- Cartoon mode keeps ink only where you interact: the hero, pedestrians, every car, the phone booth and props you hit or use. Houses, roads and the asphalt edge are no longer outlined
-- Settings: new row CURBS on the PICTURE page. Original draws the curb with the game's own texture; Tinted is the earlier painted curb (it applies from the next level load). Defaults for a fresh save now match the author's PSP menus: Textures On, Saturation 1.28, Contrast 1.30, Eye Lines Off, Texture Detail 80%, Old TV 20%, Draw Distance 250 m. Existing saves are untouched
-- Far distance: Draw Distance 250 m raises the city limit and the haze that looked like a white wall is gone; a ring of baked panoramas beyond the city edge is back for a pilot set of zones (levels 1, 3 and 6)
-- Mission cards glow with the original's soft round light instead of a texture square
-- Police keep 27 m from a standing player like on the PS2, and the wanted meter falls at once during a chase (no 3 s pause)
-- Ramps and jump zones: the entrance rails of the big level 5 ramp no longer stop the car dead; thin gate-style jump zones launch the car like the PS2 (the level 5 fire escape); the fence rule at roof edges follows a PS2 recording
-- Jumps near fences on levels 2 to 7: fence links that used to count as the map edge are now inner fences, so a car in flight no longer hits an invisible wall
-- Green road arrows follow the slope without glow; the "Vote Quimby" van speaks near you; poles and lamp posts fall from a bumper push
-- Message bubbles appear in one step with their text; the camera cut at the start of a mission stays within 30 m of you
 
 ## Build
 
@@ -88,8 +84,8 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About four weeks, 81 test builds and 39 full tours on a real PSP. 1,076 playtest notes, logged and worked through one by one.
-Over 4,400 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
+About five weeks, 83 test builds and 40 full tours on a real PSP. 1,086 playtest notes, logged and worked through one by one.
+Over 4,500 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
 ## Reporting bugs
@@ -114,5 +110,5 @@ so anyone can find the exact spot.
 
 ## License
 
-GPL-3.0 for the code. Vendored Media Engine code keeps its MIT license, fonts keep CC BY 3.0. The leaked source of the original game was never used.
+GPL-3.0 for the code. Vendored Media Engine code keeps its MIT license, fonts keep CC BY 3.0.
 The Simpsons and The Simpsons: Hit & Run are trademarks of their respective owners. Non-commercial fan project.

@@ -48,26 +48,57 @@ static void streetSourceFrame(void) {
 static int hornStopOld = HORN_STOP_OLD;
 void trafficHornStopOld(int on) { hornStopOld = on != 0; }
 
-typedef struct { int handle; float timer; } TrHornVoice;
+// Сверка g11b, P10_звук_машины_и_пространство P10-4 (гудок трафика): по событию «машину ударили / мешают» — шанс 0,5; если у машины уже идёт серия, новый гудок ничего не делает; серия 1..3 гудков
+// (число дополнительных 0, 1 или 2 поровну): гудок 0,25–0,5 с, пауза 0,25–0,5 с, ..., последний гудок (и единственный) 0,5–1 с; дальность 30–60 м (полная до 30). Клип общий (петля, обрезается таймером).
+// HORN_SERIES_OLD=1 — один гудок 1,4 с без шанса, 4–60 м, новый перезапускает прежний (TEST81).
+#ifndef HORN_SERIES_OLD
+#define HORN_SERIES_OLD 0
+#endif
+typedef struct { int handle; float timer; float pause; int left; char hn[40]; } TrHornVoice;
 static TrHornVoice trHorns[TR_MAXCAR];
+static float hornRnd(float a, float b) { return a + (b - a) * (float)(rand() & 0x7fff) / 32768.f; }
+static void trafficHornStart(int idx, const char *hn, float x, float y, float z) {   // вызывает main_loop.h на TR_EV_CAR_HONK (сверка g11b-collect)
+  if (idx < 0 || idx >= TR_MAXCAR) return;
+  TrHornVoice *v = &trHorns[idx];
+  if (HORN_SERIES_OLD) { if (v->handle) audioStop(v->handle); v->handle = sndPlay(hn, x, y, z, 1.f); v->timer = 1.4f; v->pause = 0.f; v->left = 0; return; }
+  if (v->handle || v->pause > 0.f || v->left > 0) return;   // серия идёт — новый ничего не делает
+  if (rand() & 1) return;                                    // шанс 0,5 (traffic_horn)
+  snprintf(v->hn, sizeof v->hn, "%s", hn);
+  v->left = rand() % 3;                                      // дополнительных гудков 0, 1 или 2 поровну
+  v->timer = v->left ? hornRnd(.25f, .5f) : hornRnd(.5f, 1.f); v->pause = 0.f;
+  v->handle = sndPlay(hn, x, y, z, 1.f);
+}
 
 static void trafficHornFrame(float dt, float camx, float camy, float camz) {
 #if !HORN_STOP_OLD
   if (hornStopOld) return;
   for (int i = 0; i < TR_MAXCAR; i++) {
-    if (!trHorns[i].handle) continue;
-    trHorns[i].timer -= dt;
-    int stop = trHorns[i].timer <= 0.f;
-    if (!haveTraffic || i >= traffic.maxCars || traffic.car[i].mode == TRM_OFF || traffic.car[i].car.destroyed) stop = 1;
+    TrHornVoice *v = &trHorns[i];
+    int gone = !haveTraffic || i >= traffic.maxCars || traffic.car[i].mode == TRM_OFF || traffic.car[i].car.destroyed;
+    if (!v->handle && v->pause > 0.f) {   // пауза между гудками серии
+      if (gone) { v->pause = 0.f; v->left = 0; continue; }
+      if ((v->pause -= dt) <= 0.f) {
+        v->pause = 0.f; v->left--;
+        v->timer = v->left ? hornRnd(.25f, .5f) : hornRnd(.5f, 1.f);
+        v->handle = sndPlay(v->hn, traffic.car[i].car.x, traffic.car[i].car.y, traffic.car[i].car.z, 1.f);
+      }
+      continue;
+    }
+    if (!v->handle) continue;
+    v->timer -= dt;
+    int stop = v->timer <= 0.f;
+    if (gone) { stop = 1; v->left = 0; }
+    float farD = HORN_SERIES_OLD ? 50.f : 60.f;
     if (!stop) {
       float dx = traffic.car[i].car.x - camx, dy = traffic.car[i].car.y - camy, dz = traffic.car[i].car.z - camz;
-      if (dx * dx + dy * dy + dz * dz > 50.f * 50.f) stop = 1;
+      if (dx * dx + dy * dy + dz * dz > farD * farD) { stop = 1; v->left = 0; }
     }
     if (stop) {
-      audioStop(trHorns[i].handle);
-      trHorns[i].handle = 0;
+      audioStop(v->handle);
+      v->handle = 0;
+      if (!HORN_SERIES_OLD && v->left > 0) v->pause = hornRnd(.25f, .5f);
     } else {
-      audioSetAt(trHorns[i].handle, traffic.car[i].car.x, traffic.car[i].car.y, traffic.car[i].car.z, 4.f, 60.f);
+      audioSetAt(v->handle, traffic.car[i].car.x, traffic.car[i].car.y, traffic.car[i].car.z, HORN_SERIES_OLD ? 4.f : 30.f, 60.f);
     }
   }
 #endif
@@ -110,7 +141,50 @@ static void trafficHornClear(void) {
 
 // №390: moving traffic uses authored engine/idle clips and the same spatial DSP.
 // Keep a stable assignment for the three nearest audible cars, without increasing mixer capacity.
+#ifndef TRAFFIC_HEARSE_OLD
+#define TRAFFIC_HEARSE_OLD 0
+#endif
+// Сверка g08-sound (P10-1, P10-2, P10-21, Д2; audio.c audioSvEngine): трафик — до 5 слотов по порядку появления (вблизи слышимости), один клип «ferrari»,
+// высота (0,5 + 0,5·v/16,7)·множитель машины (0,8…1,2 при появлении); машины ИИ миссий — до 5 слотов, клип «mission_ai_vehicle», высота 0,3 + 0,7·v/TopSpeed;
+// стоящим тоже играет, шин нет, оверлей у трафика по модели. WORLD_ENGINE_SV_OLD=1 или нет клипов в пакете — прежние 3 источника (audio.c)
+static void trafficMotorFrameSv(float dt,float camx,float camy,float camz) {
+  static int slotCar[AUDIO_SV_SLOTS]={-1,-1,-1,-1,-1}; static float slotMul[AUDIO_SV_SLOTS]; static unsigned rngS=0x2545F491u;
+  const float R2=125.f*125.f; int taken[TR_MAXCAR]={0};
+  for(int s=0;s<AUDIO_SV_SLOTS;s++) {   // слот держит свою машину, пока она в игре и слышна
+    int i=slotCar[s];
+    if(i>=0) {
+      int ok=haveTraffic && i<traffic.maxCars;
+      if(ok){const TrCar *a=&traffic.car[i];
+        ok=(a->mode==TRM_DRIVE||a->mode==TRM_PHYS) && !a->car.destroyed;
+        if(ok){float dx=a->car.x-camx,dy=a->car.ry-camy,dz=a->car.z-camz;ok=dx*dx+dy*dy+dz*dz<R2;}}
+      if(!ok){slotCar[s]=-1;audioSvEngine(0,s,0,-1,0,0,0,0,1,1,dt);} else taken[i]=1;
+    }
+  }
+  if(haveTraffic) for(int i=0;i<traffic.maxCars&&i<TR_MAXCAR;i++) {
+    if(taken[i])continue;
+    const TrCar *a=&traffic.car[i];
+    if((a->mode!=TRM_DRIVE && a->mode!=TRM_PHYS) || a->car.destroyed || a->model<0 || a->model>=(int)traffic.hd->nModel)continue;
+    if(!TRAFFIC_HEARSE_OLD && strstr(traffic.model[a->model].name,"hearse"))continue;   // круг 2 (g11b P10-31): у катафалка мотора не слышно
+    float dx=a->car.x-camx,dy=a->car.ry-camy,dz=a->car.z-camz; if(dx*dx+dy*dy+dz*dz>=R2)continue;
+    for(int s=0;s<AUDIO_SV_SLOTS;s++) if(slotCar[s]<0){
+      rngS^=rngS<<13;rngS^=rngS>>17;rngS^=rngS<<5;
+      slotCar[s]=i;slotMul[s]=.8f+.4f*((rngS>>8)*(1.f/16777216.f));break;}
+  }
+  for(int s=0;s<AUDIO_SV_SLOTS;s++) {
+    int i=slotCar[s]; if(i<0)continue;
+    const TrCar *a=&traffic.car[i];
+    float v=a->mode==TRM_DRIVE?a->v:a->car.v;
+    audioSvEngine(0,s,1,audioCarProfile(traffic.model[a->model].name),a->car.x,a->car.ry,a->car.z,v,16.7f,slotMul[s],dt);
+  }
+  const MsnCars *mc=mvCars();
+  for(int s=0;s<AUDIO_SV_SLOTS;s++) {
+    const McCar *a=mc && s<mc->n && mc->c[s].on && !mc->c[s].car.destroyed ? &mc->c[s] : NULL;
+    if(!a){audioSvEngine(1,s,0,-1,0,0,0,0,1,1,dt);continue;}
+    audioSvEngine(1,s,1,-1,a->car.x,a->car.ry,a->car.z,a->car.v,a->car.p.topSpeed,1.f,dt);
+  }
+}
 static void trafficMotorFrame(float dt,float camx,float camy,float camz) {
+  if(audioSvReady()){trafficMotorFrameSv(dt,camx,camy,camz);return;}
   static int assigned[AUDIO_WORLD_ENGINES]={-1,-1,-1};
   enum { SOURCES=TR_MAXCAR+MC_MAX };
   int selected[AUDIO_WORLD_ENGINES]={-1,-1,-1}, profile[SOURCES];
@@ -139,6 +213,9 @@ static void trafficMotorFrame(float dt,float camx,float camy,float camz) {
 #endif
     }
     profile[i]=audioCarProfile(model[i]);
+    // сверка g11b, P10_звук_машины_и_пространство P10-31: настройки звука hearse_posn и chase_hearse_posn в данных не определены — у катафалка мотора не слышно (TRAFFIC_HEARSE_OLD=1 — обычный профиль).
+    // coffin_posn (клип traffic_coffin, 10–100 м) — профиль и клип в audio.c, передано g08-sound
+    if(!TRAFFIC_HEARSE_OLD && strstr(model[i],"hearse"))profile[i]=-1;
     float dx=body[i]->x-camx,dy=body[i]->ry-camy,dz=body[i]->z-camz;
     distance[i]=dx*dx+dy*dy+dz*dz;
     if(profile[i]<0 || distance[i]>=60.f*60.f)distance[i]=1e30f;
@@ -175,6 +252,25 @@ static void trafficMotorFrame(float dt,float camx,float camy,float camz) {
 }
 static float cardHudT, itemsHudT, waspsHudT;   // сколько ещё показывать сообщения HUD, с
 #define COLL_HUD_S 3.f                          // правило порта: сообщение держится 3 с (длительности в данных нет)
+// сверка g11b (M2_движение_в_игре №7, 8, 11, 12): карточка 0,5 (вылет) + 2,0 (держится) + 0,3 (уезд) = 2,8 с; «колода собрана» и «осы убиты» — рост 0,3 + 2,0 + гашение 0,3 = 2,6 с;
+// «колода собрана» начинается в фазе ухода карточки (за 0,3 с до её конца). Рост/дуга/вылет по дуге — анимация Scrooby в ui (передано); здесь длительности. COLL_HUD_OLD=1 — 3 с / 6 с / 3 с
+#ifndef COLL_HUD_OLD
+#define COLL_HUD_OLD 0
+#endif
+#define COLL_HUD_CARD_S 2.8f
+#define COLL_HUD_MSG_S 2.6f
+#define COLL_HUD_CARD_LEAVE_S .3f
+#ifndef TUT_GAG_ZONE_OLD
+#define TUT_GAG_ZONE_OLD 0   // P15-09: подсказка про интерактивный гэг — когда игрок вошёл в зону действия гэга пешком вне миссии (было: по окончании первого гэга)
+#endif
+static int gagZoneIn;      // P15-09: игрок сейчас в зоне действия гэга (фронт входа)
+#ifndef CARD_CELEBRATE_OLD
+#define CARD_CELEBRATE_OLD 0
+#endif
+#ifndef FMV_STOPMUSIC_OLD
+#define FMV_STOPMUSIC_OLD 0   // круг 2, g07 P15-05: ролик с «stopmusic» (fmv7, L7 m8) убивает музыку насовсем (было: музыка шла под роликом молча и после него продолжалась)
+#endif
+static float itemsWaitT;   // сколько ждать до показа «колода собрана» (конец вылета карточки)
 static int gagStreamG = -1, gagStreamT = -1;    // гэг, чей звук сейчас в потоке диалогов, и его дорожка music.sap
 #if !TICKET_CONTENT_C3_OLD
 static TicketView ticketView;
@@ -184,6 +280,12 @@ static TicketView ticketView;
 #define TICKET_BUSY() 0
 #define TICKET_MOVIE_AVAILABLE 0
 #endif
+#ifndef WASP_SND_OLD
+#define WASP_SND_OLD 0
+#endif
+#define WASP_SLOTS 2
+static int waspSnd2[3] = {-2, -2, -2};   // wasp_charging, wasp_charged_idle, wasp_attack (сверка g11b P10-19)
+static struct { int wasp, stage, last, h; } wSlot[WASP_SLOTS] = {{-1, -1, -1, 0}, {-1, -1, -1, 0}};
 static int waspLoop; static int waspSnd[6] = {-2};   // петля жужжания ближайшей живой осы; id звуков world.spt
 static int shakeG = -1; static float shakeT;    // тряска камеры гэга: номер гэга и время с запуска
 static void collLog(const char *what, int idx, const char *name) {
@@ -268,8 +370,12 @@ static void gagSound(int g) {
 #ifndef DEFAULTS794_OLD
 #define DEFAULTS794_OLD 0
 #endif
+#ifndef CAMNAV_OPT_OLD
+#define CAMNAV_OPT_OLD 0       // круг 5 (g10-flow, P08:22/P16:08): 1 — строки Jump Cameras и Navigation System серые, камеры и стрелки всегда включены, в запись не пишутся (как было)
+#endif
 typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, tutorial; unsigned tutSeen, movies; int colour, invertCam, toon, treeShadow;
-                 int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist, carShadow, curbTint; } Settings;   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
+                 int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist, carShadow, curbTint,
+                 jumpCam, navSys; } Settings;   // круг 5 (сверка g10-flow, P08:22, P16:08): jumpCam — строка Jump Cameras (камеры зон у машины), navSys — Navigation System (стрелки пути); 0 Off / 1 On, по умолчанию On; в старых файлах короче — On   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
 // №794 (сверено 19.10 с settings.bin Роба на PSP: насыщенность 1,56, контраст 1,50): значения по умолчанию для нового файла. DEFAULTS794B_OLD=1 — 1,36/1,00
 #ifndef DEFAULTS794B_OLD
 #define DEFAULTS794B_OLD 0
@@ -286,7 +392,7 @@ typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, 
 #define DEFAULTS1066_OLD 0
 #endif
 static Settings cfg = {{'S', 'H', 'S', 'T'}, DRAWDEF1042_OLD ? 10 : 14, 1000, 1000, 1000, 1000, 1, 1, 0, 1, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? TONE_SAT_DEF : 156) : 128, 1, DEFAULTS794_OLD ? 0 : 1, 0, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? 100 : 150) : 130,
-                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
+                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0, 1, 1};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
 // №996: CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители камеры всегда 1 (как TEST70); шаги Height / Distance — множитель дальности и отступа глаза над точкой взгляда
 #ifndef CAMCFG996_OLD
 #define CAMCFG996_OLD 0
@@ -306,6 +412,10 @@ static void cfgSave(void);
 static const char *const MOVIES[9] = {"intro", "fmv1a", "fmv2", "fmv3", "fmv4", "fmv5", "fmv6", "fmv7", "fmv8"};
 static void movieSeen(const char *nm) {
   for (int k = 0; k < 9; k++) if (!strcmp(nm, MOVIES[k]) && !(cfg.movies >> k & 1u)) { cfg.movies |= 1u << k; cfgSave(); }
+}
+static int movieSeenBefore(const char *nm) {   // ролик уже открыт игроком (признак ставит movieSeen в конце показа)
+  for (int k = 0; k < 9; k++) if (!strcmp(nm, MOVIES[k])) return cfg.movies >> k & 1u;
+  return 0;
 }
 // Кадр ролика (правка Роба 49, 29.09, пересмотр 32: «рамка-телевизор на роликах слишком растянута; у роликов 4:3 — красивый
 // фон по бокам»): картинка 4:3 без растяжки на всю высоту, по бокам — размытый фон из той же картинки; всё уже в кадре
@@ -332,33 +442,78 @@ static void movieDrawTv(const Movie *m) {
   movieDraw(m);
   if (tvFrameOn && uiScrReady()) { uiScrDraw(UI_BOOT_TVMOVIE, 0, 0.f, 0); resetState(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0); }
 }
+// ---- сверка g11b (02.11.2026): правила роликов — пропуск, затемнение вокруг ролика. MOVIE_RULES_OLD=1 — как в TEST81 (Start пропускает любой ролик с первого кадра, срез мира)
+// M3_движение_меню №4/Д1, P07_миссии_цели №24, P14_меню_логика №13, P15_презентация P15-03/P15-04/Д1:
+//  - пропуск X или Start, не раньше 0,125 с от начала; после нажатия картинка линейно гаснет в чёрное за 0,5 с, потом конец (звук затухает вместе — нужен movieVolume в movie.c, передано: пока звук идёт до обрыва)
+//  - ролик новой игры (fmv1a) не пропускается вообще (Д1); ролики целей/просмотра fmv2..fmv8 — только если этот ролик уже открыт (cfg.movies); intro, логотипы, ролики гэгов — пропускаются
+//  - ролик цели в игре и ролик гэга: HUD гасится (мир стоит), мир темнеет до чёрного за 0,5 с линейно и только потом стартует ролик; после ролика 10 кадров сплошного чёрного, потом срез в мир
+#ifndef MOVIE_RULES_OLD
+#define MOVIE_RULES_OLD 0
+#endif
+#define MOVIE_SKIP_MIN_S .125f
+#define MOVIE_SKIPFADE_S .5f
+#define MOVIE_WORLD_FADE_S .5f
+#define MOVIE_BLACK_FRAMES 10
+static int msnMovieWorld;   // 1 — ролик цели миссии в игре (ставит main_loop.h перед вызовом, «сверка g11b-collect»): мир темнеет до и 10 чёрных кадров после
+static void movieVeil(float a) {   // чёрный прямоугольник на весь экран поверх нарисованного (внутри открытого списка GE)
+  if (a <= .003f) return;
+  typedef struct { unsigned color; short x, y, z, pad; } VeV;
+  VeV *v = (VeV *)sceGuGetMemory(2 * sizeof(VeV)); unsigned c = (unsigned)(fminf(a, 1.f) * 255.f + .5f) << 24;
+  v[0].color = v[1].color = c; v[0].x = 0; v[0].y = 0; v[1].x = SCR_W; v[1].y = SCR_H; v[0].z = v[1].z = 0;
+  sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_DEPTH_TEST); sceGuEnable(GU_BLEND); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+  sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
+  resetState();
+}
+// мир стоит: два буфера кадра хранят последние кадры мира; в каждый по очереди добавляется чёрный слой так, чтобы накопленное затемнение шло линейно 0..1 за MOVIE_WORLD_FADE_S
+static void movieWorldFade(void **fbp) {
+  void *buf[2] = {0, 0}; float cum[2] = {0.f, 0.f};
+  unsigned t0 = sceKernelGetSystemTimeLow();
+  for (;;) {
+    float t = (sceKernelGetSystemTimeLow() - t0) * 1e-6f / MOVIE_WORLD_FADE_S; if (t > 1.f) t = 1.f;
+    int k = (buf[0] == *fbp || !buf[0]) ? 0 : 1; buf[k] = *fbp;
+    if (cum[k] < 1.f) { float a = cum[k] >= .999f ? 1.f : (t - cum[k]) / (1.f - cum[k]); if (a > 0.f) { sceGuStart(GU_DIRECT, list); movieVeil(a); sceGuFinish(); sceGuSync(0, 0); } cum[k] = t; }
+    sceDisplayWaitVblankStart(); *fbp = swapBuf();
+    if (cum[0] >= 1.f && cum[1] >= 1.f) break;
+  }
+}
+static void movieBlackTail(void **fbp) {   // после ролика: 10 кадров сплошного чёрного (на 30 кадр/с около 0,33 с), потом чёрный снимается срезом
+  for (int k = 0; k < MOVIE_BLACK_FRAMES; k++) { sceGuStart(GU_DIRECT, list); movieVeil(1.f); sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf(); }
+}
+static void movieVolSync(void) { movieVolume = cfg.voice < 0 ? 0 : cfg.voice > 1000 ? PSP_AUDIO_VOLUME_MAX : cfg.voice * PSP_AUDIO_VOLUME_MAX / 1000; }   // сверка g09b-menu круг 2 (M3:4): звук ролика = ползунок голоса
+static int movieSeenBefore(const char *nm);   // ниже, после MOVIES
 // ролик гэга (GagPlayFMV): весь экран, мир стоит, START — пропустить; в сценарии смоука снимки берутся и здесь (как в интро)
 // в поставке (tools/ship_rules.txt): "movies/loot.smv" — единственный ролик гэгов уровня 1 (gag_tele, Kwik-E-Mart)
 static void gagMovie(int g, void **fbp) {
   char fn[256], rel[64]; snprintf(rel, sizeof rel, "movies/%s.smv", coll.gag[g].fmv); sibling(fn, rel);
   if (movieSystem(1) < 0) { collLog("fmv_nojpeg", g, coll.gag[g].fmv); return; }
   if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
+  if (!MOVIE_RULES_OLD) movieWorldFade(fbp);   // P15 Д1: мир темнеет до чёрного за 0,5 с, ролик гэга стартует после
   sndMaster(0.f);
   mem1060Pre(2560u << 10, "movie");   // №1060: кольцо кусков и кадр ролика (≈1,6 МБ) — цельным блоком; экран ролика закрывает мир
-  int err = 0, shot = 0; Movie *m = movieOpen(fn, &err);
+  int err = 0, shot = 0; movieVolSync(); Movie *m = movieOpen(fn, &err);
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
-  unsigned last = sceKernelGetSystemTimeLow(); char s[160];
+  unsigned last = sceKernelGetSystemTimeLow(); char s[160]; unsigned t00 = last; int skipping = 0; float skipT = 0.f;
   while (m && movieUpdate(m)) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
     unsigned hit = pad.Buttons & ~prev; prev = pad.Buttons;
-    if (hit & PSP_CTRL_START) break;
+    if (MOVIE_RULES_OLD) { if (hit & PSP_CTRL_START) break; }
+    else {   // M3 №4: X или Start не раньше 0,125 с, дальше картинка гаснет 0,5 с; у гэга пропуск включён всегда (P15 Д1)
+      if (!skipping && (t - t00) * 1e-6f >= MOVIE_SKIP_MIN_S && (hit & (PSP_CTRL_START | PSP_CTRL_CROSS))) skipping = 1;
+      if (skipping && (skipT += dt) >= MOVIE_SKIPFADE_S) break;
+    }
     SmokeCmd sc; while (smokeNext(dt, &sc)) {}
     if (!!smkShot[0] != shot) {
       shot = !!smkShot[0]; moviePause(m, shot);
       if (shot) { snprintf(s, sizeof s, "GAGSHOT name=%s gag=%s frame=%d t=%.1f\n", smkShot, coll.gag[g].name, movieFrame(m), smkT); smkWrite(s); }
     }
-    sceGuStart(GU_DIRECT, list); movieDrawTv(m); sceGuFinish(); sceGuSync(0, 0);
+    sceGuStart(GU_DIRECT, list); movieDrawTv(m); if (skipping) movieVeil(skipT / MOVIE_SKIPFADE_S); sceGuFinish(); sceGuSync(0, 0);
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
   if (tvPak) SCR_CLOSE();
   MovieStats st; memset(&st, 0, sizeof st); if (m) movieClose(m, &st); else st.err = err;
+  if (!MOVIE_RULES_OLD) movieBlackTail(fbp);   // P15 Д1: 10 кадров сплошного чёрного
 #if !TICKET_CONTENT_C3_OLD
   if(!TICKET_CONTENT_C3_OLD && st.frames>0 && coll.gag[g].pad==2) movieSeen(coll.gag[g].fmv);
 #endif
@@ -381,26 +536,38 @@ static void msnMovie(const char *rmv, void **fbp) {
   SceIoStat st; int have = sceIoGetstat(fn, &st) >= 0;
   if (!have || movieSystem(1) < 0) { snprintf(s, sizeof s, "MSNFMV name=%s have=%d played=0 t=%.1f\n", nm, have, smkT); smkWrite(s); return; }
   if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
+  // сверка g11b: кто может пропустить (M3 №4/Д1, P07 №24, P14 №13, P15-03): ролик новой игры — никто; fmv2..fmv8 — если этот ролик уже открыт; остальные (intro, логотипы, простой) — да; X — не для логотипов
+  int fmvWorld = !MOVIE_RULES_OLD && msnMovieWorld && !strncmp(nm, "fmv", 3);
+  int canSkip = MOVIE_RULES_OLD || (strcmp(nm, "fmv1a") && (strncmp(nm, "fmv", 3) || movieSeenBefore(nm)));
+  int crossOk = !MOVIE_RULES_OLD && (!strncmp(nm, "fmv", 3) || !strcmp(nm, "intro"));
+  if (fmvWorld && !FMV_STOPMUSIC_OLD && !strcmp(nm, "fmv7")) sndMusic(SND_MUS_OFF);   // SetFMVInfo("fmv7.rmv","stopmusic") в m8l.mfk уровня 7: второй аргумент в данных; до хоста он не доходит (fmvCb получает только имя) — по имени из данных
+  if (fmvWorld) movieWorldFade(fbp);   // P15-04: мир темнеет до чёрного за 0,5 с линейно, ролик цели стартует после
   sndMaster(0.f);
-  int err = 0, shot = 0; Movie *m = movieOpen(fn, &err);
+  int err = 0, shot = 0; movieVolSync(); Movie *m = movieOpen(fn, &err);
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
-  unsigned last = sceKernelGetSystemTimeLow(); int skipped = 0;
+  unsigned last = sceKernelGetSystemTimeLow(), t00 = last; int skipped = 0, skipping = 0; float skipT = 0.f;
   while (m && movieUpdate(m)) {
     unsigned tt = sceKernelGetSystemTimeLow(); float dt = (tt - last) * 1e-6f; last = tt; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
     unsigned hit = pad.Buttons & ~prev; prev = pad.Buttons;
-    if (hit & PSP_CTRL_START) { skipped = 1; break; }
+    // сведение дирижёра: правила пропуска g11b-collect (P15, задержка, ✕, затухание) + запрет пропуска ролика новой игры g10b-loop (P14:14)
+    if (MOVIE_RULES_OLD) { if ((hit & PSP_CTRL_START) && !movieNoSkipSv) { skipped = 1; break; } }
+    else {
+      if (!skipping && canSkip && !movieNoSkipSv && (tt - t00) * 1e-6f >= MOVIE_SKIP_MIN_S && (hit & (PSP_CTRL_START | (crossOk ? PSP_CTRL_CROSS : 0u)))) { skipping = 1; skipped = 1; }
+      if (skipping && (skipT += dt) >= MOVIE_SKIPFADE_S) break;
+    }
     SmokeCmd sc; while (smokeNext(dt, &sc)) {}
     if (!!smkShot[0] != shot) {
       shot = !!smkShot[0]; moviePause(m, shot);
       if (shot) { snprintf(s, sizeof s, "MSNFMVSHOT name=%s clip=%s frame=%d t=%.1f\n", smkShot, nm, movieFrame(m), smkT); smkWrite(s); }
     }
-    sceGuStart(GU_DIRECT, list); movieDrawTv(m); sceGuFinish(); sceGuSync(0, 0);
+    sceGuStart(GU_DIRECT, list); movieDrawTv(m); if (skipping) movieVeil(skipT / MOVIE_SKIPFADE_S); sceGuFinish(); sceGuSync(0, 0);
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
   if (tvPak) SCR_CLOSE();
   MovieStats ms; memset(&ms, 0, sizeof ms); if (m) movieClose(m, &ms); else ms.err = err;
+  if (fmvWorld) movieBlackTail(fbp);   // P15-04: после ролика 10 кадров сплошного чёрного, потом срез в мир
   movieSystem(0); sndMaster(1.f);
   if (!padResyncOld) padResync = 1;   // правка 279: START пропуска ролика — не пауза в игре
   if (ms.frames > 0) movieSeen(nm);   // VIEW MOVIES: ролик открыт
@@ -417,13 +584,17 @@ static void collFrame(float dt, void **fbp) {
   while (collectPop(&coll, &e)) {
     float p[3] = {e.x, e.y, e.z};
     switch (e.type) {
-      case CE_CARD: sndPlay("card_collect", e.x, e.y, e.z, 1.f); fxBurst(fxFind("card_collect_psShape"), p, NULL); tutEvent(TUT_CARD);
+      case CE_CARD: sndCardFound(e.x, e.y, e.z);   /* сверка g08-sound (P09 Д3): card_collect — в машине, пешком вставка OF_found_card */ fxBurst(fxFind("card_collect_psShape"), p, NULL); tutEvent(TUT_CARD);
         sndSay(SND_SAY_CARD, 0);   // аудит 09.10: W_Card («I can sell this on the internet»)
-        cardHudT = COLL_HUD_S; if (uiReady) uiHudSet(UI_F_CARD_TITLE, coll.card[e.idx].title);
+        if (!CARD_CELEBRATE_OLD && haveHomer && onFoot()) homerCelebrate(&homer, 1);   // круг 2, g04-homer P05:1: большая радость hom_victory_large при карточке (за рулём клипа нет: 0)
+        cardHudT = COLL_HUD_OLD ? COLL_HUD_S : COLL_HUD_CARD_S; if (uiReady) uiHudSet(UI_F_CARD_TITLE, coll.card[e.idx].title);
         { char nm[16]; snprintf(nm, sizeof nm, "card%u", coll.card[e.idx].id); collLog("card", e.idx, nm); } break;
-      case CE_CARDS_DONE: itemsHudT = 2.f * COLL_HUD_S; collLog("cards_done", e.idx, "-");   // после сообщения карточки
+      case CE_CARDS_DONE: if (COLL_HUD_OLD) itemsHudT = 2.f * COLL_HUD_S;
+        else { itemsWaitT = cardHudT > COLL_HUD_CARD_LEAVE_S ? cardHudT - COLL_HUD_CARD_LEAVE_S : 0.f; itemsHudT = itemsWaitT + COLL_HUD_MSG_S; }   // М2 №8: начинается в фазе ухода карточки
+        collLog("cards_done", e.idx, "-");   // после сообщения карточки
         bonusOpenFromColl("cards"); break;   // правка 421: колода уровня собрана — «New bonus game track unlocked!» (Hud.pag ItemsUnlocked): трасса уровня открыта
-      case CE_WASP_SPAWN: sndPlayId(waspSnd[0], e.x, e.y, e.z, 1.f); collLog("wasp_spawn", e.idx, coll.wasp[e.idx].name); tutEvent(TUT_WASP); break;   // подсказка про ос (PS2 11:20)
+      case CE_WASP_SPAWN: sndPlayId(waspSnd[0], e.x, e.y, e.z, 1.f); collLog("wasp_spawn", e.idx, coll.wasp[e.idx].name); if (WASP_NEAR_OLD) tutEvent(TUT_WASP); break;   // подсказка про ос (PS2 11:20); сверка g11b P15-07: теперь по CE_WASP_NEAR (оса ближе 5 м), не по появлению
+      case CE_WASP_NEAR: if (!WASP_NEAR_OLD) tutEvent(TUT_WASP); break;
       case CE_WASP_CHARGE: collLog("wasp_charge", e.idx, coll.wasp[e.idx].name); break;
       case CE_WASP_FIRE: sndPlayId(waspSnd[2], e.x, e.y, e.z, 1.f); break;
 #ifndef WASP_BOLT_OLD
@@ -431,23 +602,60 @@ static void collFrame(float dt, void **fbp) {
 #endif
       case CE_WASP_ZAP: sndPlayId(waspSnd[5], e.x, e.y, e.z, 1.f); collLog("wasp_zap", e.idx, coll.wasp[e.idx].name); break;
       case CE_WASP_DEAD: sndPlayId(waspSnd[4], e.x, e.y, e.z, 1.f); collLog("wasp_dead", e.idx, coll.wasp[e.idx].name); break;
-      case CE_WASPS_DONE: waspsHudT = COLL_HUD_S; collLog("wasps_done", e.idx, "-"); break;
+      case CE_WASPS_DONE: { const char *tr_; sndMusicEvent("Destroy_Camera_Bonus", &tr_); } /* сверка g08 круг 3 (P09 Д4): все осы-камеры — вставка */ waspsHudT = COLL_HUD_OLD ? COLL_HUD_S : COLL_HUD_MSG_S; collLog("wasps_done", e.idx, "-"); break;   // М2 №11/12: 0,3 + 2,0 + 0,3 = 2,6 с
 #if !TICKET_CONTENT_C3_OLD
       case CE_TICKET: if(ticketViewAction(&ticketView,&coll,e.idx)) gagMovie(e.idx,fbp); break;
 #endif
       case CE_GAG_START: {
         const CollGag *G = &coll.gag[e.idx];
         collLog("gag_start", e.idx, G->name);
-        if (G->shake[0] > 0.f) { shakeG = e.idx; shakeT = 0.f; }
+        if (G->shake[0] > 0.f || G->shake[1] > 0.f || G->shake[2] > 0.f) { shakeG = e.idx; shakeT = 0.f; }   // сверка g11b P08 №2: пауза может быть 0 — условие по любому аргументу
         if (G->fmv[0]) gagMovie(e.idx, fbp); else gagSound(e.idx);
       } break;
-      case CE_GAG_END: collLog("gag_end", e.idx, coll.gag[e.idx].name); tutEvent(TUT_GAG); break;   // подсказка про гэги — после первого (правило порта)
+      case CE_GAG_END: collLog("gag_end", e.idx, coll.gag[e.idx].name); if (TUT_GAG_ZONE_OLD) tutEvent(TUT_GAG); break;   // подсказка про гэги — после первого (правило порта); сверка g11b P15-09: теперь по входу в зону действия, collHud
       case CE_GAG_FOUND: collLog("gag_found", e.idx, coll.gag[e.idx].name); break;
       case CE_GAGS_DONE: collLog("gags_done", e.idx, "-"); break;   // «LEVEL GAGS COMPLETE!» — строка 2 WaspsComplete: поля выбора в ui.shr нет
       default: break;
     }
   }
+  coll.st.gagHold = gagStreamG >= 0 ? gagStreamG + 1 : 0; coll.st.inMission = mvInMission();   // сверка g11b: звук гэга продлевает «играет» (P16-14); в миссии гэги с роликом молчат (P16 Д7)
   SpFxOut o; while (spFxPop(&coll.sp, &o)) spFxOut(0, &o);   // окна EFX: частицы сцен гэгов и ос (родные системы fx.shr)
+  // сверка g11b, P10_звук_машины_и_пространство P10-19: два голоса на ближайших живых ос, позиционно по wasp_settings (полная до 12 м, затухание до 30 м), по стадиям: появление wasp_fade_in (разово, CE_WASP_SPAWN),
+  // дальше петля wasp_idle; зарядка — петля wasp_charging; заряжена — петля wasp_charged_idle; атака — wasp_attack разово, затем wasp_idle; уничтожена — wasp_destroyed (CE_WASP_DEAD), голос освобождается.
+  // Звуков wasp_charging / wasp_charged_idle в пакете звуков нет (tools/sound_export.py:58) — пока их нет, на этих стадиях петля wasp_idle (передано в g08/g12). WASP_SND_OLD=1 — одна петля wasp_idle у ближайшей, 3–30 м
+  if (!WASP_SND_OLD) {
+    if (waspSnd2[0] == -2) { waspSnd2[0] = sndId("wasp_charging"); waspSnd2[1] = sndId("wasp_charged_idle"); waspSnd2[2] = sndId("wasp_attack"); }
+    int paused = uiReady && uiPaused();
+    for (int k = 0; k < WASP_SLOTS; k++) {   // голос держит свою осу, пока она жива и ближе 30 м
+      int w = wSlot[k].wasp;
+      if (w >= 0) { const SpRun *r = &coll.sp.run[coll.wasp[w].inst]; float dx = r->x - eyeX, dy = r->y - eyeY, dz = r->z - eyeZ;
+        if (paused || coll.st.waspSt[w] != 1 || !r->alive || r->state == 5 || dx * dx + dy * dy + dz * dz > 30.f * 30.f) { if (wSlot[k].h) audioStop(wSlot[k].h); wSlot[k].h = 0; wSlot[k].wasp = -1; wSlot[k].stage = -1; } }
+    }
+    for (int k = 0; k < WASP_SLOTS && !paused; k++) {
+      if (wSlot[k].wasp >= 0) continue;
+      int best = -1; float bd = 30.f * 30.f;
+      for (unsigned i = 0; i < coll.nwasp; i++) {
+        if (coll.st.waspSt[i] != 1) continue;
+        int taken = 0; for (int q = 0; q < WASP_SLOTS; q++) taken |= wSlot[q].wasp == (int)i;
+        const SpRun *r = &coll.sp.run[coll.wasp[i].inst]; float dx = r->x - eyeX, dy = r->y - eyeY, dz = r->z - eyeZ, d = dx * dx + dy * dy + dz * dz;
+        if (!taken && r->alive && r->state != 5 && d < bd) { bd = d; best = (int)i; }
+      }
+      wSlot[k].wasp = best; wSlot[k].stage = -1;
+    }
+    for (int k = 0; k < WASP_SLOTS; k++) {
+      int w = wSlot[k].wasp; if (w < 0) continue;
+      const SpRun *r = &coll.sp.run[coll.wasp[w].inst];
+      int stage = r->state == 2 ? 1 : r->state == 3 ? 2 : 0;   // 0 жужжание, 1 зарядка, 2 заряжена
+      if (r->state == 4 && wSlot[k].last != 4 && waspSnd2[2] >= 0) sndPlayId(waspSnd2[2], r->x, r->y, r->z, 1.f);   // wasp_attack разово
+      wSlot[k].last = r->state;
+      if (stage != wSlot[k].stage || !wSlot[k].h || !audioPlaying(wSlot[k].h)) {
+        if (wSlot[k].h) audioStop(wSlot[k].h);
+        int id = stage == 1 && waspSnd2[0] >= 0 ? waspSnd2[0] : stage == 2 && waspSnd2[1] >= 0 ? waspSnd2[1] : waspSnd[1];
+        wSlot[k].h = id >= 0 ? audioPlayAt(id, r->x, r->y, r->z, 12.f, 30.f) : 0; wSlot[k].stage = stage;
+      } else audioSetAt(wSlot[k].h, r->x, r->y, r->z, 12.f, 30.f);
+    }
+    if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
+  } else {
   // жужжание: петля wasp_idle у ближайшей живой осы (дальше 30 м — тихо), в паузе — нет
   int best = -1; float bd = 30.f * 30.f;
   for (unsigned i = 0; i < coll.nwasp && !(uiReady && uiPaused()); i++) {
@@ -460,6 +668,7 @@ static void collFrame(float dt, void **fbp) {
     if (!waspLoop || !audioPlaying(waspLoop)) waspLoop = audioPlayAt(waspSnd[1], r->x, r->y, r->z, 3.f, 30.f);
     else audioSetAt(waspLoop, r->x, r->y, r->z, 3.f, 30.f);
   } else if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
+  }
   // поток гэга: громкость и панорама по месту сцены; кончился — поток диалогов снова по центру (реплики Гомера)
   if (gagStreamG >= 0) {
     if (audioStreamTrack(AUDIO_ST_DIALOG) != gagStreamT) { gagStreamG = -1; audioStreamSet(AUDIO_ST_DIALOG, 1.f, 0.f); }
@@ -470,25 +679,50 @@ static void collFrame(float dt, void **fbp) {
   if (waspsHudT > 0.f) waspsHudT -= dt;
   if (shakeG >= 0) shakeT += dt;
 }
-// тряска камеры гэга (GagSetCameraShake сила, задержка мс, длительность с): после задержки — дрожание глаза ±сила м (правило порта: форма)
+// тряска камеры гэга (GagSetCameraShake). Сверка g11b, P08_камера №2: аргументы по порядку — ПАУЗА в секундах, сила (шейкером не используется), ДЛИТЕЛЬНОСТЬ в секундах (пример данных 0,1 / 450 / 3,5);
+// направление строго вверх, 58,9 рад/с. Без длительности: затухающая тряска 0,18 с с размахом до 1,1 м; с длительностью: без затухания, размах 1,0 м, до конца паузы плюс длительность.
+// Размах понимаем как полный (от пика до пика): амплитуда глаза — половина. Прежнее (сила м, задержка мс, три оси 71/53/67 рад/с, линейное затухание) — SHAKE_ARGS_OLD=1.
+#ifndef SHAKE_ARGS_OLD
+#define SHAKE_ARGS_OLD 0
+#endif
 static void collShake(float *ex, float *ey, float *ez) {
   if (shakeG < 0) return;
-  const CollGag *G = &coll.gag[shakeG]; float t = shakeT - G->shake[1] * .001f;
-  if (t > G->shake[2]) { shakeG = -1; return; }
+  const CollGag *G = &coll.gag[shakeG];
+  if (SHAKE_ARGS_OLD) {
+    float t = shakeT - G->shake[1] * .001f;
+    if (t > G->shake[2]) { shakeG = -1; return; }
+    if (t < 0.f) return;
+    float a = G->shake[0] * (1.f - t / G->shake[2]);
+    *ex += a * sinf(t * 71.f); *ey += a * sinf(t * 53.f + 1.f); *ez += a * sinf(t * 67.f + 2.f);
+    return;
+  }
+  float t = shakeT - G->shake[0], dur = G->shake[2];
+  if (dur <= 0.f) {   // без длительности: затухающая 0,18 с
+    if (t > .18f) { shakeG = -1; return; }
+    if (t < 0.f) return;
+    *ey += .55f * (1.f - t / .18f) * sinf(t * 58.9f);
+    return;
+  }
+  if (t > dur) { shakeG = -1; return; }
   if (t < 0.f) return;
-  float a = G->shake[0] * (1.f - t / G->shake[2]);
-  *ex += a * sinf(t * 71.f); *ey += a * sinf(t * 53.f + 1.f); *ez += a * sinf(t * 67.f + 2.f);
+  *ey += .5f * sinf(t * 58.9f);
 }
 static void collHud(void) {
   if (!haveColl || !uiReady) return;
   int card = cardHudT > 0.f, tot;
   uiHudShow(UI_T_CARD_TEXT, card); uiHudShow(UI_T_CARDS, card);
   if (card) { uiHudSet(UI_F_CARDS, collectCount(&coll, coll.level, COLL_CARDS, &tot)); uiHudSet(UI_F_CARDS_TOTAL, tot); }
-  uiHudShow(UI_T_ITEMS_COMPLETE, itemsHudT > 0.f && !card);
+  uiHudShow(UI_T_ITEMS_COMPLETE, COLL_HUD_OLD ? (itemsHudT > 0.f && !card) : (itemsHudT > 0.f && itemsHudT <= COLL_HUD_MSG_S));   // сверка g11b М2 №8: с фазы ухода карточки, 2,6 с
   uiHudShow(UI_T_WASPS, waspsHudT > 0.f);
-  if (onFoot() && !uiPaused() && collectWantsAction(&coll) >= 0) { uiHudShow(UI_T_ACTION, 1); uiActionText("Use"); }   // △ у гэга
+  { int act_ = onFoot() && !uiPaused() && collectWantsAction(&coll) >= 0;
+    if (act_) { uiHudShow(UI_T_ACTION, 1); uiActionText("Use"); }   // △ у гэга
+    if (act_ && !gagZoneIn && !TUT_GAG_ZONE_OLD && !mvInMission()) tutEvent(TUT_GAG);   // P15-09: вход в зону действия гэга в «воскресной» езде (подсказка показывается раз за игру)
+    gagZoneIn = act_; }
 }
 // модели пакета: в городе — карточки, осы и уличные гэги; в комнате — только гэги этой комнаты
+#ifndef SPARKLE_FADE_OLD
+#define SPARKLE_FADE_OLD 0   // P16-13/Д8: блёстки гэга гаснут 10..20 м, размер 1,0 / 0,5 (1 — 45 м постоянной силы, размер 1,3)
+#endif
 static int gagSnap = -1;
 static int glowFogOld;   // отрицательный контроль правки 76 (flag glowfog): свечение сложением в тумане, как раньше
 // №1063 (Роб 27.10: «у карточек такой же блик, как в оригинале… точно векторное свечение, не старое»): данные оригинала — у карточки один билборд-квад 1,6 м со сложением, цвет вершины белый (его альфа — пульс),
@@ -676,7 +910,13 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
     const CollGag *G = &coll.gag[g];
     if (G->room != room || !collectSparkle(&coll, g)) continue;
     float dx = G->tx - ex, dz = G->tz - ez; if (dx * dx + dz * dz > 45.f * 45.f) continue;
-    fxSparkleCA(G->tx, G->ty + .6f, G->tz, 1.3f, t * .5f + g * .37f, 0xffc8f0ff, BLING989_A);   // №989: блёстки гэга прозрачнее (было fxSparkle, 1)
+    float sk = 1.f, ssz = 1.3f;
+    if (!SPARKLE_FADE_OLD) {   // сверка g11b P16-13/Д8: сила = 1 - зажим((расстояние до игрока - 10 м) x 0,1, 0..1) — полная до 10 м, нулевая с 20 м (до положения гэга); размер 1,0 на улице и 0,5 в комнате (было 1,3)
+      float gx = G->x - ex, gz = G->z - ez, gd = sqrtf(gx * gx + gz * gz);   // расстояние от камеры; игрок рядом с камерой — порт приближает до игрока ≈ глаз камеры
+      sk = 1.f - fminf(1.f, fmaxf(0.f, (gd - 10.f) * .1f)); if (sk <= 0.f) continue;
+      ssz = room >= 0 ? .5f : 1.f;
+    }
+    fxSparkleCA(G->tx, G->ty + .6f, G->tz, ssz, t * .5f + g * .37f, 0xffc8f0ff, BLING989_A * sk);   // №989: блёстки гэга прозрачнее (было fxSparkle, 1)
   }
   if (smkOn) { unsigned c3 = sceKernelGetSystemTimeLow(); cpA[0] += (cp1 - cp0) * .001; cpA[1] += (cp2 - cp1) * .001; cpA[2] += (c3 - cp2) * .001; cpA[3] += sp->ninst;
     if (++cpN >= 30) { char l[200]; snprintf(l, sizeof l, "COLLPROF gagskin=%.3f inst=%.3f bill_spark=%.3f ninst=%.0f ngag=%u ms/frame\n", cpA[0] / cpN, cpA[1] / cpN, cpA[2] / cpN, cpA[3] / cpN, coll.ngag); smkWrite(l); cpN = 0; memset(cpA, 0, sizeof cpA); } }

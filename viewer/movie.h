@@ -32,6 +32,7 @@ typedef struct Movie Movie;
 
 // 1: загрузить avcodec и открыть sceJpeg 480x272 (0 = ок, <0 — нет аппаратного JPEG, интро пропускается); 0: закрыть
 int  movieSystem(int on);
+extern int movieVolume;                // сверка g09b-menu круг 2: громкость звука ролика 0..32767 (по умолчанию максимум); ставить перед movieOpen (main_frontend.h movieVolSync)
 // NULL — нет файла, испорчен или нет памяти (errOut, если не NULL, получает MV_*); сразу стартуют чтение и звук
 Movie *movieOpen(const char *fn, int *errOut);
 int  movieUpdate(Movie *m);           // раз в кадр развёртки: разжать нужный кадр; 1 = идёт, 0 = кончился или ошибка

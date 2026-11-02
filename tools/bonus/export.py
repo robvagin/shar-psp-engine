@@ -32,6 +32,9 @@ VEHICLES = ['apu_v', 'bart_v', 'bbman_v', 'bookb_v', 'burns_v', 'carhom_v', 'cAr
             'fone_v', 'frink_v', 'gramp_v', 'hbike_v', 'homer_v', 'honor_v', 'krust_v', 'lisa_v', 'marge_v', 'moe_v', 'mrplo_v',
             'otto_v', 'plowk_v', 'scorp_v', 'skinn_v', 'smith_v', 'snake_v', 'wiggu_v', 'willi_v', 'zombi_v']   # MiniMenu.pag Vehicle0_Value
 RACE_VEHICLES = ["pickupA", "cLimo", "otto_v"]  # measured default b01; menu still 43
+# круг 5 (g07b, P17-19): соперники случайно из полного списка 67 машин игры — к 43 машинам выбора добавлены ещё 24 (без повторов с VEHICLES и RACE_VEHICLES). BONUS_AI_ALL_OLD=1 — прежний состав пакета
+AI_VEHICLES = ['gramR_v', 'atv_v', 'knigh_v', 'mono_v', 'oblit_v', 'hype_v', 'rocke_v', 'cCellA', 'cCube', 'cBlbart', 'cMilk', 'cNonup', 'cBone', 'compactA', 'minivanA',
+               'sedanA', 'sedanB', 'sportsA', 'sportsB', 'wagonA', 'SUVA', 'taxiA', 'coffin', 'hallo']
 # Правка Роба 453 (10.10, «текстуры бонус-трасс галимые»): у трасс предел стороны текстуры — родной размер диска (до BONUS_TEX_CAP, по
 # умолчанию 512), а не 128 города: мипы считаются из исходника (LANCZOS, до 1 px), палитра по-прежнему точная/k-means 256 по всем
 # уровням, T4 у текстур до 16 цветов. Трасса — отдельная сцена без города (стенд 1,7–7,5 МБ SHR7 при 37 МБ у уровня 1).
@@ -391,7 +394,7 @@ def shr_bbox(path):
 
 def cars_pack(out):
     env = dict(os.environ, **QUALITY)
-    subprocess.run([sys.executable, str(ROOT / 'tools/msncar_export.py'), '--level', '1', '--names', ','.join(dict.fromkeys(VEHICLES + RACE_VEHICLES)), '--out', str(out)],
+    subprocess.run([sys.executable, str(ROOT / 'tools/msncar_export.py'), '--level', '1', '--names', ','.join(dict.fromkeys(VEHICLES + RACE_VEHICLES + ([] if os.environ.get('BONUS_AI_ALL_OLD') == '1' else AI_VEHICLES))), '--out', str(out)],
                    check=True, env=env, cwd=ROOT)
 
 

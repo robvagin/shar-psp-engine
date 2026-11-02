@@ -18,12 +18,20 @@ enum { SV_ROW_CAR = 0, SV_ROW_VIEW = 1, SV_ROW_STARS = 4 };
 enum { SV_FLY_CAR = 0, SV_FLY_EMPTY = 1 };   // перелёты FLT1 сцены: оборот с машиной / без неё
 
 // времена экрана — по записи PS2 (14:03.6–14:09.5, кадры 10/с): правила порта, в данных времени нет
+// Сверка g09a-hud (круг 1, M2:34 / Д11): свет лавки открывается и закрывается линейно по 0,5 с, затемнение до 85 %. SHOP_LIGHT_SV_OLD=1 — прежнее (0,4 / 0,3 с, 80 %)
+#ifndef SHOP_LIGHT_SV_OLD
+#define SHOP_LIGHT_SV_OLD 0
+#endif
+// Сверка g09a-hud (круг 1, M2:Д9): счёт на экране при покупке убывает 1,0 с десятью шагами по 0,1 с (пересчёт по времени). SHOP_COUNT_SV_OLD=1 — плавно
+#ifndef SHOP_COUNT_SV_OLD
+#define SHOP_COUNT_SV_OLD 0
+#endif
 #define SV_DARK_HOLD .6f     // после закрытого ириса сцена тёмная (ирис раскрывается над ней, текст уже виден)
-#define SV_LIGHT_IN  .4f     // свет зажигается; с его началом — машина и счёт монет
-#define SV_DARK_A    .8f     // тёмная сцена видна тускло (шторы, колонны различимы): прозрачность шторки PreviewLightCover
+#define SV_LIGHT_IN  (SHOP_LIGHT_SV_OLD ? .4f : .5f)     // свет зажигается; с его началом — машина и счёт монет
+#define SV_DARK_A    (SHOP_LIGHT_SV_OLD ? .8f : .85f)    // тёмная сцена видна тускло (шторы, колонны различимы): прозрачность шторки PreviewLightCover
 #define SV_COUNT    1.0f     // монеты убывают до новой суммы (151 -> 1 за 1 с), машина уходит с последней монетой
 #define SV_EMPTY     .3f     // пустой подиум
-#define SV_LIGHT_OUT .3f     // свет гаснет (и счёт), потом ирис
+#define SV_LIGHT_OUT (SHOP_LIGHT_SV_OLD ? .3f : .5f)     // свет гаснет (и счёт), потом ирис
 #define SV_DT_MAX .05f       // шаг часов экрана не больше (длинный кадр ириса, загрузка сцены ◄ ►)
 
 #define SV_DENIED_BLINK 1.2f
@@ -78,6 +86,7 @@ int shopViewTick(Shop *s, const char *dir, float dt) {
     char fn[320]; snprintf(fn, sizeof fn, "%sshop.shr", dirPath);
     phase = SHOPV_IN; t = 0.f; statsOn = 0; pending = -1;
     if (uiScrOpen(fn) != 0) { failed = 1; logf_("nopack %s", fn); return SHOPV_EV_NONE; }
+    { int cnt_ = shopSellerCount(s, s->at); if (cnt_ > 0 && s->sel >= cnt_) s->sel = 0; }   // сверка g09a-hud: список продавца стал короче (купленное ушло)
     if (loadCar(s, shopSellerItem(s, s->at, s->sel)) != 0) { uiScrClose(); failed = 1; logf_("noscene sel=%d", s->sel); return SHOPV_EV_NONE; }
     on = 1; sounds();
     logf_("open seller=%d item=%d coins=%d name=%s", s->at, curItem, shopCoins(s), s->item[curItem].name);
@@ -112,7 +121,11 @@ void shopViewEnd(Shop *s) {
   logf_("end coins=%d open=%d", s ? shopCoins(s) : -1, s ? s->open : -1);
 }
 
+static float coverAlpha(void);
 void shopViewInput(Shop *s, unsigned hit) {
+  if (!SHOP_LIGHT_SV_OLD && on && s && phase == SHOPV_IN && (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))) {   // Д11: закрытие в разгар открытия идёт с текущей точки света
+    float a_ = coverAlpha(); snd(sBack); phase = SHOPV_OUT; t = SV_LIGHT_OUT * (a_ > SV_DARK_A ? 1.f : a_ / SV_DARK_A); logf_("cancel-mid"); return;
+  }
   if (!on || !s || phase != SHOPV_IDLE) return;
   int it = shopSellerItem(s, s->at, s->sel);
   if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) { snd(sBack); phase = SHOPV_OUT; t = 0.f; logf_("cancel"); return; }
@@ -165,7 +178,8 @@ void shopViewDraw2D(Shop *s) {
   uiScrSetRow(SV_ROW_VIEW, statsOn);
   for (int k = 0; k < 4; k++) { int v = it >= 0 ? shopStars(s, it, k) : 0; uiScrSetRow(SV_ROW_STARS + k, v < 0 ? 0 : v); }
   int lit = (phase == SHOPV_IN && t >= SV_DARK_HOLD) || phase == SHOPV_IDLE || phase == SHOPV_BOUGHT;
-  int coins = phase == SHOPV_BOUGHT ? coinsFrom - (int)((coinsFrom - coinsTo) * (t < SV_COUNT ? t / SV_COUNT : 1.f) + .5f)
+  float cf = t < SV_COUNT ? t / SV_COUNT : 1.f; if (!SHOP_COUNT_SV_OLD) cf = floorf(cf * 10.f + 1e-4f) / 10.f;   // шаги по 0,1 с
+  int coins = phase == SHOPV_BOUGHT ? coinsFrom - (int)((coinsFrom - coinsTo) * cf + .5f)
             : phase >= SHOPV_OUT && pending >= 0 ? coinsTo : shopCoins(s);
   uiSetCoins(coins);
   uiScrShow(0, UI_T_COINS, lit);

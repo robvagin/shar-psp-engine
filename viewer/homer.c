@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include "homer.h"
 #include "stateprops.h"
+#include "sverka_shared.h"   // сверка g04-homer: svSurfaceAt (поверхность земли для звука шага)
+// сверка g04-homer P02-34: звук шага из sound.c; в сборках без звука (боты, тесты) — пустая слабая заглушка, настоящая из sound.c её перекрывает
+__attribute__((weak)) void sndFootstep(int ground, float x, float y, float z) { (void)ground; (void)x; (void)y; (void)z; }
 
 #ifndef SKIN_HOST
 #include <pspgu.h>
@@ -25,6 +28,8 @@
 
 static float clampf(float v, float a, float b) { return v < a ? a : v > b ? b : v; }
 // правка 252: угол-бесконечность или 1e30 крутил бы цикл вечно (a - 2π == a) — такой угол сводим fmodf, NaN/inf -> 0; |a| < 64 — как было
+static unsigned g04Rng = 2463534242u;   // сверка g04-homer: простой генератор для пауз ожидания (без rand)
+static unsigned g04Rand(void) { g04Rng ^= g04Rng << 13; g04Rng ^= g04Rng >> 17; g04Rng ^= g04Rng << 5; return g04Rng; }
 static float wrapPi(float a) {
   if (!(a > -64.f && a < 64.f)) a = (a > -1e30f && a < 1e30f) ? fmodf(a, 2.f * PI_F) : 0.f;
   while (a > PI_F) a -= 2.f * PI_F; while (a < -PI_F) a += 2.f * PI_F; return a;
@@ -66,6 +71,7 @@ void homerCarFrom(HomerCar *hc, const Car *c, float lift) {
   hc->husk = carHuskDrives(c);
   hc->seatY = c->p.seat[1] + lift; hc->seatData = c->p.seatData;
   hc->door[0] = c->p.doorX - homerDoorOut; hc->door[1] = c->p.doorZ; hc->seatA[0] = c->p.seatAx; hc->seatA[1] = c->p.seatAz;
+  hc->hostile = 0;   // сверка g04-homer ГОМЕР 5.7: ставит вызывающий для машин ИИ миссий
   hc->iris = carIrisFor(c->p.name);   // правка 333: SetIrisTransition(1) в .con — посадка и выход ирисом
 }
 static void xform(const float *m, float x, float y, float z, float out[3]) {
@@ -132,6 +138,17 @@ static void animTick(Homer *H, float dt) {
   if (stride > 1e-3f) {
     float ph = H->phaseLoco + dt * v / stride;
     // правка 45: шаг бега — фаза прошла 0.5 или 1 (два шага на цикл), на земле, бег (клип hom_loco_dash весит больше половины)
+    if (!HOMER_STEPFX_OLD) {
+      // сверка g04-homer P02-Д2 / P02-34: шаг на каждое касание ноги (два на цикл), пока желаемая скорость стика > 1 м/с; пыль (r = желаемая скорость, S = r / 8)
+      // и звук шага sndFootstep (бетон; металл и дерево по svSurfaceAt; в помещении и на остальной земле — бетон). HOMER_STEPFX_OLD=1 — только бег
+      if (H->state == HS_FOOT && H->grounded && H->wantV > 1.f && floorf(ph * 2.f) > floorf(H->phaseLoco * 2.f)) {
+        if (HOMER_STEP_DUST) pushEv(H, HOMER_EV_STEP, H->x, H->y, H->z, H->wantV, 0, 0);
+        if (!HOMER_STEPSND_OLD) {
+          int ind = 0, sf = svSurfaceAt(H->x, H->y, H->z, &ind);
+          sndFootstep((H->indoor || ind) ? 0 : (sf == SURF_METAL ? 1 : sf == SURF_WOOD ? 2 : 0), H->x, H->y, H->z);
+        }
+      }
+    } else
     if (HOMER_STEP_DUST && H->grounded && k == 2 && w >= .5f && floorf(ph * 2.f) > floorf(H->phaseLoco * 2.f))
       pushEv(H, HOMER_EV_STEP, H->x, H->y, H->z, v, 0, 0);
     H->phaseLoco = fmodf(ph, 1.f);
@@ -156,7 +173,7 @@ static void sampleLoco(Homer *H, SkinXf *out) {
 }
 
 static int isDrvClip(const Homer *H, int c) {
-  return c >= 0 && (c == H->cDrvTurn[0] || c == H->cDrvTurn[1] || c == H->cDrvGas || c == H->cDrvBrake || c == H->cDrvCrash);
+  return c >= 0 && (c == H->cDrvTurn[0] || c == H->cDrvTurn[1] || c == H->cDrvGas || c == H->cDrvBrake || c == H->cDrvCrash || (c >= 0 && c == H->cDrvBack));
 }
 void homerDriveInput(Homer *H, float steer, float gas, float brake, float speed, int crash) {
   H->drvSteer = steer; H->drvGas = gas; H->drvBrake = brake; H->drvSpeed = speed; H->drvCrash |= crash != 0;
@@ -165,10 +182,39 @@ void homerDriveInput(Homer *H, float steer, float gas, float brake, float speed,
 // жесты по 0,67–0,83 с, каждый из покоя в покой: поворот руля, когда руль пошёл в сторону, газ с места, тормоз на ходу, удар.
 // Пороги — правило порта (в данных их нет): руль за 0,5, газ с 0,3 до 0,7 ниже 8 м/с, тормоз за 0,5 быстрее 5 м/с; удар —
 // всегда, поверх жеста. Без входа (боты) — только покой
-static void driverGestures(Homer *H) {
+static void driverGestures(Homer *H, float dt) {
   if (H->cDrvTurn[0] < 0) return;
   int gest = H->clip != H->cInCar;
-  if (gest && clipDone(H)) { playClip(H, H->cInCar, 1, .2f, 0.f); gest = 0; }
+  if (gest && clipDone(H)) { playClip(H, H->cInCar, 1, .2f, 0.f); gest = 0; H->gKind = 0; }
+  if (!HOMER_GESTURE_OLD) {
+    // сверка g04-homer P02-29 / P05-Д2: жест выбирается только в покое (идущий не прерывается, и удар его не прерывает). Порядок: руль (стик > 0,5 и скорость > 5 км/ч),
+    // задний ход, газ (ускорение > 8 м/с² и скорость < 20 км/ч), торможение (замедление > 10 м/с² и скорость > 50 км/ч), последним удар (замедление > 25 м/с² вперёд;
+    // выше 50 км/ч сильный удар уходит в ветку торможения). Клип держится на кадре (руль 10, газ 15, тормоз 15) до отпускания: руль — стик < 0,1 или задний ход;
+    // газ — ускорение < 7 м/с²; тормоз — замедление < 9 м/с², скорость < 1 км/ч или задний ход. Взгляд назад (look_back_driver) в данных не выгружен.
+    // HOMER_GESTURE_OLD=1 — пороги порта (правки 220/231)
+    float spd = H->drvSpeed, acc = dt > 1e-4f ? (spd - H->drvPrevSpd) / dt : 0.f; H->drvPrevSpd = spd;
+    if (fabsf(acc) > 80.f) acc = acc > 0.f ? 80.f : -80.f;   // сброс/телепорт машины — не толчок
+    int rev = spd < -.3f;
+    if (gest && H->gKind) {                                   // идущий жест: держать на кадре до отпускания
+      float holdT = (H->gKind == 1 ? 10.f : (H->gKind == 4 ? 25.f : 15.f)) / 30.f; int rel = 0;
+      if (rev) H->gRevT = 0.f; else H->gRevT += dt;
+      if (H->gKind == 4) rel = H->gRevT > .73f;   // круг 5: взгляд назад держится ещё ≈22 тика (0,73 с) после конца реверса
+      else if (H->gKind == 1) rel = fabsf(H->drvSteer) < .1f || rev;
+      else if (H->gKind == 2) rel = acc < 7.f;
+      else rel = (-acc) < 9.f || spd < .28f || rev;
+      if (H->clipT >= holdT && !rel) { H->clipT = holdT; H->clipRate = 0.f; } else H->clipRate = 1.f;
+    } else if (!gest) {
+      int k = -1, kind = 0;
+      if (fabsf(H->drvSteer) > .5f && spd > 5.f / 3.6f) { k = H->cDrvTurn[H->drvSteer > 0.f ? 1 : 0]; kind = 1; }
+      else if (rev) { if (!HOMER_LOOKBACK_OLD && H->cDrvBack >= 0) { k = H->cDrvBack; kind = 4; H->gRevT = 0.f; } }   // круг 5: look_back_driver (ndr_look_back)
+      else if (acc > 8.f && spd < 20.f / 3.6f) { k = H->cDrvGas; kind = 2; }
+      else if (-acc > 10.f && spd > 50.f / 3.6f) { k = H->cDrvBrake; kind = 3; }
+      else if (-acc > 25.f && spd > 0.f) k = H->cDrvCrash;
+      if (k >= 0) { playClip(H, k, 0, .1f, 0.f); H->drvGestures++; H->gKind = kind; }
+    }
+    H->drvPrevSteer = H->drvSteer; H->drvPrevGas = H->drvGas; H->drvPrevBrake = H->drvBrake; H->drvCrash = 0;
+    return;
+  }
   int k = -1;
   if (H->drvCrash && H->cDrvCrash >= 0 && H->clip != H->cDrvCrash) k = H->cDrvCrash;
   else if (!gest) {
@@ -195,6 +241,12 @@ int homerDriverBox(Homer *H, float bb[6]) {
   return 1;
 }
 
+static char pcPre[8];   // префикс клипов персонажа (определение с инициализацией ниже)
+// сверка g04-homer P05-Д1: качание фигуры за рулём (+0,12 м у Лизы, место сиденья выше)
+static void seatBob(Homer *H) {
+  if (H->state != HS_IN_CAR || HOMER_SEATBOB_OLD) return;
+  H->place.w.y += H->bobOff + (!strcmp(pcPre, "lsa_") ? .12f : 0.f);
+}
 void homerPose(Homer *H) {
   const SkinModel *m = H->m; int nj = (int)m->h->nJoints, root = (int)m->h->rootJoint;
   int drv = !DRIVER_POSE_OLD && H->rootMode && H->car.ok && H->clip >= 0 && (H->clip == H->cInCar || isDrvClip(H, H->clip)) &&
@@ -205,7 +257,7 @@ void homerPose(Homer *H) {
       for (int k = 0; k < 16; k++) o[k] = a[k] + (a[k] - b[k]) * .5f;
       o[15] = 1.f; o[3] = o[7] = o[11] = 0.f;
     }
-    anchorFrame(H, (float *)&H->place);
+    anchorFrame(H, (float *)&H->place); seatBob(H);
     return;
   }
   if (!drv) H->drvPoseValid = 0;
@@ -217,6 +269,7 @@ void homerPose(Homer *H) {
       else skinRootMotion(m, H->clip, H->clipT, H->xf[root].t);
     }
   }
+  if (H->ejPh == 4 && H->clip >= 0 && !H->rootMode) { H->xf[root].t[0] = m->j[root].t[0]; H->xf[root].t[2] = m->j[root].t[2]; }   // круг 5: шаг по x, z даёт moveBody, не поза
   if (H->fade < H->fadeLen && H->fadeLen > 0.f) {
     float u = smooth01(H->fade / H->fadeLen);
     memcpy(H->tmp, H->snap, sizeof(SkinXf) * nj);
@@ -229,7 +282,7 @@ void homerPose(Homer *H) {
     if (H->drvPoseValid) memcpy(H->palPrev, H->palFresh, sizeof(ScePspFMatrix4) * nj); else memcpy(H->palPrev, H->pal, sizeof(ScePspFMatrix4) * nj);
     memcpy(H->palFresh, H->pal, sizeof(ScePspFMatrix4) * nj); H->drvPoseValid = 1; H->drvPoseTick = 0;
   }
-  if (H->rootMode && H->car.ok) anchorFrame(H, (float *)&H->place);
+  if (H->rootMode && H->car.ok) { anchorFrame(H, (float *)&H->place); seatBob(H); }
   else if (H->pitch != 0.f) {                                // правка 147: выброс — тело наклонено, ось опускается к земле
     float u = clampf(H->pitch / (.5f * PI_F), 0.f, 1.f);
     skinPlaceTilt(&H->place, H->x, H->y - (HOMER_EJECT_PIV - HOMER_EJECT_LIE) * u, H->z, H->h, H->pitch, HOMER_EJECT_PIV);
@@ -249,6 +302,7 @@ void homerPose(Homer *H) {
 
 void homerTalk(Homer *H, const char *g) {   // жест реплики разговора: стоя на земле, один раз (см. HS_FOOT, longIdle)
   int c = g && *g && strcmp(g, "none") ? skinFindClip(H->m, g) : -1;
+  if (!HOMER_TALK_OLD && c >= 0 && H->cTalk >= 0 && H->clip == H->cTalk && !clipDone(H)) return;   // P15-15: играющий жест не прерывается новой репликой
   if (c >= 0 && H->state == HS_FOOT && H->grounded) { H->cTalk = c; playClip(H, c, 0, .2f, 0.f); H->idleT = 0.f; }
   else if (c < 0 && H->cTalk >= 0 && H->clip == H->cTalk) { H->cTalk = -1; playLoco(H, .2f); }
 }
@@ -310,6 +364,10 @@ int homerInit(Homer *H, const SkinModel *m) {
   H->cFlail = need(skinFindClip(m, "flail"), &bad);      // по суффиксу (правка 147: есть и у brt_/lsa_/mrg_/apu_)
   H->cGetUp = need(skinFindClip(m, "get_up"), &bad);
   H->cTalk = -1; H->jaw = skinFindJoint(m, "Jaw"); H->jExtra = skinFindJoint(m, "Extra_Attributes");        // разговор: жест реплики и рот
+  H->cDodge = skinFindClip(m, "npd_dodge"); H->cDrvBack = skinFindClip(m, "ndr_look_back");   // круг 5: клипы, на которые .cho ссылается чужими именами
+  H->cCarVic[0] = skinFindClip(m, "ndr_in_car_victory_small"); H->cCarVic[1] = skinFindClip(m, "ndr_in_car_victory_large");
+  H->cSurf[0] = clipP(m, "surf_in"); H->cSurf[1] = clipP(m, "surf_cycle"); H->cSurf[2] = clipP(m, "surf_out");   // сверка g04-homer P02-23: сёрфинг (необязательные)
+  if (H->cSurf[0] < 0 || H->cSurf[1] < 0 || H->cSurf[2] < 0) H->cSurf[0] = H->cSurf[1] = H->cSurf[2] = -1;
   H->cIdle[0] = clipP(m, "idle_scratch");       // необязательные
   H->cIdle[1] = clipP(m, "idle_check_shoes");
   H->cIdle[2] = clipP(m, "idle_chili");
@@ -348,6 +406,7 @@ void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h)
   H->frame = h; H->heldX = H->heldY = 0.f; H->padLast = -1; H->bouncing = 0;
   H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0;
   H->camHoldD = H->camHoldE = 0.f;
+  H->supY = H->y; H->wallHit = 0; H->jkicked = H->edgeFall = 0; H->frameLatch = 0; H->idleWait = 0.f; H->stunT = 0.f; H->celT = 0.f; H->celKind = 0;   // сверка g04-homer
 }
 
 // ------------------------------------------------------------------ коллизия
@@ -448,21 +507,28 @@ static void stepMove(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
   float nx = H->x + H->vx * dt, nz = H->z + H->vz * dt;
   float oldY = H->y, ny;
   if (H->grounded) ny = H->y; else { H->vy -= g * dt; if (H->vy < -50.f) H->vy = -50.f; ny = H->y + H->vy * dt; }
+  if (!HOMER_CEIL_OLD && w && !H->grounded && H->vy > 0.f) {   // сверка g04-homer P02-13: голова упёрлась в потолок — вертикаль 0, начало падения, позиция на 0,1 ниже
+    float a_[3] = {H->x, H->y + HOMER_HEIGHT, H->z}, b_[3] = {H->x, ny + HOMER_HEIGHT + .05f, H->z};
+    if (colRayFrac(w, a_, b_, 0) < 1.f) { H->vy = 0.f; ny = fmaxf(H->y - .1f, H->groundY); if (!HOMER_JKICK_ONCE_OLD) H->edgeFall = 1; }   // круг 3: после удара головой — как падение, второй прыжок и удар закрыты
+  }
   float ix = nx, iz = nz; (void)ix; (void)iz;                  // куда шёл сам, до выталкивания стенами
+  H->wallHit = 0;                                             // сверка g04-homer P02-Д5: касание твёрдого в этом подшаге (стена, предмет, персонаж)
+  const float bkx = -sinf(H->h) * HOMER_BODY_BACK, bkz = -cosf(H->h) * HOMER_BODY_BACK;   // P02-21: центр круга тела на 0,05 назад от оси
   if (w) {
     CarBox b; memset(&b, 0, sizeof b);
-    b.x = nx; b.z = nz; b.fx = 0.f; b.fz = 1.f; b.hw = b.hl = HOMER_RADIUS;
+    b.x = nx + bkx; b.z = nz + bkz; b.fx = 0.f; b.fz = 1.f; b.hw = b.hl = HOMER_RADIUS;
     b.y = ny; b.lo = H->grounded ? HOMER_STEP : .15f; b.hi = HOMER_HEIGHT;
     float mx, mz, cnx, cnz;
     float pvx = H->vx, pvz = H->vz;                         // желаемая скорость до гашения стеной
     int pushed = colPushCar(w, &b, &mx, &mz, &cnx, &cnz);
     if (pushed) {
+      H->wallHit = 1;
       for (int k = 0; k < b.n; k++) {                        // скорость в стену гасим (скольжение вдоль)
         float vn = H->vx * b.nx[k] + H->vz * b.nz[k];
         if (vn < 0.f) { H->vx -= vn * b.nx[k]; H->vz -= vn * b.nz[k]; }
       }
     }
-    nx = b.x; nz = b.z;
+    nx = b.x - bkx; nz = b.z - bkz;
 #if HOMER_STAIR_UP
     // Лесенка из плит (гараж АЭС L1: уступы 1–1,55 м из наклонных ящиков). Узкое правило, чтобы не лезть на заборы и крыши:
     //  начало цепочки — упёрся в стену, а впереди верх НАКЛОННОЙ плиты (n.y в [HOMER_STAIR_NY, 0,9995)), выше шага, не выше HOMER_STAIR_MAX;
@@ -499,13 +565,15 @@ static void stepMove(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
   if (H->solid) {
     float sx, sz;
     if (H->solid(H->solidUser, &H->x, &H->z, H->y, HOMER_RADIUS, &stop, &sx, &sz)) {
+      H->wallHit = 1;
       float vn = H->vx * sx + H->vz * sz; if (vn < 0.f) { H->vx -= vn * sx; H->vz -= vn * sz; }
     }
   }
   // земля
-  float gy = -1e9f, n[3]; int has = 0;
+  float gy = -1e9f, n[3] = {0.f, 1.f, 0.f}; int has = 0;
   float top = (H->grounded ? oldY : fmaxf(oldY, ny)) + HOMER_STEP;
   if (w) has = colGround(w, H->x, H->z, top, ny - 200.f, &gy, n);
+  const float colGy = gy, colNy = has ? n[1] : 1.f;            // сверка g04-homer ГОМЕР 4.1: земля из коллизии (не крыша машины, не мост)
   { float ry; if (carRoofAt(car, H->x, H->z, &ry) && ry <= top && (!has || ry > gy)) { gy = ry; has = 1; } }
   if (stop > -1e8f && stop <= top && (!has || stop > gy)) { gy = stop; has = 1; }
   float bridge = -1e9f; int onVoid = 0;
@@ -532,10 +600,33 @@ static void stepMove(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
 #ifndef HOMER_VOID_FLOOR_OLD
   if (HOMER_VOID_WALL && w && !has) { float fy; if (voidFloor(w, H->x, H->z, top, &fy)) { gy = fy; has = 1; n[0] = n[2] = 0.f; n[1] = 1.f; H->voidFloors++; } }   // над пустотой без шага — пол
 #endif
+  // сверка g04-homer ГОМЕР 4.1: опора — наклон не круче 30° (нормаль.y > 0,866); круче не опора. Порт: на крутую грань до HOMER_SLOPE_RISE над
+  // последней годной опорой (бордюр, ступень) ступить можно; выше — стена, шаг отменяется, и если уже стоит на крутом — стекает вниз.
+  // HOMER_SLOPE30_OLD=1 — любой наклон
+  if (!HOMER_SLOPE30_OLD && w && has && gy == colGy && colNy < HOMER_SLOPE_NY && colNy > .02f) {
+    if (H->grounded && gy > H->supY + HOMER_SLOPE_RISE) {
+      float hl = sqrtf(n[0] * n[0] + n[2] * n[2]), dxn = hl > 1e-4f ? n[0] / hl : 0.f, dzn = hl > 1e-4f ? n[2] / hl : 0.f;   // горизонталь нормали — вниз по склону
+      float mvx = H->x - x0, mvz = H->z - z0;
+      if (mvx * dxn + mvz * dzn < 0.f && H->groundY < gy - .001f) {   // шаг вверх по склону: отменить, ход в склон гасим
+        float vn = H->vx * dxn + H->vz * dzn; if (vn < 0.f) { H->vx -= vn * dxn; H->vz -= vn * dzn; }
+        H->x = x0; H->z = z0; H->wallHit = 1;
+        has = colGround(w, H->x, H->z, top, ny - 200.f, &gy, n);
+      } else if (H->groundY >= gy - .001f || mvx * dxn + mvz * dzn >= 0.f) {   // вниз или вбок — стекает: добавка вниз по склону
+        H->vx += dxn * 8.f * dt; H->vz += dzn * 8.f * dt;
+      }
+    }
+  }
+  if (has && gy == colGy && colNy >= HOMER_SLOPE_NY) H->supY = gy;   // годная опора (в том числе ровная посадка из воздуха)
   if (has) H->groundY = gy;
   if (H->grounded) {
     if (has && gy >= oldY - HOMER_SNAP) { H->y = gy; H->vy = 0.f; }
-    else { H->grounded = 0; H->vy = 0.f; H->airFrom = oldY; H->launchV = sqrtf(H->vx * H->vx + H->vz * H->vz); }   // сошёл с края
+    else {
+      H->grounded = 0; H->vy = 0.f; H->airFrom = oldY; H->launchV = sqrtf(H->vx * H->vx + H->vz * H->vz);   // сошёл с края
+      // сверка g04-homer P02-Д5 / P02-10: в отрыве касание твёрдого в прошлом шаге обнуляет горизонталь; со схода с края нет второго прыжка и удара в воздухе
+      if (!HOMER_JUMP_WALL_OLD && H->wallHit) { H->vx = H->vz = 0.f; H->launchV = 0.f; }
+      if (!HOMER_JKICK_ONCE_OLD) H->edgeFall = 1;
+      if (!HOMER_AIR_PS2_OLD) { float s0 = sqrtf(H->vx * H->vx + H->vz * H->vz); H->airRun = H->dashHeld; H->airCap = fmaxf(H->airRun ? HOMER_RUN : HOMER_AIR_SPEED, s0) - (H->airRun ? 4.f : 0.f); }   // круг 3: потолок на сходе с края
+    }
   } else if (has && H->vy <= 0.f && H->y <= gy) {
     H->lastLandV = -H->vy; H->y = gy; H->vy = 0.f; H->grounded = 2; H->bouncing = 0;   // 2 = приземлился в этом подшаге
     H->landings++;
@@ -549,8 +640,10 @@ static void moveBody(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
   for (int i = 0; i < n; i++) { stepMove(H, w, car, sdt, g); if (H->grounded == 2) { landed = 1; H->grounded = 1; } }
   H->speed = sqrtf(H->vx * H->vx + H->vz * H->vz);
   if (landed) {
-    H->jumps = 0;
-    pushEv(H, HOMER_EV_LAND, H->x, H->y, H->z, H->lastLandV, 0, 0);
+    const int jumpsWas = H->jumps; H->jumps = 0; H->jkicked = 0; H->edgeFall = 0; H->airCap = 0.f;
+    float lpow = 0.f, ring = 0.f;   // сверка g04-homer P02-14: сила пыли приземления 0,5 / 0,7 после второго прыжка / 1,0 и кольцо после стомпа (читает main_state.h / fx, передано g11-objects)
+    if (!HOMER_LANDPOW_OLD) { lpow = H->state == HS_STOMP ? 1.f : (jumpsWas >= 2 ? .7f : .5f); ring = H->state == HS_STOMP ? 1.f : 0.f; }
+    pushEv(H, HOMER_EV_LAND, H->x, H->y, H->z, H->lastLandV, lpow, ring);
     H->grounded = 3;                                          // флаг для автомата состояний (сбрасывается там)
   }
   // выпал из мира: назад на последнее надёжное место
@@ -563,12 +656,33 @@ static void moveBody(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
 }
 
 // ------------------------------------------------------------------ управление
+#define STEER_NEUTRAL_T_PS .3f
 static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
   float mx = in ? in->mx : 0.f, my = in ? in->my : 0.f;
   float mag = sqrtf(mx * mx + my * my); if (mag > 1.f) { mx /= mag; my /= mag; mag = 1.f; }
   if (!allowMove) mag = 0.f;
   if (H->steerGap > .1f) H->neutralT = 9.f;   // №920: steer не звали (машина, пинок, падение) — стик «в нуле давно», как до правки
   H->steerGap = 0.f;
+  // сверка g04-homer P02-2: правило оригинала. Направление стика считается от ТЕКУЩЕЙ камеры каждый кадр. На событии смены камеры (переход, облёт,
+  // перескок у стены, поворот L/R) берётся прежняя камера: пока стик остаётся в пределах 15° от направления на момент события, мировое направление
+  // хода заморожено; больше 15° — сразу новая камера. Отличия порта: нет различия «вход/выход/интерьер» (сигнала нет — держится на любом переходе, как хотел
+  // Роб в №836); дрожь стика в ноль короче STEER_NEUTRAL_T замораживание не снимает (№920). HOMER_FRAME_PS2_OLD=1 — прежняя схема №704/836/916/920/947б/1059 ниже
+  float psDirHold = 0.f; int psHolding = 0;
+  if (!HOMER_FRAME_PS2_OLD && in) {
+    float stickA = atan2f(mx, my), camNow = in->camYaw;
+    int evtNow = homerCamBusy || H->camTurn != 0.f;
+    if (homerCamFlipN != H->flipSeen) { H->flipSeen = homerCamFlipN; evtNow = 1; }
+    if (evtNow && !H->flipLatch && mag > 0.f) { H->frameLatch = 1; H->frameHold = H->prevCamYaw - stickA; H->frameStick = stickA; H->flipLatchT = 0.f; }
+    H->flipLatch = evtNow;                                    // здесь это «событие было в прошлом кадре» (фронт)
+    if (mag > 0.f) H->flipLatchT = 0.f; else if (H->frameLatch && (H->flipLatchT += dt) > STEER_NEUTRAL_T_PS) H->frameLatch = 0;
+    if (H->frameLatch && mag > 0.f && fabsf(wrapPi(stickA - H->frameStick)) > .2618f) H->frameLatch = 0;   // 15°: новая камера сразу
+    if (H->frameLatch && mag > 0.f) { psHolding = 1; psDirHold = H->frameHold; }
+    H->frame = psHolding ? psDirHold + stickA : camNow;
+    H->prevCamYaw = camNow;
+    if (mag > 0.f) { H->heldX = mx; H->heldY = my; } else if (H->neutralT += dt, H->neutralT > .3f) { H->heldX = H->heldY = 0.f; }
+    if (mag > 0.f) H->neutralT = 0.f;
+  }
+  if (HOMER_FRAME_PS2_OLD) {
   // направление: курс камеры в момент, когда стик изменился (как в оригинале: держишь — мир не крутится с камерой)
   // №836 (Роб 18.10: «после перебивки камеры — выход из будки, из дома — начинаешь бежать, а направление уезжает за камерой; управление должно
   // остаться таким, как было начато относительно вида, а когда камера выровнялась и меняешь направление — уже от вида»): курс вида берётся,
@@ -619,23 +733,76 @@ static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
     float d_ = wrapPi(homerViewYaw - H->frame), mt_ = homerWalkCamRate * dt, k_ = 1.f - expf(-dt / homerWalkCamTau);
     H->frame = wrapPi(H->frame + clampf(d_ * k_, -mt_, mt_));
   }
+  }   // конец прежней схемы кадра (HOMER_FRAME_PS2_OLD)
   float dir = H->frame - atan2f(mx, my);
-  float top = H->grounded ? ((in && in->dash) ? HOMER_RUN : HOMER_WALK) : HOMER_AIR_SPEED;   // ○ зажат — бег (ControllerPS2.pag)
+  // сверка g04-homer P02-1 / P17-10: стик, направленный против лица (угол > 90°) при отклонении < 0,6 — ввод ×0,01: Гомер не разворачивается, а тормозит.
+  // Крестовина (отклонение 1) идёт без гашения. Подкидывающая точка (полёт по дуге) не трогается. HOMER_BACKSTICK_OLD=1 — как было
+  int killed = 0;
+  if (!HOMER_BACKSTICK_OLD && mag > 0.f && mag < .6f && !H->bouncing && cosf(dir - H->h) <= 0.f) { mag *= .01f; killed = 1; }
+  const int dashing = in && in->dash;
+  H->dashHeld = dashing;   // круг 3: бег на отрыве берётся из последнего ввода
+  // желаемая скорость стика. Сверка g04-homer ГОМЕР 1.1 / P02-3: ходьба (отклонение²)/0,69 до 1, × 4 м/с; бег — полные 8 м/с при любом ненулевом стике.
+  // HOMER_STICK_SQ_OLD=1 / HOMER_DASH_SPEED_OLD=1 — линейно (отклонение × 4 или × 8)
+  float sqv = mag * mag / .69f; if (sqv > 1.f) sqv = 1.f;
+  float top = H->grounded ? (dashing ? HOMER_RUN : HOMER_WALK) : HOMER_AIR_SPEED;   // ○ зажат — бег (ControllerPS2.pag)
   float target = mag * top;
+  if (!HOMER_STICK_SQ_OLD && !(dashing && HOMER_DASH_SPEED_OLD)) {
+    if (dashing && mag > 0.f) target = HOMER_RUN;   // круг 3 (проверка P02-3): погашенный стик с ○ — всё равно 8 м/с вдоль лица
+    else if (dashing) target = 0.f;
+    else target = sqv * HOMER_WALK;
+  }
+  if (H->grounded && !dashing && !HOMER_STICK_SQ_OLD) target = sqv * HOMER_WALK;
+  H->wantV = (killed || mag <= 0.f) ? 0.f : target;
   if (!H->grounded && H->bouncing && mag == 0.f) return;       // полёт с подкидывающей точки: без стика дуга не гаснет
-  float dvx = sinf(dir) * target - H->vx, dvz = cosf(dir) * target - H->vz;
-  float cur = sqrtf(H->vx * H->vx + H->vz * H->vz);
-  float rate = H->grounded ? (target > cur ? HOMER_ACCEL : HOMER_DECEL) : HOMER_AIR_ACCEL;
-  float dl = sqrtf(dvx * dvx + dvz * dvz), mxd = rate * dt;
-  if (dl > mxd) { dvx *= mxd / dl; dvz *= mxd / dl; }
-  H->vx += dvx; H->vz += dvz;
-  if (!H->grounded) {                                         // в воздухе не быстрее скорости отрыва (и не меньше 4 м/с)
-    float cap = fmaxf(HOMER_AIR_SPEED, H->launchV), s = sqrtf(H->vx * H->vx + H->vz * H->vz);
-    if (s > cap) { H->vx *= cap / s; H->vz *= cap / s; }
+  if (!H->grounded && !HOMER_AIR_PS2_OLD) {
+    // сверка g04-homer ГОМЕР 2.2 / 2.3, P02-9 / P02-10, Д1: в воздухе скорость меняет только стик — к ней на каждом тике прибавляется
+    // (желаемое направление) × (желаемая скорость: до 4, на беге 8) × 0,078; тик оригинала равен кадру (цель 30 к/с, Д1), поэтому 0,078 за 1/30 с
+    // (не × 60). Без стика скорость не гасится. Потолок горизонтальной скорости: max(4 | 8 на беге, текущая) − (бег? 4 : 0): после разбега с ○ — 4 м/с.
+    // Подкидывающая точка потолка не имеет. HOMER_AIR_PS2_OLD=1 — цель-скорость 4 м/с и потолок скорости отрыва
+    // круг 3 (проверка по исходнику): потолок и признак бега запоминаются ОДИН раз на отрыве (прыжок, второй прыжок, сход с края) и держатся весь полёт;
+    // желаемая скорость в воздухе = (отклонение²/0,69 до 1) × (8 при беге на отрыве, иначе 4) — не от живого ○
+    if (H->airCap <= 0.f) { float s0 = sqrtf(H->vx * H->vx + H->vz * H->vz); H->airRun = dashing; H->airCap = fmaxf(dashing ? HOMER_RUN : HOMER_AIR_SPEED, s0) - (dashing ? 4.f : 0.f); }   // отрыв не через doJump (отлёт, сход): запомнить сейчас
+    float dsp = sqv * (H->airRun ? HOMER_RUN : HOMER_AIR_SPEED);
+    if (mag > 0.f && !killed && dsp > 0.f) {
+      float a = .078f * dsp * (dt * 30.f);
+      H->vx += sinf(dir) * a; H->vz += cosf(dir) * a;
+    }
+    if (!H->bouncing) {
+      float s_ = sqrtf(H->vx * H->vx + H->vz * H->vz), cap = H->airCap;
+      if (s_ > cap && s_ > 1e-4f) { H->vx *= cap / s_; H->vz *= cap / s_; }
+    }
+  } else if (H->grounded && dashing && !HOMER_RUN_FACE_OLD) {
+    // сверка g04-homer ГОМЕР 1.3 / 1.4: бег — направление хода равно направлению лица (ниже оно догоняет стик с темпом 2/с), скорость сразу 8 м/с, без разгона 20;
+    // отпустил стик — торможение 10. HOMER_RUN_FACE_OLD=1 — ход в сторону стика
+    float fx = sinf(H->h), fz = cosf(H->h);
+    if (target > 0.f && !HOMER_DASH_SPEED_OLD) { H->vx = fx * target; H->vz = fz * target; }
+    else {
+      float dvx = fx * target - H->vx, dvz = fz * target - H->vz;
+      float rate = target > sqrtf(H->vx * H->vx + H->vz * H->vz) ? HOMER_ACCEL : HOMER_DECEL, dl = sqrtf(dvx * dvx + dvz * dvz), mxd = rate * dt;
+      if (dl > mxd) { dvx *= mxd / dl; dvz *= mxd / dl; }
+      H->vx += dvx; H->vz += dvz;
+    }
+  } else {
+    float dvx = sinf(dir) * target - H->vx, dvz = cosf(dir) * target - H->vz;
+    float cur = sqrtf(H->vx * H->vx + H->vz * H->vz);
+    float rate = H->grounded ? (target > cur ? HOMER_ACCEL : HOMER_DECEL) : HOMER_AIR_ACCEL;
+    float dl = sqrtf(dvx * dvx + dvz * dvz), mxd = rate * dt;
+    if (dl > mxd) { dvx *= mxd / dl; dvz *= mxd / dl; }
+    H->vx += dvx; H->vz += dvz;
+    if (!H->grounded) {                                         // в воздухе не быстрее скорости отрыва (и не меньше 4 м/с)
+      float cap = fmaxf(HOMER_AIR_SPEED, H->launchV), s = sqrtf(H->vx * H->vx + H->vz * H->vz);
+      if (s > cap) { H->vx *= cap / s; H->vz *= cap / s; }
+    }
   }
   if (mag > .1f) {
-    float d = wrapPi(dir - H->h), mt = HOMER_TURN * dt;
-    H->h = wrapPi(H->h + clampf(d, -mt, mt));
+    float d = wrapPi(dir - H->h);
+    if (HOMER_TURN_EXP_OLD) { float mt = HOMER_TURN * dt; H->h = wrapPi(H->h + clampf(d, -mt, mt)); }
+    else {
+      // сверка g04-homer P02-4 / ГОМЕР 1.2, 2.4: лицо догоняет стик по экспоненте — темп 10 в секунду на ходьбе, 2 на беге, 4 в воздухе
+      // (63 % угла за 0,1 / 0,5 / 0,25 с). HOMER_TURN_EXP_OLD=1 — линейно 720°/с
+      float rate = !H->grounded ? 4.f : ((dashing && !HOMER_RUN_FACE_OLD) ? 2.f : 10.f);
+      H->h = wrapPi(H->h + d * (1.f - expf(-rate * dt)));
+    }
   }
 }
 
@@ -657,6 +824,7 @@ static int tryBounce(Homer *H, const ColWorld *w) {
   if (dy < .5f) return 0;                                    // вершина ниже ступней — не пружина
   float vy = sqrtf(2.f * HOMER_GRAVITY * dy), t = vy / HOMER_GRAVITY;
   H->vx = (A[0] - H->x) / t; H->vz = (A[2] - H->z) / t; H->vy = vy;
+  if (!HOMER_PAD_ANY_OLD) { float hv_ = sqrtf(H->vx * H->vx + H->vz * H->vz); if (hv_ > 25.f) { H->vx *= 25.f / hv_; H->vz *= 25.f / hv_; } }   // P02-16: горизонталь не больше 25 м/с
   H->grounded = 0; H->jumps = 1; H->airFrom = H->y; H->bouncing = 1; H->bounces++;
   H->launchV = sqrtf(H->vx * H->vx + H->vz * H->vz); H->speed = H->launchV;
   memcpy(H->padApex, A, sizeof H->padApex);
@@ -667,23 +835,39 @@ static int tryBounce(Homer *H, const ColWorld *w) {
   return 1;
 }
 
-static void doJump(Homer *H, int second) {
+static void doJump(Homer *H, int second, int afterLaunch) {
   H->vy = sqrtf(2.f * HOMER_GRAVITY * (second ? HOMER_JUMP2_H : HOMER_JUMP_H));
-  H->jumps = second ? 2 : 1; H->grounded = 0; H->airFrom = H->y;
+  // сверка g04-homer P02-Д5: в отрыве горизонталь берётся из движения за прошлый шаг, но если в нём было касание твёрдого (стена, ящик, персонаж) — ноль
+  if (!HOMER_JUMP_WALL_OLD && H->wallHit) H->vx = H->vz = 0.f;
+  H->jumps = second ? 2 : 1; H->grounded = 0; H->airFrom = H->y; H->edgeFall = 0; H->jkicked = 0;
+  if (!HOMER_AIR_PS2_OLD) {   // круг 3: потолок горизонтали и бег запоминаются на отрыве; второй прыжок пересчитывает от текущей скорости
+    float s0 = sqrtf(H->vx * H->vx + H->vz * H->vz); H->airRun = H->dashHeld;
+    H->airCap = fmaxf(H->airRun ? HOMER_RUN : HOMER_AIR_SPEED, s0) - (H->airRun ? 4.f : 0.f);
+  }
   H->launchV = sqrtf(H->vx * H->vx + H->vz * H->vz);         // скорость отрыва = потолок скорости в воздухе
-  if (!second) playClip(H, H->cTake, 0, .01f, 0.f);           // cho: jump_idle_launch blendIn 0.01
+  if (!second && !afterLaunch) playClip(H, H->cTake, 0, .01f, 0.f);           // cho: jump_idle_launch blendIn 0.01 (afterLaunch — клип заводки уже доиграл)
   else playClip(H, H->cDash2, 0, .5f, 0.f);                   // cho: jump_dash_in_air blendIn 0.5
   pushEv(H, HOMER_EV_JUMP, H->x, H->y, H->z, second ? 2.f : 1.f, sinf(H->h), cosf(H->h));
 }
 
 static void kickHit(Homer *H, float fwd, float up) {
   float fx = sinf(H->h), fz = cosf(H->h);
-  pushEv(H, HOMER_EV_HIT, H->x + fx * fwd, H->y + up, H->z + fz * fwd, HOMER_KICK_REACH, fx, fz);
+  const float reach = (!HOMER_KICKSEG_OLD && H->state == HS_KICK) ? .5f : HOMER_KICK_REACH;   // круг 2, ГОМЕР 3.1: пинок на земле — малая сфера в конце отрезка
+  if (H->indoor && !HOMER_INTERIOR_OLD) { H->hitSent = 1; return; }   // сверка g04-homer P02-6: внутри интерьера клип удара играет, по предметам не бьёт
+  pushEv(H, HOMER_EV_HIT, H->x + fx * fwd, H->y + up, H->z + fz * fwd, reach, fx, fz);
   H->hitSent = 1;
 }
 
 int homerCanEnter(const Homer *H, const HomerCar *car) {
   if (!car || !car->ok || car->dead || (H->state != HS_FOOT && H->state != HS_KICK)) return 0;   // в остов не садится
+  // сверка g04-homer P02-18: пока идёт действие (воздух, удар, заводка прыжка, праздник), △ не читается
+  if (!HOMER_AIR_ACT_OLD && (H->state != HS_FOOT || !H->grounded || H->launchWait > 0.f || H->celKind == 2)) return 0;
+  if (!HOMER_ENTER_BOX_OLD) {
+    // сверка g04-homer ГОМЕР 5.1 / 6.2: сесть можно внутри объёма «габарит кузова + 1 м во все стороны (включая высоту)». HOMER_ENTER_BOX_OLD=1 — 5 м от двери / 3,5 м от кузова
+    const CarBox *bx = &car->box; float ex = H->x - bx->x, ez = H->z - bx->z;
+    float a = ex * bx->fx + ez * bx->fz, sd = -ex * bx->fz + ez * bx->fx;
+    return fabsf(a) <= bx->hl + HOMER_ENTER_PAD && fabsf(sd) <= bx->hw + HOMER_ENTER_PAD && H->y + .9f >= car->y - HOMER_ENTER_PAD && H->y + .9f <= car->roof + HOMER_ENTER_PAD;
+  }
   float p[3]; xform(car->m, car->door[0], -car->lift, car->door[1], p);
   if (fabsf(p[1] - H->y) > 2.f) return 0;
   float dx = p[0] - H->x, dz = p[2] - H->z;
@@ -699,7 +883,7 @@ int homerEnterCar(Homer *H, const HomerCar *car, const HomerCarCb *cb) {
   if (!homerCanEnter(H, car)) return 0;
   H->car = *car; if (cb) H->cb = *cb; else memset(&H->cb, 0, sizeof H->cb);
   setAnchor(H, 0.f);
-  H->state = HS_TO_DOOR; H->st = 0.f; H->phase = 0;
+  H->state = HS_TO_DOOR; H->st = 0.f; H->phase = 0; H->waitCar = 0.f; H->doorT = 0.f; H->doorBudget = 0.f; H->celKind = 0; H->surfSt = 0;
   return 1;
 }
 
@@ -711,7 +895,7 @@ static void startSeq(Homer *H, int state, int clip) {
 
 void homerSetInCar(Homer *H, const HomerCar *car) {
   H->car = *car; setAnchor(H, 1.f);
-  H->state = HS_IN_CAR; H->rootMode = 1; H->door = 0.f; H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0;
+  H->state = HS_IN_CAR; H->rootMode = 1; H->door = 0.f; H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0; H->bobInit = 0; H->bobOff = 0.f; H->gKind = 0;
   H->clip = H->cInCar; H->clipLoop = 1; H->clipT = 0.f; H->clipRate = 1.f; H->fade = H->fadeLen = 0.f;
 }
 
@@ -722,8 +906,37 @@ int homerExitCar(Homer *H, const HomerCar *car, const HomerCarCb *cb) {
   return 1;
 }
 
+// сверка g04-homer ГОМЕР 8.6: оса попала — оглушение sec с мерцанием; не отлетает и не падает
+void homerStun(Homer *H, float sec) { H->stunT = sec; }
+int homerPressButton(Homer *H, float yaw) {
+  if (HOMER_SWITCHCLIP_OLD || H->state != HS_FOOT || !H->grounded || H->launchWait > 0.f) return 0;
+  int c = clipP(H->m, "hit_switch"); if (c < 0) return 0;
+  if (yaw == yaw) H->h = yaw;
+  H->vx = H->vz = 0.f; H->speed = 0.f; H->celKind = 1; H->celClip = c; H->surfSt = 0; playClip(H, c, 0, .1f, 0.f);
+  return 1;
+}
+void homerRockOut(Homer *H, int on) { H->rockOut = on; }
+
+// сверка g04-homer P05-1 / P02-24 / P07-Д4: радость. big=0 — конец этапа (малый клип, стик обрывает), big=1 — миссия пройдена / карточка (большой, ничем не прерывается).
+// Пешком — hom_victory_small/large; за рулём — in_car_victory_*_driver (клипов нет в homer.shr: 0, передано tools/homer_export.py)
+int homerCelebrate(Homer *H, int big) {
+  const char *nm = big ? "victory_large" : "victory_small";
+  if (H->state == HS_IN_CAR) {
+    int c = H->cCarVic[big ? 1 : 0];   // круг 5: in_car_victory_*_driver -> ndr_in_car_victory_* (клип водителя ndr)
+    if (c < 0 || H->clip != H->cInCar) return 0;
+    playClip(H, c, 0, .15f, 0.f); return 1;
+  }
+  if (H->state != HS_FOOT || !H->grounded || H->launchWait > 0.f) return 0;
+  int c = clipP(H->m, nm); if (c < 0) return 0;
+  if (H->celKind == 2 && !big) return 0;   // большой не перебивается малым
+  H->celKind = big ? 2 : 1; H->celClip = c; H->surfSt = 0; playClip(H, c, 0, .15f, 0.f);
+  return 1;
+}
+
 void homerHurt(Homer *H, float fromX, float fromZ, float power) {
   if (!homerOnFoot(H) || H->state == HS_HURT) return;
+  // круг 2, ГОМЕР 8.6 / P04:W5: выстрел осы (сила ≤ 0,1, collect.c) — оглушение 0,5 с с мерцанием, без отлёта и падения; событие HURT остаётся (монеты, реплика). HOMER_STUN_OLD=1 — отлёт
+  if (!HOMER_STUN_OLD && power > 0.f && power <= .1f) { H->stunT = .5f; pushEv(H, HOMER_EV_HURT, H->x, H->y + .9f, H->z, power, 0.f, 0.f); return; }
   float dx = H->x - fromX, dz = H->z - fromZ, l = sqrtf(dx * dx + dz * dz);
   if (l < 1e-3f) { dx = -sinf(H->h); dz = -cosf(H->h); l = 1.f; }
   dx /= l; dz /= l; if (power <= 0.f) power = 1.f;
@@ -793,13 +1006,16 @@ static int exitBlocked(Homer *H, const ColWorld *w) {
       if (H->solid(H->solidUser, &x, &z, py, HOMER_RADIUS, &top, &nx, &nz) && (x - px) * (x - px) + (z - pz) * (z - pz) > .15f * .15f) return 1;
     }
   }
+  // круг 3 (проверка P02-28): высота земли у точки выхода отличается от высоты машины больше чем на 1 м — выход через верх. HOMER_EXIT_TOP_OLD=1 — без этого условия
+  if (!HOMER_EXIT_TOP_OLD && w) { float gy_; if (colGround(w, pe[0], pe[2], H->car.y + 3.f, H->car.y - 6.f, &gy_, 0) && fabsf(gy_ - H->car.y) > 1.f) return 1; }
   return 0;
 }
 static void exitOverTop(Homer *H) {
   const SkinModel *m = H->m; int root = (int)m->h->rootJoint;
   const HomerCar *c = &H->car;
-  H->x = c->x; H->z = c->z; H->y = c->roof; H->h = c->h;
-  H->vx = H->vz = 0.f; H->vy = sqrtf(2.f * HOMER_GRAVITY * .5f); H->speed = 0.f; H->launchV = 0.f;
+  H->x = c->x; H->z = c->z; H->y = c->roof + (HOMER_EXIT_TOP_OLD ? 0.f : .2f); H->h = c->h;
+  H->vx = H->vz = 0.f; H->vy = HOMER_EXIT_TOP_OLD ? sqrtf(2.f * HOMER_GRAVITY * .5f) : 0.f; H->speed = 0.f; H->launchV = 0.f;   // P02-28: на крышу плюс 0,2 м, без подскока 0,5 м
+  if (!HOMER_EXIT_TOP_OLD && H->irisOn) H->irisCarOut++;   // P02-28: ирис (вызывающий закрывает кадр по смене счётчика)
   H->grounded = 0; H->jumps = 1; H->airFrom = H->y; H->groundY = H->y;
   H->state = HS_FOOT; H->rootMode = 0; H->st = 0.f; H->frame = H->h; H->overTop = 1;
   memcpy(H->snap, H->xf, sizeof(SkinXf) * m->h->nJoints);
@@ -856,6 +1072,20 @@ static int ejectNow(Homer *H, const ColWorld *w, float fromX, float fromZ, float
   if (l < 1e-3f) { dx = -cosf(c->h); dz = sinf(c->h); l = 1.f; }   // влево от машины
   dx /= l; dz /= l;
   int top = exitBlocked(H, w);                                // у двери стена/предмет: с крыши в другую сторону
+  if (!HOMER_DODGE_OLD && H->cDodge >= 0 && !top) {
+    // круг 5, ГОМЕР 5.5 / P05-22: Гомер ждал 0,5 с (ejWait), теперь встаёт лицом наружу от водительской двери (вбок от машины), на землю у двери и играет клип уворота; движение даёт корень клипа
+    const CarBox *bx = &c->box; float ox = bx->fz, oz = -bx->fx;   // наружу на водительской стороне (водитель — отрицательная сторона бока)
+    H->x = p[0]; H->z = p[2]; H->y = p[1]; H->h = atan2f(ox, oz);
+    H->vx = H->vz = H->vy = 0.f; H->speed = 0.f; H->launchV = 0.f; H->grounded = 1; H->jumps = 0; H->airFrom = H->y; H->groundY = H->y;
+    H->state = HS_HURT; H->st = 0.f; H->phase = 0; H->rootMode = 0; H->frame = H->h; H->overTop = 0; H->ejPh = 4; H->pitch = 0.f;
+    memcpy(H->snap, H->xf, sizeof(SkinXf) * m->h->nJoints); memcpy(H->snap[root].q, m->j[root].q, 16); memcpy(H->snap[root].t, m->j[root].t, 12);
+    H->clip = -1; playClip(H, H->cDodge, 0, .1f, 0.f);
+    H->camYaw = atan2f(ox, oz); H->camY = H->y; H->camInit = 1; H->camPullD = 0.f; H->camRise = 0.f; H->ejected++;
+    pushEv(H, HOMER_EV_ON_FOOT, H->x, H->y, H->z, 0, sinf(H->h), cosf(H->h));
+    pushEv(H, HOMER_EV_EJECT, H->x, H->y, H->z, power, ox, oz);
+    if (H->cb.done) H->cb.done(H->cb.user, 0);
+    return 1;
+  }
   if (top) { H->x = c->x; H->z = c->z; H->y = c->roof; dx = -dx; dz = -dz; }
   else { H->x = p[0]; H->z = p[2]; H->y = p[1] + HOMER_EJECT_Y; }
   if (power <= 0.f) power = 1.f;
@@ -890,7 +1120,7 @@ int homerEject(Homer *H, const ColWorld *w, const HomerCar *car, float fromX, fl
 #ifdef HOMER_EJECT_V1
   return ejectNow(H, w, fromX, fromZ, power);
 #else
-  H->ejWait = HOMER_EJECT_DELAY; H->ejFromX = fromX; H->ejFromZ = fromZ; H->ejPow = power;   // правка 147: ещё в горящем остове
+  H->ejWait = (!HOMER_DODGE_OLD && H->cDodge >= 0) ? .5f : HOMER_EJECT_DELAY; H->ejFromX = fromX; H->ejFromZ = fromZ; H->ejPow = power;   // правка 147: ещё в горящем остове
   return 1;
 #endif
 }
@@ -906,7 +1136,10 @@ int homerEject(Homer *H, const ColWorld *w, const HomerCar *car, float fromX, fl
 #define HOMER_CARHIT_V 3.f      // м/с: как TR_PED_HIT_V прохожих
 #define HOMER_CARHIT_COOL 1.5f  // с: пауза до следующего удара (пока встаёт)
 static int carHitsHomer(Homer *H, const HomerCar *c) {
-  if (c->dead || fabsf(c->v) <= HOMER_CARHIT_V || fabsf(c->y - H->y) > 1.8f) return 0;
+  // сверка g04-homer ГОМЕР 5.7: пешего сбивают только машины ИИ миссий (c->hostile: погоня, цели), порог 1 м/с; трафик, припаркованные и чужие — обычные толчки по столкновению.
+  // HOMER_CARHIT_ALL_OLD=1 — любая машина быстрее HOMER_CARHIT_V (3 м/с)
+  if (!HOMER_CARHIT_ALL_OLD && !c->hostile) return 0;
+  if (c->dead || fabsf(c->v) <= (HOMER_CARHIT_ALL_OLD ? HOMER_CARHIT_V : 1.f) || fabsf(c->y - H->y) > 1.8f) return 0;
   const CarBox *b = &c->box; float dx = H->x - b->x, dz = H->z - b->z, a = dx * b->fx + dz * b->fz, s = -dx * b->fz + dz * b->fx, r = HOMER_RADIUS;
   if (fabsf(a) >= b->hl + r || fabsf(s) >= b->hw + r) return 0;
   float vx = b->fx * c->v, vz = b->fz * c->v, sp = fabsf(c->v);
@@ -920,6 +1153,12 @@ static int carHitsHomer(Homer *H, const HomerCar *c) {
   playClip(H, H->cFlail, 0, .05f, 0.f); H->carHits++;
   return 1;
 }
+// сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (погоня, цель) сбивает пешего, если вызывающий (traffic.c / car.c) передаёт её сюда с hostile = 1. 1 — сбит
+int homerKnockedByCar(Homer *H, const HomerCar *c) {
+  if (HOMER_CARHIT_OLD || !c || !c->ok || H->state == HS_HURT || H->carHitCool > 0.f || !homerOnFoot(H)) return 0;
+  if (!carHitsHomer(H, c)) return 0;
+  H->carHitCool = HOMER_CARHIT_COOL; return 1;
+}
 static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, const HomerInput *in, float dt);
 void homerUpdate(Homer *H, const ColWorld *w, const HomerCar *car, const HomerInput *in, float dt) {
   static unsigned gen; if (++gen == 0) gen = 1;
@@ -928,6 +1167,11 @@ void homerUpdate(Homer *H, const ColWorld *w, const HomerCar *car, const HomerIn
 static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, const HomerInput *in, float dt) {
   if (dt <= 0.f) return;
   if (dt > .1f) dt = .1f;
+  HomerInput inI;   // сверка g04-homer P02-6 / ГОМЕР 1.6: внутри интерьера ○ (бег) и ✕ (прыжок) отключены
+  if (in && H->indoor && !HOMER_INTERIOR_OLD && (in->dash || in->jump)) { inI = *in; inI.dash = 0; inI.jump = 0; in = &inI; }
+  // круг 3 (проверка ГОМЕР 8.6): на время оглушения желаемое движение равно нулю (прыжок и удар проходят); HOMER_STUN_OLD=1 — только мерцание
+  if (H->stunT > 0.f && !HOMER_STUN_OLD && in && (in->mx != 0.f || in->my != 0.f)) { if (in != &inI) inI = *in; inI.mx = inI.my = 0.f; in = &inI; }
+  if (H->stunT > 0.f) { H->stunT -= dt; if (H->stunT < 0.f) H->stunT = 0.f; }
   if (car && car->ok) {
     if (H->state == HS_TO_DOOR || H->state == HS_GET_IN || H->state == HS_IN_CAR || H->state == HS_GET_OUT) H->car = *car;
   }
@@ -939,38 +1183,74 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
   if (car && car->ok) H->camCar = *car; else H->camCar.ok = 0;   // для камеры пешком
   H->st += dt; H->steerGap += dt;
   int wantsMove = in && (in->mx * in->mx + in->my * in->my) > .01f;
+  const int anyStick = in && (in->mx != 0.f || in->my != 0.f);   // сверка g04-homer P02-15/36: «ввод» — любое ненулевое желаемое, не только > 0,1
 
   if (H->carHitCool > 0.f) H->carHitCool -= dt;
   if (!HOMER_CARHIT_OLD && solid && H->state != HS_HURT && H->carHitCool <= 0.f && carHitsHomer(H, solid)) H->carHitCool = HOMER_CARHIT_COOL;   // №709: сбит машиной — падает и встаёт
 
   switch (H->state) {
   case HS_FOOT: {
+    // сверка g04-homer P02-22: стоит на крыше машины — едет вместе с ней (положение и поворот вокруг центра кузова, высота крыши)
+    if (!HOMER_RIDE_OLD && H->onCar && car && car->ok && H->grounded && H->carPrevOk) {
+      const CarBox *cb_ = &car->box; float ang = atan2f(cb_->fx, cb_->fz), da = wrapPi(ang - H->carPrevAng), c_ = cosf(da), s_ = sinf(da);
+      float rx = H->x - H->carPrevX, rz = H->z - H->carPrevZ;
+      H->x = cb_->x + rx * c_ + rz * s_; H->z = cb_->z - rx * s_ + rz * c_; H->h = wrapPi(H->h + da); H->y += car->roof - H->carPrevRoof;
+      H->vx = H->vz = 0.f;
+    }
+    // сверка g04-homer P05-1 / P02-24: праздничный клип — малый стик прерывает, большой не прерывает и держит на месте
+    if (H->celKind) {
+      if (H->clip != H->celClip || clipDone(H) || (H->celKind == 1 && anyStick)) { H->celKind = 0; playLoco(H, .2f); }
+      else { H->vx = H->vz = 0.f; H->speed = 0.f; moveBody(H, w, solid, dt, HOMER_GRAVITY); if (H->grounded == 3) H->grounded = 1; break; }
+    }
+    // сверка g04-homer P02-7 / ГОМЕР 2.8: заводка прыжка с места — ни движения, ни гравитации; отрыв (и звук) после конца клипа; кнопки в это время не читаются (P02-18)
+    if (H->launchWait > 0.f && H->clip != H->cTake) H->launchWait = 0.f;   // клип сменило другое действие — заводка отменена
+    if (H->launchWait > 0.f) {
+      H->vx = H->vz = 0.f; H->speed = 0.f;
+      if ((H->launchWait -= dt) <= 0.f) { H->launchWait = 0.f; doJump(H, 0, 1); }
+      else break;
+    }
     // кнопки
-    if (in && in->jump) {
-      if (H->grounded) doJump(H, 0);
-      else if (H->jumps == 1 && H->vy <= HOMER_JUMP2_UP && H->vy >= -HOMER_JUMP2_DOWN) doJump(H, 1);
+    if (in && in->jump && H->launchWait <= 0.f) {
+      if (H->grounded) {
+        if (!HOMER_JUMP_LAUNCH_OLD && H->speed < .5f && !wantsMove && H->clip != H->cTake && clipLen(H, H->cTake) > .01f) {   // с места: сначала заводка
+          H->launchWait = clipLen(H, H->cTake); H->vx = H->vz = 0.f; playClip(H, H->cTake, 0, .01f, 0.f);
+          break;
+        }
+        doJump(H, 0, 0);
+      }
+      else if (H->jumps == 1 && H->vy <= HOMER_JUMP2_UP && H->vy >= -HOMER_JUMP2_DOWN && (HOMER_JKICK_ONCE_OLD || !H->jkicked)) doJump(H, 1, 0);   // P02-11: после удара в прыжке второй прыжок закрыт
     }
     int doStomp = in && in->stomp && !H->grounded;             // только прежняя раскладка (отрицательный контроль); игрок — X X □
     if (in && in->attack) {
       if (H->grounded) {                                      // пинок на земле: hom_break ("break")
         H->state = HS_KICK; H->st = 0.f; H->hitSent = 0; playClip(H, H->cBreak, 0, .08f, 0.f);   // cho break_quick blendIn .08
+        if (!HOMER_KICK_STOP_OLD) { H->vx = H->vz = 0.f; H->speed = 0.f; }   // P02-17: сразу стоп (ходьба выключается)
         break;
-      } else if (H->jumps >= 2) doStomp = 1;                   // второй прыжок + пинок = стомп (оригинал)
-      else if (H->clip != H->cJKick) { H->hitSent = 0; playClip(H, H->cJKick, 0, .05f, 0.f); }
+      } else if (!HOMER_JKICK_ONCE_OLD && (H->jkicked || H->edgeFall)) {}   // P02-11 / P02-10: удар в прыжке один раз; после схода с края ни удара, ни стомпа
+      else if (H->jumps >= 2) doStomp = 1;                   // второй прыжок + пинок = стомп (оригинал)
+      else if (H->clip != H->cJKick) { H->hitSent = 0; playClip(H, H->cJKick, 0, .05f, 0.f); if (!HOMER_JKICK_ONCE_OLD) H->jkicked = 1; }
     }
     if (doStomp) {
+      H->stompVy = H->vy;                                     // P02-12: вертикаль на нажатии сохраняется
       H->state = HS_STOMP; H->st = 0.f; H->phase = 0; H->hitSent = 0;
       playClip(H, H->cStA, 0, .05f, 0.f);
       break;
     }
     steer(H, in, dt, 1);
     moveBody(H, w, solid, dt, HOMER_GRAVITY);
-    if (H->grounded) tryBounce(H, w);                         // подкидывающая точка под ногами (JMP1)
+    if (H->grounded || !HOMER_PAD_ANY_OLD) tryBounce(H, w);   // подкидывающая точка (JMP1); P02-Д4: в любой фазе — вход в объём (действие обрывается)
+    // сверка g04-homer P02-22: стоим ли на крыше машины (земля — крыша, а не мир): для переезда вместе с ней и сёрфинга
+    H->onCar = 0;
+    if (H->grounded && car && car->ok && fabsf(H->y - car->roof) < .02f && fabsf(H->y - H->groundY) < .02f) {
+      const CarBox *cb2 = &car->box; float ex_ = H->x - cb2->x, ez_ = H->z - cb2->z;
+      if (fabsf(ex_ * cb2->fx + ez_ * cb2->fz) <= cb2->hl && fabsf(-ex_ * cb2->fz + ez_ * cb2->fx) <= cb2->hw) H->onCar = 1;
+    }
+    if (H->onCar) { H->carPrevOk = 1; H->carPrevX = car->box.x; H->carPrevZ = car->box.z; H->carPrevAng = atan2f(car->box.fx, car->box.fz); H->carPrevRoof = car->roof; } else H->carPrevOk = 0;
     // анимация
-    if (H->clip == H->cJKick && !H->hitSent && H->clipT >= 5.f / 30.f) kickHit(H, .7f, .4f);   // удар ногой: кадры 4–11
+    if (H->clip == H->cJKick && !H->hitSent && H->clipT >= (HOMER_JKICK_ONCE_OLD ? 5.f : 6.f) / 30.f) kickHit(H, .7f, .4f);   // удар ногой: кадры 4–11 (P02-11: кадр удара 6, 0,2 с)
     if (H->grounded == 3) {                                   // приземлился
       H->grounded = 1;
-      if (H->speed < 1.f && !wantsMove) playClip(H, H->cLand, 0, .01f, 0.f);   // cho jump_idle_land blendIn .01
+      if (H->speed < 1.f && !(HOMER_LANDCLIP_OLD ? wantsMove : anyStick)) playClip(H, H->cLand, 0, .01f, 0.f);   // cho jump_idle_land blendIn .01 (P02-15: без стика; любой стик или ✕ прерывает)
       else playLoco(H, .1f);
     }
     if (!H->grounded) {
@@ -978,13 +1258,40 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       else if (H->clip < 0 || H->clip == H->cLand || (H->clip != H->cTake && H->clip != H->cAir && H->clip != H->cDash2 && H->clip != H->cJKick))
         playClip(H, H->cAir, 0, .1f, 0.f);                    // сошёл с края
       else if (H->clip == H->cJKick && clipDone(H)) playClip(H, H->cAir, 0, .1f, 0.f);
-      H->idleT = 0.f;
+      H->idleT = 0.f; H->idleWait = 0.f;
+      if (!HOMER_AIRCLIP_OLD && (H->clip == H->cAir || H->clip == H->cDash2) && H->clip >= 0) {
+        // сверка g04-homer P02-Д6 / P05-26: клип воздуха замедляется так, чтобы закончиться ровно на земле (скорость min(1, остаток / время до земли)); не ускоряется
+        float hh = fmaxf(H->y - H->groundY, 0.f), tg = (H->vy + sqrtf(H->vy * H->vy + 2.f * HOMER_GRAVITY * hh)) / HOMER_GRAVITY, rem = clipLen(H, H->clip) - H->clipT;
+        H->clipRate = (tg > .05f && rem > 0.f) ? fminf(1.f, rem / tg) : 1.f;
+      }
     } else {
+      // сверка g04-homer P02-23 / P05-17: сёрфинг на крыше едущей машины (> 10 м/с) без ввода: surf_in, surf_cycle по кругу, surf_out на остановке/стике/падении скорости
+      if (!HOMER_SURF_OLD && H->cSurf[0] >= 0) {
+        int want = H->onCar && car && fabsf(car->v) > 10.f && !anyStick && !(in && (in->jump || in->attack));
+        if (H->surfSt == 0 && want) { H->surfSt = 1; playClip(H, H->cSurf[0], 0, .2f, 0.f); }
+        else if (H->surfSt == 1 && !want) { H->surfSt = 3; playClip(H, H->cSurf[2], 0, .2f, 0.f); }
+        else if (H->surfSt == 1 && clipDone(H)) { H->surfSt = 2; playClip(H, H->cSurf[1], 1, .1f, 0.f); }
+        else if (H->surfSt == 2 && !want) { H->surfSt = 3; playClip(H, H->cSurf[2], 0, .2f, 0.f); }
+        else if (H->surfSt == 3 && (clipDone(H) || anyStick)) { H->surfSt = 0; playLoco(H, .2f); }
+        if (H->surfSt) { H->idleT = 0.f; break; }
+      }
       int longIdle = H->clip >= 0 && (H->clip == H->cIdle[0] || H->clip == H->cIdle[1] || H->clip == H->cIdle[2] || H->clip == H->cTalk);
-      if (wantsMove || H->speed > .05f) H->idleT = 0.f; else H->idleT += dt;
-      if (longIdle) { if (wantsMove || clipDone(H)) { if (H->clip == H->cTalk) H->cTalk = -1; playLoco(H, .2f); H->idleT = 0.f; } }
-      else if (H->clip == H->cLand && !clipDone(H) && !wantsMove) {}
-      else if (H->idleT > 8.f && H->cIdle[H->idleNext % 3] >= 0) {   // долго стоит: почесаться / ботинки / чили (cho homer_idle0..2)
+      if ((HOMER_IDLE_PS2_OLD ? wantsMove : anyStick) || H->speed > .05f) { H->idleT = 0.f; H->idleWait = 0.f; } else H->idleT += dt;
+      if (longIdle) { if ((HOMER_IDLE_PS2_OLD ? wantsMove : anyStick) || clipDone(H)) { if (H->clip == H->cTalk) H->cTalk = -1; playLoco(H, .2f); H->idleT = 0.f; } }
+      else if (H->clip == H->cLand && !clipDone(H) && !(HOMER_LANDCLIP_OLD ? wantsMove : anyStick)) {}
+      else if (!HOMER_IDLE_PS2_OLD && H->idleT > 0.f) {
+        // сверка g04-homer P02-36 / ГОМЕР 1.9 / P05-20: пауза до длинного idle 10–20 с случайно (после каждого проигрыша новая); клип по таблице 5/10 основной, 3/10 вариант 1,
+        // 2/10 вариант 2; два раза подряд один и тот же вариант не берётся (заменяется основным); обрыв любым ненулевым стиком (в longIdle выше). HOMER_IDLE_PS2_OLD=1 — 8 с и по кругу
+        if (H->idleWait <= 0.f) H->idleWait = 10.f + (g04Rand() % 1000) * .01f;
+        if (H->idleT > H->idleWait) {
+          unsigned r_ = g04Rand() % 10; int idx = r_ < 5 ? 0 : (r_ < 8 ? 1 : 2);
+          if (idx == H->idleLast && idx != 0) idx = 0;
+          if (H->cIdle[idx] < 0) idx = H->cIdle[0] >= 0 ? 0 : (H->cIdle[1] >= 0 ? 1 : 2);
+          if (H->cIdle[idx] >= 0) { playClip(H, H->cIdle[idx], 0, .2f, 0.f); H->idleLast = idx; }
+          H->idleWait = 0.f;
+        } else if (H->clip >= 0) playLoco(H, .1f);
+      }
+      else if (HOMER_IDLE_PS2_OLD && H->idleT > 8.f && H->cIdle[H->idleNext % 3] >= 0) {   // долго стоит: почесаться / ботинки / чили (cho homer_idle0..2)
         playClip(H, H->cIdle[H->idleNext % 3], 0, .2f, 0.f); H->idleNext++;
       }
       else if (H->clip >= 0) playLoco(H, .1f);
@@ -993,18 +1300,20 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
 
   case HS_KICK: {
     steer(H, NULL, dt, 0);                                    // тормозит, не поворачивает
+    if (!HOMER_KICK_STOP_OLD) { H->vx = H->vz = 0.f; H->speed = 0.f; }   // P02-17: на земле стоит сразу, корень клипа не двигает
     moveBody(H, w, solid, dt, HOMER_GRAVITY);
     if (H->grounded == 3) H->grounded = 1;
-    if (!H->hitSent && H->clipT >= 8.f / 30.f) kickHit(H, .85f, .45f);   // носок впереди всего: кадры 7–10 (0.8 м, 0.45 м)
-    int canCancel = H->clipT > .45f && (wantsMove || (in && in->jump));
+    if (!H->hitSent && H->clipT >= (HOMER_KICKSEG_OLD ? 8.f / 30.f : .25f)) { if (HOMER_KICKSEG_OLD) kickHit(H, .85f, .45f); else kickHit(H, .7f, .7f); }   // круг 2, ГОМЕР 3.1: 0,25 с, ≈0,7 м вперёд и вверх   // носок впереди всего: кадры 7–10 (0.8 м, 0.45 м)
+    int canCancel = HOMER_KICK_STOP_OLD && H->clipT > .45f && (wantsMove || (in && in->jump));   // P02-17: клип ничем не прерывается
     if (clipDone(H) || canCancel) { H->state = HS_FOOT; H->st = 0.f; playLoco(H, .1f); }
-    else if (in && in->attack && H->clipT > .4f) { H->st = 0.f; H->hitSent = 0; playClip(H, H->cBreak, 0, .08f, 0.f); H->clipT = 0.f; }
+    else if (HOMER_KICK_STOP_OLD && in && in->attack && H->clipT > .4f) { H->st = 0.f; H->hitSent = 0; playClip(H, H->cBreak, 0, .08f, 0.f); H->clipT = 0.f; }
     break; }
 
   case HS_STOMP: {
     if (H->phase == 0) {                                      // замах: зависает в воздухе
-      H->vx = H->vz = 0.f; H->vy = 0.f; H->speed = 0.f;
-      if (H->clipT >= clipLen(H, H->cStA)) { H->phase = 1; H->vy = -4.f; playClip(H, H->cStAir, 0, .05f, 0.f); }
+      H->vx = H->vz = 0.f; H->speed = 0.f;
+      if (HOMER_STOMP_VY_OLD) H->vy = 0.f; else H->vy = H->stompVy;   // P02-12: вертикаль сохраняется (после замаха падение ×3,22 от неё)
+      if (H->clipT >= clipLen(H, H->cStA)) { H->phase = 1; H->vy = HOMER_STOMP_VY_OLD ? -4.f : H->stompVy; playClip(H, H->cStAir, 0, .05f, 0.f); }
     } else if (H->phase == 1) {                               // падение ×3.22
       H->vx = H->vz = 0.f;
       moveBody(H, w, solid, dt, HOMER_GRAVITY * HOMER_STOMP_G);
@@ -1021,6 +1330,16 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     break; }
 
   case HS_HURT: {
+    if (H->ejPh == 4) {                                       // круг 5: уворот — движение клипа dodge (корень), потом управление
+      float t0 = H->clipT, t1 = fminf(t0 + dt, clipLen(H, H->cDodge)), a[3], b2[3];
+      skinRootMotion(H->m, H->cDodge, t0, a); skinRootMotion(H->m, H->cDodge, t1, b2);
+      float mx_ = b2[0] - a[0], mz_ = b2[2] - a[2], cs = cosf(H->h), sn = sinf(H->h);
+      H->vx = (mx_ * cs + mz_ * sn) / dt; H->vz = (-mx_ * sn + mz_ * cs) / dt;
+      moveBody(H, w, solid, dt, HOMER_GRAVITY);
+      if (H->grounded == 3) H->grounded = 1;
+      if (clipDone(H)) { H->state = HS_FOOT; H->st = 0.f; H->ejPh = 0; H->vx = H->vz = 0.f; playLoco(H, .15f); }
+      break;
+    }
     if (H->ejPh) {                                            // правка 147: выброс взрывом (фазы — см. HOMER_EJECT_* в homer.h)
       if (H->ejPh == 2) {                                     // касание: скольжение гаснет
         float v = sqrtf(H->vx * H->vx + H->vz * H->vz), nv = fmaxf(v - HOMER_EJECT_FRIC * dt, 0.f);
@@ -1066,7 +1385,8 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     float a = dx * b->fx + dz * b->fz, s = dx * rx + dz * rz;
     float tx = p[0], tz = p[2];
     if (s > -b->hw - .2f) {                                   // не со стороны водителя: сначала за угол машины
-      float sa = a >= 0.f ? 1.f : -1.f, wa = sa * (b->hl + .8f), ws = fabsf(a) < b->hl + .5f ? s : -(b->hw + .7f);
+      // сверка g04-homer P05-23: угловые точки обхода на 0,53 м по каждой оси от габарита (HOMER_DOOR_PTS_OLD=1 — 0,8 / 0,7 м)
+      float sa = a >= 0.f ? 1.f : -1.f, wa = sa * (b->hl + (HOMER_DOOR_PTS_OLD ? .8f : .53f)), ws = fabsf(a) < b->hl + .5f ? s : -(b->hw + (HOMER_DOOR_PTS_OLD ? .7f : .53f));
       tx = b->x + b->fx * wa + rx * ws; tz = b->z + b->fz * wa + rz * ws;
     }
     // Правка Роба 212 (03.10: «Гомер обходит к двери очень долго — если далеко, садиться с другой стороны или через ирис-кружок»):
@@ -1092,15 +1412,32 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       else if ((H->stallT += dt) > .6f) { seatUnderIris(H); break; }
     }
 #endif
+    // сверка g04-homer P05-24 / ГОМЕР 5.2: машина едет быстрее 1 км/ч (0,28 м/с) — Гомер стоит без управления и ждёт остановки (не отказ); не дольше
+    // HOMER_ENTER_WAIT_MAX, потом сразу на сиденье под ирисом (P02-31). HOMER_ENTER_WAIT_OLD=1 — садится на ходу
+    // круг 3 (проверка по исходнику): едущая быстрее 1 км/ч машина или Гомер внутри габарита кузова — посадка сразу через ирис, мгновенно на сиденье (ожидания нет).
+    // Без ириса (боты, тесты) — идёт к двери, как раньше. HOMER_ENTER_WAIT_OLD=1 — идёт к двери и на ходу
+    if (!HOMER_ENTER_WAIT_OLD && H->irisOn && H->st <= dt * 1.5f) {
+      float ex_ = H->x - b->x, ez_ = H->z - b->z, a_ = ex_ * b->fx + ez_ * b->fz, s_ = -ex_ * b->fz + ez_ * b->fx;
+      if (fabsf(H->car.v) > .28f || (fabsf(a_) < b->hl && fabsf(s_) < b->hw && H->y + .9f < H->car.roof)) { seatUnderIris(H); break; }
+    }
     float ex = tx - H->x, ez = tz - H->z, d = sqrtf(ex * ex + ez * ez);
+    if (!HOMER_DOOR_WALK_OLD && H->doorBudget <= 0.f)   // P02-32: таймаут = 1,5 × путь / 4 м/с
+      H->doorBudget = fmaxf(.5f, 1.5f * (d + ((tx == p[0] && tz == p[2]) ? 0.f : hypotf(p[0] - tx, p[2] - tz))) / 4.f);
     HomerInput ai; memset(&ai, 0, sizeof ai); ai.dash = 1;   // к двери бегом (правило порта, как было до раскладки ○)
     float hA = anchorHeading(H);
     int atDoor = (tx == p[0] && tz == p[2]) && d < .15f;
     if (!atDoor && d > 1e-3f) {                               // «стик» к цели: скорость по расстоянию (бег, у двери тише)
       int wp = !(tx == p[0] && tz == p[2]);                  // к углу — бегом, к двери — с торможением (успеть встать)
+      if (!HOMER_DOOR_WALK_OLD) {
+        // сверка g04-homer P02-32 / P05-13: идёт пешком, не бежит: скорость min(расстояние / 0,1 с, 4 м/с); лицо догоняет курс с темпом 10/с
+        float vs = fminf(d / .1f, 4.f), ang = atan2f(ex, ez);
+        H->vx = ex / d * vs; H->vz = ez / d * vs; H->frame = ang; H->heldX = 0.f; H->heldY = 1.f;
+        H->h = wrapPi(H->h + wrapPi(ang - H->h) * (1.f - expf(-10.f * dt)));
+      } else {
       float mag = wp ? 1.f : clampf(sqrtf(2.f * HOMER_DECEL * fmaxf(d - .05f, 0.f)) / HOMER_RUN, .12f, 1.f);
       ai.camYaw = atan2f(ex, ez); ai.my = mag; H->frame = ai.camYaw; H->heldX = 0.f; H->heldY = mag;
       steer(H, &ai, dt, 1);
+      }
     } else steer(H, NULL, dt, 0);
     moveBody(H, w, &H->car, dt, HOMER_GRAVITY);               // сквозь машину не ходит (точка у двери — в 0.37 м от борта)
     if (H->grounded == 3) H->grounded = 1;
@@ -1109,6 +1446,9 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       H->h = wrapPi(H->h + clampf(dh, -mt, mt));
       if (atDoor && fabsf(dh) < .25f) { startSeq(H, HS_GET_IN, H->cOpenIn); break; }
     }
+    if (!HOMER_DOOR_WALK_OLD) {   // P02-32 / P05-13: по истечении бюджета ставит в точку у двери (ирис — только для занятой двери и упора, выше)
+      if ((H->doorT += dt) > H->doorBudget) { H->x = p[0]; H->z = p[2]; H->y = p[1]; H->vx = H->vz = 0.f; startSeq(H, HS_GET_IN, H->cOpenIn); break; }
+    } else
     if (H->st > 4.f) { if (H->irisOn) seatUnderIris(H); else startSeq(H, HS_GET_IN, H->cOpenIn); break; }   // застрял — под ирисом на сиденье (без ириса — садимся как есть)
     break; }
 
@@ -1119,7 +1459,15 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       if (clipDone(H)) { H->phase = 1; playClip(H, H->cIn, 0, .1f, 0.f); }
     } else if (H->phase == 1) {
       setDoor(H, 1.f);
-      if (clipDone(H)) { H->phase = 2; playClip(H, H->cCloseIn, 0, .1f, 0.f); }   // cho: close_door_driver blendIn .1
+      if (clipDone(H)) {
+        H->phase = 2; playClip(H, H->cCloseIn, 0, .1f, 0.f);   // cho: close_door_driver blendIn .1
+        if (!HOMER_CTRL_EARLY_OLD) {   // сверка g04-homer P02-27 / P05-14: управление и «в машине» — по концу get_into_car; закрывание двери идёт уже за рулём (HS_IN_CAR)
+          H->state = HS_IN_CAR; setAnchor(H, 1.f);
+          pushEv(H, HOMER_EV_IN_CAR, H->x, H->y, H->z, 0, 0, 0);
+          if (H->cb.done) H->cb.done(H->cb.user, 1);
+          break;
+        }
+      }
     } else {
       setDoor(H, 1.f - smooth01((t - .03f) / (clipLen(H, H->cCloseIn) - .08f)));
       if (clipDone(H)) {
@@ -1135,7 +1483,19 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     break; }
 
   case HS_IN_CAR: {
-    setAnchor(H, 1.f); driverGestures(H);
+    if (!HOMER_CTRL_EARLY_OLD && H->clip == H->cCloseIn) {   // закрывание двери за рулём: 0,2 с независимо от клипа (P05-Д8)
+      setDoor(H, 1.f - smooth01(H->clipT / .2f));
+      if (clipDone(H)) { setDoor(H, 0.f); playClip(H, H->cInCar, 1, .1f, 0.f); }
+    }
+    if (!HOMER_SEATBOB_OLD && H->car.ok) {
+      // сверка g04-homer P05-Д1: фигура водителя (машина игрока) качается по вертикали вслед за толчками машины: вертикальное ускорение центра > 1 м/с² —
+      // сдвиг на −0,003 × ускорение, не больше 2 м/с × кадр; общий сдвиг в пределах ±0,11 м; при ≤ 1 м/с² возвращается к сиденью со скоростью 1 м/с
+      float vy_ = H->bobInit ? (H->car.y - H->bobPrevY) / dt : 0.f, ac_ = H->bobInit ? (vy_ - H->bobPrevVy) / dt : 0.f;
+      H->bobPrevY = H->car.y; H->bobPrevVy = vy_; H->bobInit = 1;
+      if (fabsf(ac_) > 1.f) H->bobOff = clampf(H->bobOff + clampf(-.003f * ac_, -2.f * dt, 2.f * dt), -.11f, .11f);
+      else H->bobOff = H->bobOff > 0.f ? fmaxf(0.f, H->bobOff - dt) : fminf(0.f, H->bobOff + dt);
+    }
+    setAnchor(H, 1.f); driverGestures(H, dt);
     float F[16]; anchorFrame(H, F); float pp[3]; xform(F, H->seatRoot[0], 0.f, H->seatRoot[2], pp);
     H->x = pp[0]; H->y = pp[1]; H->z = pp[2]; H->h = anchorHeading(H); H->speed = 0.f;
     break; }
@@ -1152,8 +1512,18 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       setDoor(H, 1.f);
       if (clipDone(H)) { H->phase = 2; playClip(H, H->cCloseOut, 0, .05f, 0.f); }
     } else {
+      if (!HOMER_CTRL_EARLY_OLD) {
+        // сверка g04-homer P02-27 / P05-14 / P05-Д8: после клипа «выйти» управление за игроком; закрытие двери (0,2 с) идёт параллельно и обрывается стиком > 0,5 или кнопкой;
+        // если стик > 0,5 уже на старте закрытия — дверь остаётся открытой. HOMER_CTRL_EARLY_OLD=1 — клип закрытия до конца
+        float sm = in ? sqrtf(in->mx * in->mx + in->my * in->my) : 0.f;
+        if (t <= dt * 1.5f) H->doorHold = sm > .5f;
+        if (!H->doorHold) setDoor(H, 1.f - smooth01(t / .2f));
+        // круг 3: обрыв закрытия двери любым ненулевым стиком или кнопкой; порог 0,5 — только для решения «дверь остаётся открытой»
+        if (clipDone(H) || (in && (in->mx != 0.f || in->my != 0.f || in->jump || in->attack))) { if (!H->doorHold && clipDone(H)) setDoor(H, 0.f); finishExit(H, w); }
+      } else {
       setDoor(H, 1.f - smooth01((t - .05f) / (clipLen(H, H->cCloseOut) - .1f)));
       if (clipDone(H)) { setDoor(H, 0.f); finishExit(H, w); }
+      }
     }
     if (H->state == HS_GET_OUT) {
       setAnchor(H, H->phase == 0 ? 1.f : H->phase == 1 ? 1.f - smooth01(H->clipT / fmaxf(clipLen(H, H->cOut), 1e-3f)) : 0.f);
@@ -1248,18 +1618,42 @@ static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], f
 // идёт камера, на посадке догоняет Гомера с той же постоянной; пешком и у двери — как была (жёстко)
 int homerCamHeroOld;   // правка 361 (homer.h)
 float (*homerCamRayExtra)(const float a[3], const float b[3]);   // правка 284: лучи камеры пешком видят и машины (main.c)
+static int camGoalOn; static float camGoal[3];
+void homerCamGoal(int on, float x, float y, float z) { camGoalOn = on; camGoal[0] = x; camGoal[1] = y; camGoal[2] = z; }
 void homerCamera(Homer *H, const ColWorld *w, float dt, float eye[3], float look[3]) {
   float hx = H->x, hz = H->z;
-  if (!H->camInit || H->state != HS_GET_IN || HOMER_CAM_SEAT_K <= 0.f) { H->camFx = hx; H->camFz = hz; }
+  int fresh = !H->camInit;   // камера только что поставлена (старт, телепорт, выход) — без запаздывания
+  if (fresh || H->state != HS_GET_IN || HOMER_CAM_SEAT_K <= 0.f) {
+    // сверка g04-homer P08-3: положение, за которым идёт глаз, догоняет Гомера с запаздыванием 0,08 за 16 мс (τ = 0,19 с); далеко (> 8 м) или в выбросе/на машине — жёстко.
+    // HOMER_CAMLAG_OLD=1 — жёстко
+    if (HOMER_CAMLAG_OLD || fresh || !homerOnFoot(H) || hypotf(hx - H->camFx, hz - H->camFz) > 8.f) { H->camFx = hx; H->camFz = hz; }
+    else { float k = 1.f - expf(-dt / .19f); H->camFx += (hx - H->camFx) * k; H->camFz += (hz - H->camFz) * k; }
+  }
   else { float k = fminf(1.f, dt * HOMER_CAM_SEAT_K); H->camFx += (hx - H->camFx) * k; H->camFz += (hz - H->camFz) * k; }
   H->x = H->camFx; H->z = H->camFz;
   homerCameraAt(H, w, dt, eye, look);
   H->x = hx; H->z = hz;
+  if (!HOMER_CAMLAG_OLD && homerOnFoot(H)) {
+    // сверка g04-homer P08-3 / P08-4: точка взгляда отдельным фильтром 0,044 за 16 мс (63 % за 0,29 с; вдвое быстрее, если Гомер падает быстрее 1 м/с); по высоте — тот же
+    // фильтр, но замирает, когда камера не выше цели больше чем на 0,5 м (прыжок вверх, подъём по ступеням при стоящей камере)
+    float ty = look[1];
+    if (!H->lkInit || fresh || hypotf(hx - H->lkX, hz - H->lkZ) > 8.f) { H->lkX = hx; H->lkY = ty; H->lkZ = hz; H->lkInit = 1; }
+    else {
+      float tau = (H->vy < -1.f && !H->grounded) ? .145f : .29f, k = 1.f - expf(-dt / tau);
+      H->lkX += (hx - H->lkX) * k; H->lkZ += (hz - H->lkZ) * k;
+      if (eye[1] - ty > .5f) H->lkY += (ty - H->lkY) * k;
+    }
+    look[0] = H->lkX; look[1] = H->lkY; look[2] = H->lkZ;
+  } else { H->lkInit = 0; }
+  if (!HOMER_CAMLOOK_MIN_OLD) {   // P08-Д10: глаз от точки взгляда не ближе 1 м — точка выталкивается вдоль линии взгляда
+    float dx = look[0] - eye[0], dy = look[1] - eye[1], dz = look[2] - eye[2], l = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (l < 1.f && l > 1e-4f) { look[0] = eye[0] + dx / l; look[1] = eye[1] + dy / l; look[2] = eye[2] + dz / l; }
+  }
 }
 static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], float look[3]) {
   float fx, fz, yb = H->y;
   if (!H->camInit) { H->camYaw = H->h; H->camY = H->y; H->camInit = 1; H->camPullD = 0.f; H->camRise = 0.f; }
-  float camD = homerCamDist, camE = homerCamEyeH;   // правка 349 (В86): после переноса DEATH — поза WalkerCam оригинала, пока стоит
+  float camD = homerCamDist, camE = homerCamEyeH;   // правка 349 (В86): после переноса DEATH — поза камера пешком оригинала оригинала, пока стоит
   if (H->camHoldD > 0.f) {
     if (!homerOnFoot(H) || H->speed > .5f || H->camTurn != 0.f) {   // пошёл / повернул камеру / сел — к обычной 2,5 м/с (правило порта)
       float k = camD > H->camHoldD ? fminf(1.f, 2.5f * dt / (camD - H->camHoldD)) : 1.f;
@@ -1278,10 +1672,21 @@ static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], f
   }
   else if (!homerCamHeroOld && homerOnFoot(H) && (H->state == HS_HURT || !H->grounded)) {   // правка 361: выброс, падение, отлёт — камера
     float hv = sqrtf(H->vx * H->vx + H->vz * H->vz);                                        // догоняет курс полёта Гомера, как курс шага
-    if (hv > 1.f) { float d = wrapPi(atan2f(H->vx, H->vz) - H->camYaw); H->camYaw = wrapPi(H->camYaw + d * fminf(1.f, dt * 1.6f * clampf(hv / 4.f, .3f, 1.f))); }
+    if (hv > 1.f) {
+      float d = wrapPi(atan2f(H->vx, H->vz) - H->camYaw);
+      // сверка g04-homer P08-6 / P08-50: в воздухе камера обходит героя по тому же закону 1059 (скорость / дальность · sin разницы курсов) с настоящей скоростью; HOMER_CAMAIR_OLD=1 — коэффициент 1,6
+      if (!HOMER_CAMAIR_OLD) H->camYaw = wrapPi(H->camYaw + (hv / fmaxf(camD, 1.5f)) * sinf(d) * dt);
+      else H->camYaw = wrapPi(H->camYaw + d * fminf(1.f, dt * 1.6f * clampf(hv / 4.f, .3f, 1.f)));
+    }
   }
   if (H->camTurn != 0.f && homerOnFoot(H)) H->camYaw = wrapPi(H->camYaw + H->camTurn * dt * 1.6f);   // правка 75: L/R — поворот ~90°/с
-  if (!H->grounded && homerOnFoot(H)) yb = fminf(H->y, fmaxf(H->groundY, H->airFrom) + .6f);   // в прыжке почти не поднимаем
+  if (!HOMER_CAMGOAL_OLD && camGoalOn && homerOnFoot(H)) {
+    // сверка g04-homer P08-Д1: до предмета цели ближе 10 м (по трём осям, от точки на 1 м над ногами) — камера за спиной Гомера лицом к предмету, пружина 0,08 за 16 мс
+    float gx = camGoal[0] - H->x, gy = camGoal[1] - (H->y + 1.f), gz = camGoal[2] - H->z;
+    if (gx * gx + gy * gy + gz * gz < 100.f && gx * gx + gz * gz > .01f)
+      H->camYaw = wrapPi(H->camYaw + wrapPi(atan2f(gx, gz) - H->camYaw) * (1.f - expf(-dt / .19f)));
+  }
+  if (!H->grounded && homerOnFoot(H)) yb = HOMER_CAMAIR_OLD ? fminf(H->y, fmaxf(H->groundY, H->airFrom) + .6f) : H->airFrom;   // в прыжке почти не поднимаем; P08-6/2.5: замирает на высоте отрыва
   H->camY += (yb - H->camY) * fminf(1.f, dt * 5.f);
   const HomerCar *c = H->camCar.ok && homerOnFoot(H) ? &H->camCar : NULL;
   // Машина рядом (правка 167, близнец 02.10 v23_exit_cam): у оригинала камера пешком кузов не обходит — линия взгляда идёт вдоль
@@ -1338,7 +1743,7 @@ static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], f
         // камера +14° -> +159° за 0,2 с). Перескок только при ходьбе (скорость > 0,5 м/с). HOMER_FLIP_STAND_OLD=1 / flag homerflipstandold 1 — как было
         if ((homerCamCarOld ? fr : frW) < 1.f && d < 1.0f && H->camFlipT > 2.f && (homerFlipStandOld || H->speed > .5f)) {   // упор: другая сторона свободна на 4 м — перескок (курс камеры +180°)
           float Eo[3] = {H->x + fx * 4.f, ey + .9f, H->z + fz * 4.f}; float fo = colRayFrac(w, T, Eo, 0);
-          if (fo >= 1.f) { H->camYaw = wrapPi(H->camYaw + 3.14159265f); H->camPullD = 4.f; H->camRise = .9f; H->camFlipT = 0.f; d = 4.f; fr = 1.f;
+          if (fo >= 1.f) { H->camYaw = wrapPi(H->camYaw + 3.14159265f); H->camPullD = HOMER_CAMFLIP_D_OLD ? 4.f : 4.26f; H->camRise = .9f; H->camFlipT = 0.f; d = HOMER_CAMFLIP_D_OLD ? 4.f : 4.26f; fr = 1.f;
             homerCamFlipN++; if (!homerCamFlipOld) { fx = -fx; fz = -fz; } }   // №916в: перескок целиком в этом кадре (раньше глаз шёл по старому курсу ещё кадр: два рывка 3,5 и 5,3 м вместо одного)
         }
         float riseCar = 0.f;
@@ -1370,7 +1775,7 @@ static void homerCameraAt(Homer *H, const ColWorld *w, float dt, float eye[3], f
   look[0] = H->x; look[1] = H->camY + homerCamLookH; look[2] = H->z;
 }
 
-void homerCamDeathPose(Homer *H) {   // правка 349 / ДОБИВКА 18 (homer.h): глаз сразу с лица Гомера, как WalkerCam PS2 на кадре 608
+void homerCamDeathPose(Homer *H) {   // правка 349 / ДОБИВКА 18 (homer.h): глаз сразу с лица Гомера, как камера пешком оригинала PS2 на кадре 608
   H->camInit = 1; H->camYaw = wrapPi(H->h + 3.14159265f); H->camY = H->y; H->camPullD = 0.f; H->camRise = 0.f;
   H->camFx = H->x; H->camFz = H->z; H->camHoldD = HOMER_CAM_DEATH_DIST; H->camHoldE = HOMER_CAM_DEATH_EYE;
 }
@@ -1469,7 +1874,10 @@ int homerSolidSprops(void *user, float *x, float *z, float y, float r, float *to
 }
 
 #ifndef SKIN_HOST
-void homerDraw(const Homer *H) { skinDrawPal(H->m, H->pal, &H->place, H->blink.eyeTex); }
+void homerDraw(const Homer *H) {
+  if (!HOMER_STUN_OLD && H->stunT > 0.f && ((int)(H->stunT * 16.f) & 1)) return;   // сверка g04-homer ГОМЕР 8.6: оглушение осой — мерцание модели
+  skinDrawPal(H->m, H->pal, &H->place, H->blink.eyeTex);
+}
 // №666: замер посадки (только журнал). out: [0] макушка над землёй под машиной, м; [1] крыша машины над землёй; [2] таз (сустав, дети Motion_Root) над землёй;
 // [3] рост персонажа стоя (bbox); [4] макушка ниже крыши, м (минус — торчит). Макушка = голова сустава Head в позе + (верх bbox − Head в позе покоя)
 int homerSeatProbe(const Homer *H, float out[9]) {

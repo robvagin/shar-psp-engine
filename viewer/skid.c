@@ -25,6 +25,7 @@
 #define GEVB_SKID_OLD 0   // -DGEVB_SKID_OLD=1 — индексы следов шин в список GE, как раньше
 #endif
 #include "skid.h"
+#include "sverka_shared.h"
 #include <math.h>
 #include <string.h>
 #include <strings.h>
@@ -38,10 +39,16 @@
 // (стоянка Kwik-E-Mart, два следа торможения на одной глубине): ширина следа / расстояние между следами = 30/195 px = 0,15; у порта
 // с полушириной 0,25 — 20/74 = 0,27. Число 0x204cb8 (0,25 м) — полная ширина следа, не половина: полуширина 0,125 м даёт 0,14.
 // «flag skidwide» — прежние 0,25 (красный контроль tests/skid/width.py)
-#define SKID_HALF_W (skidWide ? .25f : .125f)   // 0x204cb8 / 2
+// сверка g01-cars, P01-27: полуширина следа = радиус колеса × 0,4 (famil_v 0,15 м, у каждой машины своя), подъём над землёй 0,1 м; участок не короче 0,224 м и текстура 0,5 м на период —
+// уже так. Было: полуширина 0,125 м у всех, подъём 0,05 м. -DSV_SKID_W_OLD=1
+#ifndef SV_SKID_W_OLD
+#define SV_SKID_W_OLD 0
+#endif
+static float curHalfW = .125f;
+#define SKID_HALF_W (skidWide ? .25f : curHalfW)   // 0x204cb8 / 2
 static int skidWide;
 void skidWideOld(int on) { skidWide = on != 0; }
-#define SKID_LIFT .05f        // правило порта (оригинал 0,1 от низа колеса, у порта — от земли COL1, как тень)
+#define SKID_LIFT (SV_SKID_W_OLD ? .05f : .1f)        // правило порта (оригинал 0,1 от низа колеса, у порта — от земли COL1, как тень)
 #define SKID_STEP 1.f         // правило порта: участок раз в метр (оригинал 0,5)
 #define SKID_MIN .2236068f    // 0x206340: |d|² < 0,05
 #define SKID_VPM 2.f          // 0x206414: v += 2 · путь
@@ -50,6 +57,9 @@ void skidWideOld(int on) { skidWide = on != 0; }
 #define SKID_JUMP 6.f         // правило порта: точка дальше от последнего участка — машину переставили, след заново
 #define SKID_DRAW_DIST 90.f   // правило порта: дальше от глаза не рисуем (город — drawDist)
 #define SKID_HIST 8
+#ifndef SV_SKID_SURF_OLD
+#define SV_SKID_SURF_OLD 0
+#endif
 
 typedef struct { float u, v; unsigned c; float x, y, z; } SV;   // TEXTURE_32BITF | COLOR_8888 | VERTEX_32BITF
 static SV vb[SKID_QUADS * 4] __attribute__((aligned(16)));
@@ -74,6 +84,7 @@ typedef struct {
   float s[3], sl[3], sr[3], sv;   // последний закреплённый участок: середина, края, v текстуры
   unsigned char sa;               // его альфа
   float d[3];                     // направление скорости машины на прошлом шаге (0x205414)
+  int surf;                       // сверка g01-cars 9.2: вид поверхности следа (0 дорога, 1 трава, 2 грунт); смена — новый след
 } Trail;
 static Trail tr[SKID_CARS][4];
 static unsigned short tagCtr;
@@ -173,6 +184,9 @@ float skidLevel(const Car *c, const CarInput *in, float *burn) {
 #define PLAYER_SKID_SOUND_OLD 0
 #endif
 static int skidHoverOldOn; int skidHover(const char *name);
+#ifndef SV_TIRESND_OLD
+#define SV_TIRESND_OLD 0
+#endif
 float skidSoundLevel(const Car *c, const CarInput *in) {
   if (!c || !c->grounded) return 0.f;
   // №413 (Роб: летающие машины должны быть без звука шин): у парящих машин (hbike_v, frink_v, ship, witchcar, mono_v) нет колёс, как нет и следов
@@ -191,8 +205,17 @@ float skidSoundLevel(const Car *c, const CarInput *in) {
     if (sp < 0.5f && (eb > 0.1f || brk > 0.1f)) return 0.f;
     // Стоя в упоре в стену без движения — скрежета нет
     if (sp < 0.2f) return 0.f;
-    float lvl = skidLevel(c, in, NULL);
+    float burnL = 0.f, lvl = skidLevel(c, in, &burnL);
     if (sp < 0.5f && (eb > 0.1f || brk > 0.1f)) return 0.f;
+    // сверка g01-cars, P10-12: звук шин включается при уровне выше PeeloutMin 0,1 (global.spt), ниже гаснет; громкость: пробуксовка — 0,8·(уровень − 0,1)/0,9; занос на ходу — 0,6 на старте,
+    // растёт 0,3 в секунду до 0,9. Высота клипа в оригинале не меняется (в audio.c у нас 0,9 + 0,2·уровень — передано g08-sound). Было: порог 0,02, громкость уровень × 0,65. -DSV_TIRESND_OLD=1
+    if (!SV_TIRESND_OLD) {
+      static float slideT0 = -1.f;
+      if (lvl <= .1f) { slideT0 = -1.f; return 0.f; }
+      if (burnL >= lvl - 1e-4f && burnL > 0.f) { slideT0 = -1.f; return fminf(1.f, .8f * (lvl - .1f) / .9f); }
+      if (slideT0 < 0.f || c->t < slideT0) slideT0 = c->t;
+      return fminf(.9f, .6f + .3f * (c->t - slideT0));
+    }
     // Громкость скрежета резины: умеренная, не глушит мотор (как в оригинале PS2)
     return fminf(1.f, fmaxf(0.f, lvl * 0.65f));
   }
@@ -253,8 +276,9 @@ static void side(const float *dir, const float *n, float out[3]) {   // попе
   out[0] /= l; out[1] /= l; out[2] /= l;
 }
 
-static void trailPoint(Trail *t, const float *p, const float *n, const float *vd, unsigned char a) {
-  if (t->on && dot3(vd, t->d) < SKID_TURN) trailEnd(t);                       // 0x205414: резкий поворот скорости — новый след
+static void trailPoint(Trail *t, const float *p, const float *n, const float *vd, unsigned char a, int surf) {
+  if (t->on && dot3(vd, t->d) < SKID_TURN) trailEnd(t);
+  if (t->on && !SV_SKID_SURF_OLD && t->surf != surf) trailEnd(t);                 // сверка g01-cars 9.2: смена поверхности — новый след. -DSV_SKID_SURF_OLD=1                       // 0x205414: резкий поворот скорости — новый след
   if (t->on) {
     float dx = p[0] - t->s[0], dy = p[1] - t->s[1], dz = p[2] - t->s[2];
     if (dx * dx + dy * dy + dz * dz > SKID_JUMP * SKID_JUMP) trailEnd(t);     // машину переставили
@@ -262,7 +286,7 @@ static void trailPoint(Trail *t, const float *p, const float *n, const float *vd
   memcpy(t->d, vd, sizeof t->d);
   if (!t->on) {                                                                 // 0x2065ac: первый участок — поперёк скорости
     float s[3]; side(vd, n, s);
-    t->on = 1; t->q = -1; t->nh = 0; t->tag = ++tagCtr ? tagCtr : ++tagCtr;
+    t->on = 1; t->q = -1; t->nh = 0; t->surf = surf; t->tag = ++tagCtr ? tagCtr : ++tagCtr;
     memcpy(t->s, p, sizeof t->s);
     for (int k = 0; k < 3; k++) { t->sl[k] = p[k] - s[k] * SKID_HALF_W; t->sr[k] = p[k] + s[k] * SKID_HALF_W; }
     t->sv = 0.f; t->sa = 0;                                                     // 0x206ab8: начало прозрачное
@@ -330,7 +354,9 @@ void skidCar(int slot, const Car *c, const CarInput *in, const ColWorld *w) {
       float gy, n[3]; int mat = COL_MAT_HARD;
       if (!colGroundMat(w, wx, wz, wy + .3f, wy - my - 1.5f, &gy, n, &mat) || mat == COL_MAT_FOLIAGE) { trailEnd(&T[i]); continue; }
       float p[3] = {wx + n[0] * SKID_LIFT, gy + n[1] * SKID_LIFT, wz + n[2] * SKID_LIFT};
-      trailPoint(&T[i], p, n, vd, a);
+      curHalfW = SV_SKID_W_OLD ? .125f : P->wheelRad * .4f;
+      int sf = c->wheelSurf[i], surfKind = sf == SURF_GRASS ? 1 : sf == SURF_DIRT ? 2 : 0;   // шейдер следа: трава, грунт, иначе асфальт (0x205218)
+      trailPoint(&T[i], p, n, vd, a, surfKind);
     }
   }
 #ifndef SKID_HOST

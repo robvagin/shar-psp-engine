@@ -24,6 +24,9 @@ static const struct { int ev, on; const char *name; int fe; } MAP[] = {   // fe 
   {UI_EV_SCROLL, 1, "scroll", 1}, {UI_EV_ACCEPT, 1, "accept", 1},
   // 29.09: главное меню и OPTIONS — те же звуки; затемнённый пункт — locked_out, назад (△/○) — back (frontend.spt)
   {UI_EV_LOCKED, 1, "locked_out", 1}, {UI_EV_BACK, 1, "back", 1},
+  // сверка g08-sound круг 2 (g09a M1 Д1, M3:6): образец после остановки ползунка Sound — событие UI_EV_STING (в ui.h g09a сразу после UI_EV_BACK), on = строка + 1:
+  // 1 музыка, 2 эффекты, 3 двигатель, 4 голос. Пока ветка g09a не влита, событие не приходит и строки молчат
+  {UI_EV_BACK + 1, 1, "music_stinger", 1}, {UI_EV_BACK + 1, 2, "sfx_stinger", 1}, {UI_EV_BACK + 1, 3, "car_stinger", 1}, {UI_EV_BACK + 1, 4, "dialog_stinger", 1},
 };
 #define NMAP ((int)(sizeof MAP / sizeof MAP[0]))
 static int ids[NMAP], resolved, muted;
@@ -42,6 +45,13 @@ static void onEvent(int ev, int on) {
       logFn(s);
     }
   }
+}
+
+int uiSfxPlayNamed(const char *name) {
+  if (muted || !name || !sndReady()) return 0;
+  int id = sndId(name), h = id < 0 ? 0 : sndPlayUi(id, 1.f);
+  if (logFn) { char s[140]; snprintf(s, sizeof s, "UISFX named=%s id=%d h=%d t=%.3f\n", name, id, h, t0 + (sceKernelGetSystemTimeLow() - tus0) * 1e-6f); logFn(s); }
+  return h != 0;
 }
 
 void uiSfxInit(void (*log)(const char *)) {

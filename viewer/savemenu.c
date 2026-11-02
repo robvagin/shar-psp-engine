@@ -62,6 +62,54 @@ static int svFileOff, svUtilOff;   // служебное 274: «savefileoff» �
 static int svvGood = -1, svvOld, svvLast;   // удачный вариант сессии; служебное «saveold»; вариант последнего вызова (строки SVIO)
 static unsigned svvFail;                     // служебное «savefail»: железо отвергает std с этим кодом (имитация в эмуляторе)
 
+// ---- сверка с исходником, окно g09b-menu (02.11.2026, правки 1077–1081): логика вопросов и списка слотов. Каждая правка — свой выключатель
+// (-D<ИМЯ>_OLD=1 — прежнее поведение). Вид экранов наш; из оригинала — порядок вопросов, кому что можно нажать, подпись слота, минимумы показа
+#ifndef SVM_QUITASK_OLD
+#define SVM_QUITASK_OLD 0   // g09b-menu: М2 Д2 / P13-1: QUIT GAME в паузе сначала спрашивает «Are you sure you want to quit?» (Yes/No, No — в паузу); было: сразу «сохранить?» (свободная езда) или выход
+#endif
+#ifndef SVM_NOBACK_OLD
+#define SVM_NOBACK_OLD 0    // g09b-menu: P14-7: на запросах Yes/No, на «сохранить?» и на сообщениях △ и ○ не действуют, выйти можно только ответом; было: назад = No / закрыть
+#endif
+#ifndef SVM_LOADASK_OLD
+#define SVM_LOADASK_OLD 0   // g09b-menu: M3 Д7: выбор слота в LOAD GAME всегда спрашивает подтверждение; было: только когда игра уже шла
+#endif
+#ifndef SVM_LATESTSEL_OLD
+#define SVM_LATESTSEL_OLD 0 // g09b-menu: P14-4: список LOAD GAME открывается с курсором на слоте с самой свежей записью; было: первый слот
+#endif
+#ifndef SVM_LOADDAMAGED_OLD
+#define SVM_LOADDAMAGED_OLD 0 // g09b-menu: P14-5: в LOAD GAME повреждённый слот серый и не выбирается, удаления из загрузки нет (PS2); было: выбирался, «corrupt… OK?» и удаление
+#endif
+#ifndef SVM_SLOTLABEL_OLD
+#define SVM_SLOTLABEL_OLD 0 // g09b-menu: P14-6 / P16-24: подпись слота «(L<ур> M<мис>) дд/мм/гг чч:мм:сс» (PAL: день/месяц); было «LEVEL N дд/мм чч:мм»
+#endif
+#ifndef SVM_SLOTBACK_OLD
+#define SVM_SLOTBACK_OLD 0  // g09b-menu: P13-Д6: ○ на списке слотов потока «выйти / конец уровня» возвращает на вопрос «сохранить?»; было: закрывало окно
+#endif
+#ifndef SVM_START_OLD
+#define SVM_START_OLD 0     // g09b-menu: P13-Д5: START на слотах и вопросах записи закрывает паузу целиком (поток выхода — отмена потока); было: START ничего не делал
+#endif
+#ifndef SVM_SAVEDFLAG_OLD
+#define SVM_SAVEDFLAG_OLD 0 // g09b-menu: P13-Д4: после удачной записи в этой паузе выход не спрашивает «сохранить?» второй раз; было: спрашивал снова
+#endif
+#ifndef SVM_BUSYMIN_OLD
+#define SVM_BUSYMIN_OLD 0   // g09b-menu: P14-18: сообщение «Saving / Loading» в тихом пути живёт не меньше 1,0 с (PS2); было: два кадра
+#endif
+#ifndef SVM_TUTLABEL_OLD
+#define SVM_TUTLABEL_OLD 0  // g09b-menu круг 3 (проверка): подпись слота обучения L1 «(TUT)» вместо «(L1 TUT)»; 1 — прежнее
+#endif
+#ifndef SVM_START3_OLD
+#define SVM_START3_OLD 0    // g09b-menu круг 3 (проверка P13 Д5): START на записи и вопросах потока «выйти» из паузы возвращает в игру (пауза снята), в потоке конца уровня / игры START не действует; 1 — прежнее (возврат в меню паузы)
+#endif
+#ifndef SVM_DEFNO_OLD
+#define SVM_DEFNO_OLD 0     // g09b-menu круг 2 (P14 Д1): курсор в запросах да/нет (перезапись слота, загрузка записи, Quit?, NEW GAME) стоит на НЕТ; на ДА — только «сохранить перед выходом»; было: на ДА
+#endif
+#define SVM_BUSY_MIN_S 1.0f
+#define SVM_EXT_SEC 83      // g09b-menu: P14-6: секунды записи — ext[83] (бит 7 — поле записано); ext[0..44] заняты (savegame.h), хвост запаса свободен
+static int pauseSaved;      // P13-Д4: в этой паузе уже была удачная запись (сбрасывает svmPauseEnter)
+void svmPauseEnter(void) { pauseSaved = 0; }
+int svmQuitAsks(void) { return !SVM_QUITASK_OLD; }
+int svmQuitAsk(int freeRoam) { return SVM_QUITASK_OLD ? 1 : (freeRoam ? 3 : 2); }
+
 static int on; static char dir[256]; static void (*logFn)(const char *);
 static unsigned char *icon0; static unsigned icon0Size;          // ICON0.PNG из EBOOT.PBP
 static int slotSt[SV_SLOTS] = {SV_EMPTY, SV_EMPTY, SV_EMPTY, SV_EMPTY}; static SaveGame slotSg[SV_SLOTS];
@@ -320,6 +368,7 @@ static int utilDlg(int mode, int slot, void *buf, unsigned bufSize, unsigned dat
 static void stampNow(SaveGame *s) {
   ScePspDateTime t; memset(&t, 0, sizeof t); sceRtcGetCurrentClockLocalTime(&t);
   s->year = t.year; s->month = (uint8_t)t.month; s->day = (uint8_t)t.day; s->hour = (uint8_t)t.hour; s->minute = (uint8_t)t.minute;
+  if (!SVM_SLOTLABEL_OLD) s->ext[SVM_EXT_SEC] = (uint8_t)(0x80 | (t.second < 60 ? t.second : 59));   // P14-6: секунды в подпись слота
 }
 static uint8_t ioBuf[1024] __attribute__((aligned(64)));
 // Правка Роба 274 (04.10: «сохранение не работает — поправить точно, стопроцентно»): у слота два места — запись утилиты (SLES51897NN,
@@ -432,7 +481,7 @@ void svmDevBoot(int (*levelAvail)(int)) {
   if (slotSt[k] == SV_OK && !svmIsDev(&slotSg[k]) && !force) why = "busy";        // обычная запись Роба — не трогаем
   else if (slotSt[k] == SV_DAMAGED && !force) why = "damaged";
   else if (slotSt[k] == SV_OK && svmIsDev(&slotSg[k])) {   // DEV уже есть: переписать, только если другой день или другое содержимое
-    SaveGame a = slotSg[k]; a.hour = g.hour; a.minute = g.minute; svWrite(&a, chk); svWrite(&g, out);
+    SaveGame a = slotSg[k]; a.hour = g.hour; a.minute = g.minute; a.ext[SVM_EXT_SEC] = g.ext[SVM_EXT_SEC]; svWrite(&a, chk); svWrite(&g, out);
     if (!memcmp(chk, out, SV_BYTES)) why = "same";
   }
   if (why) { logf_("SVDEV boot slot=%d skip=%s st=%c\n", k, why, "OED"[slotSt[k]]); return; }
@@ -486,11 +535,11 @@ void svmAllBoot(void) {
 }
 
 // ---- экраны
-enum { ST_OFF, ST_ASK, ST_SLOTS, ST_CONFIRM, ST_BUSY, ST_NOTICE, ST_SYSDLG };   // ST_SYSDLG — 309: окно PSP (фон — экран слотов)
+enum { ST_OFF, ST_ASK, ST_SLOTS, ST_CONFIRM, ST_BUSY, ST_NOTICE, ST_SYSDLG, ST_YESNO };   // ST_YESNO — g09b-menu: вопрос Yes/No (Quit? / NEW GAME)   // ST_SYSDLG — 309: окно PSP (фон — экран слотов)
 enum { OP_NONE, OP_SAVE, OP_LOAD, OP_DELETE };
 enum { AFTER_SLOTS, AFTER_CLOSE };
 static struct {
-  int st, mode, askQuit, confirmLoad, sel, psel, op, opSlot, drawn, msg, msgSlot, error, after, result;
+  int st, mode, askQuit, confirmLoad, sel, psel, op, opSlot, drawn, msg, msgSlot, error, after, result, ask; unsigned busyT0;
   SaveGame game, loaded;
   char rows[SV_SLOTS][48], msgText[256];
 } S;
@@ -508,6 +557,35 @@ static void setMsg(int m, int slot, int error) {   // текст сообщен�
   uiScrShow(SCR_MESSAGE, UI_T_MISSION_FAILED, 0);
   logf_("SVMSG key=%s slot=%d error=%d text=%.60s\n", msgKey[m], slot, error, S.msgText);
 }
+// g09b-menu: вопрос с готовым текстом (английские строки с диска: подтверждение выхода и подтверждение новой игры; ключа в пакете нет)
+static void setMsgRaw(const char *text, const char *key) {
+  S.msg = -1; S.msgSlot = 0; S.error = 0;
+  snprintf(S.msgText, sizeof S.msgText, "%s", text);
+  uiScrRowText(SCR_PROMPT, ROW_MSG, S.msgText); uiScrShow(SCR_PROMPT, UI_T_MISSION_FAILED, 0);
+  logf_("SVMSG key=%s slot=0 error=0 text=%.60s\n", key, S.msgText);
+}
+// круг 3: чем отвечает START: SVM_R_UNPAUSE — закрыть паузу целиком (запись из паузы, выход из паузы), -1 — START не действует (конец уровня / игры, список LOAD GAME)
+static int startRes(void) {
+  if (SVM_START3_OLD) return (S.askQuit & 1) ? SVM_R_BACK : S.mode == SVM_SAVE ? SVM_R_UNPAUSE : SVM_R_BACK;
+  if (S.mode != SVM_SAVE || (S.askQuit & 3) == 1) return -1;
+  return SVM_R_UNPAUSE;
+}
+static void yesNo(int kind) {   // kind: SVM_ASK_QUIT / SVM_ASK_NEWGAME; курсор на «No» (SVM_DEFNO_OLD=1 — на «Yes»)
+  S.st = ST_YESNO; S.ask = kind; S.psel = SVM_DEFNO_OLD ? 0 : 1;
+  if (kind == SVM_ASK_QUIT) setMsgRaw("Are you sure you want to quit?", "quit_confirm");
+  else if (kind == SVM_ASK_RESTART) setMsgRaw("Are you sure you want to restart this mission?", "restart_confirm");   // сверка g09a-hud круг 5 (M2:Д6)
+  else if (kind == SVM_ASK_ABORT) setMsgRaw("Are you sure you want to abort this mission?", "abort_confirm");
+  else setMsgRaw("Restarting will cause all unsaved game progress to be lost. Restart anyway?", "newgame_confirm");
+}
+// P14-6 / P16-24: подпись слота «(L<ур> M<мис>) дд/мм/гг чч:мм:сс»; L1, миссия 0 — обучение: «(TUT)»; сокращения L, M, TUT — из текстов диска
+static void slotLabel(char *o, int n, const SaveGame *g) {
+  int L = g->level >= 1 && g->level <= 7 ? g->level : 1, sec = (g->ext[SVM_EXT_SEC] & 0x80) ? g->ext[SVM_EXT_SEC] & 0x7f : 0;
+  char who[24];
+  if (g->msnStory == 0xff) snprintf(who, sizeof who, "(L%d)", L);                                  // миссий нет (уровень без сюжета): только уровень
+  else if (L == 1 && g->msnStory == 0) snprintf(who, sizeof who, SVM_TUTLABEL_OLD ? "(L1 TUT)" : "(TUT)");   // круг 3: у обучения одно слово вместо обеих аббревиатур
+  else snprintf(who, sizeof who, "(L%d M%d)", L, (int)g->msnStory);
+  snprintf(o, (size_t)n, "%s %02d/%02d/%02d %02d:%02d:%02d", who, g->day, g->month, g->year % 100, g->hour, g->minute, sec);
+}
 static void rowsRefresh(void) {   // подписи слотов: пустой — из пакета, испорченный — «< Damaged Save >», целый — LEVEL N + время
   for (int k = 0; k < SV_SLOTS; k++) {
     const SaveGame *g = &slotSg[k];
@@ -516,21 +594,27 @@ static void rowsRefresh(void) {   // подписи слотов: пустой �
       snprintf(S.rows[k], sizeof S.rows[k], arrows ? "DEV SAVE < %s > %02d/%02d" : "DEV SAVE  %s  %02d/%02d", str(SVS_LEVEL1 + lv - 1),
                g->day, g->month);
       uiScrRowText(SCR_SLOTS, k, S.rows[k]);
+    } else if (slotSt[k] == SV_OK && !SVM_SLOTLABEL_OLD) {
+      slotLabel(S.rows[k], sizeof S.rows[k], g); uiScrRowText(SCR_SLOTS, k, S.rows[k]);
     } else if (slotSt[k] == SV_OK) {
       snprintf(S.rows[k], sizeof S.rows[k], "%s   %02d/%02d  %02d:%02d", str(SVS_LEVEL1 + (g->level >= 1 && g->level <= 7 ? g->level - 1 : 0)),
                g->day, g->month, g->hour, g->minute);
       uiScrRowText(SCR_SLOTS, k, S.rows[k]);
     } else uiScrRowText(SCR_SLOTS, k, slotSt[k] == SV_DAMAGED ? str(SVS_DAMAGED) : NULL);
-    uiScrEnable(SCR_SLOTS, k, S.mode == SVM_SAVE || slotSt[k] != SV_EMPTY);   // загрузка: пустые слоты серые, курсор их пропускает
+    uiScrEnable(SCR_SLOTS, k, S.mode == SVM_SAVE || (SVM_LOADDAMAGED_OLD ? slotSt[k] != SV_EMPTY : slotSt[k] == SV_OK));   // загрузка: пустые слоты серые, курсор их пропускает; P14-5: и повреждённые (PS2)
   }
 }
 static void gotoSlots(void) {
   S.st = ST_SLOTS; rowsRefresh();
   if (!uiScrEnabled(SCR_SLOTS, S.sel)) for (int k = 0; k < SV_SLOTS; k++) if (uiScrEnabled(SCR_SLOTS, k)) { S.sel = k; break; }
 }
+static int latestSlotIdx(void) {   // P14-4: слот с наибольшим seq среди читаемых (DEV, seq 0 — последним), иначе -1
+  int b = -1; for (int k = 0; k < SV_SLOTS; k++) if (slotSt[k] == SV_OK && (b < 0 || slotSg[k].seq > slotSg[b].seq)) b = k;
+  return b;
+}
 static void notice(int m, int slot, int error, int after) { S.st = ST_NOTICE; S.psel = 0; S.after = after; setMsg(m, slot, error); }
 static void busy(int op, int slot) {
-  S.st = ST_BUSY; S.op = op; S.opSlot = slot; S.drawn = 0;
+  S.st = ST_BUSY; S.op = op; S.opSlot = slot; S.drawn = 0; S.busyT0 = sceKernelGetSystemTimeLow();
   setMsg(op == OP_SAVE ? SVM_MSG_SAVING : op == OP_LOAD ? SVM_MSG_LOADING : SVM_MSG_DELETING, slot, 0);
 }
 static void closeWith(int r) {
@@ -557,11 +641,25 @@ int svmOpen(int mode, const SaveGame *game, int confirmLoad, int askQuit) {
   if (game) S.game = *game;
   logf_("SVOPEN mode=%s ask=%d confirm=%d slots=%c,%c,%c,%c\n", mode == SVM_SAVE ? "save" : "load", askQuit, confirmLoad,
         "OED"[slotSt[0]], "OED"[slotSt[1]], "OED"[slotSt[2]], "OED"[slotSt[3]]);
+  if (SVM_QUITASK_OLD) S.askQuit = askQuit &= 1;
+  if (!SVM_LOADASK_OLD && mode == SVM_LOAD) S.confirmLoad = 1;   // M3 Д7: подтверждение загрузки слота — всегда
+  if (askQuit & 12) { yesNo(askQuit & 4 ? SVM_ASK_RESTART : SVM_ASK_ABORT); return 0; }   // сверка g09a-hud круг 5: Restart / Abort Mission из паузы миссии
+  if (askQuit & 2) { yesNo(SVM_ASK_QUIT); return 0; }            // М2 Д2 / P13-1: сначала «выйти?»
   if (askQuit) { S.st = ST_ASK; S.psel = 0; setMsg(SVM_MSG_SAVE_BEFORE_QUIT, 0, 0); return 0; }
-  int any = 0; for (int k = 0; k < SV_SLOTS; k++) any |= slotSt[k] != SV_EMPTY;
+  int any = 0; for (int k = 0; k < SV_SLOTS; k++) any |= (SVM_LOADDAMAGED_OLD || mode != SVM_LOAD ? slotSt[k] != SV_EMPTY : slotSt[k] == SV_OK);
   if (mode == SVM_LOAD && !any) { notice(SVM_MSG_NO_DATA, 0, 1, AFTER_CLOSE); S.result = SVM_R_BACK; return 0; }
   gotoSlots();
+  if (mode == SVM_LOAD && !SVM_LATESTSEL_OLD) { int b = latestSlotIdx(); if (b >= 0) S.sel = b; }   // P14-4
   return 0;
+}
+// g09b-menu: отдельный вопрос Yes/No вне записи (NEW GAME при загруженной игре — M3 №7, P14-3); пакет fsave.shr (рамка-ТВ главного меню). 0 = открыт
+int svmAskOpen(int kind) {
+  if (!on) return -1;
+  char fn[300]; snprintf(fn, sizeof fn, "%sfsave.shr", dir);
+  if (uiScrOpen(fn)) { logf_("SVOPEN mode=ask err=pack\n"); return -1; }
+  memset(&S, 0, sizeof S); S.mode = SVM_LOAD;
+  logf_("SVOPEN mode=ask kind=%d\n", kind);
+  yesNo(kind); return 0;
 }
 int svmActive(void) { return S.st != ST_OFF; }
 const SaveGame *svmLoaded(void) { return &S.loaded; }
@@ -598,6 +696,7 @@ static void doOp(void) {   // сообщение уже на экране (об�
       } else st = SV_DAMAGED;
     }
     logf_("SVIO op=save slot=%d res=%08x verify=%c seq=%u ms=%u var=%s dlg=%d\n", k, res, "OED"[st], (unsigned)g.seq, (sceKernelGetSystemTimeLow() - t0) / 1000, var, dlg);
+    if (st == SV_OK && !SVM_SAVEDFLAG_OLD) pauseSaved = 1;   // P13-Д4: после удачной записи в этой паузе выход «сохранить?» не спрашивает
     if (st == SV_OK && dlg) { slotSt[k] = SV_OK; slotSg[k] = g; closeWith(S.askQuit ? SVM_R_QUIT : SVM_R_SAVED); }   // 309: «завершено» сказало окно
     else if (st == SV_OK) { slotSt[k] = SV_OK; slotSg[k] = g; notice(SVM_MSG_SAVED, k, 0, AFTER_CLOSE); S.result = S.askQuit ? SVM_R_QUIT : SVM_R_SAVED; }
     else notice(SVM_MSG_SAVE_FAILED, k, 1, AFTER_SLOTS);   // прежние записи и игра в памяти не тронуты
@@ -617,6 +716,7 @@ static void doOp(void) {   // сообщение уже на экране (об�
     logf_("SVIO op=load slot=%d res=%08x st=%c ms=%u var=%s dlg=%d\n", k, res, "OED"[st], (sceKernelGetSystemTimeLow() - t0) / 1000, svvName[svvLast], dlg);
     if (st == SV_OK && dlg) closeWith(SVM_R_LOADED);   // 309: «Загрузка завершена» сказало окно
     else if (st == SV_OK) { notice(SVM_MSG_LOADED, k, 0, AFTER_CLOSE); S.result = SVM_R_LOADED; }
+    else if (!SVM_LOADDAMAGED_OLD) { rowsRefresh(); notice(SVM_MSG_CORRUPT, k, 1, AFTER_SLOTS); S.op = OP_NONE; }   // P14-5: на PS2 удаления из загрузки нет — слот просто серый
     else { rowsRefresh(); notice(SVM_MSG_CORRUPT, k, 1, AFTER_SLOTS); S.op = OP_DELETE; }   // как PS2: «corrupt and must be deleted. OK?»
   } else if (S.op == OP_DELETE) {
     int r = util(SCE_UTILITY_SAVEDATA_AUTODELETE, k, 0, 0, 0, NULL); res = (unsigned)r;
@@ -634,13 +734,28 @@ int svmInput(unsigned hit) {
   if (S.st == ST_OFF) return SVM_R_NONE;
   int r;
   switch (S.st) {
-    case ST_ASK:      // «Do you want to save your game?» YES — слоты, NO — выход без записи, △ — назад в паузу
+    case ST_ASK:      // «Do you want to save your game?» YES — слоты, NO — выход без записи, △ — назад в паузу (P14-7: △ и ○ не действуют)
+      if (!SVM_START_OLD && (hit & PSP_CTRL_START)) { int sr = startRes(); if (sr >= 0) { closeWith(sr); return sr; } }   // P13-Д5: START снимает паузу (круг 3); в конце уровня не действует
+      if (!SVM_NOBACK_OLD) hit &= ~(unsigned)(PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE);
       r = uiScrMenuInput(SCR_PROMPT, &S.psel, hit);
       if (r == UI_SCR_BACK) { closeWith(SVM_R_BACK); return SVM_R_BACK; }
       if (r == 0) gotoSlots();
       else if (r == 1) { closeWith(SVM_R_QUIT); return SVM_R_QUIT; }
       break;
+    case ST_YESNO:    // g09b-menu: Quit? / NEW GAME — Yes или No; △ и ○ не действуют (P14-7); START в потоке выхода — отмена
+      if (!SVM_START_OLD && S.ask == SVM_ASK_QUIT && (hit & PSP_CTRL_START)) { int sr = startRes(); if (sr >= 0) { closeWith(sr); return sr; } }
+      if (!SVM_NOBACK_OLD) hit &= ~(unsigned)(PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE);
+      r = uiScrMenuInput(SCR_PROMPT, &S.psel, hit);
+      if (r == UI_SCR_BACK) r = 1;                                  // прежнее поведение (SVM_NOBACK_OLD=1): назад = No
+      if (r == 0) {
+        if (S.ask == SVM_ASK_NEWGAME || S.ask == SVM_ASK_RESTART || S.ask == SVM_ASK_ABORT) { closeWith(SVM_R_YES); return SVM_R_YES; }
+        if ((S.askQuit & 1) && !(pauseSaved && !SVM_SAVEDFLAG_OLD)) { S.st = ST_ASK; S.psel = 0; setMsg(SVM_MSG_SAVE_BEFORE_QUIT, 0, 0); }   // второй вопрос — только если в этой паузе не сохранялись
+        else { closeWith(SVM_R_QUIT); return SVM_R_QUIT; }
+      } else if (r == 1) { int rr = S.ask == SVM_ASK_QUIT ? SVM_R_BACK : SVM_R_NO; closeWith(rr); return rr; }
+      break;
     case ST_SLOTS:
+      if (!SVM_START_OLD && (hit & PSP_CTRL_START) && !svPick) {   // P13-Д5: START на слотах закрывает паузу целиком (и в потоке выхода из паузы — круг 3); в конце уровня не действует
+        int sr = startRes(); if (sr >= 0) { closeWith(sr); return sr; } }
       if (svPick && S.mode == SVM_SAVE && !svPickDone) {   // тур для железа: первый пустой слот, иначе отмена записи
         int t = -1; svPickDone = 1;
         for (int k = 0; k < SV_SLOTS && t < 0; k++) if (slotSt[k] == SV_EMPTY) t = k;
@@ -657,31 +772,42 @@ int svmInput(unsigned hit) {
       }
       r = uiScrMenuInput(SCR_SLOTS, &S.sel, hit);
       if (hit) logf_("SVSEL sel=%d r=%d st=%c\n", S.sel, r, "OED"[slotSt[S.sel]]);
-      if (r == UI_SCR_BACK) { closeWith(SVM_R_BACK); return SVM_R_BACK; }
+      if (r == UI_SCR_BACK) {
+        if (!SVM_SLOTBACK_OLD && (S.askQuit & 1) && S.mode == SVM_SAVE) { S.st = ST_ASK; S.psel = 0; setMsg(SVM_MSG_SAVE_BEFORE_QUIT, 0, 0); break; }   // P13-Д6: ○ из слотов потока выхода — снова «сохранить?»
+        closeWith(SVM_R_BACK); return SVM_R_BACK; }
       if (r < 0) break;
       if (S.mode == SVM_SAVE) {
         if (dlgFor(OP_SAVE, r)) dlgStart(OP_SAVE, r);   // 309: «сохранить?» / «перезаписать?» спросит окно PSP
         else if (slotSt[r] == SV_EMPTY) busy(OP_SAVE, r);
-        else { S.st = ST_CONFIRM; S.op = OP_SAVE; S.opSlot = r; S.psel = 0; setMsg(SVM_MSG_OVERWRITE, r, 0); }
+        else { S.st = ST_CONFIRM; S.op = OP_SAVE; S.opSlot = r; S.psel = SVM_DEFNO_OLD ? 0 : 1; setMsg(SVM_MSG_OVERWRITE, r, 0); }
       } else if (slotSt[r] == SV_DAMAGED) { S.op = OP_DELETE; S.opSlot = r; notice(SVM_MSG_CORRUPT, r, 1, AFTER_SLOTS); }
       else if (slotSt[r] == SV_OK) {
-        if (S.confirmLoad) { S.st = ST_CONFIRM; S.op = OP_LOAD; S.opSlot = r; S.psel = 0; setMsg(SVM_MSG_LOAD_CONFIRM, r, 0); }
+        if (S.confirmLoad) { S.st = ST_CONFIRM; S.op = OP_LOAD; S.opSlot = r; S.psel = SVM_DEFNO_OLD ? 0 : 1; setMsg(SVM_MSG_LOAD_CONFIRM, r, 0); }
         else if (dlgFor(OP_LOAD, r)) dlgStart(OP_LOAD, r);
         else busy(OP_LOAD, r);
       }
       break;
-    case ST_CONFIRM:  // YES — выполнить, NO / △ — к слотам
+    case ST_CONFIRM:  // YES — выполнить, NO / △ — к слотам (P14-7: △ и ○ не действуют; START — как на слотах)
+      if (!SVM_START_OLD && (hit & PSP_CTRL_START) && S.mode == SVM_SAVE) { int sr = startRes(); if (sr >= 0) { closeWith(sr); return sr; } }
+      if (!SVM_NOBACK_OLD) hit &= ~(unsigned)(PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE);
       r = uiScrMenuInput(SCR_PROMPT, &S.psel, hit);
       if (r == 0) { if (dlgFor(S.op, S.opSlot)) dlgStart(S.op, S.opSlot); else busy(S.op, S.opSlot); }   // 309: загрузка поверх игры — окно после нашего «прогресс будет потерян»
       else if (r == 1 || r == UI_SCR_BACK) gotoSlots();
       break;
     case ST_BUSY:
-      if (S.drawn >= 2) doOp();
+      if (S.drawn >= 2) {
+        unsigned t0 = S.busyT0; doOp();
+        if (!SVM_BUSYMIN_OLD && S.st != ST_BUSY && S.st != ST_SYSDLG) {   // P14-18: сообщение «Saving / Loading» живёт не меньше SVM_BUSY_MIN_S (кадр стоит на сообщении)
+          int left = (int)(SVM_BUSY_MIN_S * 1000.f) - (int)((sceKernelGetSystemTimeLow() - t0) / 1000);
+          for (; left > 0; left -= 50) { sceKernelDelayThread(50 * 1000); bbBeatTick(); }
+        }
+      }
       break;
     case ST_SYSDLG:   // 309: окно PSP (кадр стоит на экране слотов, окно поверх); закрылось удачно — меню закрыто
       if (S.drawn >= 2) { doOp(); if (S.st == ST_OFF) return S.result; }
       break;
-    case ST_NOTICE:   // Continue (X / △ / ○)
+    case ST_NOTICE:   // Continue (X; P14-7: △ и ○ не действуют)
+      if (!SVM_NOBACK_OLD) hit &= ~(unsigned)(PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE);
       r = uiScrMenuInput(SCR_NOTICE, &S.psel, hit);
       if (r == 0 || r == UI_SCR_BACK) {
         if (S.after == AFTER_CLOSE) { int res = S.result; closeWith(res); return res; }
@@ -707,13 +833,13 @@ static void dlgBackdrop(void) {
 }
 void svmDraw(float t) {
   { static int lastSt = -1;   // гейт: что написано на кнопках вопроса/сообщения при их появлении (tests/savegame/emu_check.py)
-    if (S.st != lastSt && (S.st == ST_ASK || S.st == ST_CONFIRM || S.st == ST_NOTICE)) {
+    if (S.st != lastSt && (S.st == ST_ASK || S.st == ST_CONFIRM || S.st == ST_NOTICE || S.st == ST_YESNO)) {
       int sc = S.st == ST_NOTICE ? SCR_NOTICE : SCR_PROMPT;
       logf_("SVROWS scr=%s r0=%s r1=%s\n", sc == SCR_NOTICE ? "notice" : "prompt", uiScrRowShown(sc, 0), uiScrRowShown(sc, 1)); }
     lastSt = S.st; }
   switch (S.st) {
     case ST_SLOTS: uiScrMenuFlags(2); uiScrDrawMenu(SCR_SLOTS, S.sel, t); break;   // 413: GameSlots — CGuiMenu флаги 2 (SLES 0x1b7344/0x1dd73c)
-    case ST_ASK: case ST_CONFIRM: uiScrDrawMenu(SCR_PROMPT, S.psel, t); break;
+    case ST_ASK: case ST_CONFIRM: case ST_YESNO: uiScrDrawMenu(SCR_PROMPT, S.psel, t); break;
     case ST_NOTICE: uiScrDrawMenu(SCR_NOTICE, S.psel, t); break;
     case ST_BUSY: uiScrDrawMenu(SCR_MESSAGE, -1, t); S.drawn++; break;
     case ST_SYSDLG: dlgBackdrop(); S.drawn++; break;   // 309: фон окна PSP — игра (город паузы / гостиная) под затемнением

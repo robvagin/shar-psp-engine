@@ -65,21 +65,28 @@ int shopBuy(Shop *s, int item) {
   return SHOP_OK;
 }
 
+// Сверка g09a-hud (круг 1, P13:13): в списке продавца машин только непроданные. SHOP_SOLDHIDE_OLD=1 — прежнее
+#ifndef SHOP_SOLDHIDE_OLD
+#define SHOP_SOLDHIDE_OLD 0
+#endif
 int shopSellerNear(const Shop *s, float x, float y, float z) {
   int best = -1; float bd = 1e9f;
   for (int i = 0; i < s->nseller; i++) {
     const ShopSeller *v = &s->seller[i];
     float dx = x - v->x, dy = y - v->y, dz = z - v->z, d = sqrtf(dx * dx + dz * dz);
     if (fabsf(dy) > 2.f || d > v->radius + SHOP_REACH || d >= bd) continue;
+    if (!SHOP_SOLDHIDE_OLD && shopSellerItem(s, i, 0) < 0) continue;   // продавать нечего — лавка не открывается
     best = i; bd = d;
   }
   return best;
 }
 
+// Сверка g09a-hud (круг 1, P13:13): в списке продавца машин только непроданные — купил, машина пропала из списка. SHOP_SOLDHIDE_OLD=1 — прежнее («уже купленное показывается, но не покупается»)
 int shopSellerItem(const Shop *s, int seller, int k) {
   if (seller < 0 || seller >= s->nseller) return -1;
   for (int i = 0; i < s->nitem; i++)
-    if (eqi(s->item[i].quest, "forsale") && eqi(s->item[i].seller, s->seller[seller].shop) && k-- == 0) return i;
+    if (eqi(s->item[i].quest, "forsale") && eqi(s->item[i].seller, s->seller[seller].shop)
+        && (SHOP_SOLDHIDE_OLD || s->item[i].kind != SHOP_CAR || !shopOwns(s, SHOP_CAR, s->item[i].name)) && k-- == 0) return i;
   return -1;
 }
 

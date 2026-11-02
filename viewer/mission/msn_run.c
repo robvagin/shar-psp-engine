@@ -12,6 +12,83 @@
 #ifndef MSN_INTERIOR_ALIAS_OLD
 #define MSN_INTERIOR_ALIAS_OLD 0
 #endif
+/* ---- сверка с исходником оригинала, окно g07-missions (02.11.2026, правки Роба 1077–1081). Каждый выключатель: 1 — поведение прежнее (TEST81).
+   Документ и номер строки — у каждого в комментарии; журнал: docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g07-missions_журнал.md */
+#ifndef MSN_STAGEDELAY_OLD
+#define MSN_STAGEDELAY_OLD 0   /* P06-17, СВЕРКА_С_ИСХОДНИКОМ 5.4, P07-27: этап → следующий этап без паузы (было 0,2 с, с «этап пройден» 0,8 с) */
+#endif
+#ifndef MSN_LOCKED_OLD
+#define MSN_LOCKED_OLD 0       /* P07-2, P06-8: запертый этап играет всегда; по концу сверка текущей машины/костюма, подсказка; пропуска по владению нет */
+#endif
+#ifndef MSN_PAR_OLD
+#define MSN_PAR_OLD 0          /* P07-4, P06-4: пар-время ставки в целых секундах; сверх пара — предупреждение и гонка идёт, провал на пар + 15 с, без выплаты */
+#endif
+#ifndef MSN_OOV_OLD
+#define MSN_OOV_OLD 0          /* 8.1, P06 Д3, P07-12, P07 Д1: «не выходи из машины» — включается выходом, помнит машину, окно = SetCondTime + 1 с */
+#endif
+#ifndef MSN_TIMERPAUSE_OLD
+#define MSN_TIMERPAUSE_OLD 0   /* P06-11, P07-26: таймер и условия времени стоят на переходах в интерьер и при аресте */
+#endif
+#ifndef MSN_ORDER_OLD
+#define MSN_ORDER_OLD 0        /* P07-28: за кадр сначала цель; выполнена — условия кадра не проверяются */
+#endif
+#ifndef MSN_DAMAGE_OLD
+#define MSN_DAMAGE_OLD 0       /* P07-13: условие damage срабатывает, когда доиграла анимация взрыва машины */
+#endif
+#ifndef MSN_FOLLOW_OLD
+#define MSN_FOLLOW_OLD 0       /* P07-29: followdistance — проверка раз в 100 мс, провал сразу при расстоянии (целые м) больше максимума, минимума нет */
+#endif
+#ifndef MSN_LOSETAIL_OLD
+#define MSN_LOSETAIL_OLD 0     /* P07-30: losetail закрывается в кадр, когда расстояние (целое) больше SetObjDistance; без числа — 0 */
+#endif
+#ifndef MSN_GOOUTSIDE_OLD
+#define MSN_GOOUTSIDE_OLD 0    /* P07-31: gooutside закрывается по входу в триггер своего локатора */
+#endif
+#ifndef MSN_INTERIOR_ENTER_OLD
+#define MSN_INTERIOR_ENTER_OLD 0 /* P07-32: interior закрывается в момент НАЧАЛА перехода в нужный интерьер */
+#endif
+#ifndef MSN_COINS_OLD
+#define MSN_COINS_OLD 0        /* P07-22: нехватка монет на взнос — отказ и сразу отмена миссии */
+#endif
+#ifndef MSN_DUMP_OLD
+#define MSN_DUMP_OLD 0         /* P07-10, P07-11, СВЕРКА 5.9: выпавший груз — задержка 1 с / 0..5 с, жизнь 15 с, мигание последних 5 с */
+#endif
+#ifndef MSN_HINT_OLD
+#define MSN_HINT_OLD 0         /* P06-19, P13-14: подсказка провала — случайная из первых N, не по кругу */
+#endif
+#ifndef MSN_ABORT_OLD
+#define MSN_ABORT_OLD 0        /* P06-20, P07-23: AllowMissionAbort("false") читается */
+#endif
+#ifndef MSN_BARREL_OLD
+#define MSN_BARREL_OLD 0   /* круг 3: 1 — разбитая бочка проваливает миссию (прежнее) */
+#endif
+#ifndef MSN_IRIS_OLD
+#define MSN_IRIS_OLD 0         /* P06-10: SetIrisWipe в конце этапа — событие ириса */
+#endif
+#ifndef MSN_LEVELOVER_OLD
+#define MSN_LEVELOVER_OLD 0    /* P06-22: SetLevelOver / SetGameOver срабатывают на старте этапа с этой командой */
+#endif
+#ifndef MSN_C3_OLD
+#define MSN_C3_OLD 0           /* круг 3, проверка по исходнику: перенос «не выходи из машины» с новым остатком 10 с и ожиданием; провал по времени при остатке < 1 с; пауза таймера только на переходе; damage ждёт взрыв всегда; ирис ждёт 1 с */
+#endif
+#ifndef MSN_BUYCUR_OLD
+#define MSN_BUYCUR_OLD 0       /* круг 5, P06-24 / P07-15: buycar и buyskin закрываются, когда ТЕКУЩАЯ машина / надетый костюм стали нужными, а не когда вещь куплена */
+#endif
+#ifndef MSN_BONUSINTRO_OLD
+#define MSN_BONUSINTRO_OLD 0   /* круг 2, g07b P06-1: бонус-персонажи работают весь отрезок вступления (любой этап), без условия «не в помещении» */
+#endif
+#ifndef MSN_BONUSREPEAT_OLD
+#define MSN_BONUSREPEAT_OLD 0  /* круг 2, g07b P06-2: одноразовый бонус только при 7-м аргументе = 1; иначе повтор; пройденный bm1 на новом входе в уровень не создаётся */
+#endif
+#ifndef MSN_FADE_OLD
+#define MSN_FADE_OLD 0         /* круг 2, g07b P06-9: пауза этапа после SetFadeOut = 0,25 + 2,0 с, число скрипта не читается */
+#endif
+#ifndef MSN_CP5_OLD
+#define MSN_CP5_OLD 0          /* круг 2, g07b P06-5: вход через загрузку/сохранение/MISSION SELECT ставит контрольную точку на этап-чекпоинт вступления */
+#endif
+#ifndef MSN_TALKORDER_OLD
+#define MSN_TALKORDER_OLD 0    /* P07-16: подсказка и стрелка — к первому по порядку скрипта неподобранному предмету */
+#endif
 
 #define F (rt->f)
 
@@ -96,6 +173,8 @@ static void dispatch(MsnRuntime *rt, const MsnCmd *c, int when)
     case MSN_OP_ADDCOLLECTIBLESTATEPROP: reg_set(rt, MSN_REG_PROP, c, 0, 1, -1, level); break;
     default: break;
     }
+    if (!MSN_ABORT_OLD && c->op == MSN_OP_ALLOWMISSIONABORT && !level)   /* P06-20 / P07-23: AllowMissionAbort("false") — Accept/Cancel вступления не показывать */
+        rt->allow_abort = !msn_streq(msn_arg_s(F, c, 0), "false");
     if ((info->route & MSN_ROUTE_ENG) && rt->host.command) {
         MsnCall call;
         call.f = F; call.cmd = c; call.when = when;
@@ -115,7 +194,9 @@ void msn_init(MsnRuntime *rt, const MsnFile *f, const MsnHost *host)
     memset(rt, 0, sizeof *rt);
     rt->f = f;
     if (host) rt->host = *host;
-    rt->delay_stage = 0.2f; rt->delay_stage_flourish = 0.8f; rt->delay_mission = 3.0f;
+    /* P06-17 / 5.4 / P07-27: у оригинала следующий этап — в том же кадре (с «этап пройден» — через кадр); последний этап держит 3 с (delay_mission) */
+    rt->delay_stage = MSN_STAGEDELAY_OLD ? 0.2f : 0.0f; rt->delay_stage_flourish = MSN_STAGEDELAY_OLD ? 0.8f : 0.0f; rt->delay_mission = 3.0f;
+    rt->allow_abort = 1; rt->rng = 0x2545F491u;
     rt->radius_car = 6.5f; rt->radius_foot = 2.6f; rt->talk_radius = MSN_TALK_R;   /* правка 345: было 3.0 (msn_talk_reach) */
     rt->cur = -1; rt->story = -1; rt->status = MSN_IDLE;
     rt->auto_bonus = 1;
@@ -145,7 +226,7 @@ void msn_level_start(MsnRuntime *rt)
     dispatch_range(rt, L->rew_first, L->rew_count, MSN_AT_REWARDS);
     for (i = 0; i < F->nmissions; i++) {
         const MsnMission *m = &F->missions[i];
-        if ((m->flags & MSN_MF_BONUS) && m->bonus_npc != 0xFFFFFFFFu) {
+        if ((m->flags & MSN_MF_BONUS) && m->bonus_npc != 0xFFFFFFFFu && (MSN_BONUSREPEAT_OLD || !((m->flags & MSN_MF_BONUSMISSION) && (rt->completed & (1u << i)) && !rt->dev_bonus_replay))) {
             MsnEvent e; memset(&e, 0, sizeof e);
             e.type = MSN_EV_BONUS_AVAILABLE; e.index = (int)i;
             e.name = msn_arg_s(F, &F->cmds[m->bonus_npc], 0); e.name2 = msn_str(F, m->id);
@@ -223,7 +304,8 @@ static void begin_objective(MsnRuntime *rt)
         emit(rt, &e);
         break;
     case MSN_OBJ_FMV:
-        ev(rt, MSN_EV_FMV, 0, 0, rt->c_fmv ? msn_arg_s(F, rt->c_fmv, 0) : "", NULL);
+        /* P15-05: вторая позиция SetFMVInfo («stopmusic») — в text: музыку на время ролика убить насовсем, не ставить на паузу; хост без обработки её не замечает */
+        ev(rt, MSN_EV_FMV, 0, 0, rt->c_fmv ? msn_arg_s(F, rt->c_fmv, 0) : "", rt->c_fmv && msn_argc(rt->c_fmv) > 1 ? msn_arg_s(F, rt->c_fmv, 1) : NULL);
         break;
     case MSN_OBJ_RACE: case MSN_OBJ_DELIVERY: case MSN_OBJ_DUMP: {
         int i;
@@ -265,7 +347,9 @@ static void enter_stage(MsnRuntime *rt)
     if (!ph || rt->stage >= ph->stage_count) { phase_done(rt); return; }
     st = &F->stages[ph->first_stage + rt->stage];
     /* locked stage: skipped when the car / costume is already owned (with the following buy stage) */
-    if ((st->flags & MSN_SF_LOCKED) && rt->host.owns && rt->host.owns(rt->host.user, st->lock_kind, msn_str(F, st->lock_name))) {
+    /* P07-2 / P06-8: у оригинала разговор запертого этапа играет ВСЕГДА, владение его не пропускает; по концу сверяется то, что на игроке сейчас
+       (complete_stage). MSN_LOCKED_OLD=1 — прежнее: куплено — этап с разговором и этап покупки пропускаются */
+    if (MSN_LOCKED_OLD && (st->flags & MSN_SF_LOCKED) && rt->host.owns && rt->host.owns(rt->host.user, st->lock_kind, msn_str(F, st->lock_name))) {
         ev(rt, MSN_EV_STAGE_SKIPPED, st->lock_kind, 0, msn_str(F, st->lock_name), NULL);
         rt->stage++;
         if (rt->stage < ph->stage_count) {
@@ -279,7 +363,23 @@ static void enter_stage(MsnRuntime *rt)
         return;
     }
     rt->st = st; rt->st_index = ph->first_stage + rt->stage; rt->obj = st->obj;
-    rt->t_stage = 0; rt->out_time = rt->follow_time = rt->escape_time = rt->hit_cooldown = 0;
+    {   /* P06 Д3 / P07-12: «не выходи из машины» уже идёт (игрок пешком после выхода) — следующий этап с таким же условием стартует включённым, на той же машине */
+        int carry_oov = 0, k2;
+        for (k2 = 0; !MSN_OOV_OLD && rt->oov_on && k2 < st->ncond; k2++) if (F->conds[st->cond_first + k2].type == MSN_COND_OUTOFVEHICLE) carry_oov = 1;
+        if (!MSN_C3_OLD) {   /* круг 3: признак переноса ждёт следующий этап с таким условием (этап без условия его не гасит); у нового условия остаток 10 с, не накопленное время */
+            if (carry_oov) {
+                float ct = 10.0f; int k3; uint32_t j3;
+                for (k3 = 0; k3 < st->ncond; k3++) { const MsnCond *c3 = &F->conds[st->cond_first + k3]; if (c3->type == MSN_COND_OUTOFVEHICLE)
+                    for (j3 = 0; j3 < c3->cmd_count; j3++) if (F->cmds[c3->cmd_first + j3].op == MSN_OP_SETCONDTIME) ct = msn_arg_f(F, &F->cmds[c3->cmd_first + j3], 0) / 1000.0f; }
+                if (!rt->w_prev_foot && rt->w_have && rt->w_vehicle[0] && msn_streq(rt->w_vehicle, rt->oov_car)) { rt->oov_on = 0; rt->out_time = 0; ev(rt, MSN_EV_OUTOFVEHICLE, 0, 0, NULL, NULL); }   /* игрок уже снова в своей машине */
+                else rt->out_time = (ct + 1.0f) - 10.0f;
+            }
+        } else if (!carry_oov) { rt->out_time = 0; if (rt->oov_on) { rt->oov_on = 0; ev(rt, MSN_EV_OUTOFVEHICLE, 0, 0, NULL, NULL); } }
+    }
+    rt->t_stage = 0; rt->follow_time = rt->escape_time = rt->hit_cooldown = 0; rt->follow_acc = 0; rt->buy_fallback = 0; rt->boom_wait = 0; rt->par_late = 0; rt->par_warn = 0; rt->hit_delay = 0;
+    memset(rt->drop_pend, 0, sizeof rt->drop_pend); memset(rt->drop_blink, 0, sizeof rt->drop_blink);
+    if (MSN_OOV_OLD) rt->out_time = 0;
+    if (!MSN_C3_OLD && !rt->oov_on) rt->out_time = 0;
     rt->flag_dialogue = rt->flag_fmv = rt->flag_boss = rt->flag_cargo_lost = rt->items_changed = 0; rt->hit_vehicle = NULL;
     rt->c_dest = rt->c_target = rt->c_talk = rt->c_dialog = rt->c_fmv = rt->c_completion = rt->c_pickup_prop = NULL;
     rt->target = NULL; rt->objdist = 0; rt->duration = 0; rt->fee = 0; rt->laps = 1;
@@ -313,7 +413,7 @@ static void enter_stage(MsnRuntime *rt)
         default: break;
         }
     }
-    if (st->flags & MSN_SF_ELAPSED) { rt->timer_up = 1; rt->remaining = 0; has_time = 1; }
+    if (st->flags & MSN_SF_ELAPSED) { rt->timer_up = 1; rt->remaining = MSN_PAR_OLD ? 0.0f : 0.001f; has_time = 1; }   /* P06-4: счёт гонки начинается с 1 мс */
     rt->timer_on = has_time;
     if (st->obj == MSN_OBJ_PICKUPITEM && rt->target) {       /* the prop is defined in setup or in the stage */
         const MsnPhase *ph2 = cur_phase(rt);
@@ -335,12 +435,29 @@ static void enter_stage(MsnRuntime *rt)
     {
         MsnEvent e; memset(&e, 0, sizeof e);
         e.type = MSN_EV_STAGE_START; e.index = st->obj; e.text = msn_str(F, st->text); e.name = msn_str(F, st->icon);
+        if (rt->suppress_start) { e.text = ""; e.name = ""; rt->suppress_start = 0; }   /* P06-8: подсказка запертого этапа уже показана — стартовое сообщение этого этапа убрано */
         e.name2 = rt->target; e.value = rt->timer_on && !rt->timer_up ? rt->remaining : 0;
         emit(rt, &e);
     }
     for (i = 0; i < st->cmd_count; i++) {
         const MsnCmd *c = &F->cmds[st->cmd_first + i];
         if (!(msn_opinfo[c->op].flags & MSN_OPF_END)) dispatch(rt, c, MSN_AT_STAGE);
+    }
+    if (!MSN_IRIS_OLD && rt->iris_closed) { rt->iris_closed = 0; ev(rt, MSN_EV_IRIS, 0, 0, NULL, NULL); }   /* P06-10: прошлый этап закрыл ирис — этот стартует под закрытым и открывает его */
+    if (!MSN_LEVELOVER_OLD) {   /* P06-22: SetLevelOver / SetGameOver работают на СТАРТЕ этапа, где стоят (L7 m8 после ролика): уровень завершён сразу */
+        int go = 0, lo = 0;
+        for (i = 0; i < st->cmd_count; i++) {
+            unsigned op = F->cmds[st->cmd_first + i].op;
+            if (op == MSN_OP_SETGAMEOVER) go = 1; else if (op == MSN_OP_SETLEVELOVER) lo = 1;
+        }
+        if (go || lo) {
+            ev(rt, MSN_EV_LEVEL_OVER_NOW, go, 0, NULL, NULL);
+            ev(rt, MSN_EV_MARKER_CLEAR, 0, 0, NULL, NULL); ev(rt, MSN_EV_CLEANUP, 0, 0, NULL, NULL); reg_clear_mission(rt);
+            rt->completed |= 1u << rt->cur;
+            rt->status = MSN_LEVEL_DONE;
+            ev(rt, MSN_EV_LEVEL_COMPLETE, go ? 1 : 0, 0, NULL, NULL);
+            return;
+        }
     }
     if (rt->cd_count > 0) {
         rt->status = MSN_COUNTDOWN; rt->cd_step = 0;
@@ -384,7 +501,7 @@ void msn_start_mission(MsnRuntime *rt, int mission, int restore)
     m = &F->missions[mission];
     rt->cur = mission;
     if (!(m->flags & MSN_MF_BONUS)) rt->story = mission;
-    rt->timer_on = 0; rt->remaining = 0; rt->cargo = 0; rt->fail = 0;
+    rt->timer_on = 0; rt->remaining = 0; rt->cargo = 0; rt->fail = 0; rt->allow_abort = 1; rt->oov_on = 0; rt->iris_closed = 0; rt->suppress_start = 0;
     memset(&e, 0, sizeof e); e.type = MSN_EV_MISSION_START; e.name = msn_str(F, m->id); e.text = msn_str(F, m->title);
     e.value = (m->flags & MSN_MF_BONUS) ? 1.0f : 0.0f; e.index = m->flags;
     e.name2 = g_continuing ? "continue" : NULL;
@@ -397,11 +514,32 @@ void msn_start_mission(MsnRuntime *rt, int mission, int restore)
         return;
     }
     if (restore) { rt->phase = rt->cp_phase; rt->stage = rt->cp_stage; rt->restoring = 1; }
-    else { rt->phase = m->intro != MSN_NONE16 ? 0 : 1; rt->stage = 0; rt->cp_phase = rt->phase; rt->cp_stage = 0; }
+    else {
+        rt->phase = m->intro != MSN_NONE16 ? 0 : 1; rt->stage = 0; rt->cp_phase = rt->phase; rt->cp_stage = 0;
+        if (!MSN_CP5_OLD && !g_continuing && cur_phase(rt)) {   /* круг 2, P06-5: точка повтора — первый этап-чекпоинт вступления; «следующая миссия» оставляет 0 */
+            const MsnPhase *ph = cur_phase(rt); uint32_t s;
+            for (s = 0; s < ph->stage_count; s++) if (F->stages[ph->first_stage + s].flags & MSN_SF_CHECKPOINT) { rt->cp_stage = (int)s; break; }
+        }
+    }
     start_phase(rt, restore);
 }
 
 static void collect(MsnRuntime *rt, int i);
+
+/* имя интерьера двери/скрипта совпало с целью этапа (имена дисковых дверей и скриптовые псевдонимы) */
+static int interior_is(const char *have, const char *want)
+{
+    size_t n;
+    if (!have || !want) return 0;
+    if (msn_streq(have, want)) return 1;
+    /* Disc doors use full resource names; mission destinations use script aliases. */
+    if (!MSN_INTERIOR_ALIAS_OLD && ((msn_streq(have, "AndroidsDungeon") && msn_streq(want, "Android")) ||
+        (msn_streq(have, "Moes") && strncmp(want, "moe", 3) == 0 &&
+         (!want[3] || (want[3] >= '0' && want[3] <= '9'))))) return 1;
+    /* "moe1" (scripts) vs "moe" (door data) */
+    n = strlen(have);
+    return n > 0 && strncmp(want, have, n) == 0 && want[n] >= '0' && want[n] <= '9';
+}
 
 /* ------------------------------------------------------------------ completion / failure */
 static void complete_stage(MsnRuntime *rt)
@@ -419,14 +557,30 @@ static void complete_stage(MsnRuntime *rt)
         const MsnCmd *c = &F->cmds[st->cmd_first + i];
         if (msn_opinfo[c->op].flags & MSN_OPF_END) dispatch(rt, c, MSN_AT_STAGE_END);
     }
+    if (!MSN_LOCKED_OLD && (st->flags & MSN_SF_LOCKED)) {   /* P07-2 / P06-8: по концу разговора запертого этапа — что на игроке сейчас (имя), несовпало: подсказка с текстом этапа */
+        const char *want = msn_str(F, st->lock_name), *have = NULL; int known = 1;
+        if (st->lock_kind == MSN_OWN_SKIN) { have = rt->host.cur_skin ? rt->host.cur_skin(rt->host.user) : NULL; if (!have) known = 0; }   /* костюм неизвестен — замок считается пройденным */
+        else have = rt->w_now ? rt->w_now->vehicle : (rt->w_have ? rt->w_vehicle : NULL);
+        if (known && !(have && *want && msn_streq(have, want))) {
+            ev(rt, MSN_EV_LOCKED_HINT, st->lock_kind, st->msg == MSN_NONE16 ? -1.0f : (float)st->msg, want, msn_str(F, st->text));
+            rt->suppress_start = 1;   /* у следующего этапа (покупка) стартовое сообщение убирается; идём дальше в любом случае */
+        }
+    }
+    float iris_wait = 0.0f;
+    if (!MSN_IRIS_OLD) {   /* P06-10: SetIrisWipe(число) в конце этапа — ирис закрывается (скорость 1,0, число не читается), следующий этап стартует под закрытым */
+        for (i = 0; i < st->cmd_count; i++)
+            if (F->cmds[st->cmd_first + i].op == MSN_OP_SETIRISWIPE) { rt->iris_closed = 1; ev(rt, MSN_EV_IRIS, 1, 1.0f, NULL, NULL); iris_wait = MSN_C3_OLD ? 0.0f : 1.0f; break; }
+    }
     rt->status = MSN_BETWEEN;
     rt->delay = (st->flags & MSN_SF_SHOWCOMPLETE) ? rt->delay_stage_flourish : rt->delay_stage;
+    if (iris_wait > rt->delay) rt->delay = iris_wait;   /* круг 3, строка 12: смена этапа ждёт, пока ирис закроется (1 с, как у вида) */
     for (i = 0; i < st->cmd_count; i++) {   /* правка 122: SetFadeOut(t) — следующий этап не раньше, чем экран уйдёт в чёрное */
         const MsnCmd *c = &F->cmds[st->cmd_first + i];
-        if (c->op == MSN_OP_SETFADEOUT) { float t = msn_arg_f(F, c, 0); if (t > rt->delay) rt->delay = t; }
+        if (c->op == MSN_OP_SETFADEOUT) { float t = MSN_FADE_OLD ? msn_arg_f(F, c, 0) : 2.25f; if (t > rt->delay) rt->delay = t; }   /* круг 2, P06-9: число не читается, уход 0,25 + чёрный 2,0 */
     }
 }
 
+int (*msnWagerPayFn)(int fee);   /* круг 2, g07b P06-3: выплата ставки = вход + trunc(коэффициент машины × вход) (msn_view mvWagerPay); NULL — вход × 2 */
 static void mission_done(MsnRuntime *rt)
 {
     const MsnMission *m = cur_mission(rt);
@@ -445,8 +599,13 @@ static void mission_done(MsnRuntime *rt)
         for (s = 0; s < ph->stage_count; s++) {
             const MsnStage *st = &F->stages[ph->first_stage + s];
             for (i = 0; i < st->cmd_count; i++)
-                if (F->cmds[st->cmd_first + i].op == MSN_OP_SETRACEENTERYFEE) coins = 2.0f * (float)msn_arg_i(F, &F->cmds[st->cmd_first + i], 0);
+                if (F->cmds[st->cmd_first + i].op == MSN_OP_SETRACEENTERYFEE) {
+                    int fee = msn_arg_i(F, &F->cmds[st->cmd_first + i], 0);
+                    coins = (msnWagerPayFn && !MSN_BONUSREPEAT_OLD) ? (float)msnWagerPayFn(fee) : 2.0f * (float)fee;
+                }
         }
+        /* P06-4 / P07-4: финиш между пар-временем и пар + 15 с засчитывает миссию, но без выплаты (секунды целые) */
+        if (!MSN_PAR_OLD && rt->timer_up && rt->par > 0 && (int)rt->remaining > (int)rt->par) coins = 0.0f;
     }
     ev(rt, MSN_EV_MARKER_CLEAR, 0, 0, NULL, NULL);
     ev(rt, MSN_EV_MISSION_COMPLETE, quest, coins, msn_str(F, m->id), msn_str(F, m->title));
@@ -518,7 +677,12 @@ static void fail(MsnRuntime *rt, int reason)
     const char *hint = "";
     while (avail < 8 && *msn_fail_hint(F, reason, avail)) avail++;
     if (n <= 0 || n > avail) n = avail;                /* not set: rotate over every hint the bible has */
-    if (n > 0) hint = msn_fail_hint(F, reason, rt->fail_count % n);
+    if (n > 0) {   /* P06-19 / P13-14: подсказка — случайная из первых N (SetNumValidFailureHints, без него все), не по кругу */
+        int k;
+        if (MSN_HINT_OLD) k = rt->fail_count % n;
+        else { rt->rng = rt->rng * 1664525u + 1013904223u + (uint32_t)rt->fail_count; k = (int)((rt->rng >> 16) % (uint32_t)n); }
+        hint = msn_fail_hint(F, reason, k);
+    }
     rt->fail_count++;
     rt->status = MSN_FAILED; rt->fail = reason;
     ev(rt, MSN_EV_MARKER_CLEAR, 0, 0, NULL, NULL);
@@ -534,11 +698,13 @@ void msn_retry(MsnRuntime *rt, int from_start)
     m = cur_mission(rt);
     ev(rt, MSN_EV_CLEANUP, 0, 0, NULL, NULL);
     reg_clear_mission(rt);
-    rt->timer_on = 0; rt->remaining = 0; rt->cargo = 0; rt->fail = 0;
+    rt->timer_on = 0; rt->remaining = 0; rt->cargo = 0; rt->fail = 0; rt->oov_on = 0; rt->iris_closed = 0; rt->suppress_start = 0;
     if (from_start) { rt->phase = m->intro != MSN_NONE16 ? 0 : 1; rt->stage = 0; rt->cp_phase = rt->phase; rt->cp_stage = 0; }
     else { rt->phase = rt->cp_phase; rt->stage = rt->cp_stage; rt->timer_on = rt->cp_timer; rt->remaining = rt->cp_remaining; rt->restoring = 1; }
     start_phase(rt, 1);
 }
+
+int msn_abort_allowed(const MsnRuntime *rt) { return MSN_ABORT_OLD ? 1 : rt->allow_abort; }
 
 void msn_abort(MsnRuntime *rt)
 {
@@ -570,8 +736,8 @@ int msn_start_bonus(MsnRuntime *rt, int mission)
 {
     if (mission < 0 || (uint32_t)mission >= F->nmissions || !(F->missions[mission].flags & MSN_MF_BONUS)) return 0;
     /* only from free roam: level done, or the story mission is still in the first stage of its intro */
-    if (!(rt->status == MSN_LEVEL_DONE || (rt->cur == rt->story && rt->phase == 0 && rt->stage == 0 && rt->status == MSN_RUNNING)))
-        return 0;
+    if (!(rt->status == MSN_LEVEL_DONE || (rt->cur == rt->story && rt->phase == 0 && (MSN_BONUSINTRO_OLD ? rt->stage == 0 : 1) && rt->status == MSN_RUNNING)))
+        return 0;   /* круг 2, P06-1: любой этап вступления */
     ev(rt, MSN_EV_MARKER_CLEAR, 0, 0, NULL, NULL);
     ev(rt, MSN_EV_CLEANUP, 0, 0, NULL, NULL);
     reg_clear_mission(rt);
@@ -607,11 +773,14 @@ float msn_talk_reach(const MsnRuntime *rt, const MsnCmd *c_talk)
 int msn_bonus_near(MsnRuntime *rt, const MsnWorld *w)
 {
     uint32_t i;
-    if (!w || !w->on_foot || w->interior || !msn_free_roam(rt)) return -1;
+    if (!w || !w->on_foot || (MSN_BONUSINTRO_OLD && w->interior)) return -1;
+    if (MSN_BONUSINTRO_OLD ? !msn_free_roam(rt)
+                           : !(rt->status == MSN_LEVEL_DONE || (rt->cur >= 0 && rt->cur == rt->story && rt->phase == 0 && rt->status == MSN_RUNNING && cur_mission(rt)->intro != MSN_NONE16))) return -1;
     for (i = 0; i < F->nmissions; i++) {
         const MsnMission *m = &F->missions[i];
         MsnEntity e;
-        if (!(m->flags & MSN_MF_BONUS) || m->bonus_npc == 0xFFFFFFFFu || ((rt->completed & (1u << i)) && !rt->dev_bonus_replay)) continue;
+        int done = (rt->completed & (1u << i)) != 0, once = MSN_BONUSREPEAT_OLD ? 1 : (m->bonus_npc != 0xFFFFFFFFu && msn_arg_i(F, &F->cmds[m->bonus_npc], 6) == 1);   /* круг 2, P06-2: повтор, если 7-й аргумент не 1 */
+        if (!(m->flags & MSN_MF_BONUS) || m->bonus_npc == 0xFFFFFFFFu || (done && once && !rt->dev_bonus_replay)) continue;
         if (!bonus_entity(rt, (int)i, msn_arg_s(F, &F->cmds[m->bonus_npc], 0), &e)) continue;
         if (dist3(w->player, e.pos) < msn_talk_reach(rt, NULL)) return (int)i;
     }
@@ -720,7 +889,7 @@ static int nav(MsnRuntime *rt, const MsnWorld *w, MsnVec3 *out, const MsnLoc **l
         for (i = 0; i < rt->nitems; i++) {
             float d;
             if (rt->done[i] || (rt->obj == MSN_OBJ_DUMP && !rt->released[i])) continue;
-            d = w ? dist3(w->player, item_pos(rt, i)) : (float)i;
+            d = (w && MSN_TALKORDER_OLD) ? dist3(w->player, item_pos(rt, i)) : (float)i;   /* P07-16: метка — к первому по порядку скрипта неподобранному, не к ближайшему */
             if (d < bd) { bd = d; best = i; }
         }
         if (best >= 0) {
@@ -764,8 +933,19 @@ static int check_conditions(MsnRuntime *rt, const MsnWorld *w, float dt)
     int k;
     /* ставка gr1: UseElapsedTime + SetParTime 195 — опоздал, провал (ставка пропала). MSN_BREAK_PARTIME=1 — красный контроль
        tests/shop (часть race 30.09): без проверки пар-времени опоздавший забирает выигрыш */
-    if (!MSN_BREAK_PARTIME && rt->timer_on && rt->timer_up && rt->par > 0 && rt->remaining > rt->par && msn_streq(msn_str(F, st->obj_arg), "gamble"))
-        return MSN_FAIL_PARTIME;
+    if (MSN_PAR_OLD) {
+        if (!MSN_BREAK_PARTIME && rt->timer_on && rt->timer_up && rt->par > 0 && rt->remaining > rt->par && msn_streq(msn_str(F, st->obj_arg), "gamble"))
+            return MSN_FAIL_PARTIME;
+    } else if (!MSN_BREAK_PARTIME && rt->timer_on && rt->timer_up && rt->par > 0 && msn_streq(msn_str(F, st->obj_arg), "gamble")) {
+        /* P07-4 / P06-4: пар-время считается в ЦЕЛЫХ секундах. Не дольше пара — финиш платит. Дольше: предупреждение (текст проигрыша ставочной гонки) каждую
+           секунду, гонка ПРОДОЛЖАЕТСЯ; миссия рвётся, только когда прошло больше пара + 15 с; финиш между ними засчитывает миссию без выплаты */
+        int over = (int)rt->remaining - (int)rt->par;
+        if (over > 0) {
+            rt->par_late = 1;
+            if (over != rt->par_warn) { rt->par_warn = over; ev(rt, MSN_EV_PAR_LATE, over, (float)(15 - over), NULL, NULL); }
+            if (!rt->paused && over > 15) return MSN_FAIL_PARTIME;
+        }
+    }
     for (k = 0; k < st->ncond; k++) {
         const MsnCond *cd = &F->conds[st->cond_first + k];
         const char *target = NULL; float minh = 0.0f, ctime = 10.0f, fmin = 0, fmax = 150.0f; int pos = 1, hasmin = 0;
@@ -784,15 +964,46 @@ static int check_conditions(MsnRuntime *rt, const MsnWorld *w, float dt)
         (void)hasmin;
         switch (cd->type) {
         case MSN_COND_TIMEOUT:
-            if (rt->timer_on && !rt->timer_up && rt->remaining <= 0) return MSN_FAIL_TIMEOUT;
+            if (rt->timer_on && !rt->timer_up && (MSN_C3_OLD ? rt->remaining <= 0 : rt->remaining < 1.0f) && !rt->paused) return MSN_FAIL_TIMEOUT;   /* круг 3: целые секунды с отбрасыванием дроби — на экране 0:00 */   /* P06-11: пока переход/арест — «время вышло» не наступает */
             break;
         case MSN_COND_OUTOFVEHICLE:
-            rt->out_time = w->on_foot ? rt->out_time + dt : 0;
-            if (rt->out_time >= ctime) return MSN_FAIL_OUTOFVEHICLE;
+            if (MSN_OOV_OLD) {
+                rt->out_time = w->on_foot ? rt->out_time + dt : 0;
+                if (rt->out_time >= ctime) return MSN_FAIL_OUTOFVEHICLE;
+                break;
+            }
+            {   /* 8.1, P06 Д3, P07-12, P07 Д1: условие включается, только когда игрок реально вышел из машины, и помнит ЭТУ машину. Окно = SetCondTime + 1 с.
+                   Сел в ту же — выключено, окно заново; сел в ДРУГУЮ — провал сразу; зашёл в помещение (не в переходе) — провал. Арест и переход счёт не рвут,
+                   но провал в них не наступает */
+                float win = ctime + 1.0f;
+                if (w->on_foot) {
+                    if (!rt->oov_on && rt->w_have && !rt->w_prev_foot) {   /* кадр выхода: был в машине, стал пешком */
+                        rt->oov_on = 1; rt->out_time = 0;
+                        strncpy(rt->oov_car, w->vehicle ? w->vehicle : "", sizeof rt->oov_car - 1); rt->oov_car[sizeof rt->oov_car - 1] = 0;
+                        rt->oov_win = win;
+                        ev(rt, MSN_EV_OUTOFVEHICLE, 1, win, rt->oov_car, NULL);
+                    }
+                    if (rt->oov_on) {
+                        rt->out_time += dt;
+                        if (!rt->paused && w->interior && !w->transition) return MSN_FAIL_OUTOFVEHICLE;
+                        if (!rt->paused && rt->out_time >= win) return MSN_FAIL_OUTOFVEHICLE;
+                    }
+                } else if (rt->oov_on) {
+                    if (w->vehicle && !msn_streq(w->vehicle, rt->oov_car)) return rt->paused ? 0 : MSN_FAIL_OUTOFVEHICLE;   /* другая машина (в т.ч. угнанная) */
+                    rt->oov_on = 0; rt->out_time = 0;
+                    ev(rt, MSN_EV_OUTOFVEHICLE, 0, win, rt->oov_car, NULL);
+                }
+            }
             break;
         case MSN_COND_DAMAGE: {
             float h;
-            if (vehicle_health(rt, w, target, &h) && h <= minh + 1e-6f) return MSN_FAIL_DAMAGE;
+            if ((MSN_C3_OLD ? vehicle_health(rt, w, target, &h) : vehicle_health(rt, w, NULL, &h)) && h <= minh + 1e-6f) {
+                /* P07-13: провал по КОНЦУ анимации взрыва машины, не по порогу прочности; хост, не знающий о взрыве (vehicle_boom 0), — как раньше */
+                int mine = MSN_C3_OLD ? (!target || !*target || msn_streq(target, "current") || msn_streq(target, "default") || (w->vehicle && msn_streq(target, w->vehicle))) : 1;   /* круг 3: условие следит за текущей машиной игрока */
+                if (!MSN_DAMAGE_OLD && mine && w->vehicle_boom == 1) { rt->boom_wait = 1; break; }   /* взрыв машины игрока идёт — миссия ещё не проиграна */
+                if (!MSN_DAMAGE_OLD && mine && w->vehicle_boom == 2) return MSN_FAIL_DAMAGE;
+                return MSN_FAIL_DAMAGE;
+            }
             break; }
         case MSN_COND_POSITION: {
             int r, ahead = 0; MsnEntity e;
@@ -807,6 +1018,19 @@ static int check_conditions(MsnRuntime *rt, const MsnWorld *w, float dt)
             break; }
         case MSN_COND_FOLLOWDISTANCE: {
             MsnEntity e;
+            if (!MSN_FOLLOW_OLD) {   /* P07-29: проверка раз в 100 мс; провал сразу при расстоянии (целые метры) больше максимума; минимального нет; шкала близости = 1 − d/max */
+                if (target && entity(rt, target, &e) == 1) {
+                    rt->follow_acc += dt;
+                    if (rt->follow_acc >= 0.1f) {
+                        float d = dist3(w->player, e.pos), near = fmax > 0 ? 1.0f - d / fmax : 0.0f;
+                        rt->follow_acc = 0;
+                        if (near < 0) near = 0;
+                        ev(rt, MSN_EV_FOLLOW_NEAR, (int)d, near, NULL, NULL);
+                        if (!rt->paused && (int)d > (int)fmax) return MSN_FAIL_FOLLOWDISTANCE;
+                    }
+                }
+                break;
+            }
             if (target && entity(rt, target, &e) == 1) {
                 float d = dist3(w->player, e.pos);
                 rt->follow_time = (d > fmax || (fmin > 0 && d < fmin)) ? rt->follow_time + dt : 0;
@@ -814,7 +1038,12 @@ static int check_conditions(MsnRuntime *rt, const MsnWorld *w, float dt)
             }
             break; }
         case MSN_COND_KEEPBARREL:
-            if (rt->flag_cargo_lost) return MSN_FAIL_KEEPBARREL;
+            /* круг 3 (проверка g07b, P07 keepbarrel): разбитая бочка миссию НЕ проваливает — миссия возвращается на N этапов назад (N — второй аргумент условия: 1, 2 или 3), как после сброса.
+               MSN_BARREL_OLD=1 — прежнее (провал). Сигнал MSN_IN_CARGO_LOST шлёт хост при разбитой бочке (анимация предмета дошла до «разбита»; хост — g11-objects / game_msn) */
+            if (rt->flag_cargo_lost) {
+                if (!MSN_BARREL_OLD && cd->arg > 0) { rt->flag_cargo_lost = 0; rt->barrel_back = cd->arg; break; }
+                return MSN_FAIL_KEEPBARREL;
+            }
             break;
         default: break;
         }
@@ -854,25 +1083,28 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
     case MSN_OBJ_TIMER: return rt->t_stage >= rt->duration;
     case MSN_OBJ_INTERIOR: {
         const char *want = rt->c_dest ? msn_arg_s(F, rt->c_dest, 0) : "";
+        /* P07-32: interior закрывается в момент НАЧАЛА перехода в нужный интерьер (игрок уже внутри — сразу) */
+        if (!MSN_INTERIOR_ENTER_OLD && w->entering && interior_is(w->entering, want)) return 1;
         if (!w->interior) return 0;
-        if (msn_streq(w->interior, want)) return 1;
-        /* Disc doors use full resource names; mission destinations use script aliases. */
-        if (!MSN_INTERIOR_ALIAS_OLD && ((msn_streq(w->interior, "AndroidsDungeon") && msn_streq(want, "Android")) ||
-            (msn_streq(w->interior, "Moes") && strncmp(want, "moe", 3) == 0 &&
-             (!want[3] || (want[3] >= '0' && want[3] <= '9'))))) return 1;
-        {   /* "moe1" (scripts) vs "moe" (door data) */
-            size_t n = strlen(w->interior);
-            return n > 0 && strncmp(want, w->interior, n) == 0 && want[n] >= '0' && want[n] <= '9';
-        } }
-    case MSN_OBJ_GOOUTSIDE: return w->interior == NULL;
+        return interior_is(w->interior, want); }
+    case MSN_OBJ_GOOUTSIDE: {
+        /* P07-31: gooutside закрывается по входу в триггер своего локатора (outside_Simpsons_house_locator); значок в мире как у goto */
+        const MsnLoc *l = (!MSN_GOOUTSIDE_OLD && rt->c_dest) ? msn_arg_loc(F, rt->c_dest, 0) : NULL;
+        if (l) return !w->interior && msn_loc_contains(F, l, w->player, r);
+        return w->interior == NULL; }
     case MSN_OBJ_FOLLOW:
         if (entity(rt, rt->target, &e) != 1 || !e.finished) return 0;
         return rt->objdist <= 0 || dist3(w->player, e.pos) < rt->objdist;
     case MSN_OBJ_LOSETAIL: {
+        if (!MSN_LOSETAIL_OLD) {   /* P07-30: закрывается в кадр, когда расстояние (целое) больше SetObjDistance; число не задано — расстояние 0 */
+            if (entity(rt, rt->target, &e) != 1) return 0;
+            return (int)dist3(w->player, e.pos) > (int)rt->objdist;
+        }
+        {
         float range = rt->objdist > 0 ? rt->objdist : 150.0f;
         if (entity(rt, rt->target, &e) != 1) return 0;
         rt->escape_time = dist3(w->player, e.pos) > range ? rt->escape_time + dt : 0;
-        return rt->escape_time >= 1.0f; }
+        return rt->escape_time >= 1.0f; } }
     case MSN_OBJ_DESTROY:
         return entity(rt, rt->target, &e) == 1 && e.health <= 0.0f;
     case MSN_OBJ_PICKUPITEM: {
@@ -880,10 +1112,19 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
         if (w->on_foot || !l || dist3(w->player, locpos(l)) > 5.0f) return 0;
         rt->cargo = 1; rt->flag_cargo_lost = 0; return 1; }
     case MSN_OBJ_DESTROYBOSS: return rt->flag_boss;
-    case MSN_OBJ_BUYCAR: case MSN_OBJ_BUYSKIN:
-        return rt->host.owns && rt->host.owns(rt->host.user, st->obj == MSN_OBJ_BUYCAR ? MSN_OWN_CAR : MSN_OWN_SKIN, msn_str(F, st->obj_arg));
+    case MSN_OBJ_BUYCAR: case MSN_OBJ_BUYSKIN: {
+        int owned = rt->host.owns && rt->host.owns(rt->host.user, st->obj == MSN_OBJ_BUYCAR ? MSN_OWN_CAR : MSN_OWN_SKIN, msn_str(F, st->obj_arg));
+        if (MSN_BUYCUR_OLD) return owned;
+        if (!owned) return 0;   /* нельзя «носить» не купленное */
+        if (st->obj == MSN_OBJ_BUYCAR) return rt->buy_fallback || (w->vehicle && msn_streq(w->vehicle, msn_str(F, st->obj_arg)));
+        { const char *sk = rt->host.cur_skin ? rt->host.cur_skin(rt->host.user) : NULL;
+          return !sk || msn_streq(sk, msn_str(F, st->obj_arg)); } }
     case MSN_OBJ_COINS:
         if (w->action && w->coins >= rt->fee) { ev(rt, MSN_EV_PAY, 0, (float)rt->fee, NULL, NULL); return 1; }
+        if (!MSN_COINS_OLD && w->action) {   /* P07-22: монет не хватает — отказ, и миссия СРАЗУ отменяется (назад в свободную езду) */
+            ev(rt, MSN_EV_WAGER_DENIED, 0, (float)rt->fee, NULL, NULL);
+            msn_abort(rt);
+        }
         return 0;
     case MSN_OBJ_DUMMY: return 1;
     case MSN_OBJ_RACE: {
@@ -901,6 +1142,54 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
         return 0; }
     case MSN_OBJ_DELIVERY: case MSN_OBJ_DUMP: {
         int i, got = 0;
+        if (!MSN_DUMP_OLD && st->obj == MSN_OBJ_DUMP) {
+            /* P07-10 / P07-11 / 5.9: два режима выпадения. С привязкой (BindCollectibleTo): через случайную задержку 0..5 с после того, как цель прошла точку;
+               предмет не пропадает. Без привязок («столкновения»): удар по цели → через 1 с выпадает следующий свободный предмет; он живёт 15 с, последние 5 с
+               мигает, потом пропадает и снова считается невыпавшим */
+            int i2;
+            if (entity(rt, rt->target, &e) == 1) {
+                int b;
+                for (b = 0; b < rt->nbind; b++) {
+                    int it = rt->bind_item[b];
+                    if (it >= 0 && it < rt->nitems && !rt->released[it] && !rt->done[it] && e.waypoint >= rt->bind_wp[b]) {
+                        if (!rt->drop_pend[it]) {
+                            rt->rng = rt->rng * 1664525u + 1013904223u;
+                            rt->drop_pend[it] = 1; rt->drop_delay[it] = (float)((rt->rng >> 16) % 5001u) / 1000.0f;   /* 0..5 с */
+                        }
+                    }
+                }
+                for (i2 = 0; i2 < rt->nitems; i2++)
+                    if (rt->drop_pend[i2] && !rt->released[i2]) {
+                        rt->drop_delay[i2] -= dt;
+                        if (rt->drop_delay[i2] <= 0) {
+                            MsnEvent d; memset(&d, 0, sizeof d);
+                            rt->drop_pend[i2] = 0; rt->released[i2] = 1; rt->relpos[i2] = e.pos;
+                            d.type = MSN_EV_DROP; d.index = i2; d.pos = e.pos; emit(rt, &d);
+                        }
+                    }
+                if (rt->nbind == 0) {
+                    if (rt->hit_vehicle && msn_streq(rt->hit_vehicle, rt->target) && rt->hit_delay <= 0) rt->hit_delay = 1.0f;
+                    if (rt->hit_delay > 0) {
+                        rt->hit_delay -= dt;
+                        if (rt->hit_delay <= 0) {
+                            for (i2 = 0; i2 < rt->nitems; i2++) if (!rt->released[i2] && !rt->done[i2]) break;
+                            if (i2 < rt->nitems) {
+                                MsnEvent d; memset(&d, 0, sizeof d);
+                                rt->released[i2] = 1; rt->relpos[i2] = e.pos; rt->drop_life[i2] = 0; rt->drop_blink[i2] = 0;
+                                d.type = MSN_EV_DROP; d.index = i2; d.pos = e.pos; emit(rt, &d);
+                            }
+                        }
+                    }
+                }
+            }
+            if (rt->nbind == 0)
+                for (i2 = 0; i2 < rt->nitems; i2++) {
+                    if (!rt->released[i2] || rt->done[i2]) continue;
+                    rt->drop_life[i2] += dt;
+                    if (rt->drop_life[i2] >= 10.0f && !rt->drop_blink[i2]) { rt->drop_blink[i2] = 1; ev(rt, MSN_EV_DROP_BLINK, i2, 1.0f, NULL, NULL); }
+                    if (rt->drop_life[i2] >= 15.0f) { rt->released[i2] = 0; rt->drop_blink[i2] = 0; ev(rt, MSN_EV_DROP_EXPIRE, i2, 1.0f, NULL, NULL); }
+                }
+        } else
         if (st->obj == MSN_OBJ_DUMP && entity(rt, rt->target, &e) == 1) {
             int b;
             for (b = 0; b < rt->nbind; b++) {         /* BindCollectibleTo(item, waypoint) */
@@ -937,7 +1226,25 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
     }
 }
 
+static void barrel_rollback(MsnRuntime *rt)   /* круг 3: откат на N этапов назад — контрольная точка переставляется на этап (текущий − N), дальше обычный повтор */
+{
+    int s = rt->stage - rt->barrel_back; rt->barrel_back = 0;
+    if (s < 0) s = 0;
+    rt->cp_phase = rt->phase; rt->cp_stage = s;
+    msn_retry(rt, 0);
+}
+static void tick_impl(MsnRuntime *rt, float dt, const MsnWorld *w);
 void msn_tick(MsnRuntime *rt, float dt, const MsnWorld *w)
+{
+    rt->w_now = w;
+    tick_impl(rt, dt, w);
+    rt->w_now = NULL;
+    /* что видел этот тик — для следующего (кадр выхода из машины, имя машины под игроком) */
+    rt->w_prev_foot = w->on_foot; rt->w_on_foot = w->on_foot; rt->w_have = 1;
+    strncpy(rt->w_vehicle, w->vehicle ? w->vehicle : "", sizeof rt->w_vehicle - 1); rt->w_vehicle[sizeof rt->w_vehicle - 1] = 0;
+}
+
+static void tick_impl(MsnRuntime *rt, float dt, const MsnWorld *w)
 {
     int reason;
     if (rt->auto_bonus && w->action) {               /* free roam: talk to a bonus giver -> its mission */
@@ -965,15 +1272,30 @@ void msn_tick(MsnRuntime *rt, float dt, const MsnWorld *w)
     case MSN_RUNNING: break;
     default: return;
     }
+    {   /* P06-11 / P07-26: на переходе в интерьер и из него и пока полиция ловит игрока таймер миссии стоит, провалы по времени не наступают */
+        int pz = !MSN_TIMERPAUSE_OLD && (w->transition || w->arrested);
+        if (pz != rt->paused) { rt->paused = pz; ev(rt, MSN_EV_TIMER_PAUSE, pz, 0, NULL, NULL); }
+    }
     rt->t_stage += dt;
     if (rt->hit_cooldown > 0) rt->hit_cooldown -= dt;
-    if (rt->timer_on && rt->obj != MSN_OBJ_DIALOGUE && rt->obj != MSN_OBJ_FMV) {
+    if (rt->timer_on && rt->obj != MSN_OBJ_DIALOGUE && rt->obj != MSN_OBJ_FMV && !(MSN_C3_OLD ? rt->paused : (!MSN_TIMERPAUSE_OLD && w->transition))) {   /* круг 3: сам таймер замирает только на переходе; на аресте идёт, глушатся провалы */
         rt->remaining += rt->timer_up ? dt : -dt;
         timer_event(rt);
+    }
+    if (!MSN_ORDER_OLD) {   /* P07-28: за кадр сначала цель; выполнена — условия этого кадра не проверяются (цель побеждает) */
+        if (check_objective(rt, w, dt)) { complete_stage(rt); return; }
+        if (rt->status != MSN_RUNNING) return;   /* цель могла отменить миссию (взнос ставки) */
+        if (rt->obj != MSN_OBJ_DIALOGUE && rt->obj != MSN_OBJ_FMV) {
+            reason = check_conditions(rt, w, dt);
+            if (reason) { fail(rt, reason); return; }
+            if (rt->barrel_back) { barrel_rollback(rt); return; }
+        }
+        return;
     }
     if (rt->obj != MSN_OBJ_DIALOGUE && rt->obj != MSN_OBJ_FMV) {
         reason = check_conditions(rt, w, dt);
         if (reason) { fail(rt, reason); return; }
+        if (rt->barrel_back) { barrel_rollback(rt); return; }
     }
     if (check_objective(rt, w, dt)) complete_stage(rt);
 }
@@ -1001,6 +1323,21 @@ void msn_get_progress(const MsnRuntime *rt, MsnProgress *p)
     p->version = 1; p->level = (uint8_t)F->hdr->level;
     p->story = (uint8_t)(rt->story < 0 ? 0xFF : rt->story);
     p->phase = (uint8_t)rt->cp_phase; p->stage = (uint8_t)rt->cp_stage; p->completed = rt->completed;
+}
+
+/* P14-16: запись оригинала хранит только уровень и номер текущей миссии — после загрузки/RESUME она начинается заново с её начала (вступление, этап 0).
+   msn_resume — прежнее: с этапа-чекпоинта из записи */
+void msn_resume_restart(MsnRuntime *rt, const MsnProgress *p)
+{
+    rt->completed = p->completed;
+    if (p->story == 0xFF || p->story >= F->nmissions) { msn_level_start(rt); return; }
+    {
+        const MsnLevelInfo *L = F->level;
+        dispatch_range(rt, L->lvl_first, L->lvl_count, MSN_AT_LEVEL);
+        dispatch_range(rt, L->init_first, L->init_count, MSN_AT_LEVEL_INIT);
+        dispatch_range(rt, L->rew_first, L->rew_count, MSN_AT_REWARDS);
+    }
+    msn_start_mission(rt, p->story, 0);
 }
 
 void msn_resume(MsnRuntime *rt, const MsnProgress *p)

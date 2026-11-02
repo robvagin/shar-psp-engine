@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Facts extracted from Robert's SLES_518.97, not leaked source.
+"""Facts extracted from Robert's SLES_518.97 (his PAL disc).
 Original 0x19e378..0x19e770 compares b_<giver>, then loads its briefing P3D.
 We validate the actual pointer-building instructions; string adjacency alone is not evidence.
 """

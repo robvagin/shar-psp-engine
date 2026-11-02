@@ -6,6 +6,10 @@
 #ifndef MSN_DLG_TEXT842_OLD
 #define MSN_DLG_TEXT842_OLD 0
 #endif
+#ifndef MSN_TRAFFIC25_OLD
+#define MSN_TRAFFIC25_OLD 0   /* сверка g07, P06-25: NoTrafficForStage — чистка 200 м и лимит 0 до следующего SetMaxTraffic; ClearTrafficForStage — чистка 200 м. 1 — прежнее */
+#endif
+#define MSN_TRAFFIC_CLEAR_M 200.0f
 
 #define U (g->api.user)
 #define CALL(grp, fn, ...) do { if (g->api.grp.fn) g->api.grp.fn(U, __VA_ARGS__); } while (0)
@@ -34,7 +38,7 @@ static int is_typed(unsigned op)
     case MSN_OP_STAGESTARTMUSICEVENT: case MSN_OP_ADDSTAGEMUSICCHANGE: case MSN_OP_SETSTAGEMUSICALWAYSON:
     case MSN_OP_SETFADEOUT: case MSN_OP_STAYINBLACK:
     case MSN_OP_STREETRACEPROPSLOAD: case MSN_OP_STREETRACEPROPSUNLOAD: case MSN_OP_ADDCOLLECTIBLESTATEPROP:
-    case MSN_OP_SETMAXTRAFFIC: case MSN_OP_NOTRAFFICFORSTAGE:
+    case MSN_OP_SETMAXTRAFFIC: case MSN_OP_NOTRAFFICFORSTAGE: case MSN_OP_CLEARTRAFFICFORSTAGE:
     case MSN_OP_SETPRESENTATIONBITMAP:
     /* data read through msn_reward_*() */
     case MSN_OP_BINDREWARD:
@@ -270,8 +274,11 @@ static void on_command(void *user, const MsnCall *c)
     case MSN_OP_STREETRACEPROPSLOAD: CALL(props, race_props, msn_arg_s(f, k, 0), 1); break;
     case MSN_OP_STREETRACEPROPSUNLOAD: CALL(props, race_props, msn_arg_s(f, k, 0), 0); break;
     case MSN_OP_ADDCOLLECTIBLESTATEPROP: a = place_arg(f, k, 1); CALL(props, state_prop, msn_arg_s(f, k, 0), &a); break;
-    case MSN_OP_SETMAXTRAFFIC: CALL(traffic, max_cars, msn_arg_i(f, k, 0)); break;
-    case MSN_OP_NOTRAFFICFORSTAGE: CALL(traffic, max_cars, 0); break;
+    case MSN_OP_SETMAXTRAFFIC: g->traffic_zero = 0; CALL(traffic, max_cars, msn_arg_i(f, k, 0)); break;
+    case MSN_OP_NOTRAFFICFORSTAGE:
+        if (!MSN_TRAFFIC25_OLD) { g->traffic_zero = 1; CALL(traffic, clear, MSN_TRAFFIC_CLEAR_M); }
+        CALL(traffic, max_cars, 0); break;
+    case MSN_OP_CLEARTRAFFICFORSTAGE: if (!MSN_TRAFFIC25_OLD) CALL(traffic, clear, MSN_TRAFFIC_CLEAR_M); break;
     case MSN_OP_SETPRESENTATIONBITMAP: CALL(ui, presentation, msn_arg_s(f, k, 0)); break;
     case MSN_OP_BINDREWARD: break;                      /* read with msn_reward_get() by the shop */
     default: break;
@@ -374,7 +381,7 @@ static void on_event(void *user, const MsnEvent *e)
         if (rt->par > 0) { g->hud.par_ms = (int)(rt->par * 1000.0f); CALL(ui, par_time, g->hud.par_ms); }
         if (rt->obj == MSN_OBJ_TALKTO && rt->c_talk)
             CALL(npc, talk_target, msn_arg_s(f, rt->c_talk, 0), msn_arg_i(f, rt->c_talk, 1), msn_arg_f(f, rt->c_talk, 2), msn_arg_f(f, rt->c_talk, 3));
-        if (!stage_has_op(g, MSN_OP_SETMAXTRAFFIC, MSN_OP_NOTRAFFICFORSTAGE)) CALL(traffic, max_cars, -1);
+        if (!stage_has_op(g, MSN_OP_SETMAXTRAFFIC, MSN_OP_NOTRAFFICFORSTAGE) && (MSN_TRAFFIC25_OLD || !g->traffic_zero)) CALL(traffic, max_cars, -1);   /* P06-25: лимит 0 держится до SetMaxTraffic */
         break; }
     case MSN_EV_MARKER: send_marker(g, e->pos, e->loc, e->name); break;
     case MSN_EV_MARKER_CLEAR:
@@ -456,6 +463,7 @@ static void on_event(void *user, const MsnEvent *e)
         if (!msnSwitchOld) { g->hud.objective = g->hud.icon = ""; g->hud.objective_msg = -1; g->hud.items_done = g->hud.items_total = g->hud.lap = g->hud.laps = 0; }
         timer_hide(g);
         CALL(ui, counter, 0, 0);
+        g->traffic_zero = 0;
         g->swap_mask = 0; g->wait_dialogue = g->wait_fmv = 0;
         if (g->api.cleanup) g->api.cleanup(U);
         break;
@@ -464,7 +472,7 @@ static void on_event(void *user, const MsnEvent *e)
         break;
     case MSN_EV_BONUS_AVAILABLE:
         if (e->index >= 0 && (uint32_t)e->index < f->nmissions && f->missions[e->index].bonus_npc != 0xFFFFFFFFu &&
-            (!(rt->completed & (1u << e->index)) || rt->dev_bonus_replay)) {
+            (!(rt->completed & (1u << e->index)) || rt->dev_bonus_replay || !(msn_arg_i(f, &f->cmds[f->missions[e->index].bonus_npc], 6) == 1))) {   /* круг 2, P06-2: повторяемый (7-й аргумент не 1) остаётся со значком */
             MsnGiver gv; giver_from_cmd(g, &f->cmds[f->missions[e->index].bonus_npc], &gv);
             CALL(nav, giver_icon, &gv, 1);
         }
@@ -492,10 +500,27 @@ static int on_owns(void *user, int kind, const char *name)
     return g->api.shop.owns ? g->api.shop.owns(U, kind, name) : 0;
 }
 
+static const char *on_cur_skin(void *user)
+{
+    MsnGame *g = (MsnGame *)user;
+    return g->api.shop.cur_skin ? g->api.shop.cur_skin(U) : NULL;
+}
+
 static int on_skin_spot(void *user, MsnVec3 *out)
 {
     MsnGame *g = (MsnGame *)user;
     return g->api.shop.skin_spot ? g->api.shop.skin_spot(U, out) : 0;
+}
+
+/* СВЕРКА_КАМЕРА 7.5: точка в кадре с дальностью 250 м (range <= 0 — MSN_VIEW_RANGE) */
+int msn_point_in_view(const float eye[3], const float dir[3], float fov_cos, const float p[3], float range)
+{
+    float dx = p[0] - eye[0], dy = p[1] - eye[1], dz = p[2] - eye[2], d2 = dx * dx + dy * dy + dz * dz, d, dot;
+    if (range <= 0.0f) range = MSN_VIEW_RANGE;
+    if (d2 > range * range) return 0;
+    if (d2 < 1e-6f) return 1;
+    d = sqrtf(d2); dot = (dx * dir[0] + dy * dir[1] + dz * dir[2]) / d;
+    return dot >= fov_cos;
 }
 
 /* ------------------------------------------------------------------ public */
@@ -507,7 +532,7 @@ void msn_game_init(MsnGame *g, MsnRuntime *rt, const MsnFile *f, const MsnGameAp
     g->rt = rt; g->f = f;
     g->auto_dialogue_s = 1.0f; g->auto_fmv_s = 1.0f;
     g->hud.objective = g->hud.icon = ""; g->hud.objective_msg = -1; g->hud.par_ms = -1; g->hud.talk_prompt = -1;
-    h.user = g; h.command = on_command; h.event = on_event; h.entity = on_entity; h.owns = on_owns; h.bonus_entity = on_bonus_entity; h.skin_spot = on_skin_spot;
+    h.user = g; h.command = on_command; h.event = on_event; h.entity = on_entity; h.owns = on_owns; h.bonus_entity = on_bonus_entity; h.skin_spot = on_skin_spot; h.cur_skin = on_cur_skin;
     msn_init(rt, f, &h);
 }
 

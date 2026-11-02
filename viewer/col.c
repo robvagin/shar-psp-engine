@@ -10,6 +10,18 @@
 #endif
 #ifndef SEAM_FENCE_OLD
 #define SEAM_FENCE_OLD 1    // забор ниже опоры машины: не держать по опоре (gather, crossFence). ПО УМОЛЧАНИЮ ОТКАТ (1): эта часть №581 снимала защиту карманов (правка 339, tests/pockets: переехали по опоре 12 вместо 0), а стыки (seam_wall_gate) от неё не зависят. -DSEAM_FENCE_OLD=0 — как у Gemini
+// сверка g11, СВЕРКА_ПОЛНАЯ/P18_инструменты_данные P18-05 (В) и P12-06: у забора (чанк Wall) в данных нет высоты (все концы y = 0); игра при каждой проверке ставит
+// его по высоте тела, полувысота 10 м вверх и вниз, то есть для машины стена бесконечна вверх и вниз, односторонняя. Было: внутренние заборы режутся на куски с конечным
+// верхом (tools/psp_export.py col_fence_tops: видимое в полосе плюс запас, потолок опора + 3 м), и кузов в полёте над забором (с трамплина, с крыши) проходил над ним.
+// Стало: звено с конечным верхом (не изгородь-куст, не граница карты) держит на любой высоте тела; верх из данных больше не учитывается ни в сборе фигур (gather),
+// ни в пересечении линии (crossFence), ни у заборов трассы гонки. Изгороди-кусты (y0 < COL_SEG_FOL_Y0) остаются как были: проезд сквозь куст — слово Роба (правка 173),
+// решает Роб (в исходнике куст — такой же забор). Окно по высоте ±10 м ставится вокруг центра самого тела, поэтому тело всегда внутри него: для запроса от тела звено бесконечно по высоте (отдельного окна в коде нет).
+// Круг 3: глубина забора за линией 20 м вместо 6 (камере 4 м — у камеры свой путь, луч); путь тела через линию проверяется с продлением концов на 0,07 м (crossFence). Лимит 8 звеньев на запрос не вводили.
+// FENCELAW_SV_OLD=1 / flag fencelawsv 0 — как было
+#ifndef FENCELAW_SV_OLD
+#define FENCELAW_SV_OLD 0
+#endif
+int colFenceLawSv = !FENCELAW_SV_OLD;
 #endif
 // Коллизия уровня по секции COL1 — см. col.h. Чистый C99, float, одна аллокация в colInit.
 //
@@ -42,7 +54,7 @@ long colStat[4];   // вызовы: gather, colGround, colCrossFence, итера
 #define MAXA 8              // собственных осей SAT у фигуры
 #define GATHER_MARGIN 0.6f  // запас широкой фазы: кузов может сдвинуться за итерации
 #define FENCE_EXT 2.0f      // продление забора за стык без выпуклого излома
-#define FENCE_D 6.0f        // толщина забора «за линией» для SAT
+#define FENCE_D (colFenceLawSv ? 20.0f : 6.0f)   // круг 3 (g11): закон забора — 20 м за линией; FENCELAW_SV_OLD=1 — 6 м        // толщина забора «за линией» для SAT
 #define PUSH_EPS 1e-4f
 // Стеновая сторона горба (длинная лежачая капсула-не-куст, падение с террасы на откос): кузов выталкивается не рывком (до 0,39 м/кадр),
 // а не больше HUMP_WALL_STEP за вызов; остаток глубины уходит на следующие кадры, нормаль и контакт прежние — скорость гасится как у стены.
@@ -1108,6 +1120,8 @@ static int sliceCyl(const Q *q, const ColCyl *C, Shape *sh) {
   return 1;
 }
 
+// сверка g11 P18-05: звено с конечным верхом, которое по закону исходника бесконечно по высоте (не изгородь-куст и не граница карты)
+static inline int fenceLawSeg(const ColSeg *G) { return colFenceLawSv && G->y0 >= COL_SEG_FOL_Y0 && G->y1 < 1e5f; }
 // забор с конечным верхом (внутренний, правка 47): слой кузова — по наклонному полу на той части забора, что лежит в
 // габарите запроса (запас наклона gather для всего кузова сразу пропускал бы машину, чей низ над забором, только
 // над дальним углом). 0 — весь слой кузова над верхом забора (или под низом) на этом участке. Бесконечные — как было
@@ -1335,7 +1349,7 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
             if (mxx < q->x0 || mnx > q->x1 || mxz < q->z0 || mnz > q->z1) continue;
 #endif
             int bySup = 0;
-            if (G->y1 < q->ylo || G->y0 > q->yhi || !fenceBand(q, G)) {   // правка 339: по своему верху не задевает — а по опоре машины?
+            if (!fenceLawSeg(G) && (G->y1 < q->ylo || G->y0 > q->yhi || !fenceBand(q, G))) {   // правка 339; сверка g11 P18-05: закон исходника — высоты нет: по своему верху не задевает — а по опоре машины?
               if (!q->fsupOn || G->y1 > 1e5f || G->y0 < COL_SEG_FOL_Y0 || (!SEAM_FENCE_OLD && G->y1 < q->fsup)) continue;   // в полёте; бесконечный; изгородь (правка 173)
               ColSeg Gs = *G; Gs.y1 = fmaxf_(G->y1, q->fsup + COL_FENCE_HOLD);
               if (Gs.y1 < q->ylo || Gs.y0 > q->yhi || !fenceBand(q, &Gs)) continue;
@@ -1375,7 +1389,7 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
   // пока идёт гонка (colExtraFences). Как заборы уровня, без продолжений концов; номер в контакте — COL_XFENCE + k
   for (uint32_t k = 0; k < nxSeg && S->nshape < MAXSHAPE; k++) {
     const ColSeg *G = &xSeg[k];
-    if (G->y1 < q->ylo || G->y0 > q->yhi || !fenceBand(q, G)) continue;
+    if (!fenceLawSeg(G) && (G->y1 < q->ylo || G->y0 > q->yhi || !fenceBand(q, G))) continue;   // сверка g11 P18-05
     float mnx = fminf_(G->a[0], G->b[0]), mxx = fmaxf_(G->a[0], G->b[0]), mnz = fminf_(G->a[1], G->b[1]), mxz = fmaxf_(G->a[1], G->b[1]);
     if (mxx < q->x0 || mnx > q->x1 || mxz < q->z0 || mnz > q->z1) continue;
     float dx = G->b[0] - G->a[0], dz = G->b[1] - G->a[1], L = sqrtf(dx * dx + dz * dz); if (L < 1e-4f) continue;
@@ -1942,15 +1956,15 @@ static int crossFence(const ColWorld *w, float x0, float z0, float x1, float z1,
         const ColSeg *G = &w->seg[i];
         if (colPassFol && segFolKeep(w, i, (x0 + x1) * .5f, bx ? bx->y + bx->lo : ylo, (z0 + z1) * .5f)) continue;   // правка 173: изгородь (304: с памятью)
         if (colPassBack && segBackKept(i)) continue;   // сверка PS2 09.10: кузов, пришедший с изнанки, ещё на линии — назад можно
-        if (G->y1 < ylo || G->y0 > yhi) continue;   // внутренний забор с конечным верхом (tools/psp_export.py col_fence_tops): путь над ним
+        if (!fenceLawSeg(G) && (G->y1 < ylo || G->y0 > yhi)) continue;   // сверка g11 P18-05: закон исходника — высоты нет; внутренний забор с конечным верхом (tools/psp_export.py col_fence_tops): путь над ним
         float s0 = (x0 - G->a[0]) * G->n[0] + (z0 - G->a[1]) * G->n[1];
         float s1 = (x1 - G->a[0]) * G->n[0] + (z1 - G->a[1]) * G->n[1];
         if (!(s0 >= 0.f && s1 < 0.f)) continue;
         float t = s0 / (s0 - s1), px = x0 + (x1 - x0) * t - G->a[0], pz = z0 + (z1 - z0) * t - G->a[1];
         float dx = G->b[0] - G->a[0], dz = G->b[1] - G->a[1], L2 = dx * dx + dz * dz;
-        float u = px * dx + pz * dz;
-        if (u < 0.f || u > L2) continue;
-        if (bx && !(G->y1 > 1e5f && G->y0 < -1e5f)) {           // конечный забор: слой кузова по полу в точке пересечения
+        float u = px * dx + pz * dz, ext = colFenceLawSv && fenceLawSeg(G) ? .07f * sqrtf(L2) : 0.f;   // круг 3 (g11): линия забора продлена на 0,07 м с каждого конца
+        if (u < -ext || u > L2 + ext) continue;
+        if (bx && !fenceLawSeg(G) && !(G->y1 > 1e5f && G->y0 < -1e5f)) {           // конечный забор: слой кузова по полу в точке пересечения
           float fy = bx->y + bx->gx * (px + G->a[0] - bx->x) + bx->gz * (pz + G->a[1] - bx->z), top = G->y1;
           // правка 339: на опоре — не ниже опоры + COL_FENCE_HOLD, если до шага кузов был с лица (заходил за линию не глубже COL_FENCE_SUP_PEN).
           // Кузов, уже стоящий поперёк линии (приземлился, вытолкнуло), не держим: иначе каждый подшаг отменялся бы — машина замирала на линии
@@ -2062,6 +2076,22 @@ static float raySeg(const ColSeg *G, const float o[3], const float d[3]) {   // 
   float px = o[0] + d[0] * t - G->a[0], pz = o[2] + d[2] * t - G->a[1], dx = G->b[0] - G->a[0], dz = G->b[1] - G->a[1];
   float u = px * dx + pz * dz; return (u < 0.f || u > dx * dx + dz * dz) ? 2.f : t;
 }
+// сверка g11b-collect круг 5 (P11-Д5, P11-25): для луча осы забор перекрывает путь по всей рамке, натянутой по осям мира на два конца отрезка
+// (диагональный забор закрывает весь прямоугольник), а не только по самому отрезку. colRayFenceBox = 1 включает вызывающий (collect.c) на время
+// своего луча; по умолчанию 0 — прежний луч по отрезку (камера, машина и боты не затронуты). Луч, начатый внутри рамки, считается перекрытым с t = 0
+int colRayFenceBox = 0;
+static float rayFenceBox(const ColSeg *G, const float o[3], const float d[3]) {
+  float lo[3] = {fminf_(G->a[0], G->b[0]) - .05f, G->y0, fminf_(G->a[1], G->b[1]) - .05f};
+  float hi[3] = {fmaxf_(G->a[0], G->b[0]) + .05f, G->y1 + (G->y1 >= COL_TALL ? colSegUp : 0.f), fmaxf_(G->a[1], G->b[1]) + .05f};
+  float t0 = 0.f, t1 = 1.f;
+  for (int k = 0; k < 3; k++) {
+    if (fabsf(d[k]) < 1e-9f) { if (o[k] < lo[k] || o[k] > hi[k]) return 2.f; continue; }
+    float ta = (lo[k] - o[k]) / d[k], tb = (hi[k] - o[k]) / d[k]; if (ta > tb) { float x = ta; ta = tb; tb = x; }
+    if (ta > t0) t0 = ta; if (tb < t1) t1 = tb;
+    if (t0 > t1) return 2.f;
+  }
+  return t0;
+}
 // CAMPERF (ускорение камеры, дирижёр 23.10): 21 луч ближней плоскости камеры (csNearFree) лежат в одной пирамиде в 1–3 м. colRayFrac гнал каждый по своим клеткам
 // и считал rayTri (деление) для каждого треугольника клетки — ~10 мкс на луч. Пакет: клетки коробки всех лучей обходятся один раз (штамп — как в colRayFrac), треугольник
 // проверяется ящиком против коробки пакета и только потом лучами, чьи коробки его касаются (запас COL_RAYS_EPS на округление). Ответ каждого луча тот же, что у
@@ -2129,7 +2159,7 @@ float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foli
         if (t == COL_TRI) h = rayTri(&w->tri[i], a, d);
         else if (t == COL_BOX) { if (foliage || w->box[i].pad != 1.f) h = rayBox(&w->box[i], a, d); }
         else if (t == COL_CYL) { if (foliage || w->cyl[i].pad[0] != 1.f) h = rayCapsule(&w->cyl[i], a, d); }
-        else h = raySeg(&w->seg[i], a, d);
+        else h = colRayFenceBox ? rayFenceBox(&w->seg[i], a, d) : raySeg(&w->seg[i], a, d);   // круг 5 (P11-Д5)
         if (h < best) best = h;
       }
     }

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include "transit.h"
+#include "ui.h"        // сверка g09a-hud круг 5 (M2:36): надпись LOADING на долгом чёрном экране
 #include "blackbox.h"   // правка 103: bbBeatTick — кадр ириса показан (сторож самописца, main.c)
 
 #define TR_W 480
@@ -220,7 +221,14 @@ void transitHold(float sec) {
   if (!T.active) logFade("done", 0.f, 0.f);
 }
 
+// Сверка g09a-hud круг 5 (M2:36): если экран чёрный (ирис закрыт или чёрное после затемнения) дольше 3 с, надпись LOADING мигает с периодом 0,25 с. Время считается по часам
+// игры (dt шагов ириса, с учётом замедления не масштабируется). IRIS_LOADING_OLD=1 — надписи нет
+#ifndef IRIS_LOADING_OLD
+#define IRIS_LOADING_OLD 0
+#endif
+static float blackT;
 void transitStep(float dt) {
+  if (!IRIS_LOADING_OLD) { if (T.active && transitFullyClosed()) blackT += dt; else blackT = 0.f; }
   if (!T.active) return;
   if (T.mode == 1) {   // правка 349: чёрный после затемнения, затем картинка сразу
     T.ht += dt / fadeSlow();
@@ -240,10 +248,16 @@ int transitSkipMsn(void) {
   T.active = 0; logFrame("skip", T.f, 1.f); return 1;
 }
 int transitFullyClosed(void) { return T.active && (T.mode == 1 || weightAt(T.f) <= .001f); }   // ирис закрыт целиком (или чёрный после затемнения): мир под ним не виден
+static void loadingBlink(void) {
+  if (IRIS_LOADING_OLD || blackT <= 3.f || ((int)((blackT - 3.f) / .25f) & 1)) return;
+  int font = uiFontFind("boulder_16"); if (font < 0) font = 0;
+  int w = uiText(font, 0, -100, 0x00000000u, "LOADING");   // замер ширины за экраном
+  uiText(font, (TR_W - w) / 2, 128, 0xffffffffu, "LOADING");
+}
 void transitDraw(void) {
   if (!T.active) return;
-  if (T.mode == 1) { drawBlack(1.f); return; }   // правка 349
-  drawMesh(weightAt(T.f));
+  if (T.mode == 1) { drawBlack(1.f); loadingBlink(); return; }   // правка 349
+  drawMesh(weightAt(T.f)); loadingBlink();
 }
 
 const char *transitHomerWhy(const Homer *H) {

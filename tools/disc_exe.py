@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """№880 (отчёт сборки с NTSC-диска SLUS_206.24): исполняемый файл диска — по строке BOOT2 из SYSTEM.CNF (PAL SLES_518.97, NTSC SLUS_206.24).
-Факты из исполняемого файла своего диска, не из утёкшего кода. pal() — европейский ли диск (адреса в briefcards_source/ticket_source сняты с PAL).
+Факты из исполняемого файла своего диска. pal() — европейский ли диск (адреса в briefcards_source/ticket_source сняты с PAL).
 elf(path) -> (байты, сегменты, word(va), fileoff(va)); mips_strings(b, seg) — пары «lui rX + addiu rX,rX» с адресом инструкции и строкой по адресу."""
 import re, struct
 from pathlib import Path

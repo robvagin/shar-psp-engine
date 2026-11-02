@@ -116,6 +116,37 @@ enum { BNS_HZ_TRAP = 1, BNS_HZ_LAUNCH = 2, BNS_HZ_LIGHT = 3 };
 #define BR_TRAP_HOLD_S 2.f        // с наверху (ПРАВИЛО ПОРТА)
 #endif
 
+// ---- сверка с исходником (g07b-msnview, 02.11.2026; строки P17-14/15/17/18/20, P04 B1, P07 17/18, P17 Д3). Каждое — под своим выключателем (=1 — прежнее поведение порта)
+//   нитро: у каждой машины 3 заряда в начале заезда; подбор «нитро» даёт +1 заряд; гудок тратит заряд и даёт толчок +10 м/с вдоль курса, повтор не раньше чем через 0,5 с
+//   (кнопка человека — ↑ крестовины, как гудок в игре; ИИ жмёт сам не чаще раза в 10 с, если путь впереди в пределах 10° от курса; на «GO!» часть ИИ тратит заряд сразу)
+//   конец заезда: отсчёт 10 с начинается, когда доехал предпоследний или доехали все люди; последний финишёр обрывает его
+//   подборы возвращаются: нитро через 15 с, ключ через 30 с; ловушки переключает только лидер (первый датчик — вперёд, второй — назад); событие 63 (B04G) ничего не делает
+#ifndef BR_NITRO3_OLD
+#define BR_NITRO3_OLD 0
+#endif
+#ifndef BR_DNF10_OLD
+#define BR_DNF10_OLD 0
+#endif
+#ifndef BR_RESPAWN_KIND_OLD
+#define BR_RESPAWN_KIND_OLD 0
+#endif
+#ifndef BR_TRAP_LEADER_OLD
+#define BR_TRAP_LEADER_OLD 0
+#endif
+#ifndef BR_LAUNCH_OLD
+#define BR_LAUNCH_OLD 0
+#endif
+#define BR_NITRO_CHARGES 3
+#define BR_HORN_KICK 10.f        // м/с вдоль курса за одно нажатие
+#define BR_HORN_GAP_S 0.5f
+#ifndef BR_AIHORN3_OLD
+#define BR_AIHORN3_OLD 0   // круг 3 (проверка g07b): 1 — ИИ может гудеть с первой секунды и решает каждый кадр (прежнее)
+#endif
+#define BR_AI_HORN_GAP_S 10.f
+#define BR_AI_HORN_CHECK_S 2.f
+#define BR_DNF10_S 10.f
+#define BR_RESPAWN_NITRO_S 15.f
+#define BR_RESPAWN_WRENCH_S 30.f
 typedef struct { int state, obj; float f, hold, last, fps; } BrTrap;   // ловушка: BR_TRAP_*, объект ANM1, кадр, выдержка
 
 typedef struct {
@@ -158,6 +189,9 @@ typedef struct {
   BrTrap trap[BR_MAXTRAP]; int ntrap;                    // объект ловушки ANM1: состояние и кадр клипа
   unsigned launched;                                      // машины, подброшенные поршнями в этом выходе
   unsigned nNitro, nWrench, nDeath, nTrap, nLaunch, nLight;   // счётчики (журнал, гейты)
+  int nitro[BR_MAX]; float nitroGap[BR_MAX], aiHornT[BR_MAX], aiChkT[BR_MAX]; uint32_t rng; unsigned nHorn;   // сверка g07b: заряды нитро, паузы гудка, зерно выбора ИИ, счётчик гудков
+  float dnfT; int dnfOn;                       // сверка g07b: отсчёт 10 с до DNF (идёт, когда dnfOn)
+  int trapIn[BR_MAXTRAP + 2];                  // сверка g07b: лидер был в датчике k прошлый кадр (границы входа)
 } BonusRace;
 enum { BR_TRAP_IDLE = 0, BR_TRAP_RISE, BR_TRAP_HOLD, BR_TRAP_LOWER };
 
@@ -219,6 +253,10 @@ void brPickTick(BonusRace *b, float dt);                  // раз в кадр:
 int brPickShown(const BonusRace *b, int p);               // 1 — подбор p стоит (рисовать модель)
 // нитро машины i: разгон вдоль курса (thr — газ 0..1; водитель ИИ — 1), пока колёса на земле; 1 — действует
 int brBoost(BonusRace *b, int i, Car *k, float thr, float dt);
+// сверка g07b-msnview: гудок = толчок нитро. brHorn — человек (1 — сработало); brAiHorn — раз в кадр для ИИ (решает сам); brGoNitro — на «GO!» часть ИИ тратит заряд сразу
+int brHorn(BonusRace *b, int i, Car *k);
+int brAiHorn(BonusRace *b, int i, Car *k, float dt);
+int brGoNitro(BonusRace *b, Car *const *cars);
 // DEATH трассы (JMP1): машина в объёме — на точку возврата данных, курсом локатора; ПРАВИЛО ПОРТА: курс, смотрящий против хода
 // гонки у точки возврата (по плотному пути хода), развёрнут на π (b06 death/death1 по ходу смотрят назад; обратный ход). 1 — вернули.
 // ПРАВИЛО ПОРТА для соперников ИИ (не игрока b->human): с BR_DEATH_AI_N-го DEATH подряд без нового чекпойнта — не на точку данных,

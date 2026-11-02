@@ -19,6 +19,23 @@
 #define NEAR_K 0.19f
 #define NEAR_HT 1.42f
 #define FACE_DEF 1.5f   // лицо Гомера: сустав Head 1.42 м + 0.08
+// сверка g06 (02.11.2026, g06-camera:10,11,14,15,21,23,24,38,46; P08 12–13, P15-16, Д3): планы по числам оригинала. Положение камеры = середина между героями (по ногам) +
+// дистанция × (вектор от игрока к собеседнику × sin(угол) + вектор вбок × cos(угол)); цель = середина + высота цели, крупный план ещё сдвинут вдоль оси на ±1,06 м.
+//   pc_far  +0,55 рад, npc_far  −0,55; pc_near +1,40, npc_near −1,40 (угол от направления вбок); дальний: 5,0 м, глаз +2,11, цель +1,03, кадр 1,0 рад по горизонтали;
+//   крупный (телевик): 6,2 м, глаз +2,20, цель +1,25, кадр 0,49 рад (28,1°). Камера неподвижна. Кадр 16:9 держит ГОРИЗОНТАЛЬНЫЙ угол данных (как №647) — вертикаль 2·atan(tan(h/2)·9/16).
+// Без SetConversationCam на реплику — ближний план говорящего (pc_near / npc_near), с самой первой реплики; каждая реплика смотрит только в свою запись.
+// Сторона без локатора лучшей стороны — всегда одна и та же (+1: слева от оси игрок → собеседник в осях движка, векторное произведение оси на вертикаль оригинала).
+// Ребёнок в кадре: камера и цель ниже на 0,4 м. CONV_SV_OLD=1 — прежние подобранные по записи числа и правила (правило порта)
+#ifndef CONV_SV_OLD
+#define CONV_SV_OLD 0
+#endif
+#ifndef CONV_DEFAULT_SV_OLD
+#define CONV_DEFAULT_SV_OLD 0
+#endif
+#ifndef CONV_SIDE_SV_OLD
+#define CONV_SIDE_SV_OLD 0
+#endif
+#define SV_CHILD_HEAD 1.2f   // голова ниже этого — ребёнок (Лиза; в данных диска метки ребёнка нет, как у порта по росту модели)
 
 static const char *const names[] = {"", "npc_far", "npc_near", "pc_far", "pc_near"};
 static int ieq(const char *a, const char *b) {
@@ -35,22 +52,37 @@ int convShotOnPc(int shot) { return shot == CONV_PC_FAR || shot == CONV_PC_NEAR;
 
 int convShotFor(const char *const *cams, int ncam, int line, int pcSpeaks, int *fromData) {
   int shot = CONV_NONE;
-  for (int i = 0; cams && i < ncam && i <= line; i++) { int s = convShot(cams[i]); if (s) shot = s; }
+  if (CONV_DEFAULT_SV_OLD) { for (int i = 0; cams && i < ncam && i <= line; i++) { int s = convShot(cams[i]); if (s) shot = s; } }
+  else if (cams && line >= 0 && line < ncam) shot = convShot(cams[line]);   // сверка g06 (g06-camera:24, P15 Д3): только запись своей реплики
   if (fromData) *fromData = shot != CONV_NONE;
   if (shot) return shot;
-  if (line <= 0) return CONV_NPC_FAR;                     // запись PS2 10:45 и 39:30: первая реплика — общий план
-  return pcSpeaks ? CONV_PC_NEAR : CONV_NPC_NEAR;          // дальше — говорящий крупно
+  if (CONV_DEFAULT_SV_OLD && line <= 0) return CONV_NPC_FAR;   // прежнее (запись PS2 10:45 и 39:30): первая реплика — общий план
+  return pcSpeaks ? CONV_PC_NEAR : CONV_NPC_NEAR;          // сверка g06 (g06-camera:21, 23): ближний план говорящего, с первой реплики
 }
 
 static float headOf(const ConvScene *s, int who) { float h = who ? s->npcHead : s->pcHead; return h > .05f ? h : FACE_DEF; }
 int convSide(const ConvScene *s, const float prevEye[3]) {
   float ax = s->npc[0] - s->pc[0], az = s->npc[2] - s->pc[2], lx = az, lz = -ax;   // лево оси = up x a
-  const float *p = s->hasBest ? s->best : prevEye;
+  const float *p = s->hasBest ? s->best : (CONV_SIDE_SV_OLD ? prevEye : 0);   // сверка g06 (g06-camera:15): без локатора — всегда одна сторона, не «где стояла прежняя камера»
   if (!p) return 1;
   float mx = (s->pc[0] + s->npc[0]) * .5f, mz = (s->pc[2] + s->npc[2]) * .5f;
   return (p[0] - mx) * lx + (p[2] - mz) * lz >= 0.f ? 1 : -1;
 }
+static void poseSv(const ConvScene *s, int shot, int side, float eye[3], float look[3], float *fovY) {
+  int onPc = convShotOnPc(shot), near = shot == CONV_NPC_NEAR || shot == CONV_PC_NEAR;
+  float ax = s->npc[0] - s->pc[0], az = s->npc[2] - s->pc[2], d = sqrtf(ax * ax + az * az);
+  if (d < 1e-3f) { ax = 0.f; az = 1.f; } else { ax /= d; az /= d; }   // ось: от игрока к собеседнику
+  float vx = az * (float)side, vz = -ax * (float)side;                 // вбок: слева от оси (side +1)
+  float D = near ? 6.2f : 5.0f, th = (near ? 1.40f : .55f) * (onPc ? 1.f : -1.f), hE = near ? 2.20f : 2.11f, hT = near ? 1.25f : 1.03f, hf = near ? .49f : 1.0f;
+  float shift = near ? (onPc ? 1.06f : -1.06f) : 0.f, mx = (s->pc[0] + s->npc[0]) * .5f, my = (s->pc[1] + s->npc[1]) * .5f, mz = (s->pc[2] + s->npc[2]) * .5f;
+  // ребёнок в кадре (снимаемый герой): камера и цель на 0,4 м ниже (g06-camera:38)
+  float head = onPc ? (s->pcHead > .05f ? s->pcHead : FACE_DEF) : (s->npcHead > .05f ? s->npcHead : FACE_DEF), low = head < SV_CHILD_HEAD ? .4f : 0.f;
+  eye[0] = mx + D * (ax * sinf(th) + vx * cosf(th)); eye[2] = mz + D * (az * sinf(th) + vz * cosf(th)); eye[1] = my + hE - low;
+  look[0] = mx + ax * shift; look[2] = mz + az * shift; look[1] = my + hT - low;
+  *fovY = 2.f * atanf(tanf(hf * .5f) * 9.f / 16.f) * (180.f / 3.14159265f);
+}
 void convPose(const ConvScene *s, int shot, int side, float eye[3], float look[3], float *fovY) {
+  if (!CONV_SV_OLD) { poseSv(s, shot, side, eye, look, fovY); return; }
   int onPc = convShotOnPc(shot), near = shot == CONV_NPC_NEAR || shot == CONV_PC_NEAR;
   const float *F = onPc ? s->npc : s->pc, *S = onPc ? s->pc : s->npc;   // передний (слушает) и говорящий
   float ax = S[0] - F[0], az = S[2] - F[2], d = sqrtf(ax * ax + az * az);

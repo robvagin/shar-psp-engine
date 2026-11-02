@@ -77,6 +77,29 @@ void sndCarSetup(float topSpeedMs);
 void sndEngine(float speedMs, float throttle, unsigned flags);
 void sndCarPosition(float x,float y,float z,int outside);
 void sndHorn(int on);
+// сверка g08-sound (02.11.2026): состояние машины для модели мотора и реплик (sound.c), шаги по поверхности, режимы шин
+void sndCarState(float topSpeedMs, float skid01, int air, int parked, float life01, int burnout, int brakeOrRev);
+void sndMusicAlways(int on);                                    // этап «музыка всегда»
+void sndCarMass(float kg);                                   // масса машины игрока, кг (интенсивность удара = импульс / 100000; по умолчанию 1500)
+void sndStepFoot(float x, float y, float z, int run);        // касание ноги Гомера: 2D, клип по поверхности; run=1 — рывок (Turbo на 5 с)
+void sndStore(int kind);                                     // «магазин»: 0 выкл, 1 будка/лавка машин, 2 провал миссии, 3 гардероб
+void sndTubaNow(void);                                       // сверка g10b-loop круг 5: ближайший кадр пешком — случайная туба прогулки (если музыка миссии не держит)
+void sndJustMusic(int on);                                   // «только музыка» на время перехода в помещение и из него
+void sndLoadDuck(int on);                                    // газета не из меню: звук мира как в паузе
+void sndCardFound(float x, float y, float z);                // карточка: card_collect — в машине, пешком — вставка OF_found_card
+void sndMissionAmbience(int level, int mission, int onFoot); // атмосфера старта миссии по таблице уровень × номер (пешком)
+void sndSwitchPress(void);                                   // нажат красный переключатель: щелчок switch на 0,3 с
+int  sndAnimObj(const char *objKey, float x, float y, float z); // звук подвижного объекта по имени объекта уровня (запуск клипа)
+void sndModeSnap(void);                                      // шины сразу в целевое значение (смена экрана)
+#ifndef SV_GIC_OLD
+#define SV_GIC_OLD 0                                         // P05 Д5: реплика GIC в начале посадки (△ принят), а не у двери; 1 — прежнее
+#endif
+#ifndef SV_CAB_OLD
+#define SV_CAB_OLD 0                                         // круг 2 (g04 P10 Д7): «оставлена» после конца анимации выхода (homerCabEngine), а не с начала выхода; 1 — прежнее
+#endif
+#ifndef SV_PARK_OLD
+#define SV_PARK_OLD 0                                        // P10-16: мотор оставленной машины не глохнет через 3 с — играет холостой клип; 1 — прежнее
+#endif
 void sndPoliceCars(const MsnCars *cars);
 void sndBurnRepeatOld(int on);   // №180/№184: 1 — реплика горящей машины один раз (прежнее)
 void sndPlayerCar(const char *name);
@@ -113,6 +136,7 @@ void sndBindObjects(int set, unsigned n, const void *xyz, unsigned strideBytes);
 extern void (*sndBindPump)(void);   // №517: кадр экрана загрузки изнутри долгой привязки звуков к предметам (NULL — нет)
 void sndObjectHit(int set, unsigned i, float x, float y, float z, float speed);   // plays the object's own sound
                                                   // (правка 135.1: реплика Гомера D_Break — только в машине, sndOnFoot)
+int  sndIsCrate(int set, unsigned i);                                              // круг 3 (g11): звук удара предмета — деревянный ящик диска (car_hit_crate)
 int  sndObjectSound(int set, unsigned i);                                          // its resource id, -1 none
 
 // ---- pickups and Homer

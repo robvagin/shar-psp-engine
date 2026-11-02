@@ -42,6 +42,12 @@
 extern "C" {
 #endif
 
+#ifndef WASP_NEAR_OLD
+#define WASP_NEAR_OLD 0   // сверка g11b P15-07: подсказка про ос-камер — когда любая оса ближе 5 м к игроку, событие CE_WASP_NEAR (было: при появлении осы; 1 — как было)
+#endif
+#ifndef WASP_BOB_OLD
+#define WASP_BOB_OLD 0   // сверка g11b P04 W11: качание осы ±0,5 м (1 Гц) и дрейф ±0,5 м (период 1,99 с); 1 — оса неподвижна в воздухе
+#endif
 #define COLL_LEVELS 8
 #define COLL_MAXCARD 8
 #define COLL_MAXWASP 32
@@ -63,7 +69,8 @@ enum { COLL_TOUCH = 0, COLL_ACTION = 1 };
 
 // ---- события для звука, частиц, HUD и ролика
 enum { CE_NONE, CE_CARD, CE_CARDS_DONE, CE_WASP_SPAWN, CE_WASP_CHARGE, CE_WASP_FIRE, CE_WASP_ZAP, CE_WASP_DEAD,
-       CE_WASPS_DONE, CE_GAG_START, CE_GAG_END, CE_GAG_FOUND, CE_GAGS_DONE, CE_WASP_MISS, CE_TICKET };
+       CE_WASPS_DONE, CE_GAG_START, CE_GAG_END, CE_GAG_FOUND, CE_GAGS_DONE, CE_WASP_MISS, CE_TICKET,
+       CE_WASP_NEAR };   // CE_WASP_NEAR (сверка g11b, P15-07): любая оса ближе 5 м к игроку — подсказка про ос-камер
 typedef struct { int type, idx; float x, y, z; } CollEvent;   // idx: карточка / оса / гэг в пакете
 
 // игрок на этот кадр (вызывающий уже решил, кому △: миссии, гэгу или машине)
@@ -89,6 +96,19 @@ typedef struct {   // изменяемое состояние (боты: коп�
   unsigned boltFired, boltMissed, boltFull;
   unsigned zaps, kills, gagRuns;            // счётчики (отчёты, гейты)
   unsigned shieldHits, shieldBreaks;        // удары по щиту осы, проломы (гейт tests/levelmech/shield.sh)
+  // сверка g11b (02.11.2026, P04 W3–W10, Д7, СВЕРКА_ГОМЕР 8.x): агрессия, перелёты и путь снаряда осы; старое поведение — WASP_AGGR_OLD=1 и др. в collect.c
+  uint8_t waspAggr[COLL_MAXWASP];           // 0 наблюдает (ATTRACTION), 1 агрессия до конца жизни осы
+  uint8_t waspFly[COLL_MAXWASP];            // 0 стоит, 1 перелёт в позицию атаки, 2 уход от игрока, 3 отлёт на 5 м
+  float waspTo[COLL_MAXWASP][3];            // точка перелёта
+  float waspLastFly[COLL_MAXWASP];          // wclock конца прошлого перелёта; -1e9 — ещё не летала
+  float wclock;                             // время осиной логики, с
+  float boltRun[COLL_MAXBOLT], boltEnd[COLL_MAXBOLT];   // пройдено и длина пути до проверенной при выстреле стены (0 — стены нет)
+  unsigned boltPoolFull;                    // выстрелов не было: пул снарядов занят (W1)
+  float waspBob[COLL_MAXWASP][3];           // текущее качание осы (W11): снимается в начале шага, добавляется в конце
+  int gagHold;                              // гэг g+1, чей звук ещё идёт (ставит main_collect.h каждый кадр): конец гэга ждёт и анимацию, и звук (P16-14)
+  int inMission;                            // 1 — идёт миссия (ставит main_collect.h): гэги с роликом и проверочные в миссии не срабатывают (P16 Д7)
+  float pJump;                              // высота игрока над землёй в прыжке, м (0 — на земле или нет Гомера): цель по высоте и «прыгающего снаряд пропускает» (W4/W5, 8.5)
+  uint8_t waspNear[COLL_MAXWASP];           // оса ближе 5 м к игроку уже отмечена событием CE_WASP_NEAR (P15-07)
 } CollState;
 
 typedef struct Collect {

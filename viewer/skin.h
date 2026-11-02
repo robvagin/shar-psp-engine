@@ -162,6 +162,17 @@ SkinModel *skinLoad(const char *path);
 void skinSlotOpt(const SkinModel *m);   // №914: переставить слоты костей пачек для общих слотов (skin.c)
 void skinSetSlotOpt(int on); extern unsigned skinSlotModels, skinSlotBefore, skinSlotAfter;
 extern int skinLoadErr; extern unsigned skinLoadGot;   // №775: причина последнего отказа skinLoad (skin.c)
+// ===== сверка g04-homer (02.11.2026): выключатели =1 — поведение TEST81 =====
+#ifndef SKIN_BLINK_OLD
+#define SKIN_BLINK_OLD 0     // P15-01: моргание — пауза 2,0…4,0 с от конца моргания, первое моргание сразу при появлении; 1 — 2…6 с и первое через 2 с
+#endif
+#ifndef SKIN_MOUTH_OLD
+#define SKIN_MOUTH_OLD 0     // P15-02: ход рта говорящего (skinMouthStep) — угол с постоянной скоростью между −18° и верхней границей персонажа, разворот со случайным сдвигом границ и новой скоростью; 1 — синус msn_view.c
+#endif
+// P15-02: состояние рта одного говорящего. a — угол челюсти, рад (0 — покой; знак «открыто» по оригиналу не подтверждён записью PS2: вопрос 1 отчёта P15)
+typedef struct { float a, v, lo, hi, hi0, shift, vlo, vhi; int dir, init; unsigned seed; } SkinMouth;
+// шаг рта; model — имя персонажа (подстрока: homer, bart, lisa, marge, apu, snake, gil, willie, hibbard, milhouse, ralph, wiggum, mole, grampa, krusty, patty, selma; иначе по умолчанию). Возврат — угол, рад
+float skinMouthStep(SkinMouth *mo, const char *model, float dt);
 typedef struct SkinPre SkinPre;                 // предзагрузка модели: чтение файла в фоне (PSP: sceIoReadAsync), без остановки кадра
 #ifndef SKINPRE_ERR_OLD
 #define SKINPRE_ERR_OLD 0   // 1 — ошибка фонового чтения модели считается «ещё идёт» (прежнее, ревизия 1.2)

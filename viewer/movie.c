@@ -57,6 +57,12 @@ int mvChunk(const MvHdr *o, const unsigned char *c, unsigned len, unsigned *jl, 
 }
 
 #ifndef MOVIE_HOST
+// сверка g09b-menu круг 2 (g11b-collect, M3:4): громкость звука ролика = ползунок голоса (оригинал); 0..32767 (PSP_AUDIO_VOLUME_MAX). Выставляет вызывающий перед movieOpen
+// (main_frontend.h movieVolSync). MOVIEVOL_OLD=1 — звук ролика всегда на максимуме, как было
+#ifndef MOVIEVOL_OLD
+#define MOVIEVOL_OLD 0
+#endif
+int movieVolume = PSP_AUDIO_VOLUME_MAX;
 #define MV_SLOTS 16                   // кусков в кольце: 0,64 с вперёд (intro: наибольший кусок 62 КБ -> ~1 МБ)
 #define MV_ABLK 1024                  // сэмплов на sceAudioOutputBlocking: 23 мс
 #define MV_PRE 8                      // кусков в запасе до старта звука
@@ -123,7 +129,7 @@ static int mvAudio(SceSize a, void *p) {
     }
     if (n < MV_ABLK) memset(o + 2 * n, 0, 4 * (MV_ABLK - n));
     sceKernelDcacheWritebackRange(o, sizeof m->abuf[0]);
-    sceAudioOutputBlocking(m->ch, PSP_AUDIO_VOLUME_MAX, o);
+    sceAudioOutputBlocking(m->ch, MOVIEVOL_OLD ? PSP_AUDIO_VOLUME_MAX : movieVolume, o);
     m->aPos += n; cur ^= 1;
   }
   return 0;

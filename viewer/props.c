@@ -1,6 +1,7 @@
 // Пропы: реализация (см. props.h). Чистый C99, float, без malloc в кадре.
 #include "props.h"
 #include "propbreak.h"
+#include "sverka_shared.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -42,6 +43,7 @@ int propsInit(Props *p, const void *section, unsigned size) {
   for (unsigned i = 0; i < ntype; i++) {
     if ((uint64_t)p->types[i].firstPiece + p->types[i].nPiece > npiece) return -6;
   }
+  p->nearList = (unsigned *)calloc(ninst ? ninst : 1, sizeof(unsigned));   // №1086
   p->st = calloc(ninst ? ninst : 1, sizeof(PropState));
   if (!p->st) return -7;
   // коробка каждого типа в осях модели: по вершинам всех кусочков (модель = o + sc*v)
@@ -166,7 +168,7 @@ void propsTypeFx(const Props *p, unsigned t, int *particle, int *breakIdx) {
   *particle = p->typeFx[2 * t]; *breakIdx = p->typeFx[2 * t + 1] == 0xFF ? -1 : p->typeFx[2 * t + 1];
 }
 
-void propsFree(Props *p) { if (p->st) free(p->st); free(p->trunk); memset(p, 0, sizeof *p); }
+void propsFree(Props *p) { if (p->st) free(p->st); free(p->nearList); free(p->trunk); memset(p, 0, sizeof *p); }
 
 void propPieceMatrix(const PropState *st, float ox, float oy, float oz, float sc, float m[16]) {
   float w = st->q[0], x = st->q[1], y = st->q[2], z = st->q[3];
@@ -369,17 +371,44 @@ void propsRespawnStep(Props *p, float ex, float ez, float dt,
     PropState *s = &p->st[i]; const PropType *t = &p->types[p->def[i].type];
     if (s->noRespawn || (!s->hidden && s->asleep && s->fresh)) { s->away = 0.f; continue; }
     float dx = s->home[0] - ex, dz = s->home[2] - ez, r = t->radius + 2.f * t->halfH + 1.f;
+    // сверка g11, P11-17 и P11-Д6 (Н): класс 10 (фонари, светофоры, столбы) после удара остаётся в физике и, как только выходит из пирамиды видимости игрока, удаляется из мира до перезагрузки
+    // зоны — без таймера и без возврата. У нас класс 10 — столб, валившийся на шарнире (pole != 0). P12-02 (С): остальные сбитые лежат там, где остановились, до выгрузки и новой загрузки зоны,
+    // исчезновения за 30 с нет, а возврат домой «5 с вне вида дальше 60 м» стал возвратом при выходе из зоны: игрок дальше PROP_ZONE_R (зону мира заменяет расстояние, события зон окну g10a
+    // не переданы). Слово Роба №589 («через какое-то время уходят») ВОПРОС. PROPLIE_SV_OLD=1 — как в TEST81
+#ifndef PROPLIE_SV_OLD
+#define PROPLIE_SV_OLD 0
+#endif
+#ifndef PROP_ZONE_R
+#define PROP_ZONE_R 400.f
+#endif
+    if (!PROPLIE_SV_OLD) {
+      if (s->gone) { s->away = 0.f; continue; }
+      if (s->pole && !s->hidden && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; s->gone = 1; s->away = 0.f; continue; }
+    }
+    float zoneR = PROPLIE_SV_OLD ? 60.f : PROP_ZONE_R;
 #ifndef PROP_FADE_OLD
     // №589: через PROP_FADE_S (30 с) сбитый предмет убирается, но только когда камера его не видит: прозрачности у пропов в движке нет (куски идут общей
     // пачкой, вершины без альфы), а исчезновение на глазах — «глюк». Видимый лежит дальше; предметы миссий (noRespawn) не убираются
-    if (!s->hidden && !s->fresh && s->fadeT > PROP_FADE_S && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; continue; }
+    if (PROPLIE_SV_OLD && !s->hidden && !s->fresh && s->fadeT > PROP_FADE_S && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; continue; }
 #endif
-    if (dx * dx + dz * dz < 60.f * 60.f ||
+    if (dx * dx + dz * dz < zoneR * zoneR ||
         seen(user, s->home[0], s->home[1], s->home[2], r) || seen(user, s->x, s->y, s->z, r)) { s->away = 0.f; continue; }
     if ((s->away += fminf(dt, .05f)) < 5.f) continue;
     s->x = s->home[0]; s->y = s->home[1]; s->z = s->home[2]; memcpy(s->q, p->def[i].q, sizeof s->q);
     memset(s->vel, 0, sizeof s->vel); memset(s->w, 0, sizeof s->w);
-    s->asleep = s->fresh = 1; s->hidden = 0; s->away = s->hitCool = s->sleepT = s->gOff = s->fadeT = 0.f; s->pole = 0;
+    s->asleep = s->fresh = 1; s->hidden = 0; s->away = s->hitCool = s->sleepT = s->gOff = s->fadeT = 0.f; s->pole = 0; s->kicked = s->gone = 0;
+  }
+}
+
+// сверка g09b-menu круг 5 (P12-03): рестарт миссии, выбор миссии и выход из помещения выгружают и заново грузят зоны — сбитое вокруг снова целое. Те же правила, что у возврата
+// по времени (propsRespawnStep): миссионные (noRespawn) не трогаются, целые остаются, остальные — домой; ударенные высокие предметы (gone) тоже возвращаются
+void propsZoneReload(Props *p) {
+  for (unsigned i = 0; i < p->ninst; i++) {
+    PropState *s = &p->st[i];
+    if (s->noRespawn || (!s->hidden && s->asleep && s->fresh && !s->gone)) { s->away = 0.f; continue; }
+    s->x = s->home[0]; s->y = s->home[1]; s->z = s->home[2]; memcpy(s->q, p->def[i].q, sizeof s->q);
+    memset(s->vel, 0, sizeof s->vel); memset(s->w, 0, sizeof s->w);
+    s->asleep = s->fresh = 1; s->hidden = 0; s->away = s->hitCool = s->sleepT = s->gOff = s->fadeT = 0.f; s->pole = 0; s->kicked = s->gone = 0;
   }
 }
 
@@ -444,8 +473,34 @@ void propsAdvance(Props *p, const ColWorld *world, float dt) {
   }
 }
 
+// №1086 (Роб, тур TEST82 на PSP: фаза «Гомер, предметы, монеты» 1,9 → 5,9 мс; приоритет 26.09 — ровный FPS): проверка «машина задела предмет» для каждой машины трафика и ИИ перебирала все предметы уровня и не выходила
+// рано у стоящих. Теперь: чужая машина (не игрока) стоит (скорость меньше 0,5 м/с) или дальше PROP_OTHER_R от игрока — выход сразу; остальные идут по списку предметов рядом с игроком (propsUpdate строит его раз в
+// кадр: радиус PROP_NEAR_R и все не спящие предметы). Поведение то же — любая машина ломает и толкает предметы. PROPCOST1086_OLD=1 — как в TEST82 (полный обход, без выхода)
+#ifndef PROPCOST1086_OLD
+#define PROPCOST1086_OLD 0
+#endif
+#define PROP_NEAR_R 160.f
+#define PROP_OTHER_R 80.f
+unsigned propsHitIter;
+static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const CarBox *previous, int other, int useList);
 void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previous) {
   if (!car) return;
+  const int other = p->ownCar && car != p->ownCar;   // №1086: машина трафика или ИИ — шкала Hit & Run и монеты игроку не идут (game.c gamePropKick)
+  const int kickWas = propsKickOther;
+  if (other) propsKickOther = 1;
+  int useList = 0;
+  if (!PROPCOST1086_OLD) {
+    if (other) {
+      float vx_ = car->vel[0], vz_ = car->vel[2], dx_ = car->x - p->nearC[0], dz_ = car->z - p->nearC[1];
+      if (vx_ * vx_ + vz_ * vz_ < .25f || (p->nearOk && dx_ * dx_ + dz_ * dz_ > PROP_OTHER_R * PROP_OTHER_R)) { propsKickOther = kickWas; return; }
+    }
+    if (p->nearOk && p->nearList) { float dx_ = car->x - p->nearC[0], dz_ = car->z - p->nearC[1]; useList = dx_ * dx_ + dz_ * dz_ < (PROP_NEAR_R - 60.f) * (PROP_NEAR_R - 60.f); }
+  }
+  propsHitCarImpl(p, world, car, previous, other, useList);
+  propsKickOther = kickWas;
+}
+static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const CarBox *previous, int other, int useList) {
+  (void)other;
   CarBox cb = {0}; carBox(car, &cb);
   CarBox prev = previous ? *previous : cb;
   float sx = cb.x - prev.x, sy = cb.y - prev.y, sz = cb.z - prev.z;
@@ -454,19 +509,37 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
   float carSpeed = sqrtf(car->vel[0] * car->vel[0] + car->vel[2] * car->vel[2]);
   float rax = -cb.fz, raz = cb.fx;   // ось «вправо» кузова в xz
   float inv = carSpeed > 1e-3f ? 1.f / carSpeed : 0.f;
-  float dirx = car->vel[0] * inv, dirz = car->vel[2] * inv;
+  float dirx0 = car->vel[0] * inv, dirz0 = car->vel[2] * inv;
   float roof = cb.y + cb.hi;
   // Правка «быстрый расчёт» (10.10): при скорости < 0,5 м/с цикл каждого экземпляра только пропускал — не обходим вовсе (PROP_HITSLOW_OLD=1 — прежнее)
 #ifndef PROP_HITSLOW_OLD
 #define PROP_HITSLOW_OLD 0
 #endif
-  if (!PROP_HITSLOW_OLD && carSpeed < 0.5f) return;
-  for (unsigned i = 0; i < p->ninst; i++) {
+  // сверка g11, P11-02 (С): предмет входит в физику от первого касания любой машиной, порога скорости нет (оригинал: касание, не удар). Было: касание только при скорости машины >= 0,5 м/с.
+  // При малой скорости направление удара — от центра кузова к предмету; повторное касание уже тронутого малой скоростью его не будит. PROPTOUCH_SV_OLD=1 — порог 0,5 м/с
+#ifndef PROPTOUCH_SV_OLD
+#define PROPTOUCH_SV_OLD 0
+#endif
+  if (PROPTOUCH_SV_OLD && !PROP_HITSLOW_OLD && carSpeed < 0.5f) return;
+  unsigned nIt_ = useList ? p->nearN : p->ninst;
+  for (unsigned q_ = 0; q_ < nIt_; q_++) {
+    unsigned i = useList ? p->nearList[q_] : q_; propsHitIter++;
     PropState *st = &p->st[i]; const PropType *ty = &p->types[p->def[i].type];
     if (st->hidden || st->pole == 1 || (!pole1046Old && st->pole == 2)) continue;   // №968; №1046: лежащий столб машину не толкает: падающий на шарнире столб машину не трогает (скорость машина потеряла при ударе)
     int awake = !st->asleep;
-    if (carSpeed < 0.5f) continue;
+    // сверка g11 круг 2 (от g01-cars, P01 Д6): после первого удара задетый предмет, пока он не в физике (лежит), машине больше не мешает — столкновение с ним снято до возврата домой.
+    // PROPONCE_SV_OLD=1 — лежащий снова бьётся
+#ifndef PROPONCE_SV_OLD
+#define PROPONCE_SV_OLD 0
+#endif
+    if (!PROPONCE_SV_OLD && st->kicked && st->asleep) continue;
+    if (PROPTOUCH_SV_OLD && carSpeed < 0.5f) continue;
     float dx = st->x - cb.x, dz = st->z - cb.z;
+    float dirx = dirx0, dirz = dirz0;
+    if (!PROPTOUCH_SV_OLD && carSpeed < 0.5f) {   // сверка g11 P11-02: малая скорость — тронутый уже не будим, направление от кузова к предмету
+      if (st->kicked) continue;
+      float dl = hypotf(dx, dz); if (dl > 1e-3f) { dirx = dx / dl; dirz = dz / dl; } else { dirx = 0.f; dirz = 1.f; }
+    }
     float rr = ty->radius + cb.hl + cb.hw + 1.f + sweep;
     if (dx * dx + dz * dz > rr * rr) continue;
     float lf = dx * cb.fx + dz * cb.fz, lr = dx * rax + dz * raz;
@@ -520,7 +593,7 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
     // удар: отбрасываем по ходу машины и чуть вбок (от центра кузова), подпрыгивает невысоко,
     // верх опрокидывается вперёд. massRatio в квадрате — тяжёлые фонари/светофоры летят заметно слабее.
     if (p->onKick && p->onKick(p->kickUser, i, dirx, dirz)) {   // BreakableObject с мешами: вместо пропа играет обломок
-      st->hidden = 1; st->asleep = 1;
+      st->hidden = 1; st->asleep = 1; st->kicked = 1;
       if (PROP_BREAK_PASS_OLD) { float k = fmaxf(ty->mass, 1.f) / (car->p.mass + fmaxf(ty->mass, 1.f)) * 0.15f; car->vel[0] *= 1.f - k; car->vel[2] *= 1.f - k; }
       continue;
     }
@@ -550,7 +623,7 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
     // min(0,6·kick, 3) рад/с. PROP_TALL_FALL_OLD=1 / flag tallfall946old 1 — как было
     if (!propsTallFallOld && st->hy >= PROP_TALL_HY) ang = fmaxf(ang, fminf(kick * 0.6f, 3.f));
     st->w[0] = dirz * ang; st->w[1] = -side * 3.f; st->w[2] = -dirx * ang;
-    st->asleep = 0; st->sleepT = 0.f; st->fresh = 1;
+    st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; st->kicked = 1;
     if (pole968) {   // кинематика шарнира вместо импульса коробки: основание на месте, угол по θ'' = 0,5·sin θ
       st->pole = 1; st->poleTh = 0.0174533f; st->poleW = propsPoleKick1046(carSpeed, POLE_W0, POLE_WK, POLE_V0);
       st->poleD[0] = dirx; st->poleD[1] = dirz; memcpy(st->poleQ0, st->q, sizeof st->poleQ0);
@@ -574,9 +647,68 @@ void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previo
   }
 }
 
+// сверка g11, P16-21 и P18 Д6 (Н): RADIATE_FORCE — всем подвижным предметам, кроме игрока, в шаре r вокруг точки: скорость вверх force / масса (масса строки ATC, 100 если нуль). Предмет входит в физику
+int propsKickOther = 0;   // круг 3 (g11): 1 — расчёт касания идёт для машины трафика или ИИ (game.c: ни шкалы Hit & Run, ни монеты за их удары)
+int propsRadiate(Props *p, float x, float y, float z, float r, float force) {
+  int n = 0;
+  if (!p || !p->st) return 0;
+  for (unsigned i = 0; i < p->ninst; i++) {
+    PropState *st = &p->st[i]; if (st->hidden || st->pole == 1) continue;
+    const PropType *ty_ = &p->types[p->def[i].type];
+    float dx = st->x - x, dy = st->y - y, dz = st->z - z, rr_ = r + ty_->radius;   // круг 3 (g11): шар предмета плюс радиус толчка
+    if (dx * dx + dy * dy + dz * dz > rr_ * rr_) continue;
+    float m = ty_->mass; if (m <= 0.f) m = 100.f;
+    st->vel[1] += force / m; st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1; n++;
+  }
+  return n;
+}
+// сверка g11, P11-05: взрыв машины (sverka_shared.h svBoom) в радиусе 20 м: предметы, чья рамка пересекает сферу, ломаются (если за предметом обломок: взрыв игрока вызывает onKick) или разлетаются —
+// скорость от центра взрыва force / масса (потолок PROP_BOOM_VMAX: у оригинала скорость не ограничена, на PSP предмет не должен улететь за карту), с подбросом. Читатель хранит свой seq.
+// PROPBOOM_SV_OLD=1 — взрыв предметы не трогает
+#ifndef PROPBOOM_SV_OLD
+#define PROPBOOM_SV_OLD 0
+#endif
+#ifndef PROP_BOOM_VMAX
+#define PROP_BOOM_VMAX 30.f
+#endif
+static unsigned boomSeqPr;
+static void propsBoomStep(Props *p) {
+  if (PROPBOOM_SV_OLD || svBoom.seq == boomSeqPr) return;
+  boomSeqPr = svBoom.seq;
+  if (svBoom.radius <= 0.f || !p->st) return;
+  float c[3] = {svBoom.x, svBoom.y, svBoom.z};
+  for (unsigned i = 0; i < p->ninst; i++) {
+    PropState *st = &p->st[i]; if (st->hidden || st->pole == 1) continue;
+    float q[3]; propsClosestPoint(p, i, c, q);
+    float dx = q[0] - c[0], dy = q[1] - c[1], dz = q[2] - c[2];
+    if (dx * dx + dy * dy + dz * dz > svBoom.radius * svBoom.radius) continue;
+    float ux = st->x - c[0], uz = st->z - c[2], ul = sqrtf(ux * ux + uz * uz);
+    if (ul > 1e-3f) { ux /= ul; uz /= ul; } else { ux = 0.f; uz = 1.f; }
+    if (svBoom.byPlayer && p->onKick && p->onKick(p->kickUser, i, ux, uz)) { st->hidden = 1; st->asleep = 1; st->kicked = 1; continue; }
+    float m = p->types[p->def[i].type].mass; if (m <= 0.f) m = 100.f;
+    float v = svBoom.force / m; if (v > PROP_BOOM_VMAX) v = PROP_BOOM_VMAX;
+    st->vel[0] = ux * v; st->vel[2] = uz * v; st->vel[1] = v * .5f;
+    st->w[0] = uz * v * .3f; st->w[2] = -ux * v * .3f;
+    st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1;
+  }
+}
+// №1086: список предметов рядом с игроком (раз в кадр): радиус PROP_NEAR_R и все не спящие (летят, падают — могут быть где угодно)
+static void propsNearBuild(Props *p, const Car *car) {
+  p->nearOk = 0; p->nearN = 0; p->ownCar = car;
+  if (PROPCOST1086_OLD || !car || !p->nearList) return;
+  p->nearC[0] = car->x; p->nearC[1] = car->z;
+  for (unsigned i = 0; i < p->ninst; i++) {
+    const PropState *st = &p->st[i]; if (st->hidden) continue;
+    float dx = st->x - car->x, dz = st->z - car->z;
+    if (!st->asleep || dx * dx + dz * dz < PROP_NEAR_R * PROP_NEAR_R) p->nearList[p->nearN++] = i;
+  }
+  p->nearOk = 1;
+}
 void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt) {
   if (dt <= 0.f) return;
+  propsBoomStep(p);
   propsAdvance(p, world, dt);
+  propsNearBuild(p, car);
   propsHitCar(p, world, car, p->havePreviousCar ? &p->previousCar : 0);
   if (car) { carBox(car, &p->previousCar); p->havePreviousCar = 1; }
 }

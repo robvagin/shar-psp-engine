@@ -6,6 +6,7 @@
 #   КОМАНДА     — {out} = временный файл (подменит ГДЕ ЛЕЖИТ только при успехе), {outdir} = его родительская папка
 level.shr   | build/level.shr         | tools/psp_export.py tools/jumps_export.py tools/prp2_export.py tools/animobj_export.py tools/missions/p3dlocs.py tools/stateprop_dump.py tools/char_export.py tools/car_dump.py tools/pvs.c tools/wind.c tools/build_level.sh hit-and-run-web/tools/convert.py hit-and-run-web/tools/p3d.py hit-and-run-web/tools/interiors.py tools/uvq.py tools/coplanar.py tools/level_light.py viewer/skin.h tools/walls_confirmed/L1.tsv | tools/build_level.sh {out}
 fx.shr      | build/fx.shr            | tools/fx_pack.py tools/fx_export.py | python tools/fx_pack.py --out {out}
+objnames.shr | build/objnames.shr      | tools/objnames_export.py tools/animobj_export.py tools/prp2_export.py | python tools/objnames_export.py --level 1 --out {out}
 # монета-спрайт (Роб 17.10, viewer/coinspr.h): кадры оборота 3D-монеты, запечённые в Blender один раз (build/coin_bake: coin_dump.py -> coin_blender.py / SHAR_coin.blend -> frames3/); в git не кладутся (данные диска). Нет файла — монеты 3D-моделью
 coinspr.bin | build/coinspr.bin | {stage}/level.shr tools/sprites_bake.py tools/coin/coin_pack.py tools/coin/coin_dump.py tools/coin/coin_blender.py | python tools/sprites_bake.py coin {stage}/level.shr {out}   # №880: принятые кадры build/coin_bake/frames3, иначе Blender из диска игрока, иначе пропуск
 homer.shr   | build/homer.shr         | tools/homer_export.py tools/uvq.py tools/char_export.py | python tools/homer_export.py --out {out}
@@ -108,6 +109,8 @@ msncam.shr  | build/msncam.shr        | tools/msncam_export.py tools/frontend3d_
 zonecam-l1.shr | build/zonecam-l1.shr | tools/zonecam_export.py tools/interior_export.py | python tools/zonecam_export.py --level 1 --out {out}
 # №408: камеры зон для машины (tools/zonecam_export.py --car -> viewer/carzone.c): рельс сбоку на прыжке через дом, z1_housejump и др.
 carzone-l1.shr | build/carzone-l1.shr | tools/zonecam_export.py tools/interior_export.py tools/jumps_export.py | python tools/zonecam_export.py --level 1 --car --out {out}
+# сверка g01-cars круг 5, P01-07: курс зон прыжка машины (tools/jumpdir_export.py -> viewer/car.c carJumpDirLoad)
+jumpdir-l1.shr | build/jumpdir-l1.shr | tools/jumpdir_export.py tools/jumps_export.py | python tools/jumpdir_export.py --level 1 --out {out}
 # 29.09: машины миссий уровня (AddStageVehicle, LoadDisposableCar "AI"; viewer/msncar.c, main.c — модели по требованию) и блок
 # машины для SetForcedCar (MCR1 v2); флаги качества текстур — как у уровня (закон 1)
 msncars-l1.shr | build/msncars-l1.shr | tools/msncar_export.py viewer/worldcars.h tools/traffic_export.py tools/psp_export.py tools/missions/compile.py tools/texq.py tools/uvq.py tools/level_light.py viewer/skin.h tools/car_dump.py | SHR_TEX_CAP256=1 SHR_SMALL_MIPS=1 SHR_LAYERS=1 python tools/msncar_export.py --level 1 --out {out}
@@ -131,6 +134,7 @@ l{N}/horizon.shr | build/levels/l{N}/horizon.shr | {stage}/l{N}/level.shr tools/
 # интерфейс уровня: фон паузы ingamel{N} и радар l{N}hudmap (движок переоткрывает ui.shr при смене уровня)
 l{N}/ui.shr      | build/levels/l{N}/ui.shr      | tools/ui_export.py tools/ui_typo.py build/ui_typo.json tools/pixel_fonts.py assets/fonts/pixel | LEVEL={N} python tools/ui_export.py --out {out}
 l{N}/fx.shr      | build/levels/l{N}/fx.shr      | tools/fx_pack.py tools/fx_export.py | python tools/fx_pack.py --level {N} --out {out}
+l{N}/objnames.shr | build/levels/l{N}/objnames.shr | tools/objnames_export.py tools/animobj_export.py tools/prp2_export.py | python tools/objnames_export.py --level {N} --out {out}
 l{N}/audio/music.sap | build/levels/l{N}/audio/music.sap | tools/sound_export.py tools/music_graph.py tools/rms.py tools/ticket_audio.py tools/street_voice_export.py tools/npc_list.py tools/audio_export.py tools/traffic_export.py tools/missions/compile.py tools/interior_export.py | python tools/sound_export.py --level {N} --out {outdir}
 l{N}/audio/sfx.sab   | build/levels/l{N}/audio/sfx.sab   | tools/sound_export.py tools/music_graph.py tools/rms.py tools/ticket_audio.py tools/street_voice_export.py tools/npc_list.py tools/audio_export.py tools/traffic_export.py tools/missions/compile.py tools/interior_export.py | python tools/sound_export.py --level {N} --out {outdir}
 l{N}/level{NN}.msn   | build/levels/l{N}/missions/level{NN}.msn | tools/missions/compile.py tools/missions/mfk.py tools/missions/commands.py | python tools/missions/compile.py --level {N} -q --out {outdir}
@@ -143,6 +147,7 @@ l{N}/interiors-l{N}-gfx.bin | build/levels/l{N}/interiors-l{N}-gfx.bin | tools/i
 l{N}/collect-l{N}.shr | build/levels/l{N}/collect-l{N}.shr | tools/collect_export.py tools/gag_skin_export.py tools/frontend3d_export.py tools/prp2_export.py tools/psp_export.py tools/texq.py tools/char_export.py tools/stateprop_dump.py hit-and-run-web/tools/convert.py hit-and-run-web/tools/p3d.py tools/uvq.py | python tools/collect_export.py --level {N} --out {out}
 l{N}/zonecam-l{N}.shr | build/levels/l{N}/zonecam-l{N}.shr | tools/zonecam_export.py tools/interior_export.py | python tools/zonecam_export.py --level {N} --out {out}
 l{N}/carzone-l{N}.shr | build/levels/l{N}/carzone-l{N}.shr | tools/zonecam_export.py tools/interior_export.py tools/jumps_export.py | python tools/zonecam_export.py --level {N} --car --out {out}
+l{N}/jumpdir-l{N}.shr | build/levels/l{N}/jumpdir-l{N}.shr | tools/jumpdir_export.py tools/jumps_export.py | python tools/jumpdir_export.py --level {N} --out {out}
 l{N}/msncam.shr  | build/levels/l{N}/msncam.shr  | tools/msncam_export.py tools/frontend3d_export.py | python tools/msncam_export.py --level {N} --out {out}
 l{N}/msncars-l{N}.shr | build/levels/l{N}/msncars-l{N}.shr | tools/msncar_export.py viewer/worldcars.h tools/traffic_export.py tools/psp_export.py tools/missions/compile.py tools/texq.py tools/uvq.py tools/level_light.py viewer/skin.h tools/car_dump.py | SHR_TEX_CAP256=1 SHR_SMALL_MIPS=1 SHR_LAYERS=1 python tools/msncar_export.py --level {N} --out {out}
 # персонажи миссий уровней 2–7 (tools/npc_list.py --level N --rules; к персонажам уровня 1 выше — новые, общие для всех уровней:

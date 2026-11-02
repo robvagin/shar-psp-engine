@@ -137,6 +137,22 @@ enum MsnEventType {
                                  name2 = collectible name, value = 1 if it must be BROKEN (delivery item without a
                                  drawable, e.g. L1 m4 "PP_powerbox3": the world state prop powerbox3; the engine
                                  reports it with msn_notify(MSN_IN_DESTROYED, "powerbox3", 0))           */
+    ,
+    /* сверка g07-missions (02.11.2026): новые события, вид и модули подхватывают по мере готовности; без обработчика ничего не ломают */
+    MSN_EV_LOCKED_HINT,       /* P06-8 / P07-2: запертый этап кончился, а нужной машины/костюма нет: index = MSN_OWN_*, name = имя замка, text = текст этапа,
+                                 value = номер сообщения этапа (или -1); следующему этапу стартовое сообщение подавлено */
+    MSN_EV_PAR_LATE,          /* P06-4 / P07-4: ставочная гонка дольше пар-времени, но не дольше пар + 15 с: index = секунды сверх пара, value = секунд до провала
+                                 (выдаётся каждую целую секунду; текст проигрыша ставочной гонки из библии) */
+    MSN_EV_IRIS,              /* P06-10: SetIrisWipe конца этапа: index = 1 закрыть ирис (скорость 1,0), 0 открыть (старт следующего этапа) */
+    MSN_EV_OUTOFVEHICLE,      /* P06 Д3 / P07-12: условие «не выходи из машины»: index = 1 включилось (игрок вышел; name = машина), 0 выключилось; value = окно, с */
+    MSN_EV_FOLLOW_NEAR,       /* P07-29: проверка followdistance раз в 100 мс: value = близость 1 − расстояние/максимум (0..1), index = расстояние, м (целое) */
+    MSN_EV_WAGER_DENIED,      /* P07-22: взнос ставки не хватает монет: отказ-звук и миссия отменяется (msn_abort) на этом же кадре */
+    MSN_EV_DROP_EXPIRE,       /* P07-10: выпавший предмет режима «столкновения» пропал по сроку 15 с: index = предмет; value = 1 — за 5 с до этого мигал */
+    MSN_EV_DROP_BLINK,        /* P07-10: последние 5 с жизни выпавшего предмета: index = предмет, value = 1 — мигание включено (период 256 мс у вида) */
+    MSN_EV_HIDE_CHARACTER,    /* P06-21: SetCharacterToHide(имя): на выходе из этапа персонаж убирается из мира; name = имя */
+    MSN_EV_HUD_SHOW,          /* P06-21: ShowHUD: index = 1 показать, 0 спрятать HUD миссии */
+    MSN_EV_TIMER_PAUSE,       /* P06-11 / P07-26: таймер миссии стоит (переход в интерьер, арест): index = 1 встал, 0 пошёл */
+    MSN_EV_LEVEL_OVER_NOW     /* P06-22: SetLevelOver / SetGameOver на СТАРТЕ этапа: index = 1 если SetGameOver; уровень завершается сразу */
 };
 enum MsnFail { MSN_FAIL_NONE = 0, MSN_FAIL_TIMEOUT, MSN_FAIL_OUTOFVEHICLE, MSN_FAIL_DAMAGE, MSN_FAIL_POSITION,
                MSN_FAIL_RACE, MSN_FAIL_FOLLOWDISTANCE, MSN_FAIL_KEEPBARREL, MSN_FAIL_PARTIME, MSN_FAIL_ABORT, MSN_FAIL_HITNRUN };
@@ -170,6 +186,8 @@ typedef struct MsnHost {
     int  (*bonus_entity)(void *user, int mission, const char *name, MsnEntity *out);
     /* №ночь 11.10: метка этапа buyskin — ближайший гардероб (или дверь его комнаты); NULL или 0 = метки нет */
     int  (*skin_spot)(void *user, MsnVec3 *out);
+    /* сверка g07 (P06-8 / P07-2): имя костюма, надетого сейчас (как в замке этапа «locked» "skin"); NULL у хоста — костюм неизвестен, замок считается пройденным */
+    const char *(*cur_skin)(void *user);
 } MsnHost;
 
 typedef struct MsnWorld {
@@ -180,6 +198,11 @@ typedef struct MsnWorld {
     const char *interior;     /* NULL outside, else interior name as scripts use it ("KwikEMart") */
     int action;               /* action button pressed this frame (edge)                       */
     int coins;
+    /* сверка g07: признаки состояния мира; хост, не заполняющий их, оставляет 0 (прежнее поведение рантайма) */
+    int transition;           /* идёт вход в помещение или выход из него (от начала перехода до конца): таймер миссии и условия времени стоят (P06-11, P07-26) */
+    int arrested;             /* полиция ловит игрока (busted): то же */
+    int vehicle_boom;         /* 0 — хост не знает; 1 — машина под игроком взрывается (анимация идёт); 2 — анимация взрыва доиграна (P07-13) */
+    const char *entering;     /* P07-32: имя интерьера, в который игрок ВХОДИТ (переход начался), NULL — нет */
 } MsnWorld;
 
 enum MsnInput { MSN_IN_DIALOGUE_DONE = 1, MSN_IN_FMV_DONE, MSN_IN_BOSS_HIT, MSN_IN_CARGO_LOST,
@@ -234,6 +257,21 @@ typedef struct MsnRuntime {
     /* statistics for the dry run / profiling */
     uint32_t n_dispatch[MSN_OP_COUNT];
     uint8_t *trace;                   /* optional: trace[cmd index] = 1 when the command was processed */
+    /* сверка g07 (02.11.2026) */
+    const MsnWorld *w_now;            /* мир текущего тика (только внутри msn_tick) */
+    char w_vehicle[32]; int w_on_foot, w_prev_foot, w_have;      /* что видел последний msn_tick: машина под игроком, пешком ли, был ли тик */
+    int suppress_start;               /* P06-8: у следующего этапа подавить стартовое сообщение */
+    int iris_closed;                  /* P06-10: ирис закрыт концом этапа, откроется на старте следующего */
+    int barrel_back;                  /* круг 3: разбитая бочка — на сколько этапов откатить (0 — нет) */
+    int par_late, par_warn;           /* ставка: гонка дольше пар-времени (целые секунды), последняя выданная секунда предупреждения */
+    int oov_on; char oov_car[32]; float oov_win;   /* «не выходи из машины»: включено ли, машина первого выхода, окно (с) */
+    int paused; float follow_acc;     /* таймер стоит (переход/арест); накопитель шага followdistance 100 мс */
+    int boom_wait;                    /* условие damage ждёт конец взрыва */
+    int allow_abort;                  /* AllowMissionAbort("false") вступления: 0 — Accept/Cancel не показывать */
+    uint32_t rng;                     /* детерминированный случайный: подсказки провала, задержка выпадения */
+    float drop_delay[MSN_MAX_ITEMS], drop_life[MSN_MAX_ITEMS]; uint8_t drop_pend[MSN_MAX_ITEMS], drop_blink[MSN_MAX_ITEMS];
+    int buy_fallback;                 /* круг 5, P06-24: хост не смог поставить купленную машину игроку — этап buycar закрывается по владению, как раньше */
+    float hit_delay;                  /* P07-10: удар по цели dump засчитан, предмет выпадет через 1 с (<= 0 — ждать удара) */
 } MsnRuntime;
 
 enum { MSN_REG_NPC = 1, MSN_REG_VEHICLE, MSN_REG_PROP, MSN_REG_BONUS, MSN_REG_SELLER };
@@ -260,6 +298,8 @@ void msn_tick(MsnRuntime *rt, float dt, const MsnWorld *w);
 /* MsnWorld.vehicle_health = health of the player's current (or last used) car, 1.0 if intact / none */
 void msn_notify(MsnRuntime *rt, int input, const char *name, int value);
 void msn_retry(MsnRuntime *rt, int from_start);
+/* сверка g07 (P06-20 / P07-23): 0 — AllowMissionAbort("false") (L1 m3sd, L2 m6sd, L6 m1sd): отказаться от начала миссии нельзя, кнопки Accept/Cancel не показывать */
+int  msn_abort_allowed(const MsnRuntime *rt);
 void msn_abort(MsnRuntime *rt);
 /* №943 (Роб 24.10, «остаётся миссия "приехать домой"»): смена миссии выбором (MISSION SELECT, служебное) — цель, маркер и реестр прежней миссии снимаются
    (msn_abort делал так, выбор через CLEANUP — нет), потом msn_start_mission. msn_switch_clear — только снятие; msn_reg_mission_count — сколько записей реестра
@@ -287,6 +327,8 @@ void msn_objective_info(const MsnRuntime *rt, MsnObjInfo *o);
 typedef struct MsnProgress { uint8_t version, level, story, phase, stage; uint8_t pad[3]; uint32_t completed; } MsnProgress;
 void msn_get_progress(const MsnRuntime *rt, MsnProgress *p);
 void msn_resume(MsnRuntime *rt, const MsnProgress *p);
+void msn_resume_restart(MsnRuntime *rt, const MsnProgress *p);
+extern int (*msnWagerPayFn)(int fee);   /* круг 2, P06-3: выплата ставки (NULL — вход × 2) */   /* P14-16: миссия с начала, не с чекпоинта записи */
 
 extern const char *const msn_objective_name[MSN_OBJ_COUNT];
 extern const char *const msn_cond_name[MSN_COND_COUNT];

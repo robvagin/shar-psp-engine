@@ -16,6 +16,7 @@ void wardrobeInput(Shop *s, unsigned hit);
 void wardrobeDraw3D(void);
 void wardrobeDraw2D(Shop *s);
 int  wardrobeEnd(void);                             // экран снят: номер костюма, который надеть (или -1)
+const char *wardrobeName(int k);                    // сверка g07 круг 3: имя костюма k (h_fat, l_cool …)
 const char *wardrobeFile(int k);                    // файл модели костюма k («homer.shr», «homer-h_fat_m.shr» …)
 int  wardrobeSpot(int i, float out[4]);             // место выбора костюма i: x, y, z, радиус; 0 — больше мест нет
 void wardrobeSetLog(void (*log)(const char *));     // строки WARDV open/sel/buy/deny/end в smoke.txt (гейт tests/shop/wardrobe_emu.sh)

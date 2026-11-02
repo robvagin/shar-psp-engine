@@ -33,6 +33,10 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+# сверка g12-data (02.11.2026), выключатели; значение 1 — поведение прежнее
+LANE_C3_OLD = os.environ.get('TRAFFIC_LANE_C3_OLD') == '1'       # P16-03: центр полосы k из N — (k+0,5)/N от угла 3 к углу 0 (было: от угла 0)
+LANES_FIRST_OLD = os.environ.get('TRAFFIC_LANES_FIRST_OLD') == '1'   # P16-09: число полос дороги — по первому сегменту файла (было: наибольшее среди сегментов)
+ROAD_DIFF_OLD = os.environ.get('TRAFFIC_ROAD_DIFF_OLD') == '1'   # P18-10: байт «сложность» дороги-среза пишем в TrRoad.pad8 (было: выбрасывался)
 sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'hit-and-run-web/tools'))
 import uvq                                   # noqa: E402  16-битные UV без знака (правка Роба 43)
@@ -93,7 +97,7 @@ def road_network(level):
         if road.id != 0x3000003: continue
         name, p = string(road.data); _kind, = struct.unpack_from('<I', road.data, p)
         start, p = string(road.data, p + 4); end, p = string(road.data, p)
-        max_cars, speed, _intel, shortcut = struct.unpack_from('<IBBB', road.data, p)
+        max_cars, speed, intel, shortcut = struct.unpack_from('<IBBB', road.data, p)   # intel — «сложность» среза (P18-10)
         segs = []
         for c in road.children:
             if c.id != 0x3000002: continue
@@ -102,18 +106,20 @@ def road_network(level):
             pts = np.concatenate([np.zeros((1, 3)), floats(d.data, 9, r_ + 12).reshape(3, 3)])
             pts = np.c_[pts, np.ones(4)] @ mat(c.data, q + 64) @ mat(c.data, q); pts[:, 2] *= -1
             segs.append((pts[:, :3], lanes))
+        lanes_first = segs[0][1]   # P16-09: первый сегмент в порядке файла (до перестановки цепочкой)
         # порядок сегментов: цепочкой от перекрёстка начала (как world_resources.navigation)
         at = np.array(junc[jidx[start]]['pos']); order, rest = [], list(range(len(segs)))
         while rest:
             k = min(rest, key=lambda n: np.linalg.norm((segs[n][0][0] + segs[n][0][3]) / 2 - at))
             rest.remove(k); order.append(k); at = (segs[k][0][1] + segs[k][0][2]) / 2
         segs = [segs[k] for k in order]
-        lanes = max(l for _, l in segs)
+        lanes = max(l for _, l in segs) if LANES_FIRST_OLD else lanes_first
         lane_pts = []
         for k in range(lanes):
             pl = []
             for pts, l in segs:
                 f = (min(k, l - 1) + .5) / l
+                if not LANE_C3_OLD: f = 1. - f   # P16-03: считаем от угла 3 (pts[3]) к углу 0 (pts[0]): f у нас идёт от угла 0 к 3
                 a, b = pts[0] + (pts[3] - pts[0]) * f, pts[1] + (pts[2] - pts[1]) * f
                 if not pl or np.linalg.norm(pl[-1] - a) > .05: pl.append(a)
                 pl.append(b)
@@ -121,7 +127,7 @@ def road_network(level):
             lane_pts.append(np.c_[pl, s])
         width = float(np.mean([np.linalg.norm(pts[3] - pts[0]) / l for pts, l in segs]))
         roads.append(dict(name=name, s=jidx[start], e=jidx[end], maxCars=max_cars, speed=speed, shortcut=shortcut,
-                          lanes=lanes, pts=lane_pts, width=width))
+                          lanes=lanes, pts=lane_pts, width=width, diff=0 if ROAD_DIFF_OLD else intel))
     # точки полос разной длины (полос 1..2, число точек у полос одной дороги может отличаться) -> выравниваем
     # к общему числу: ломаную каждой полосы передискретизируем по длине до max точек
     for r in roads:
@@ -646,7 +652,7 @@ def main(level, out_path):
     for r in roads:
         flags = (1 if r['shortcut'] else 0) | (2 if r['maxCars'] == 0 else 0)
         n = len(r['pts'][0])
-        rrec += struct.pack('<4H4BIHHfff', r['s'], r['e'], r['rev'], r['lanes'], flags, min(r['maxCars'], 255), r['speed'], 0,
+        rrec += struct.pack('<4H4BIHHfff', r['s'], r['e'], r['rev'], r['lanes'], flags, min(r['maxCars'], 255), r['speed'], r.get('diff', 0),
                             npt, n, 0, float(r['pts'][0][-1, 3]), r['width'], 0.)
         for k in range(r['lanes']):
             prec += r['pts'][k].astype('<f4').tobytes(); npt += n

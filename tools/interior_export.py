@@ -449,6 +449,52 @@ def room_wall_fill(prims, TR, ceil_info):
     return [(tex, 128, P, uvf, np.full(len(P), abgr, np.uint32))], dict(probes=len(probes), holes=len(hole), runs=nrun, height=round(H, 2), tex=tex, colour=f'{abgr:08x}', tris=len(P) // 3)
 
 
+
+# сверка g11b-collect круг 5 (P16-11, СВЕРКА_ПОЛНАЯ/P16): в семи комнатах (l1i01 l4i01 l7i01 Kwik-E-Mart, l2i04 l5i04 Moe's, l3i06 l6i06 Обсерватория) лежит
+# общий контроллер кадров MasterController, который гоняет в цикле анимацию текстур шейдера: экран автомата (int_kwik_game.bmp.1..4), помехи телевизора
+# (int_moe_static.bmp.1..4), огни обсерватории (int_obv_anilights.bmp.1..5). Данные диска: чанк 0x121000 «TEX_<шейдер>» (число кадров, кадров в секунду)
+# и канал 0x121107 (ключевые кадры u16 и имена текстур); между ключами кадр не меняется. Здесь они уходят в хвост блока RMG1: блок ANI1 и подвал RAN1
+# (последние 16 байт блоба: 'RAN1', смещение блока, число записей, 0). Запись: u32 текстура-основа (номер в блобе), u32 число ключей, f32 длина (кадров), f32 кадров/с,
+# затем ключи (u16 кадр, u16 номер текстуры в блобе). ROOM_ANIM_OLD=1 — без хвоста (как раньше)
+ROOM_ANIM_OLD = os.environ.get('ROOM_ANIM_OLD') == '1'
+def room_anims(path, meta, conv, PE, cache, blob):
+    """-> [(base_tex_id, length, fps, [(frame, tex_id)])] в номерах текстур блоба до отбора; пусто, если анимации текстур нет"""
+    from p3d import read, walk, string
+    out = []
+    try: nodes = list(walk(read(path)))
+    except Exception: return out
+    texmap = getattr(conv, 'textures', {}) or {}
+    def tex_of(name, blend):
+        url = texmap.get(name)
+        return PE.load_tex(url, cache, blob, blend=blend, sky=False, flat=False) if url else None
+    for c in nodes:
+        if c.id != 0x121000: continue
+        try:
+            nm, p = string(c.data, 4)
+            if not nm.startswith('TEX_') or c.data[p:p + 3] != b'TEX': continue
+            ln, fps = struct.unpack_from('<2f', c.data, p + 4)
+            sh = nm[4:]; mat = meta['materials'].get(sh)
+            if not mat: continue
+            fl = (1 if mat.get('alpha') else 0) | (2 if mat.get('translucent') or mat.get('blend') else 0); blend = bool(fl & 2)
+            keys = None
+            stack = list(getattr(c, 'children', []))
+            while stack:
+                k = stack.pop()
+                if k.id == 0x121107:
+                    d = k.data; n = struct.unpack_from('<I', d, 8)[0]; fr = struct.unpack_from(f'<{n}H', d, 12); q = 12 + 2 * n; names = []
+                    for _ in range(n):
+                        L = d[q]; names.append(d[q + 1:q + 1 + L].split(b'\0')[0].decode('latin1')); q += 1 + L
+                    keys = list(zip(fr, names)); break
+                stack += list(getattr(k, 'children', []))
+            if not keys or ln <= 0 or fps <= 0: continue
+            ids = [(f, tex_of(n_, blend)) for f, n_ in keys]
+            base = tex_of(mat.get('texture', ''), blend)
+            if base is None or any(t is None for _, t in ids): continue
+            out.append((base, float(ln), float(fps), ids))
+        except Exception as e:
+            print(f'  анимация текстур комнаты пропущена ({e})', flush=True)
+    return out
+
 def room_gfx(PE, path, stem, TR=None, BX=None):
     """рисование одной комнаты -> байты блоба RMG1 и сводка. TR, BX — коллизия комнаты (земля и ящики мебели): по ним
     глаза Гомера для обхода «лицом в комнату» (tools/roomorient.py, правка Роба 27)"""
@@ -497,6 +543,12 @@ def room_gfx(PE, path, stem, TR=None, BX=None):
         groups.clear(); groups.update(ng)
         print(f'  прозрачные слои комнаты без стороны ({stem}): {nglass} групп, материалы {sorted(names)} (ROOM_GLASS_OLD=1 — прежнее)', flush=True)
     used = sorted({k[1] for k in groups if k[1] >= 0}); tmap = {t: i for i, t in enumerate(used)}
+    anims, extra = ([] if ROOM_ANIM_OLD else room_anims(path, meta, conv, PE, cache, blob)), []   # круг 5 (P16-11)
+    anims = [a for a in anims if a[0] in tmap]   # анимируется только то, что комната рисует
+    for a in anims:
+        for _, t in a[3]:
+            if t not in tmap and t not in extra: extra.append(t)
+    for i, t in enumerate(extra): tmap[t] = len(used) + i
     QV = np.dtype([('u', '<i2'), ('v', '<i2'), ('c', '<u4'), ('x', '<i2'), ('y', '<i2'), ('z', '<i2'), ('pad', '<i2')])
     pieces, vblob, tris, clo, chi = [], bytearray(), 0, np.full(3, 1e9), np.full(3, -1e9)
     for key in sorted(groups, key=lambda k: (k[2], k[1], k[0])):   # прозрачность, текстура, клетка: меньше смен текстур
@@ -517,18 +569,24 @@ def room_gfx(PE, path, stem, TR=None, BX=None):
             pieces.append((lo_, hi_, tmap.get(key[1], -1), fl, len(q), len(q), c, sc, off)); tris += len(q) // 3
     amb, dirs = light_group(path)
     texb = bytearray()
-    for t in used: texb += blob[t]; texb += b'\0' * (-len(texb) % 16)
+    for t in used + extra: texb += blob[t]; texb += b'\0' * (-len(texb) % 16)
     tex_off = 128; rec_off = tex_off + len(texb); v_off = rec_off + 80 * len(pieces); v_off += -v_off % 16
     recs = bytearray()
     for lo_, hi_, t, fl, nv, ni, c, S, off in pieces:
         recs += struct.pack('<6fiIIII3ffIII2I', *lo_, *hi_, t, fl, nv, ni, 0, *c, S, v_off + off, 0, 0, 0, 0)
-    head = b'RMG1' + struct.pack('<7I', len(used), len(pieces), tex_off, rec_off, room_clear, amb, len(dirs))
+    head = b'RMG1' + struct.pack('<7I', len(used) + len(extra), len(pieces), tex_off, rec_off, room_clear, amb, len(dirs))
     for (x, y, z), col in dirs + [((0.0, 0.0, 0.0), 0)] * (4 - len(dirs)): head += struct.pack('<3fI', x, y, z, col)
     cam_off = v_off + len(vblob); cam_off += -cam_off % 16
     head += struct.pack('<6f2I', *clo, *chi, cam_off, len(cams)); assert len(head) == 128
     out = bytearray(head) + texb + recs; out += b'\0' * (v_off - len(out)); out += vblob; out += b'\0' * (cam_off - len(out))
     out += cam_table(cams, cam_off); out += b'\0' * (-len(out) % 16)
-    info = dict(cams=cinfo, src_tris=src_tris, tris=tris, pieces=len(pieces), textures=len(used), tex_bytes=len(texb), bytes=len(out), orient=orient, ceil=ceil,
+    if anims:   # круг 5 (P16-11): хвост ANI1 и подвал RAN1
+        ani_off = len(out); ab = bytearray(b'ANI1' + struct.pack('<I', len(anims)))
+        for base, ln, fps, ks in anims:
+            ab += struct.pack('<2I2f', tmap[base], len(ks), ln, fps)
+            for f_, t in ks: ab += struct.pack('<2H', f_, tmap[t])
+        ab += b'\0' * (-len(ab) % 16); out += ab; out += b'RAN1' + struct.pack('<3I', ani_off, len(anims), 0)
+    info = dict(cams=cinfo, src_tris=src_tris, tris=tris, pieces=len(pieces), textures=len(used) + len(extra), anims=len(anims), tex_bytes=len(texb), bytes=len(out), orient=orient, ceil=ceil,
                 ambient=f'{amb:08x}', lights=[[round(v, 3) for v in d] + [f'{c:08x}'] for d, c in dirs])
     return bytes(out), info
 

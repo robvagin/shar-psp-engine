@@ -10,7 +10,7 @@
                         один масштаб TV_K, по ширине 16:9 доращена, как в меню (TV_MID — доля добавки на экран, остальное —
                         ровная часть пластика по бокам). Окно рамки — место картинки ролика (tools/movie_export.py tv_picture)
             4 demo      frontend.p3d Demo.scr -> Demo.pag: надпись «- DEMO -» (srr2 DEMO) поверх ролика простоя movies\demo.rmv
-                        (правка Роба 33: простой меню -> титульный -> демо; CGuiScreenDemo в SLES_518.97). COVER.pag экрана —
+                        (правка Роба 33: простой меню -> титульный -> демо; экран Demo в SLES_518.97). COVER.pag экрана —
                         скрытый слой (чёрная заливка), не рисуется
   load.shr  0 loading   backend.p3d Loading.scr: фон loadbgd0 + две полупрозрачные звезды loadbgd1 (Overlay0/1), газета
                         уровня (dynaload/images/loading/loading1..7.p3d, кадр = UI_F_LEVEL), фитиль Wick, огонь Fire (2 кадра),
@@ -29,7 +29,7 @@
   - полноэкранный фон Loading (loadbgd0) — «cover»: равномерно на всю ширину 16:9, лишнее сверху/снизу обрезано.
     Правка Роба 336 (05.10: «лучи были анимированы, крутились в разные стороны»): звёзды Overlay1/Overlay0 (loadbgd1)
     — отдельные слои, движок крутит их вокруг центра экрана (viewer/ui.c drawSpin). Числа — из кода оригинала
-    (SLES_518.97, CGuiScreenLoading, см. STAR_*): каждый кадр картинка звезды в своём размере x8,4, угол = прошло мс /
+    (SLES_518.97, экран загрузки, см. STAR_*): каждый кадр картинка звезды в своём размере x8,4, угол = прошло мс /
     20000 x 360 (18 °/с), Overlay0 по часовой, Overlay1 против (кадр PS2 m4.png). LOAD_STARS_OLD=1 — прежнее: звёзды сведены в неподвижный фон
     офлайн (красный контроль гейта tests/ui/load_spin.py)
   - лицензия и логотип — содержимое, не фон: масштаб S, по центру, по бокам чёрный (у картинок свой чёрный фон).
@@ -115,7 +115,7 @@ NEWS_DOWN, NEWS_K = 14, 0.93   # правка Роба 90 (30.09): газета 
 NEWS_MIN_H = 0.65     # гейт: газета не ниже этой доли высоты экрана (правка Роба 90: газета на 7 % меньше — было 0.70)
 
 # Правка Роба 336 (05.10 00:32): лучи экрана загрузки крутятся. Код оригинала (диск Роба, SLES_518.97, разбор psp-objdump —
-# только чтение): CGuiScreenLoading (строки «Foreground» 0x464bf0, «Overlay%d» 0x464c00; конструктор 0x1b2644–0x1b26a8 кладёт
+# только чтение): экран загрузки (строки «Foreground» 0x464bf0, «Overlay%d» 0x464c00; конструктор 0x1b2644–0x1b26a8 кладёт
 # спрайты Overlay0/Overlay1) в обновлении (0x1b28f4–0x1b2a90) каждый кадр: прошло_мс += dt; угол = прошло_мс / 20000.0
 # (0x42bc00) * 360; для Overlay0, Overlay1: сброс, ScaleAboutCenter(8.4) (0x1b2a24), RotateAboutCenter(угол, ось 0,0,1),
 # угол = -угол. Фон Background — ScaleAboutCenter(4.2) один раз в конструкторе (0x1b2760). Scrooby рисует картинку спрайта
@@ -340,6 +340,9 @@ class Loader:
                 it['fuse'] = wick['rect'][2] * S
             if pg == 'LoadingFE.pag' and it['type'] == U.T_TEXT and nm == 'Loading':     # LOADING_0..3; шага в данных нет:
                 it.update(field='DOTS', fmt='select', rate=self.anim['fps'] / self.anim['nkeys'])   # точка за цикл анимации
+                # сверка g09b-menu (M1 №14, 02.11.2026): у оригинала строка «Loading» меняет число точек каждые 500 мс по кругу (в данных шага нет, он в коде игры).
+                # LOAD_DOTS_OLD=1 — прежний темп (по часам анимации loading.p3d)
+                if not os.environ.get('LOAD_DOTS_OLD'): it['rate'] = 2.0
             if pg == 'Splash.pag' and it['type'] == U.T_TEXT and nm == 'PressStart':
                 ps2 = U._BIBLE('PRESS_START_PS2')
                 out.append(dict(it, name='SplashLoading', strings=[it['strings'][0]], tag='LOADING', sel=0))

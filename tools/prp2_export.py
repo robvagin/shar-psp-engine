@@ -1,6 +1,6 @@
 """Стейтпропы (AnimDynaPhys 0x3F0000E) и обломки (BreakableObject 0x3001000) уровня -> подсекция SPR1 внутри PRP2.
 Спека: docs/props_spec.md. Движок: viewer/stateprops.c/.h (там же формат в C, размеры структур сверяются static_assert).
-Только данные диска Роба; утёкший код SHAR не использовался. Опоры: hit-and-run-web/tools (MIT: p3d, convert,
+Только данные диска Роба. Опоры: hit-and-run-web/tools (MIT: p3d, convert,
 interiors), tools/char_export.py (скелет, каналы PTRN), tools/stateprop_dump.py (машины состояний).
 
 Вызывается из psp_export.py:
@@ -21,6 +21,14 @@ import uvq                                             # noqa: E402  16-битн
 from interiors import leaves as col_leaves             # noqa: E402
 import char_export as CE                               # noqa: E402
 from stateprop_dump import parse_stateprop, atc_table  # noqa: E402
+_atc_table_disc = atc_table
+def atc_table():
+    """сверка g12-data P18-15 (02.11.2026): строка 0 таблицы ATC переписывается так же, как в tools/psp_export.atc_rows (звук smash, частицы и
+    обломок eNull, масса 100, трение 1, упругость 1; на диске «WTF» и нули). tools/stateprop_dump.py — не наш файл, правим на входе сюда.
+    ATC0_OLD=1 — как было"""
+    rows = _atc_table_disc()
+    if rows and os.environ.get('ATC0_OLD') != '1': rows[0] = dict(sound='smash', particle='eNull', breakable='eNull', f=(1.0, 100.0, 1.0))
+    return rows
 
 MIRROR = np.diag([1.0, 1.0, -1.0, 1.0])
 N = lambda c: string(c.data)[0]
@@ -28,10 +36,14 @@ N = lambda c: string(c.data)[0]
 # ------------------------------------------------------------------ коды (совпадают с viewer/stateprops.h)
 EV = {'DESTROYED': 7, 'HIT': 8, 'FEATHER_TOUCH': 9, 'STOMP': 10, 'VEHICLE_HIT': 11}
 OP_REMOVE, OP_COINS, OP_COINS_Z, OP_COLOFF, OP_DESTROYED, OP_COLA, OP_KILLSPEED, OP_RADIATE, OP_COL2OFF, OP_BOLT = range(10)
+PRP2_COINS25_OLD = os.environ.get('PRP2_COINS25_OLD') == '1'   # красный контроль: число монет из имени вызова
 OP_BREAK = 10   # arg = BreakablesEnum: проиграть обломок этого номера в точке экземпляра (барьеры 0x3F0000F, см. _add_animphys)
 def call_op(name):
     """Вызов стейтпропа -> (op, arg) по ИМЕНИ (id 11 у SPAWN_5_COINS_Z и SPAWN_25_COINS_Z совпадает)."""
     m = re.fullmatch(r'SPAWN_(\d+)_COINS?(_Z)?', name)
+    # сверка g12-data P16-19 / P11-12 (02.11.2026): у вызова стейтпропа номер 11 оригинал не смотрит на имя — SPAWN_5_COINS_Z и SPAWN_25_COINS_Z
+    # (автоматы с колой L1/L2, один проп НЛО) оба сыплют 5 монет против оси Z предмета. Было: число из имени (25). PRP2_COINS25_OLD=1 — как было
+    if m and m.group(2) and not PRP2_COINS25_OLD: return OP_COINS_Z, 5
     if m: return (OP_COINS_Z if m.group(2) else OP_COINS), int(m.group(1))
     return {'REMOVE_FROM_WORLD': (OP_REMOVE, 0), 'REMOVE_COLLISION_VOLUME': (OP_COLOFF, 0),
             'OBJECT_DESTROYED': (OP_DESTROYED, 0), 'COLA_DESTROYED': (OP_COLA, 0), 'KILL SPEED': (OP_KILLSPEED, 0),
@@ -809,6 +821,13 @@ def wrap_prp2(prp1, spr, type_fx=b'', anm=b''):
 
 # частицы ATC (колонка «частицы») -> код таблицы частиц типов (номера InstParticleSystem одинаковы на всех уровнях, docs/fx_spec.md §3)
 PARTICLE_CODE = {'eSpark': 1, 'eStars': 2, 'eShrub': 3, 'eGarbage': 4, 'eOakTreeLeaves': 5, 'eMail': 6}
+# сверка g12-data P11-13 (02.11.2026): оригинал знает девять имён частиц удара (eGarbage, eShrub, eOakTreeLeaves, eMail, ePineTreeNeedles, eStars,
+# eParkingMeter, eCarExplosion, ePopsicles); любое другое (eSpark на фонарях и светофорах) — «нет частиц». Было: eSpark = 14 искр на каждый удар
+# (придумано по впечатлению от PS2), ePineTreeNeedles / eParkingMeter / ePopsicles в таблицу не попадали. Стало: eSpark -> 0, добавлены коды 7, 24, 26
+# (номера систем, которых нет в l0N_fx.p3d: рисует код — окно g11-objects, viewer/main_state.h). PRP2_PARTICLES_OLD=1 — прежняя таблица
+if os.environ.get('PRP2_PARTICLES_OLD') != '1':
+    del PARTICLE_CODE['eSpark']
+    PARTICLE_CODE.update({'ePineTreeNeedles': 7, 'eParkingMeter': 24, 'ePopsicles': 26})
 def type_fx_table(prop_types, atc_rows):
     """prop_types: dict с 'mat' (physProp = строка ATC). -> bytes по 2 Б на тип (см. wrap_prp2)."""
     out = bytearray()

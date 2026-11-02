@@ -21,8 +21,8 @@
 #define MC_CATCHUP_GEO_OLD 0   // 03.10: 1 — догонялка гонки по прежней мере (по прямой до любой точки пути; красный tests/aicar/catchup.sh)
 #endif
 // Аудит 09.10 п. 10 (правка 347, В42/В91): множитель догонялки гонки — к скорости ИГРОКА, а не к TopSpeed .con соперника.
-// Диск: комментарий к SetStageAIRaceCatchupParams в scripts/missions/level01/m7i.mfk:40-45 называет поля
-// FRACTIONPLAYERSPEED_MINCATCHUP / _NOCATCHUP / _MAXCATCHUP. Запись PS2 yt-bziOipI4gDI (радар, стрелка соперника; 4 к/с, 1,65 м на
+// Диск: комментарий к SetStageAIRaceCatchupParams в scripts/missions/level01/m7i.mfk:40-45 описывает три числа как доли скорости игрока
+// (при минимуме, без догонялки и при максимуме). Запись PS2 yt-bziOipI4gDI (радар, стрелка соперника; 4 к/с, 1,65 м на
 // пиксель видео — подгонка карты радара l1hudmap к кадрам финиша): в m7 Смитерс (TopSpeed 150 км/ч, у игрока 120) 81% гонки едет
 // ПОЗАДИ игрока на 8–39 м (квартили), впереди не дальше 53 м, догоняет со скоростью 4–8 м/с и финиширует ~20 м позади; его путь
 // 1411 м по прямой проходит за те же 126 с, что игрок свои 2118, — ~11 м/с по прямой при своих 41,7. С множителем к своей TopSpeed порт
@@ -40,6 +40,9 @@
 #define MC_BREAK_ROADS 0   // отрицательный контроль: 1 — дороги не используются (прямо к точке сквозь дома)
 #endif
 
+// сверка P04 A13 / B2: точка пути пройдена, когда расстояние до неё (в 3D) меньше радиуса: 10 м; в бонус-игре (свой планировщик
+// mcPlanHook, «Super Sprint» оригинала) 7 м. Было: расстояние в плоскости, везде 10 м. MC_WPR_OLD = 1 — прежнее
+static float wpRad(void) { return MC_WPR_OLD || !mcPlanHook ? WP_R : 7.f; }
 static float wrapPi(float a) { while (a > 3.14159265f) a -= 6.2831853f; while (a < -3.14159265f) a += 6.2831853f; return a; }
 #ifndef MC_BREAK_HEADING
 #define MC_BREAK_HEADING 0   // отрицательный контроль гейта tests/aicar: 1 — машина ставится курсом персонажа (без +π)
@@ -91,7 +94,19 @@ static void lanePos(const Traffic *t, int r, int l, float s, float p[3]) {
   }
 }
 static int roadsOk(const Traffic *t) { return t && t->hd && t->hd->nRoad && !MC_BREAK_ROADS; }
-static int roadAllowed(const Traffic *t, int r, int shortcuts) { return !(t->road[r].flags & 1) || shortcuts; }
+// круг 2, P04:A12 и СВЕРКА_С_ИСХОДНИКОМ:1.9 (данные g12-data: TrRoad.pad8 — сложность среза, L1: 15…23): «умение» срезать — случайное число между двумя числами
+// SetVehicleAIParams (по умолчанию 15 и 25) плюс добавка догонялки гонки до ±20 (отстаёт — больше, впереди — меньше); срез годен, если его сложность не выше
+// броска. Бросок — раз на планирование пути машины (оригинал: на каждом перекрёстке; приближение: один на весь путь). svSkill < 0 — броска нет (прежнее правило).
+// MC_SHORTCUT_OLD = 1 — срезы разрешены, если второе число > 0
+static int svSkill = -1;
+static int svStreet;   // уличная гонка 1 или 2 (McEnv.noRaceWait последнего кадра)
+static unsigned svRng = 12345u;
+static float svRand01(void) { svRng = svRng * 1664525u + 1013904223u; return (float)(svRng >> 8) / 16777216.f; }
+static int roadAllowed(const Traffic *t, int r, int shortcuts) {
+  if (!(t->road[r].flags & 1)) return 1;
+  if (!shortcuts) return 0;
+  return svSkill < 0 || t->road[r].pad8 == 0 || (int)t->road[r].pad8 <= svSkill;   // pad8 = 0 — в данных сложности нет
+}
 // ближайшая к (x, z) точка оси полосы; maxAng >= 0 — курс полосы в пределах ±maxAng от h. -> 1 и дорога, полоса, s, d2
 // y < -1e8 — высота любая; иначе полоса не дальше LANE_DY по высоте (эстакада над улицей — не та дорога)
 #define LANE_DY 3.5f
@@ -149,7 +164,18 @@ float mcLaneDist(const Traffic *t, float x, float z) {
 // к точке за спиной — объезд квартала (у гонок уровня 1 путь по полосам в 1.6–5.7 раза длиннее прямой, гейт tests/aicar).
 // Разворот на перекрёстке или на месте старта — +UTURN м. Дейкстра по состояниям; -> состояний в пути, 0 — нет пути
 #define MC_MAXROAD 256
-#define WRONGWAY 1.15f
+#ifndef MC_CHORD_OLD
+#define MC_CHORD_OLD 0   // 1 — без хорды 40 % на перекрёстках (только середина дороги)
+#endif
+// сверка P16-05 (+ P04 A1, документ СВЕРКА_ПОЛНАЯ): обратный ход по дороге в плане пути стоит 1,30 длины, не 1,15. MC_PATHMID_OLD = 1 — прежнее 1,15
+// круг 3: у погони и в уличных гонках 1 и 2 множитель 1,0 в обе стороны (ИИ ездит по обеим сторонам); задаёт replan, после планирования возвращается
+#if MC_PATHMID_OLD
+#define WRONGWAY_BASE 1.15f
+#else
+#define WRONGWAY_BASE 1.30f
+#endif
+static float wrongWayK = WRONGWAY_BASE;
+#define WRONGWAY (wrongWayK)
 // дороги, где эта машина уже не проехала (застряла, не приближалась к цели): +AVOID м к цене — объезд (правило порта, как
 // объезд места тупика у миссионера); список — у машины (McCar.avoid), планировщику — на время вызова
 #define AVOID 400.f
@@ -459,6 +485,19 @@ static int emit(float out[][3], int n, int cap, float x, float y, float z) {
   if (n > 0) { float dx = out[n - 1][0] - x, dz = out[n - 1][2] - z; if (dx * dx + dz * dz < 4.f) return n; }   // гуще 2 м — не нужно
   out[n][0] = x; out[n][1] = y; out[n][2] = z; return n + 1;
 }
+// сверка P04 A1: середина дороги — среднее первой и последней полосы в той же точке (у однополосной — сама ось)
+static void midPt(const Traffic *t, int r, int kk, float p[3]) {
+  const TrRoad *R = &t->road[r]; const TrPt *a = lanePts(t, r, 0), *b = lanePts(t, r, R->lanes > 0 ? R->lanes - 1 : 0);
+  float dx = a[kk].x - b[kk].x, dz = a[kk].z - b[kk].z;
+  if (dx * dx + dz * dz > 9.f * 9.f) { p[0] = a[kk].x; p[1] = a[kk].y; p[2] = a[kk].z; return; }   // крайние полосы дальше 9 м (широкая дорога с разделителем: середина — клумба или барьер, цель sr3 schoolbu вставала в нём навсегда) — ось первой
+  p[0] = (a[kk].x + b[kk].x) * .5f; p[1] = (a[kk].y + b[kk].y) * .5f; p[2] = (a[kk].z + b[kk].z) * .5f;
+}
+static void midAt(const Traffic *t, int r, float s, float p[3]) {
+  const TrRoad *R = &t->road[r]; float a[3], b[3]; lanePos(t, r, 0, s, a); lanePos(t, r, R->lanes > 0 ? R->lanes - 1 : 0, s, b);
+  float dx = a[0] - b[0], dz = a[2] - b[2];
+  if (dx * dx + dz * dz > 9.f * 9.f) { memcpy(p, a, sizeof a); return; }
+  for (int i = 0; i < 3; i++) p[i] = (a[i] + b[i]) * .5f;
+}
 void mcPlanAvoid(const short *r, int n) { avoidR = r; avoidN = n; }   // служебное (гейт tests/aicar/roadplan.c): список объездов для mcPlan
 int mcPlan(const Traffic *t, float x, float y, float z, float h, const float g[3], int shortcuts, float out[][3], int cap, int *offroad) {
   int dummy; if (!offroad) offroad = &dummy;
@@ -479,9 +518,38 @@ int mcPlan(const Traffic *t, float x, float y, float z, float h, const float g[3
   for (int it = 0; it < 3 && np && probePath(t, path, np); it++) np = planRoads(t, r0, l0, s0, h, rg, sg, shortcuts, path, 64);   // перекрытая — в объезд
   if (!np) { out[0][0] = g[0]; out[0][1] = g[1]; out[0][2] = g[2]; return 1; }
   int n = 0, lane = l0; float last[3] = {x, y, z};
+#if !MC_PATHMID_OLD
+  float prevLast[3] = {x, y, z}; int havePrev = 0;
+#endif
   { float p[3]; lanePos(t, r0, l0, s0, p); n = emit(out, n, cap, p[0], p[1], p[2]); memcpy(last, p, sizeof last); }   // с проекции машины на полосу
   for (int i = 0; i < np && n < cap; i++) {
     int r = path[i] >> 1, d = path[i] & 1; const TrRoad *R = &t->road[r];
+#if !MC_PATHMID_OLD
+    {   // сверка P04 A1: по середине дороги; на перекрёстке — прямая хорда: от конца прежнего пути на 40 % расстояния вперёд по его направлению,
+        // затем к началу выезда (если до него больше 1 м; не больше 0,001 м — ни одной вставки). Было: ближняя к въезду полоса, без хорды
+      if (i > 0) {
+        float e0[3]; midPt(t, r, d ? R->nPt - 1 : 0, e0);
+        float ex = e0[0] - last[0], ez = e0[2] - last[2], dist = sqrtf(ex * ex + ez * ez);
+        float dx = last[0] - prevLast[0], dz = last[2] - prevLast[2], dl = sqrtf(dx * dx + dz * dz);
+        // приближение порта: на повороте круче ~30° хорда вела точку руля в угол здания (sr3 schoolbu вставал у стены навсегда), поэтому хорда — только на прямых проездах
+        if (!MC_CHORD_OLD && dist > 1.f && havePrev && dl > 1e-3f && (dx * ex + dz * ez) > .85f * dl * dist) {
+          float q[3] = {last[0] + dx / dl * dist * .4f, last[1] + (e0[1] - last[1]) * .4f, last[2] + dz / dl * dist * .4f};
+          n = emit(out, n, cap, q[0], q[1], q[2]); memcpy(prevLast, last, sizeof last); memcpy(last, q, sizeof last);
+        }
+      }
+      const TrPt *P = lanePts(t, r, 0);
+      int last_ = i == np - 1 && r == rg;
+      float from = i == 0 ? s0 : (d ? 1e30f : -1.f), to = last_ ? sg : (d ? -1.f : 1e30f);
+      for (int k = 0; k < R->nPt && n < cap; k++) {
+        int kk = d ? R->nPt - 1 - k : k; float s = P[kk].s, p[3];
+        if (d ? (s >= from || s <= to) : (s <= from || s >= to)) continue;
+        midPt(t, r, kk, p); int n0 = n; n = emit(out, n, cap, p[0], p[1], p[2]);
+        if (n != n0) { memcpy(prevLast, last, sizeof last); havePrev = 1; memcpy(last, p, sizeof last); }
+      }
+      if (last_ && n < cap) { float p[3]; midAt(t, r, sg, p); n = emit(out, n, cap, p[0], p[1], p[2]); }
+      continue;
+    }
+#endif
     if (i > 0) {   // полоса следующей дороги — ближняя к месту въезда
       float best = 1e30f; lane = 0;
       for (int l = 0; l < R->lanes; l++) { const TrPt *P = lanePts(t, r, l); const TrPt *e = d ? &P[R->nPt - 1] : &P[0];
@@ -520,7 +588,16 @@ McCar *mcFind(MsnCars *m, const char *name) {
   for (int i = 0; i < m->n; i++) if (m->c[i].on && ieq(m->c[i].name, name)) return &m->c[i];
   return 0;
 }
-static void resetPath(McCar *c) { c->wp = 0; c->passed = -1; c->finished = 0; c->nroute = 0; c->seg = 0; c->routeWp = -1; c->replanT = 0.f; c->stuckN = 0; c->progWp = -2; c->progT = 0.f;
+static void resetPath(McCar *c) {
+  // сверка g03-aicars: состояние водителя «как в оригинале» — заново (ожидание игрока waitT и счёт событий waitEvt не сбрасываются: их читает миссия)
+  c->turning = 0; c->stkOn = 0; c->stkT = 0.f; c->stopHold = 0; c->direct = 0; c->ramT = 0.f; c->slipT = 0.f; c->flipHoldT = 0.f; c->offT = 0.f;
+  c->chaseRoad = -2; c->chaseRoadT = 0.f; c->losT = 0.f; c->losOk = 0; c->backLen = 0.f; c->stkThr = 0.f;
+#if !MC_SPEED_OLD
+  c->vdes = .7f * c->baseTop; c->catchT = 2.f;   // круг 3: первые 2 с — 0,7 своей TopSpeed
+#else
+  c->vdes = 0.f; c->catchT = 0.f;
+#endif
+  c->wp = 0; c->passed = -1; c->finished = 0; c->nroute = 0; c->seg = 0; c->routeWp = -1; c->replanT = 0.f; c->stuckN = 0; c->progWp = -2; c->progT = 0.f;
   c->rs[0] = c->car.x; c->rs[1] = c->car.y; c->rs[2] = c->car.z; c->rk = 0; c->rAhead = -1; c->rDist = 0.f; }
 McCar *mcSpawn(MsnCars *m, const ColWorld *w, const Traffic *tr, const char *name, const float pos[3], float h, int hasH,
                const char *ai, const char *con, const char *driver) {
@@ -541,7 +618,7 @@ McCar *mcSpawn(MsnCars *m, const ColWorld *w, const Traffic *tr, const char *nam
     P.wheelRad = G->wheelRad; P.bodyLo = G->bodyLo; P.bodyHi = G->bodyHi;
     P.bandLo = fminf(.35f, G->bodyLo + .1f); P.bandHi = fmaxf(P.bandLo + .5f, G->bodyHi - .4f);
   }
-  c->baseTop = P.topSpeed; c->baseGas = P.gasScale; c->mult = 1.f;
+  c->baseTop = P.topSpeed; c->baseGas = P.gasScale; c->mult = 1.f; c->baseGrip = P.tireGrip;
   carInit(&c->car, &P, w, pos[0], pos[1] + .5f, pos[2], hasH ? h : 0.f);
   // Урон машине миссии от машин — полный, как до правки 176 (её × CAR_HIT_DMG_K — про трафик: оракул В14, минивэн трафика цел после
   // 14 таранов). Ночь ботов 02.10→03.10: с × 0,45 цель тарана m3 (smith_v, M3dest.con SetHitPoints 1.5) не разбивалась вовремя;
@@ -670,6 +747,9 @@ int mcRaceAhead(int rk, float dr, int pk, float dp, int prev) {
   return dr < dp + h;
 }
 static int inWp(const float *q, const float p[3]) { return d2xz(q, p[0], p[2]) < WP_R * WP_R; }
+// сверка P04 Д4 / 1.2: догонялка гонки сравнивает соперника с игроком сначала по кругам и контрольной точке (c->rk против pk — счёт с кругами),
+// при равенстве — по разнице расстояний до той же точки (c->rDist против dp); данные последнего расчёта места игрока (mcRacePlaceRob)
+static int svPk = -1; static float svDp;
 int mcRacePlaceRob(MsnCars *m, const float (*pts)[3], int n, int laps, int pk, const float p[3], McInPt in, void *u, float *dpo,
                    int *racers) {
   int T = n * (laps > 0 ? laps : 1), ahead = 0, k = 0;
@@ -693,6 +773,7 @@ int mcRacePlaceRob(MsnCars *m, const float (*pts)[3], int n, int laps, int pk, c
     ahead += c->rAhead;
   }
   if (dpo) *dpo = dp;
+  svPk = pk; svDp = dp;
   if (racers) *racers = k;
   return k ? ahead + 1 : 0;
 }
@@ -819,6 +900,7 @@ int mcAiSubstepOld = AI_SUBSTEP_OLD;
 #ifndef AI_SUBSTEP_BREAK
 #define AI_SUBSTEP_BREAK 0   // красный контроль гейта: 40 Гц дальше порога
 #endif
+float mcHitSpeed;
 unsigned (*mcClockUs)(void); float mcPartMs[3]; int mcPartN;   // служебное: часы и подфазы mcUpdate (main_loop.h, только смоук): 0 физика carUpdate, 1 всё drive, 2 число машин
 static void aiSubstep(McCar *c, const McEnv *e, float dt) {
   Car *k = &c->car;
@@ -857,8 +939,24 @@ static void replan(McCar *c, const MsnCars *m, const McEnv *e, const float g[3])
 #endif
   if (!MC_RIVAL_ROAD_OLD && c->mode == MC_RACE && ciHas(c->con, "level01") && ciHas(c->con, "m1race")) sc = 0;
   avoidR = c->avoid; avoidN = c->navoid; probeW = e->w;
+#if !MC_PATHMID_OLD
+  wrongWayK = (c->mode == MC_CHASE || svStreet) ? 1.f : WRONGWAY_BASE;
+#endif
+#if !MC_SHORTCUT_OLD
+  if (sc && c->mode != MC_CHASE) {   // бросок умения: [мин, макс) по SetVehicleAIParams (15 и 25 по умолчанию) + добавка догонялки (множитель гонки → ±20)
+    int lo = c->hasSk ? c->skLo : 15, hi = c->hasSk ? c->skHi : 25; float add = 0.f;
+    // добавка догонялки: гонка от −20 (впереди) до +20 (отстаёт) по множителю гонки; цель от −20 до 0 и уход от 0 до +20 — по близости игрока (приближение:
+    // зависимость от расстояния в отчёте проверки не дана, взята линейная по тем же 20…70 м)
+    if (c->mode == MC_RACE) { const float *rc = c->hasRc ? c->rc : (const float[4]){80.f, .5f, 1.1f, 1.7f};
+      add = c->mult >= rc[2] ? (rc[3] > rc[2] ? 20.f * (c->mult - rc[2]) / (rc[3] - rc[2]) : 0.f) : (rc[2] > rc[1] ? -20.f * (rc[2] - c->mult) / (rc[2] - rc[1]) : 0.f); }
+    else if ((c->mode == MC_TARGET || c->mode == MC_EVADE) && e->player) {
+      float near_ = 1.f - clampf((sqrtf(d2xz(e->ppos, c->car.x, c->car.z)) - 20.f) / 50.f, 0.f, 1.f);
+      add = c->mode == MC_TARGET ? -20.f * near_ : 20.f * near_; }
+    svSkill = (int)((float)lo + svRand01() * (float)(hi > lo ? hi - lo : 0) + add);
+  }
+#endif
   c->nroute = mcPlan(e->tr, c->car.x, c->car.y, c->car.z, c->car.h, g, sc, c->route, MC_ROUTE, &c->offroad);
-  avoidN = 0; probeW = 0; c->seg = 0; c->replans++;
+  avoidN = 0; probeW = 0; svSkill = -1; wrongWayK = WRONGWAY_BASE; c->seg = 0; c->replans++;
   float dx = c->route[c->nroute - 1][0] - g[0], dz = c->route[c->nroute - 1][2] - g[2];
   c->routeCut = dx * dx + dz * dz > 1.f;
   (void)m;
@@ -933,6 +1031,142 @@ static void control(const MsnCars *m, McCar *c, const McEnv *e, const float goal
       if (c->stuckN >= 2 && roadsOk(e->tr) && c->nroute) avoidNext(c, e->tr); }   // второй раз о то же — дорогу впереди в объезд
   } else { c->stuckT = 0.f; if (c->backT > 0.f && c->backT <= dt) { if (!c->turn3) c->nroute = 0; c->turn3 = 0; } }
 }
+// ================================================================ сверка g03-aicars (02.11.2026): водитель «как в оригинале»
+// Всё ниже — свой код по поведению и числам из отчётов сверки (P04 и СВЕРКА_С_ИСХОДНИКОМ раздел 1), не по устройству кода оригинала.
+// Старый водитель control() остаётся: боты (mcBotInput) и сборка с -DMC_DRIVE_OLD=1 едут по нему.
+#define SV_KMH5 1.3889f   // «+5 км/ч» к желаемой скорости, м/с (P04 A2, 1.4)
+
+// P04 A3, Д5: объезд. Ближайшая машина в радиусе 50 м (любая: трафик, стоящие, машины миссий, машина игрока), не позади (центр не дальше
+// 0,7 м позади центра этой машины, вдоль курса), точка руля сдвигается вбок от неё на 3 м × косинус угла между курсом и направлением на неё,
+// каждый кадр, без сглаживания. -> сдвиг, м (> 0 — влево от курса)
+static float svAvoid(const MsnCars *m, const McCar *c, const McEnv *e) {
+  const Car *k = &c->car; float fx = sinf(k->h), fz = cosf(k->h), best = 50.f * 50.f, sh = 0.f;
+#define SVC(o) do { const Car *q_ = (o); float dx_ = q_->x - k->x, dz_ = q_->z - k->z, d2_ = dx_ * dx_ + dz_ * dz_; \
+                    if (d2_ < best && d2_ > 1e-4f) { float al_ = dx_ * fx + dz_ * fz; if (al_ >= -.7f) { \
+                      best = d2_; sh = (-dx_ * fz + dz_ * fx >= 0.f ? 1.f : -1.f) * 3.f * fmaxf(0.f, al_ / sqrtf(d2_)); } } } while (0)
+  if (e->player) SVC(e->player);
+  for (int i = 0; i < m->n; i++) if (&m->c[i] != c && m->c[i].on) SVC(&m->c[i].car);
+  if (e->tr && e->tr->hd) {
+    for (int i = 0; i < e->tr->maxCars; i++) if (e->tr->car[i].mode != TRM_OFF) SVC(&e->tr->car[i].car);
+    for (int i = 0; i < e->tr->npark; i++) SVC(&e->tr->park[i].car);
+  }
+#undef SVC
+  return sh;
+}
+
+// P04 A2 A4 A5 Д1 Д5, 1.4 1.5 1.6: руль и газ. Две точки впереди по пути: ближняя на 0,8 с (не меньше 5 м; задним ходом всегда 5 м), дальняя на 1,0 с
+// (не меньше 10 м). Руль = угол до точки (рад) / предельный угол колёс .con, не больше 1; задним ходом знак обратный, ×1,25. Газ релейный: полный,
+// пока скорость не выше желаемой + 5 км/ч, иначе ноль; тормоза в езде нет. Подготовка к повороту: вход, если направление от ближней точки к дальней
+// отличается от курса больше 45° и скорость выше 2 м/с, выход — когда звено снова в пределах 45° или скорость не выше 1 м/с; пока она активна,
+// руль по дальней точке (объезд не действует), а при угле до ближней точки больше ~32° (cos 0,85) и скорости выше 6 м/с — ручник и газ ноль
+// (вход в поворот заносом); иначе выше 50 м/с тормоз, выше 40 м/с газ сброшен, ниже — газ по желаемой скорости.
+// Перед трафиком, стоящими и другими машинами скорость НЕ ограничивается (прежний закон зазора — в control()).
+static void controlOrig(const MsnCars *m, McCar *c, const McEnv *e, const float goal[3], float dt, CarInput *in) {
+  Car *k = &c->car; float v = k->v, av = fabsf(v), nearP[3], farP[3], aim[3];
+  int rev = c->backT > 0.f;
+  if (c->direct && c->mode == MC_CHASE) { memcpy(nearP, goal, 12); memcpy(farP, goal, 12); }
+  else { aimPoint(c, rev ? 5.f : fmaxf(5.f, .8f * av), nearP); aimPoint(c, fmaxf(10.f, 1.f * av), farP); }
+  float ang = 0.f;
+  { float ddx = farP[0] - nearP[0], ddz = farP[2] - nearP[2];
+    if (ddx * ddx + ddz * ddz > 1.f) ang = wrapPi(atan2f(ddx, ddz) - k->h);
+    // круг 3 (проверка по исходнику): под потерей управления поворот не готовится
+    if (!c->turning && !rev && c->slipT <= 0.f && fabsf(ang) > .7854f && av > 2.f) c->turning = 1; }
+  if (c->turning) memcpy(aim, farP, 12);
+  else {
+    memcpy(aim, nearP, 12);
+    if (c->mode != MC_CHASE && !rev) { float sh = svAvoid(m, c, e); aim[0] += cosf(k->h) * sh; aim[2] += -sinf(k->h) * sh; c->shiftF = sh; }
+  }
+  float err = wrapPi(atan2f(aim[0] - k->x, aim[2] - k->z) - k->h), mw = fmaxf(.2f, k->p.maxWheelTurn), st = clampf(-err / mw, -1.f, 1.f);
+  in->steer = (rev || c->stopHold) ? clampf(-st * 1.25f, -1.f, 1.f) : st;   // круг 3: знак обратный ×1,25 и в остановке после заднего хода
+  if (c->slipT > 0.f) in->steer = clampf(in->steer * 1.5f, -1.f, 1.f);   // P04 A7: потеря управления — руль ×1,5
+  float vdes = c->vdes > 0.f ? c->vdes : fminf(k->p.topSpeed, c->vcap > 0.f ? c->vcap : 1e9f);
+  c->vt = vdes; c->dbgGap = 1e9f; c->dbgSwerve = 1e9f; c->dbgKind = 0;
+  if (rev) { in->brake = 1.f; in->throttle = 0.f; c->turning = 0; }
+  else if (c->stopHold) { in->handbrake = 1.f; in->throttle = 0.f; if (av < 1.f) c->stopHold = 0; }   // после заднего хода — ручник до остановки
+  else if (c->turning) {
+    // круг 3 (порядок по проверке): сначала занос — нос отвернут от ближней точки больше ~32° и скорость выше 6 м/с: ручник, газ ноль, состояние остаётся;
+    // потом выход (звено в пределах 45° или скорость не выше 1 м/с) с полным газом; иначе выше 50 м/с тормоз, выше 40 м/с газ сброшен, ниже — по желаемой скорости
+    float en = wrapPi(atan2f(nearP[0] - k->x, nearP[2] - k->z) - k->h);
+    if (cosf(en) < .85f && av > 6.f) { in->handbrake = 1.f; in->throttle = 0.f; }
+    else if (fabsf(ang) <= .7854f || av <= 1.f) { c->turning = 0; in->throttle = 1.f; }
+    else if (v > 50.f) in->brake = 1.f;
+    else if (v > 40.f) in->throttle = 0.f;
+    else in->throttle = v <= vdes + SV_KMH5 ? 1.f : 0.f;
+  } else in->throttle = v <= vdes + SV_KMH5 ? 1.f : 0.f;
+}
+
+// P04 A6, 1.10 (круг 3, по проверке): застревание. Счёт идёт от первого кадра со скоростью не выше 1 м/с и не сбрасывается, когда машина поехала; он
+// чистится только после заднего хода и при сбросе пути. Проверка идёт в кадрах со скоростью не выше 1 м/с: прошло больше порога — застряла (на втором и
+// следующих замедлениях сразу). Порог 0,7 с; после заднего хода 1,5 с, пока скорость не поднимется выше 1 м/с, дальше снова 0,7 с. Задний ход: старт 0,3 с,
+// каждое застревание +0,2 до 1,5 с, у погони 0,5 с; при скорости вперёд выше 14 м/с счётчик попыток и время заднего хода возвращаются. Седьмое срабатывание
+// ставит машину на дорогу на месте — кроме погони и цели уничтожения этапа (McCar.noPlace, ставит game_msn.c). В ожидании, после тарана и под потерей
+// управления счёт не идёт. После заднего хода — ручник до остановки, потом вперёд. Прежнее — в control() и drive() под MC_STUCK_OLD (вместе с MC_DRIVE_OLD)
+static void svStuck(McCar *c, const McEnv *e, float dt) {
+  Car *k = &c->car; float av = fabsf(k->v);
+  if (c->slipT > 0.f) { c->backT = 0.f; c->stopHold = 0; c->stkOn = 0; return; }   // потеря управления прерывает задний ход и остановку
+  if (c->backT > 0.f) {
+    c->backT -= dt; c->stkOn = 0; c->stkT = 0.f; c->stkThr = 1.5f;
+    if (c->backT <= 0.f) { c->backT = 0.f; c->stopHold = 1; c->nroute = 0; }   // после заднего хода путь заново от этого места
+    return;
+  }
+  if (c->waiting || c->ramT > 0.f || c->stopHold) return;
+  if (k->v > 14.f) { c->stuckN = 0; if (c->backLen > .3f) c->backLen = .3f; }
+  if (av > 1.f) c->stkThr = .7f;
+  if (c->stkThr <= 0.f) c->stkThr = .7f;
+  if (c->stkOn) c->stkT += dt;
+  if (av > 1.f) return;
+  if (!c->stkOn) { c->stkOn = 1; c->stkT = 0.f; }
+  if (c->stkT > c->stkThr) {
+    c->stkOn = 0; c->stkT = 0.f; c->stuckN++;
+    if (c->mode == MC_CHASE) c->backLen = c->backLen < .5f ? .5f : c->backLen;
+    else c->backLen = fminf(1.5f, (c->backLen > 0.f ? c->backLen : .3f) + .2f);
+    c->backT = c->backLen;
+    if (c->stuckN >= 7 && c->mode != MC_CHASE && !c->noPlace) {
+      float p[4];
+      if (mcResetPoint(e->tr, k->x, k->y, k->z, k->h, k->vel[0], k->vel[2], p)) carPlace(k, e->w, p[0], p[1] + .5f, p[2], p[3]);
+      else carPlace(k, e->w, k->x, k->y + .5f, k->z, k->h);
+      c->stuckN = 0; c->backT = 0.f; c->resets++; c->nroute = 0;
+    }
+  }
+}
+
+// P04 A11 Д3 Д4, 1.1 1.2 1.3 1.7 1.8: желаемая скорость по типу этапа (пересчёт раз в 2 с — вызывающий). Догонялки всегда включены, по умолчанию
+// гонка D = 80 м, 0,5 / 1,1 / 1,7; цель 20 и 70 м; уход 20 и 70 м. Игрок не за рулём — 0,7 TopSpeed своей машины.
+//   гонка: ближе 25 м к игроку по прямой — «норма» (1,1 × скорость игрока); дальше — другой круг или другая контрольная точка дают крайние
+//     значения (соперник впереди — «медленно», позади — «быстро»), на одной точке плавно по разнице расстояний до неё / D; результат
+//     множитель × скорость игрока, зажатый между «медленно» и «быстро» × TopSpeed МАШИНЫ ИГРОКА
+//   цель: от 1,0 TopSpeed машины игрока (игрок ближе «мин») до 0,2 (дальше «макс»), между линейно
+//   уход: от своей TopSpeed (игрок ближе 20 м) до 0,7 её (дальше 70 м)
+//   без догонялки (waypoint), погоня и полиция Hit & Run: 0,7 своей TopSpeed (круг 3, по проверке: пересчёт по типу этапа у погони не выполняется,
+//     остаётся стартовое значение); первые 2 с после создания, смены этапа и сброса пути — тоже 0,7 своей (resetPath)
+static float svPP[3], svPV[3]; static int svPPok;   // положение и скорость игрока по кадрам (пешком — скорость персонажа; считает mcUpdate)
+static float svMult = 1.f;   // множитель гонки последнего расчёта (для броска умения срезать: отстаёт — больше)
+static float svDesired(const MsnCars *m, const McCar *c, const McEnv *e) {
+  const Car *k = &c->car; float top = c->baseTop; svMult = 1.f;
+  if (c->mode == MC_CHASE) return .7f * top;
+  if (c->mode == MC_WAYPOINT || !e->player || !e->driving) return .7f * top;
+  const Car *pl = e->player; float pv = fabsf(pl->v), ptop = pl->p.topSpeed, dx = pl->x - k->x, dy = pl->y - k->y, dz = pl->z - k->z, d = sqrtf(dx * dx + dy * dy + dz * dz);
+  if (c->mode == MC_EVADE) return top * (1.f - .3f * clampf((d - 20.f) / 50.f, 0.f, 1.f));
+  if (c->mode == MC_TARGET) {
+    float lo = c->hasTc ? c->tc[0] : 20.f, hi = c->hasTc ? fmaxf(lo + 1.f, c->tc[1]) : 70.f;
+    return ptop * (1.f - .8f * clampf((d - lo) / (hi - lo), 0.f, 1.f));
+  }
+  static const float rcDef[4] = {80.f, .5f, 1.1f, 1.7f}; const float *rc = c->hasRc ? c->rc : rcDef;
+  float D = fmaxf(1.f, rc[0]), mult = rc[2];
+  if (d >= 25.f) {
+    float lead = 0.f; int have = 0;
+    if (c->rAhead >= 0 && svPk >= 0) {   // место игрока в гонке посчитано (game_msn.c): круги и точка, потом разница расстояний
+      if (c->rk > svPk) mult = rc[1]; else if (c->rk < svPk) mult = rc[3]; else { lead = (svDp - c->rDist) / D; have = 1; }
+    } else {   // гонка без этих данных (боты, бонус-игра): разница пройденного по пути соперника, как в прежней догонялке
+      float tot, sc = raceDoneLen(m, c, &tot);
+      lead = (e->haveFrac && !MC_CATCHUP_GEO_OLD && tot >= 1.f ? sc - playerDoneLen(m, c, e->ppos, e->pfrac, tot) : mcRemainingFrom(m, e->ppos) - mcRemaining(m, c)) / D; have = 1;
+    }
+    if (have) mult = lead >= 0.f ? rc[2] + (rc[1] - rc[2]) * clampf(lead, 0.f, 1.f) : rc[2] + (rc[3] - rc[2]) * clampf(-lead, 0.f, 1.f);
+  }
+  svMult = mult;
+  return clampf(mult * pv, rc[1] * ptop, rc[3] * ptop);
+}
+
 // Исторические пороги a292ed4 оставлены только для красного POLICE_CHASE_OLD
 // 430: полиция преследует и стоящего игрока; PS2 natural road stand 94,432 -> 54,999 м
 // Ни 93,7, ни 55 м не универсальный радиус остановки: в записи дорогу заняла машина
@@ -960,11 +1194,28 @@ static void control(const MsnCars *m, McCar *c, const McEnv *e, const float goal
 int mcPolice723Old = POLICE_PS2STAND_OLD;
 static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
   Car *k = &c->car; CarInput in = {0.f, 0.f, 0.f, 0.f};
+#if !MC_SVKIND_OLD
+  k->svKind = c->police ? 3 : 2; k->svRace = c->mode == MC_RACE || mcPlanHook ? 1 : 0;   // круг 2, g01 7.4: вид для svBoom и взрыв гоночной машины через 3 с
+#endif
   // цель этого кадра: точка пути или игрок
   float goal[3]; int have = 0;
   if (c->mode == MC_CHASE) {
     goal[0] = e->ppos[0]; goal[1] = e->ppos[1]; goal[2] = e->ppos[2]; have = 1;
+#if MC_CHASE_OLD
     if (e->player && e->driving) { goal[0] += e->player->vel[0] * .5f; goal[2] += e->player->vel[2] * .5f; }
+#else
+    {   // сверка P04 A9 Д6 и 2.10 (круг 3, по проверке): дальше порога — по дорогам к дороге игрока (путь до точки в 10 м от него); ближе (20 м; полиция
+        // Hit & Run 60 м) — напрямую на точку упреждения: игрок + вектор его скорости (машины или, пешком, Гомера), приведённый к длине «расстояние / своя
+        // скорость» метров (своя скорость ноль или назад — 1000 м); цель стоит — смещения нет. Проверка препятствий на прямой не делается. Было: ближе 30 м,
+        // игрок + скорость × 0,5 с, только за рулём, луч до здания у полиции (убран)
+      float ddx = e->ppos[0] - k->x, ddz = e->ppos[2] - k->z, dist = sqrtf(ddx * ddx + ddz * ddz), thr = c->police ? 60.f : 20.f;
+      c->direct = dist < thr;
+      if (c->direct) {
+        float vx = e->player && e->driving ? e->player->vel[0] : svPV[0], vz = e->player && e->driving ? e->player->vel[2] : svPV[2], sp = sqrtf(vx * vx + vz * vz);
+        if (sp > 1e-3f) { float len = k->v > 1e-3f ? fminf(1000.f, dist / k->v) : 1000.f; goal[0] += vx / sp * len; goal[2] += vz / sp * len; }
+      }
+    }
+#endif
     // Прежние отход и остановка, только отрицательный контроль №430
     if (c->police && POLICE_CHASE_OLD) {
       float pv = e->player && e->driving ? sqrtf(e->player->vel[0] * e->player->vel[0] + e->player->vel[2] * e->player->vel[2]) : 0.f;
@@ -980,13 +1231,21 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
         if (!POLICE_KEEPOFF_OLD && close > 0.f && l - close * close / 16.f - close * .25f < POLICE_STAND_MIN) have = 0;
       }
     }
-    if (c->police && !POLICE_CHASE_OLD && !mcPolice723Old && have && e->player && e->driving && hypotf(e->player->vel[0], e->player->vel[2]) < POLICE_STAND_V) {   // №723: к стоящему не ближе 27 м
+    // сверка СВЕРКА_С_ИСХОДНИКОМ 2.10 (Роб 01.11: «делать всё как в оригинале»): полиция всегда едет, стоп в 27 м от стоящего игрока убран под POLICE_STAND27_OLD = 1
+    if (POLICE_STAND27_OLD && c->police && !POLICE_CHASE_OLD && !mcPolice723Old && have && e->player && e->driving && hypotf(e->player->vel[0], e->player->vel[2]) < POLICE_STAND_V) {   // №723: к стоящему не ближе 27 м
       float dx = k->x - e->ppos[0], dz = k->z - e->ppos[2], l = sqrtf(dx * dx + dz * dz) + 1e-3f, close = -(k->vel[0] * dx + k->vel[2] * dz) / l;
       if (l - (close > 0.f ? close * close / 16.f + close * .25f : 0.f) < POLICE_PS2_STAND) have = 0;
     }
   } else if (m->nwp && !c->finished) {
     int T = total(m);
+#if MC_WPR_OLD
     while (c->wp < T && d2xz(wpAt(m, c->wp), k->x, k->z) < WP_R * WP_R) { c->passed = c->wp; c->wp++; c->nroute = 0; }
+#else
+    // сверка P04 A13 B2: расстояние до точки в 3D, радиус 10 м (бонус-игра 7 м). Было: в плоскости
+    while (c->wp < T) { const float *q_ = wpAt(m, c->wp); float dy_ = q_[1] - k->y, r_ = wpRad();
+      if (d2xz(q_, k->x, k->z) + dy_ * dy_ >= r_ * r_) break;
+      c->passed = c->wp; c->wp++; c->nroute = 0; }
+#endif
     if (c->wp >= T) c->finished = 1;
     else { memcpy(goal, wpAt(m, c->wp), sizeof goal); have = 1; }
   }
@@ -1008,10 +1267,61 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
     }
     return;
   }
+#if !MC_FREEZE_OLD
+  if (e->freeze && c->police) {   // круг 2, g10 2.8: в разговоре полиция стоит на месте
+    in.handbrake = 1.f; in.brake = fabsf(k->v) > .5f ? 1.f : 0.f; carUpdate(k, e->w, &in, dt); c->lastIn = in; return;
+  }
+#endif
+#if !MC_WAIT_OLD
+  {   // сверка P04 A10: ИИ дальше 300 м от игрока по прямой встаёт на ручник (гонка — только если он впереди игрока по кругам, контрольной точке или
+      // расстоянию, кроме уличных гонок 1 и 2: McEnv.noRaceWait); как игрок подошёл ближе 300 м — едет дальше. Ждёт больше 20 с — событие миссии
+      // «ИИ добрался до цели» (McCar.waitEvt растёт; читает game_msn.c), дальше каждые 20 с; счёт не обнуляется при выходе из ожидания, только после события
+    int waitable = (c->mode == MC_RACE || c->mode == MC_EVADE || c->mode == MC_TARGET || c->mode == MC_WAYPOINT) && e->player && !mcPlanHook && !e->noRaceWait;   // круг 3: уличные гонки 1 и 2 не ждут при любом типе цели
+    if (waitable && c->mode == MC_RACE) {   // гонка: ждёт, только если впереди игрока; места игрока нет (боты) — по остатку пути
+      int ahead = c->rAhead >= 0 ? c->rAhead : (m->nwp && mcRemaining(m, c) < mcRemainingFrom(m, e->ppos));
+      waitable = ahead != 0;
+    }
+    { float dy_ = e->ppos[1] - k->y; c->waiting = waitable && d2xz(e->ppos, k->x, k->z) + dy_ * dy_ > 300.f * 300.f; }   // круг 3: расстояние в 3D
+    if (c->waiting) {
+      in.handbrake = 1.f; in.brake = fabsf(k->v) > .5f ? 1.f : 0.f; c->still = 0.f;
+      carUpdate(k, e->w, &in, dt); c->lastIn = in;
+      if ((c->waitT += dt) >= 20.f) { c->waitT = 0.f; c->waitEvt = 1; }   // импульс на один кадр: game_msn.c читает `waitEvt > 0` каждый кадр
+      return;
+    }
+  }
+#endif
+#if !MC_HIT_OLD
+  if (c->mode == MC_CHASE && c->ramT > 0.f) {   // сверка P04 A8: преследователь сам ударил машину — 0,5 с на ручнике (пока контакт не прерван — заново), потом назад 0,5 с
+    c->ramT -= dt; in.handbrake = 1.f; in.brake = 0.f;
+    carUpdate(k, e->w, &in, dt); c->lastIn = in;
+    if (c->ramT <= 0.f) { c->ramT = 0.f; c->backT = c->backLen > 0.f ? c->backLen : .3f; c->stkOn = 0; c->stopHold = 0; }   // круг 3: задний ход 0,3 с (после застревания погони 0,5 с, пока не разогналась выше 14 м/с)
+    return;
+  }
+  if (c->baseGrip <= 0.f) c->baseGrip = k->p.tireGrip;
+  if (c->slipT > 0.f) c->slipT -= dt;   // сверка P04 A7: 1,5 с после удара — руль ×1,5 (в controlOrig); круг 3: придуманное ×0,6 сцепления убрано (режим скольжения физики не прочитан)
+#endif
   // маршрут: новая цель, конец обрезанного пути, погоня — раз в секунду
   c->replanT -= dt;
   int urgent = c->nroute == 0 || c->routeWp != c->wp;   // нет пути / новая цель — сразу
-  int need = urgent || (c->routeCut && c->seg >= c->nroute - 3) || (c->mode == MC_CHASE && c->replanT <= 0.f);
+  int chaseNeed = c->mode == MC_CHASE && c->replanT <= 0.f;
+#if !MC_CHASE_OLD
+  if (c->mode == MC_CHASE) {   // сверка P04 Д13: погоня перестраивает путь, когда цель перешла на другую дорогу (а не по таймеру: он — страховка 5 с); едет напрямую — путь не нужен
+    chaseNeed = 0;
+    if (!c->direct && roadsOk(e->tr)) {   // круг 3: проверка смены дороги под целью раз в 0,25 с (осознанно, ради кадра PSP); страховочного таймера нет
+      if ((c->chaseRoadT -= dt) <= 0.f) {
+        int r_, l_; float s_, d_; c->chaseRoadT = .25f;
+        int rr = nearestLane(e->tr, e->ppos[0], e->ppos[1], e->ppos[2], 0.f, -1.f, LANE_SNAP * LANE_SNAP, 1, &r_, &l_, &s_, &d_) ? r_ : -1;
+        if (rr != c->chaseRoad) { c->chaseRoad = rr; chaseNeed = 1; }
+      }
+    }
+  }
+#endif
+  int need = urgent || (c->routeCut && c->seg >= c->nroute - 3) || chaseNeed;
+#if !MC_STUCK_OLD
+  {   // сверка P04 Д13 (круг 3: порог 10 м, и у погони): дальше 10 м от всех звеньев пути дольше 3 с — путь заново
+    if (c->offLane > 10.f && c->nroute > 1 && !c->direct) { if ((c->offT += dt) > 3.f) { need = 1; c->offT = 0.f; } } else c->offT = 0.f;
+  }
+#endif
   // Очередь перепланировок (ресёрч процессора 10.10): у погонь 3–4 ИИ-машин перепланировка «раз в секунду» совпадает во времени у всех,
   // и один кадр получает 3–4 поиска подряд. Плановая (не срочная) — не больше одной за кадр на все машины; остальные — в следующих
   // кадрах (replanT остаётся ≤ 0, машина едет по прежнему пути). -DROADPLAN_QUEUE_OLD=1 или -DROADPLAN_OLD=1 — как было
@@ -1020,9 +1330,20 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
   // Первый маршрут машины после resetPath (routeWp -1) — не больше одного поиска за кадр на все машины: остальные стоят на ручнике ещё кадр-два (≤ 50 мс), маршрут тот же,
   // строится на следующем кадре с того же места. Срочные перепланировки в пути (новая цель, обрезанный путь) — сразу, как было. -DMCAR_WARM_OLD=1 — как было
   if (!MCAR_WARM_OLD && urgent && c->routeWp == -1 && c->nroute == 0 && !mcRoadPlanOld && replanBudget <= 0) { in.handbrake = 1.f; in.brake = fabsf(k->v) > .5f ? 1.f : 0.f; carUpdate(k, e->w, &in, dt); c->lastIn = in; return; }
-  if (need) { if (!urgent || (!MCAR_WARM_OLD && c->routeWp == -1)) replanBudget--; replan(c, m, e, goal); c->routeWp = c->wp; c->replanT = 1.f; }
+  if (need) { if (!urgent || (!MCAR_WARM_OLD && c->routeWp == -1)) replanBudget--; replan(c, m, e, goal); c->routeWp = c->wp; c->replanT = 1.f;
+#if !MC_CHASE_OLD
+    // круг 3, P04 A9: путь погони по дорогам строится до точки в 10 м от игрока
+    if (c->mode == MC_CHASE) while (c->nroute > 2 && d2xz(c->route[c->nroute - 1], e->ppos[0], e->ppos[2]) < 100.f) c->nroute--;
+#endif
+  }
   // догонялка
-  float mult = 1.f;
+  float mult = 1.f; (void)mult;
+#if !MC_SPEED_OLD
+  // сверка P04 A11 Д3 Д4, 1.1–1.3 1.7 1.8: желаемая скорость по типу этапа (svDesired), пересчёт раз в 2 с. TopSpeed физики машины не меняется
+  // (раньше множитель догонялки менял сам предел скорости и газ). Было: множитель к TopSpeed своей машины, потолок множитель × скорость игрока
+  if ((c->catchT -= dt) <= 0.f || c->vdes <= 0.f) { c->catchT = 2.f; c->vdes = svDesired(m, c, e); c->mult = svMult; } c->vcap = MC_DRIVE_OLD ? c->vdes : 1e9f;
+  k->p.topSpeed = fmaxf(3.f, top); k->p.gasScale = c->baseGas;
+#else
   if (c->hasRc && e->player) {
     // 03.10 (разбор ночи 02.10, m7 The Fat and Furious): «впереди ли соперник» мерилось по прямой до ЛЮБОЙ точки его пути
     // (mcRemainingFrom — минимум по всем точкам): на трассе с возвратом (m7: юг -> восток -> север -> финиш у старта) игрок у старта
@@ -1046,7 +1367,13 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
   // физики кадра — прежний (top × множитель): сопротивление car.c считается от него, иначе низкий потолок гасил бы ход за кадр
   c->vcap = !MC_CATCHUP_SPEED_OLD && c->hasRc && e->player && e->driving ? fmaxf(3.f, mult * fabsf(e->player->v)) : 1e9f;
   k->p.topSpeed = fmaxf(3.f, top * mult); k->p.gasScale = c->baseGas * fmaxf(1.f, mult);
+#endif
+#if !MC_DRIVE_OLD
+  svStuck(c, e, dt);   // (прежнее застревание — только вместе с MC_DRIVE_OLD = 1: оно внутри control())
+  controlOrig(m, c, e, goal, dt, &in);
+#else
   control(m, c, e, goal, dt, &in);
+#endif
   // ПРАВИЛО ПОРТА: урон машине миссии — только от машин (carHitCar в mcUpdate); удар о стену и землю не бьёт — иначе коробки
   // коллизии поперёк полос (пункт 11 очереди: 7 мест) разбивают соперника гонки и цель погони раньше игрока
   float dmg0 = k->damage, dead0 = k->deadT; int des0 = k->destroyed;
@@ -1055,6 +1382,7 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
   k->damage = dmg0; k->destroyed = des0; if (!des0) k->deadT = dead0;   // правка 199: часы взрыва идут только у разбитой
   // стоит на месте 10 с (сместилась меньше 8 м от точки отсчёта: упёрлась, качается у стены) / перевёрнута, а игрок
   // далеко — на свой путь впереди (правило порта, вне вида игрока). Перепланировка маршрута ход не обнуляет
+#if MC_STUCK_OLD
   float far2 = d2xz(e->ppos, k->x, k->z);
   if (c->progWp != c->wp || d2xz(c->progRef, k->x, k->z) > 64.f || c->mode == MC_CHASE) {
     c->progWp = c->wp; c->progRef[0] = k->x; c->progRef[1] = k->y; c->progRef[2] = k->z; c->progT = 0.f;
@@ -1065,7 +1393,18 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
     float h = (j + 1 < c->nroute) ? atan2f(b[0] - a[0], b[2] - a[2]) : atan2f(goal[0] - a[0], goal[2] - a[2]);
     carPlace(k, e->w, a[0], a[1] + .5f, a[2], h); c->stuckN = 0; c->resets++; c->nroute = 0; c->progT = 0.f;
   }
+#else
+  // сверка P04 Д2, 1.11: машина ИИ с путевыми точками (гонка, уход, цель), кузов наклонён от вертикали на 75° и больше (cos ≤ 0,2588) — через 1 с
+  // ставится на месте на колёса; встала сама за эту секунду — отсчёт отменяется. От расстояния до игрока не зависит (было: вверх колёсами > 3 с и игрок
+  // дальше 60 м — перенос на точку пути; правило «10 с без приближения на 8 м» и перенос после 5 застреваний убраны: см. svStuck)
+  if (c->mode != MC_CHASE) {
+    if (1.f - 2.f * (k->q[1] * k->q[1] + k->q[3] * k->q[3]) <= .2588f) {   // вертикаль кузова из кватерниона (pitch и roll вверх колёсами нули)
+      if ((c->flipHoldT += dt) >= 1.f) { carPlace(k, e->w, k->x, k->y + .5f, k->z, k->h); c->flipHoldT = 0.f; c->resets++; c->nroute = 0; }
+    } else c->flipHoldT = 0.f;
+  }
+#endif
   k->p.topSpeed = top; k->p.gasScale = c->baseGas;   // параметры .con — как в данных (множитель — только на кадр)
+  if (c->baseGrip > 0.f) k->p.tireGrip = c->baseGrip;
 }
 
 // бот-игрок (tools/bots/missioner): тот же водитель ведёт машину игрока к точке goal по полосам. c — тень водителя у бота:
@@ -1091,6 +1430,21 @@ void mcBotInputPath(const MsnCars *m, McCar *c, const McEnv *e, const float (*pt
 }
 
 // ---------------------------------------------------------------- кадр
+// сверка P04 A7 A8: кто кого ударил — по скорости сближения вдоль линии центров до удара (ov — скорость той, что на (ox, oz)); у кого больше, тот ударил.
+// Ударил сам преследователь (его не ударили): пауза на ручнике 0,5 с (перезапускается, пока контакт не прерван), потом назад 0,5 с (drive).
+// Ударила другая машина с заметной скоростью сближения (> 1 м/с, ≈ нормированный импульс 0,02 оригинала): 1,5 с руль ×1,5 и пониженное сцепление
+static void svHitNote(McCar *c, const float cv[3], float ox, float oz, const float ov[3]) {
+#if !MC_HIT_OLD
+  float nx = ox - c->car.x, nz = oz - c->car.z, l = sqrtf(nx * nx + nz * nz);
+  if (l < 1e-3f) return;
+  nx /= l; nz /= l;
+  float cs = cv[0] * nx + cv[2] * nz, os = -(ov[0] * nx + ov[2] * nz);
+  if (cs > os + .3f) { if (c->mode == MC_CHASE) c->ramT = .5f; }
+  else if (c->car.carHitV > 1.f && c->mode != MC_PARKED) c->slipT = 1.5f;
+#else
+  (void)c; (void)cv; (void)ox; (void)oz; (void)ov;
+#endif
+}
 static int near2(const Car *a, const Car *b, float extra) {
   float ra = a->p.halfL + fabsf(a->p.bodyOfs) + .5f, rb = b->p.halfL + fabsf(b->p.bodyOfs) + .5f, r = ra + rb + extra;
   float dx = a->x - b->x, dz = a->z - b->z; return dx * dx + dz * dz < r * r && fabsf(a->y - b->y) < 3.f;
@@ -1103,11 +1457,17 @@ void mcTrafficSees(const MsnCars *m, Traffic *t) {
 void mcUpdate(MsnCars *m, const McEnv *e, float dt, void (*hit)(void *u, const char *name), void *u) {
   if (dt <= 0.f || !e->w) return;
   if (dt > .1f) dt = .1f;
+  { float pp[3] = {e->ppos[0], e->ppos[1], e->ppos[2]};   // скорость игрока по кадрам (нужна погоне, когда игрок пешком)
+    if (svPPok && dt > 1e-4f) { svPV[0] = (pp[0] - svPP[0]) / dt; svPV[1] = (pp[1] - svPP[1]) / dt; svPV[2] = (pp[2] - svPP[2]) / dt;
+      if (svPV[0] * svPV[0] + svPV[2] * svPV[2] > 3600.f) svPV[0] = svPV[1] = svPV[2] = 0.f; }   // скачок (телепорт): не скорость
+    memcpy(svPP, pp, sizeof svPP); svPPok = 1; }
+  svStreet = e->noRaceWait;
   replanBudget = 1;   // плановых перепланировок на кадр (см. очередь в drive)
   for (int i = 0; i < m->n; i++) {
     McCar *c = &m->c[i]; if (!c->on) continue;
     Car *k = &c->car;
     int moving = c->mode != MC_PARKED && !(c->finished && fabsf(k->v) < .3f) && !k->destroyed;
+    c->waitEvt = 0;
     if (moving) { c->asleep = 0; unsigned pd_ = mcClockUs ? mcClockUs() : 0u; drive(m, c, e, dt); if (mcClockUs) { mcPartMs[1] += (mcClockUs() - pd_) / 1000.f; mcPartMs[2] += 1.f; } }
     else if (!c->asleep) {   // стоит / доехала / разбита: физика до покоя, потом спит (как стоящие машины трафика)
       CarInput in = {0.f, fabsf(k->v) > .5f ? 1.f : 0.f, 0.f, 1.f}; carUpdate(k, e->w, &in, dt);
@@ -1117,30 +1477,42 @@ void mcUpdate(MsnCars *m, const McEnv *e, float dt, void (*hit)(void *u, const c
     }
     c->wheelAng += k->v / fmaxf(.2f, k->p.wheelRad) * dt;
   }
+#if !MC_PROPTOUCH_OLD
+  if (e->carTouch) for (int i = 0; i < m->n; i++) {   // круг 2, g11 P11-02: машины ИИ рядом с игроком (80 м) задевают предметы, как машина игрока
+    McCar *c = &m->c[i]; if (!c->on || c->car.destroyed || d2xz(e->ppos, c->car.x, c->car.z) > 80.f * 80.f) continue;
+    e->carTouch(e->touchU, &c->car);
+  }
+#endif
   // удары: игрок, машины миссии между собой, трафик и стоящие
   for (int i = 0; i < m->n; i++) {
     McCar *c = &m->c[i]; if (!c->on) continue;
     if (e->player && e->driving && near2(e->player, &c->car, .5f)) {
-      float before = e->player->hitSpeed;
+      float before = e->player->hitSpeed, pv0[3], cv0[3]; memcpy(pv0, e->player->vel, sizeof pv0); memcpy(cv0, c->car.vel, sizeof cv0);
       if (carHitCar(e->player, &c->car, e->w)) {
+        svHitNote(c, cv0, e->player->x, e->player->z, pv0);
         c->asleep = 0; c->still = 0.f;
-        if (e->player->hitSpeed > 1.f && e->player->hitSpeed > before - 1e-4f) { m->hits++; if (hit) hit(u, c->name); }
+        if (e->player->hitSpeed > 1.f && e->player->hitSpeed > before - 1e-4f) { m->hits++; mcHitSpeed = e->player->hitSpeed; if (hit) hit(u, c->name); }
       }
     }
     for (int j = i + 1; j < m->n; j++) {
       if (e->noNpcCollide) continue;
       McCar *o = &m->c[j]; if (!o->on || !near2(&c->car, &o->car, .3f)) continue;
-      if (carHitCar(&c->car, &o->car, e->w)) { c->asleep = o->asleep = 0; c->still = o->still = 0.f; }
+      float cv0[3], ov0[3]; memcpy(cv0, c->car.vel, sizeof cv0); memcpy(ov0, o->car.vel, sizeof ov0);
+      if (carHitCar(&c->car, &o->car, e->w)) { c->asleep = o->asleep = 0; c->still = o->still = 0.f;
+        svHitNote(c, cv0, o->car.x, o->car.z, ov0); svHitNote(o, ov0, c->car.x, c->car.z, cv0); }
     }
     if (e->tr && e->tr->hd) {
       Traffic *t = e->tr;
       for (int j = 0; j < t->maxCars; j++) {
         TrCar *tc = &t->car[j]; if (tc->mode == TRM_OFF || !near2(&c->car, &tc->car, .3f)) continue;
-        if (carHitCar(&c->car, &tc->car, e->w)) { if (tc->mode == TRM_DRIVE) { tc->mode = TRM_PHYS; tc->stillT = 0.f; } c->asleep = 0; }
+        float cv0[3], tv0[3]; memcpy(cv0, c->car.vel, sizeof cv0); memcpy(tv0, tc->car.vel, sizeof tv0);
+        if (carHitCar(&c->car, &tc->car, e->w)) { if (tc->mode == TRM_DRIVE) { tc->mode = TRM_PHYS; tc->stillT = 0.f; } c->asleep = 0;
+          svHitNote(c, cv0, tc->car.x, tc->car.z, tv0); }
       }
       for (int j = 0; j < t->npark; j++) {
         TrParked *P = &t->park[j]; if (!near2(&c->car, &P->car, .3f)) continue;
-        if (carHitCar(&c->car, &P->car, e->w)) { P->state = 1; P->stillT = 0.f; c->asleep = 0; }
+        float cv0[3], pv0[3]; memcpy(cv0, c->car.vel, sizeof cv0); memcpy(pv0, P->car.vel, sizeof pv0);
+        if (carHitCar(&c->car, &P->car, e->w)) { P->state = 1; P->stillT = 0.f; c->asleep = 0; svHitNote(c, cv0, P->car.x, P->car.z, pv0); }
       }
     }
   }

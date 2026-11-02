@@ -41,8 +41,66 @@
 extern "C" {
 #endif
 
+// ---- сверка с исходником оригинала (02.11.2026, окно g03-aicars, правки 1077–1081, слово Роба 01.11: исходник = правда).
+// Каждая группа правок — под своим выключателем; 1 — поведение прежнее (TEST81). MC_SVERKA_OLD = 1 — все группы разом прежние.
+// Список строк: docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g03-aicars.md; что внедрено — g03-aicars_журнал.md
+// Связь выключателей (круг 3): MC_SPEED_OLD, MC_STUCK_OLD и MC_CHASE_OLD сидят в новом водителе, а прежний водитель control() запускается только при MC_DRIVE_OLD = 1,
+// поэтому одиночные значения 1 у этих трёх дают смесь; полный возврат прежнего — только MC_SVERKA_OLD = 1. Остальные группы независимы.
+#ifndef MC_SVERKA_OLD
+#define MC_SVERKA_OLD 0
+#endif
+#ifndef MC_DRIVE_OLD        // P04 A2 A3 A4 A5 Д1 Д5, 1.4 1.5 1.6: руль по двум точкам, релейный газ, поворот с ручником, объезд 3 м × cos, без торможения перед препятствиями
+#define MC_DRIVE_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_SPEED_OLD        // P04 A11 Д3 Д4, 1.1 1.2 1.3 1.7 1.8: желаемая скорость по типу этапа, пересчёт раз в 2 с
+#define MC_SPEED_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_STUCK_OLD        // P04 A6 Д2, 1.10 1.11: застревание (0,7 / 1,5 с, задний ход 0,5…1,5 с, седьмой раз на дорогу), переворот 75° → 1 с → на колёса
+#define MC_STUCK_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_HIT_OLD          // P04 A7 A8: потеря управления 1,5 с после удара; пауза и задний ход преследователя после тарана
+#define MC_HIT_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_CHASE_OLD        // P04 A9 Д6 Д13, 2.10: погоня напрямую ближе 20 м (полиция 60 м, без здания между), упреждение цель + скорость, путь по смене дороги цели
+#define MC_CHASE_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_WAIT_OLD         // P04 A10: ИИ дальше 300 м от игрока ждёт на ручнике, через 20 с — событие миссии
+#define MC_WAIT_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_PATHMID_OLD      // P04 A1, P16-05: путь по середине дороги, хорда 40 % на перекрёстке, обратный ход ×1,30
+#define MC_PATHMID_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_WPR_OLD          // P04 A13 B2: точка пути — расстояние в 3D, в бонус-игре радиус 7 м
+#define MC_WPR_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_WP32_OLD         // P04 A14: до 32 точек пути в этапе
+#define MC_WP32_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_SHORTCUT_OLD     // круг 2, P04:A12 и 1.9 (данные g12: TrRoad.pad8 — сложность среза): бросок «умения» на каждом планировании против сложности среза
+#define MC_SHORTCUT_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_SVKIND_OLD       // круг 2, g01 СВЕРКА_МАШИНЫ:7.4: вид машины для взрыва (Car.svKind: 2 ИИ миссии, 3 полиция) и Car.svRace (гонка: взрыв через 3 с)
+#define MC_SVKIND_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_PROPTOUCH_OLD    // круг 2, g11 P11-02: машины ИИ задевают предметы (propsHitCar через McEnv.carTouch)
+#define MC_PROPTOUCH_OLD MC_SVERKA_OLD
+#endif
+#ifndef MC_FREEZE_OLD       // круг 2, g10 СВЕРКА_С_ИСХОДНИКОМ:2.8: во время разговора полиция стоит (McEnv.freeze)
+#define MC_FREEZE_OLD MC_SVERKA_OLD
+#endif
+#ifndef POLICE_STAND27_OLD  // СВЕРКА_С_ИСХОДНИКОМ 2.10: стоп в 27 м от стоящего игрока (замер PS2) — 1 вернёт его; 0 — полиция всегда едет, как в исходнике
+#define POLICE_STAND27_OLD MC_SVERKA_OLD
+#endif
+
+#ifndef MC_G03_FIELDS        // game_msn.c (g07) читает McEnv.noRaceWait и McCar.waitEvt под этим именем
+#define MC_G03_FIELDS 1
+#endif
 #define MC_MAX 6          // машин миссии одновременно (данные: не больше 4 в одной миссии, tools/missions: AddStageVehicle)
+#if MC_WP32_OLD
 #define MC_WP 16          // точек пути этапа (данные: до 14 AddStageWaypoint в этапе)
+#else
+#define MC_WP 32          // сверка P04 A14: в оригинале до 32 точек пути в этапе (в данных не больше 14)
+#endif
 #define MC_ROUTE 64       // точек маршрута по полосам до следующей точки пути (дальше — перепланировка у конца)
 #define MC_AVOID 4        // дорог в объезд (где машина застревала)
 enum { MC_PARKED = 0, MC_RACE, MC_TARGET, MC_EVADE, MC_CHASE, MC_WAYPOINT };
@@ -87,6 +145,13 @@ typedef struct {
                                     // впереди (трафик, стоящие, соперники) не толкаясь, 1.5 м/с; у машин миссии 0 — как было
   int hnrWreck;                     // правка 121: разбитая полицейская уже засчитана в Hit & Run (25) — второй раз не считается
   int police;                       // правка 121 (оракул PS2): полиция Hit & Run — к стоящему игроку ближе POLICE_STANDOFF не подъезжает
+  // сверка g03-aicars (02.11): состояние водителя «как в оригинале»; всё обнуляется resetPath / mcSpawn
+  float vdes, catchT;               // желаемая скорость, м/с, и таймер пересчёта (2 с)
+  int turning;                      // подготовка к повороту (руль по дальней точке, ручник)
+  int stkOn, stopHold, direct;      // застревание: идёт счёт; после заднего хода ручник до остановки; погоня едет напрямую
+  float stkT, ramT, slipT, baseGrip, flipHoldT, waitT, offT;   // счёт застревания; пауза после тарана; потеря управления; сцепление .con; наклон 75°; ожидание игрока; вне звеньев пути
+  float backLen, stkThr; int noPlace;   // круг 3: время заднего хода (0,3 с старт), порог застревания, не ставить на дорогу на 7-м застревании (цель уничтожения; ставит game_msn.c)
+  int waitEvt, waiting, chaseRoad, losOk; float chaseRoadT, losT;   // losT/losOk: прямая видимость полиции до игрока, пересчёт раз в 0,1 с   // событий «ИИ добрался до цели» (читает миссия); сейчас ждёт; дорога под целью погони
   float dbgGap, dbgSwerve; int dbgKind;   // служебное: зазоры этого кадра и чья машина впереди (гейт, журнал)   // бот-игрок (mcBotInput): точка, к которой проложен путь; машина-цель тарана
 } McCar;
 
@@ -105,6 +170,9 @@ typedef struct {   // окружение кадра
   int hold;                         // отсчёт 3-2-1: стоять
   int haveFrac; float pfrac;        // 03.10: доля пройденного пути гонки игрока по длине (gameMsnRaceFracLen); haveFrac 0 — прежняя мера
   int noNpcCollide;                 // бонус-гонка: соперники не сталкиваются друг с другом; контакт игрок↔соперники остаётся
+  int freeze;                      // круг 2 (g10 2.8): 1 — разговор / вход в помещение: полиция стоит на месте (ставит game_msn.c по G.hnrFreeze)
+  void (*carTouch)(void *u, Car *c); void *touchU;   // круг 2 (g11 P11-02): вызывается для каждой машины ИИ рядом с игроком — game_msn.c ставит propsHitCar
+  int noRaceWait;                  // сверка P04 A10: 1 — гонка не ждёт игрока (уличные гонки 1 и 2); game_msn.c пока не ставит (0 — ждут все гонки)
 } McEnv;
 
 // Курс машины на локаторе CarStart (AddStageVehicle, ActivateVehicle, PlacePlayerCar, InitLevelPlayerVehicle, SetMissionReset*
@@ -130,6 +198,7 @@ void mcRemove(MsnCars *m, const char *name);   // машина миссии ух
 int mcMode(const char *ai);
 // кадр: после машины игрока и Гомера, до трафика. hit(u, имя) — игрок ударил машину миссии (скорость удара > 1 м/с)
 extern unsigned (*mcClockUs)(void); extern float mcPartMs[3];   // служебное: подфазы mcUpdate (смоук)
+extern float mcHitSpeed;   // круг 2 (g07 21·P07:10): скорость удара игрока по машине миссии в момент вызова hit(), м/с (порог 0,05 для выпадения предмета)
 void mcUpdate(MsnCars *m, const McEnv *e, float dt, void (*hit)(void *u, const char *name), void *u);
 // бот-игрок (tools/bots/missioner): водитель машин миссий ведёт машину игрока к goal по полосам; c — тень водителя бота
 // (c->car = копия машины игрока этого кадра). in — ввод машины (газ/тормоз 0..1 — бот переводит в нажатия R/L)

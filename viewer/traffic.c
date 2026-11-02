@@ -28,7 +28,12 @@
 #ifndef TRAFFIC_RESTART_OLD
 #define TRAFFIC_RESTART_OLD 0
 #endif
-#define ACCEL (TRAFFIC_RESTART_OLD ? 3.f : 3.9f)            // разгон трафика, м/с2
+// сверка g02-traffic, СВЕРКА_МАШИНЫ 8.4 (строка 42): оригинал — желаемая скорость 60 км/ч (16,7 м/с) на всех уровнях и разгон 3,5 м/с2 (запись PS2 давала 3,9 и
+// 16,5 м/с по трём дорогам). TRF_SV_SPEED_OLD=1 — прежнее: скорость дороги × PACE_K, разгон 3,9
+#ifndef TRF_SV_SPEED_OLD
+#define TRF_SV_SPEED_OLD 0
+#endif
+#define ACCEL (TRAFFIC_RESTART_OLD ? 3.f : (TRF_SV_SPEED_OLD ? 3.9f : 3.5f))            // разгон трафика, м/с2
 #define DECEL 6.f            // торможение до препятствия, м/с2
 #define STOP_GAP 3.f         // стоп за 3 м до препятствия
 #define LAT_G 3.f            // в повороте не больше sqrt(3 * R); кривая перекрёстка (изгиб полосы — LAT_G_FIT, аудит п. 22)
@@ -60,7 +65,7 @@
 #endif
 #define PACE_K (TRAFFIC_PACE_OLD ? 1.f : (TRAFFIC_PACE_K_OLD ? 1.25f : 1.185f))
 #define LAT_G_FIT (TRAFFIC_PACE_OLD ? LAT_G : 14.f)
-#define ROAD_V(t, r) (((t)->road[r].speed ? (t)->road[r].speed : 50) / 3.6f * PACE_K)
+#define ROAD_V(t, r) (TRF_SV_SPEED_OLD ? (((t)->road[r].speed ? (t)->road[r].speed : 50) / 3.6f * PACE_K) : (60.f / 3.6f))
 #define PED_SPAWN_MIN 15.f   // пешеходы появляются в 15..45 м (при сбросе от 8 м)
 #define PED_SPAWN_MAX 45.f
 #define PED_REMOVE 60.f
@@ -89,6 +94,86 @@
 #define HIT_CAR .05f
 #define HIT_WRECK .25f
 #define HIT_KICK .13f
+
+// ======================================================================================================================================
+// Правила оригинала для трафика и пешеходов (02.11.2026, окно g02-traffic, правки Роба 1077–1081). Каждое правило — за выключателем TRF_SV_*_OLD (по умолчанию 0 = как у
+// оригинала; 1 = прежнее поведение порта). Номер строки: docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g02-traffic.md (P03-21 = СВЕРКА_ПОЛНАЯ/P03_мир.md, «МАШИНЫ 8.1» = СВЕРКА_МАШИНЫ.md).
+// Числа — по отчётам сверки и отчёту проверки; код свой, в стиле файла.
+// ======================================================================================================================================
+#ifndef TRF_SV_BRAKE_OLD
+#define TRF_SV_BRAKE_OLD 0     // T1/T2/8.5 (22, 23, 43): коридор ±3/±2 м, глубина max(15, 1,5 v), запас по центрам 5/3 м; трафик видит трафик только на своей полосе
+#endif
+#ifndef TRF_SV_JUNC_OLD
+#define TRF_SV_JUNC_OLD 0      // P16-01/02, Д11, 8.4 (29, 30, 59): стоп-знак (behaviour 1) = очередь дорог, 3,5 с на дорогу; без управления — не ждёт; скорость 9/12 м/с
+#endif
+#ifndef TRF_SV_CHOOSE_OLD
+#define TRF_SV_CHOOSE_OLD 0    // T3/P16-04/Д2/Д3 (24, 31, 61, 62): выезд по номеру полосы, полоса с местом, повтор раз в 5 с, кривая на трети
+#endif
+#ifndef TRF_SV_LANECHG_OLD
+#define TRF_SV_LANECHG_OLD 0   // 8.2/T5 (10, 26): смена полосы
+#endif
+#ifndef TRF_SV_DODGE_OLD
+#define TRF_SV_DODGE_OLD 0     // 8.1/T4 (9, 25): уворот от машины игрока
+#endif
+#ifndef TRF_SV_REJOIN_OLD
+#define TRF_SV_REJOIN_OLD 0    // P03-25, 8.7 (21, 44): условия возврата на полосу
+#endif
+#ifndef TRF_SV_HONK_OLD
+#define TRF_SV_HONK_OLD 0      // P03-15, 8.3 (16, 41): ответ на гудок игрока, сигнал помехе
+#endif
+#ifndef TRF_SV_REMOVE_OLD
+#define TRF_SV_REMOVE_OLD 0    // P03-21 (18): удаление дальше 75 м без условия видимости, вне кадра 5 с
+#endif
+#ifndef TRF_SV_SPAWN_OLD
+#define TRF_SV_SPAWN_OLD 0     // P03-23, P18-09, P03-24 (20, 34, 55): плотность полосы, интервалы, скорость при рождении
+#endif
+#ifndef TRF_SV_HUSK_OLD
+#define TRF_SV_HUSK_OLD 0      // P03-05 (13): остов не у всех моделей, не больше 5
+#endif
+#ifndef TRF_SV_DMG2_OLD
+#define TRF_SV_DMG2_OLD 0      // P01-09 (11): удар не убивает, если прочность была > 2 %
+#endif
+#ifndef TRF_SV_PEDSPAWN_OLD
+#define TRF_SV_PEDSPAWN_OLD 0  // 7.2, P03-12/17, Д8, P03-14/18, 7.9 (4, 14, 53, 58, 51, 54, 65): рождение пешехода на границе круга 45 м
+#endif
+#ifndef TRF_SV_PEDSPEED_OLD
+#define TRF_SV_PEDSPEED_OLD 0  // 7.3 (5): 1,0 / 1,5 м/с / бег 3,0
+#endif
+#ifndef TRF_SV_PANIC_OLD
+#define TRF_SV_PANIC_OLD 0     // 7.4, P03-16 (6, 52): паника
+#endif
+#ifndef TRF_SV_PEDDODGE_OLD
+#define TRF_SV_PEDDODGE_OLD 0  // 7.5, P02-40 (7, 48): уворот по прогнозу на 1 с, съёживание или прыжок вбок
+#endif
+#ifndef TRF_SV_PEDHIT_OLD
+#define TRF_SV_PEDHIT_OLD 0    // 7.6, P02-42 (8, 50): трафик сбивает пешеходов, лёгкий толчок лежащему
+#endif
+#ifndef TRF_SV_PEDFACE_OLD
+#define TRF_SV_PEDFACE_OLD 0   // P02-37 (12): стоп лицом к игроку в 1,4 м
+#endif
+#ifndef TRF_SV_PEDTALK_OLD
+#define TRF_SV_PEDTALK_OLD 0   // 7.8, P02-39 (39, 47): разговоры
+#endif
+#ifndef TRF_SV_PEDPATH_OLD
+#define TRF_SV_PEDPATH_OLD 0   // P02-38 (46): точка тропы пройдена в 0,5 м
+#endif
+#ifndef TRF_SV_KICK_OLD
+#define TRF_SV_KICK_OLD 0      // 3.1 (2): пинок задевает одного (ближайшего)
+#endif
+#define SV_COR_CAR 3.f         // T2: боковое смещение центра цели от оси своей машины, м: машины
+#define SV_COR_PED 2.f         // пешеходы
+#define SV_STOP_CAR 5.f        // T1: остановка по расстоянию между центрами: перед машиной
+#define SV_STOP_PED 3.f        // перед пешеходом
+#define SV_JV_STOP 9.f         // 8.4: скорость в перекрёстке со стоп-знаком (behaviour 1), м/с
+#define SV_JV_FREE 12.f        // в перекрёстке типа 0 (по второму читателю P16-01 только тип 0; остальные — желаемая скорость)
+#define SV_QUEUE_T 3.5f        // P16-01: раз в 3,5 с зелёный получает первая дорога очереди
+#define SV_ONE_HIT_MIN .02f    // P01-09: остаток прочности меньше 2 % — «не с одного удара»
+#define SV_HUSK_MAX 5          // P03-05: остовов одновременно
+#ifndef TRF_SV_KICKF_OLD
+#define TRF_SV_KICKF_OLD 0     // круг 5, 3.3: 1 — прежний пинок пешехода 5 м/с вбок и 3 вверх
+#endif
+#define SV_PED_MASS 100.f      // масса пешехода по умолчанию, кг (в данных нет)
+#define SV_STEER_SIGN 1.f      // 8.1: знак руля CarInput.steer для «налево» (калибровка tests/sverka_g02)
 
 static float clampf(float v, float a, float b) { return v < a ? a : v > b ? b : v; }
 // правка 252: как wrapPi в homer.c — угол-бесконечность/1e30 не крутит цикл вечно; |a| < 64 — как было
@@ -127,6 +212,9 @@ int trafficParkModel(const Traffic *t, const char *name) {
 #ifndef TRAFFIC_PARK_FEW_OLD
 #define TRAFFIC_PARK_FEW_OLD 0
 #endif
+#ifndef TRF_SV_ZPARK_OLD
+#define TRF_SV_ZPARK_OLD 0     // круг 5, P03-19: 1 — места выбраны один раз на уровень (FNV), зона только прячет/показывает
+#endif
 #define PARK_CHOOSE_MAX 128
 static void parkChoose(Traffic *t) {
   int n = 0; for (uint32_t i = 0; i < t->hd->nSlot; i++) n += t->slot[i].park ? 1 : 0;
@@ -138,6 +226,9 @@ static void parkChoose(Traffic *t) {
   for (int k = 0; k < np && got < N; k++) { int i = ord[k], m = t->parkd[i].model; if (m < TR_MAXMODEL && seen[m]) continue; if (m < TR_MAXMODEL) seen[m] = 1; pick[i] = 1; got++; }
   for (int k = 0; k < np && got < N; k++) { int i = ord[k]; if (!pick[i]) { pick[i] = 1; got++; } }
   for (int i = 0; i < t->npark; i++) t->park[i].off = i < np ? !pick[i] : 0;
+#if TRAFFIC_ZONE_PARK
+  if (!TRF_SV_ZPARK_OLD) for (int i = 0; i < t->npark; i++) t->park[i].off = 0;   // круг 5 (P03-19): кандидат — любое место зоны, выбор при каждой загрузке зоны (svParkReselect)
+#endif
 }
 static int pedModel(Traffic *t, int i) {   // CHR1 внутри блоба пешеходов: всё, что прочтёт GE, — внутри блоба
   const TrHeader *H = t->hd; const unsigned char *d = t->base + H->pedOff;
@@ -168,6 +259,7 @@ static int pedModel(Traffic *t, int i) {   // CHR1 внутри блоба пе�
   if (t->clip[i][TRC_WALK] < 0 || t->clip[i][TRC_IDLE] < 0) return -6;
   float v = skinClipSpeed(m, t->clip[i][TRC_WALK]);
   t->walkV[i] = v > .3f && v < 4.f ? v : PED_WALK_DEF;
+  { float rv = t->clip[i][TRC_RUN] >= 0 ? skinClipSpeed(m, t->clip[i][TRC_RUN]) : 0.f; t->runV[i] = rv > 1.f && rv < 8.f ? rv : 3.4f; }   // 7.3: бег 3,0 м/с — клип npd_loco_run, шаг по его скорости корня
   return 0;
 }
 
@@ -363,8 +455,89 @@ static void bzAt(const TrCar *c, float s, float p[3]) {
   float L = c->bzTab[k + 1] - c->bzTab[k], u = (k + (L > 1e-5f ? clampf((s - c->bzTab[k]) / L, 0.f, 1.f) : 0.f)) / 8.f;
   bzPoint(c->bz, u, p);
 }
-// выбрать выезд с перекрёстка в конце дороги и кривую до ближней полосы; 0 — тупик
-static int chooseNext(Traffic *t, TrCar *c) {
+// ---- сверка g02-traffic: плотность полос, занятость, право/лево (P18-09, P16-04, T3)
+// Плотность дороги (слово MaxCars из данных, TRF1 TrRoad.maxCars) делится на число полос, остаток — последней (P18-09)
+static int laneDens(const Traffic *t, int road, int lane) {
+  const TrRoad *R = &t->road[road]; int n = R->lanes > 0 ? R->lanes : 1, d = R->maxCars;
+  return lane == n - 1 ? d / n + d % n : d / n;
+}
+// сколько машин трафика едет по полосе или уже ведёт на неё (смена полосы, кривая перекрёстка); self не считается
+static int laneCars(const Traffic *t, const TrCar *self, int road, int lane) {
+  int n = 0;
+  for (int i = 0; i < t->maxCars; i++) {
+    const TrCar *o = &t->car[i]; if (o == self || o->mode != TRM_DRIVE) continue;
+    if (o->elem == 0 ? (o->road == road && (o->lane == lane || (o->chgK > 0.f && o->chgLane == lane))) : (o->nroad == road && o->nlane == lane)) n++;
+  }
+  return n;
+}
+// какая сторона «лево»: у дороги с обратной дорогой (rev) обратные полосы лежат слева от хода; знак векторного произведения (ход × смещение) — «лево».
+// Считается по всем таким парам один раз на данные: +1 или −1
+static int leftSign(const Traffic *t) {
+  static const TrHeader *key_; static int ls_;
+  if (key_ == t->hd) return ls_;
+  int votes = 0;
+  for (uint32_t r = 0; r < t->hd->nRoad; r++) {
+    const TrRoad *R = &t->road[r]; if (R->rev == 0xFFFF || R->rev >= t->hd->nRoad || !roadOk(t, (int)r) || R->nPt < 2) continue;
+    float a[3], b[3], o[3]; lanePos(t, (int)r, 0, R->length * .5f, a); lanePos(t, (int)r, 0, R->length * .5f + 1.f, b);
+    lanePos(t, R->rev, 0, t->road[R->rev].length * .5f, o);
+    float dx = b[0] - a[0], dz = b[2] - a[2], ox = o[0] - a[0], oz = o[2] - a[2], cr = dx * oz - dz * ox;
+    votes += cr > 0.f ? 1 : cr < 0.f ? -1 : 0;
+  }
+  key_ = t->hd; ls_ = votes >= 0 ? 1 : -1; return ls_;
+}
+// кривая через перекрёсток: Безье от конца полосы въезда p0 (курс d0) к началу полосы выезда (road o, lane bl); внутренние точки — на hdk доле расстояния между концами
+static void bezierTo(Traffic *t, TrCar *c, int o, int bl, const float p0[3], const float d0[3], float hdk) {
+  const TrPt *P = lanePts(t, o, bl); float d1[3]; laneDir(t, o, bl, 0, d1);
+  float p3[3] = {P[0].x, P[0].y, P[0].z}, dx = p3[0] - p0[0], dy = p3[1] - p0[1], dz = p3[2] - p0[2];
+  float d = sqrtf(dx * dx + dy * dy + dz * dz), hd = d * hdk;
+  for (int k = 0; k < 3; k++) { c->bz[0][k] = p0[k]; c->bz[1][k] = p0[k] + d0[k] * hd; c->bz[2][k] = p3[k] - d1[k] * hd; c->bz[3][k] = p3[k]; }
+  float prev[3], cur[3]; bzPoint(c->bz, 0.f, prev); c->bzTab[0] = 0.f;
+  for (int k = 1; k <= 8; k++) {
+    bzPoint(c->bz, k / 8.f, cur);
+    float ex = cur[0] - prev[0], ey = cur[1] - prev[1], ez = cur[2] - prev[2];
+    c->bzTab[k] = c->bzTab[k - 1] + sqrtf(ex * ex + ey * ey + ez * ez); memcpy(prev, cur, sizeof prev);
+  }
+  c->bzLen = c->bzTab[8]; c->nroad = o; c->nlane = bl; c->next = 1; c->junc = t->road[c->road].endJ;
+}
+// Выбор выезда по оригиналу (T3, P16-04, Д2, Д3). 1 — выезд выбран, кривая готова; 0 — тупик (выездов нет); −1 — выезды есть, но мест нет нигде: стоять, повтор через 5 с.
+// Выезды: без разворота (направление выезда не равно обратному въезду с допуском 0,05 и это не обратная дорога). Единственный выезд — без углов, но с проверкой места.
+// Иначе по номеру полосы: нулевая (и единственная) — прямо или направо с равной вероятностью, последняя — прямо или налево, средние — только прямо; берётся выезд,
+// чей угол ближе к нужному повороту. Полоса выезда: тот же номер, если на ней машин меньше плотности, иначе первая со свободным местом; нет места — выезд не берётся
+static int chooseNextSv(Traffic *t, TrCar *c) {
+  const TrRoad *r = &t->road[c->road]; const TrJunc *j = &t->junc[r->endJ];
+  float p0[3], d0[3]; lanePos(t, c->road, c->lane, laneLen(t, c->road, c->lane), p0); laneDir(t, c->road, c->lane, 1, d0);
+  struct { int o, bl; float ang; } cand[16]; int n = 0, rev = -1;
+  float ls = (float)leftSign(t);
+  for (int k = 0; k < j->nOut && n < 16; k++) {
+    int o = t->out[j->firstOut + k]; if (!roadOk(t, o)) continue;
+    float d1[3]; laneDir(t, o, 0, 0, d1);
+    int uturn = o == (int)r->rev || t->road[o].endJ == r->startJ || hypotf(d1[0] + d0[0], d1[2] + d0[2]) < .05f;
+    if (uturn) { rev = o; continue; }
+    float cr = (d0[0] * d1[2] - d0[2] * d1[0]) * ls, dt_ = d0[0] * d1[0] + d0[2] * d1[2];
+    cand[n].o = o; cand[n].bl = -1; cand[n].ang = atan2f(cr, dt_); n++;   // + налево, − направо
+  }
+  if (!n && rev >= 0) { cand[0].o = rev; cand[0].bl = -1; cand[0].ang = 3.14159265f; n = 1; }
+  if (!n) return 0;
+  for (int k = 0; k < n; k++) {   // полоса выезда с местом (или −1)
+    int o = cand[k].o, L = t->road[o].lanes, li = c->lane < L ? c->lane : L - 1, bl = -1;
+    if (laneCars(t, c, o, li) < laneDens(t, o, li)) bl = li;
+    else for (int l = 0; l < L; l++) if (laneCars(t, c, o, l) < laneDens(t, o, l)) { bl = l; break; }
+    cand[k].bl = bl;
+  }
+  int pick = -1;
+  if (n == 1) pick = cand[0].bl >= 0 ? 0 : -1;
+  else {
+    int last = r->lanes - 1, opt[2], no = 0; opt[no++] = 0;   // 0 — прямо, 1 — направо, 2 — налево
+    if (c->lane == 0) opt[no++] = 1; else if (c->lane == last) opt[no++] = 2;
+    int want = opt[(int)(rnd(t) * no) % no]; float tgt = want == 0 ? 0.f : want == 1 ? -1.5707963f : 1.5707963f, best = 1e9f;
+    for (int k = 0; k < n; k++) { if (cand[k].bl < 0) continue; float e = fabsf(wrapPi(cand[k].ang - tgt)); if (e < best) { best = e; pick = k; } }
+  }
+  if (pick < 0) return -1;
+  bezierTo(t, c, cand[pick].o, cand[pick].bl, p0, d0, 1.f / 3.f);   // Д3: внутренние точки на трети расстояния
+  return 1;
+}
+// выбрать выезд с перекрёстка в конце дороги и кривую до ближней полосы; 0 — тупик (прежнее правило порта: случайный из всех, кроме разворота)
+static int chooseNextOld(Traffic *t, TrCar *c) {
   const TrRoad *r = &t->road[c->road]; const TrJunc *j = &t->junc[r->endJ];
   int cand[16], n = 0, rev = -1;
   for (int k = 0; k < j->nOut && n < 16; k++) {
@@ -394,12 +567,21 @@ static int chooseNext(Traffic *t, TrCar *c) {
   c->bzLen = c->bzTab[8]; c->nroad = o; c->nlane = bl; c->next = 1; c->junc = r->endJ;
   return 1;
 }
+static int chooseNext(Traffic *t, TrCar *c) { return TRF_SV_CHOOSE_OLD ? chooseNextOld(t, c) : chooseNextSv(t, c); }
 // точка маршрута машины на ds метров вперёд от s (полоса -> кривая -> следующая полоса)
 static void routeAt(const Traffic *t, const TrCar *c, float ds, float p[3]) {
   float s = c->s + ds;
   if (c->elem == 0) {
     float L = laneLen(t, c->road, c->lane);
-    if (s <= L || !c->next) { lanePos(t, c->road, c->lane, s, p); return; }
+    if (s <= L || !c->next) {
+      lanePos(t, c->road, c->lane, s, p);
+      if (!TRF_SV_LANECHG_OLD && c->chgK > 0.f) {   // 8.2/T5: смена полосы — между своей и соседней полосой по ходу манёвра (гладкая ступень)
+        float q[3], L2 = laneLen(t, c->road, c->chgLane), k = c->chgK > 1.f ? 1.f : c->chgK, u = k * k * (3.f - 2.f * k);
+        lanePos(t, c->road, c->chgLane, L > 1e-3f ? s * L2 / L : s, q);
+        for (int i = 0; i < 3; i++) p[i] += (q[i] - p[i]) * u;
+      }
+      return;
+    }
     s -= L;
   }
   if (s <= c->bzLen || c->bzLen <= 0.f) { bzAt(c, s, p); return; }
@@ -443,15 +625,37 @@ static int parkLive(const Traffic *t, int i) {
 // tools/traffic_export.py dyna_loaders). Место меняет состояние (пропасть / вернуться) только спящей машиной и только вне
 // кадра — ни на месте, ни там, где машина стоит сейчас (inView с дальностью рисования): на глазах ничего не исчезает и не
 // появляется. Пропадая, сдвинутая машина возвращается на своё место (как PARK_BACK)
+// круг 5 (P03-19): при каждой загрузке зоны улицы — до max = (типов / 3), +1 при нечётном числе типов или если типов меньше 3, машин на случайные свободные места зоны, каждая
+// с шансом «случайное по числу типов ≤ 2» (при ≤ 3 типах всегда); всего в мире не больше числа типов. Выгрузка зоны убирает её машины. Типы — модели пула с флагом стоянки
+static void svParkReselect(Traffic *t) {
+  int list[TR_MAXMODEL], types = 0;
+  for (uint32_t i = 0; i < t->hd->nSlot; i++) if (t->slot[i].park) { int m = t->slot[i].model, dup = 0; for (int k = 0; k < types; k++) dup |= list[k] == m; if (!dup && types < TR_MAXMODEL) list[types++] = m; }
+  if (!types) return;
+  unsigned prev = t->zonePrev == ~0u && t->zoneMask != ~0u ? 0u : t->zonePrev;   // «загружено всё» до первых ворот — условное: первые ворота грузят свои файлы заново
+  unsigned nb = t->zoneMask & ~prev; int active = 0, maxN = types / 3 + ((types & 1) || types < 3 ? 1 : 0);
+  for (int i = 0; i < t->npark; i++) {
+    const TrPark *k = &t->parkd[i]; TrParked *P = &t->park[i];
+    if (P->sel && k->zmask && !(k->zmask & t->zoneMask)) P->sel = 0;   // зона выгружена — машина с ней
+    active += P->sel;
+  }
+  for (int pick = 0; pick < maxN && active < types; pick++) {
+    int cand[PARK_CHOOSE_MAX], nc = 0;
+    for (int i = 0; i < t->npark && nc < PARK_CHOOSE_MAX; i++) { const TrPark *k = &t->parkd[i]; if (!t->park[i].sel && ((k->zmask && (k->zmask & nb)) || (!k->zmask && !prev))) cand[nc++] = i; }
+    if (!nc) break;
+    if ((int)(rnd(t) * types) % types > 2) continue;   // шанс «случайное по числу типов ≤ 2»
+    t->park[cand[(int)(rnd(t) * nc) % nc]].sel = 1; active++;
+  }
+}
 static void parkZones(Traffic *t, const ColWorld *w, const float ppos[3], const float eye[3], const float fwd[3]) {
   for (int i = 0; i < t->nLoader; i++) {
     const TrZone *Z = &t->loader[i]; float d[3] = {ppos[0] - Z->c[0], ppos[1] - Z->c[1], ppos[2] - Z->c[2]};
     if (fabsf(d[0] * Z->ax[0] + d[1] * Z->ax[1] + d[2] * Z->ax[2]) < Z->h[0] && fabsf(d[1]) < Z->h[1] + 2.f &&
         fabsf(d[0] * Z->az[0] + d[1] * Z->az[1] + d[2] * Z->az[2]) < Z->h[2]) { t->zoneMask = Z->group; break; }
   }
+  if (!TRF_SV_ZPARK_OLD && t->zoneMask != t->zonePrev) { svParkReselect(t); t->zonePrev = t->zoneMask; }
   for (int i = 0; i < t->npark; i++) {
     const TrPark *k = &t->parkd[i]; TrParked *P = &t->park[i]; if (P->off) continue;
-    int want = !k->zmask || (k->zmask & t->zoneMask);
+    int want = TRF_SV_ZPARK_OLD ? (!k->zmask || (k->zmask & t->zoneMask)) : (P->sel && (!k->zmask || (k->zmask & t->zoneMask)));
     if (want == !P->gone || P->state) continue;
 #ifndef TRZ_PLANT_NOVIEW   // красный контроль гейта tests/parkzone: без проверки кадра
     float R = carR(&P->car);
@@ -459,7 +663,7 @@ static void parkZones(Traffic *t, const ColWorld *w, const float ppos[3], const 
 #else
     (void)eye; (void)fwd;
 #endif
-    if (!want) { carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->wreck = 0; P->stillT = 0.f; }
+    if (!want) { carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; P->stillT = 0.f; }
     P->gone = !want;
   }
 }
@@ -468,11 +672,12 @@ static void bodyCenter(const Car *k, float *x, float *z) { *x = k->x + sinf(k->h
 
 // ближайшее препятствие впереди по ходу (машины, стоящие, игрок, Гомер пешком, пешеходы): зазор, м
 // препятствие: круг (Гомер, пешеход) или кузов-прямоугольник (машины: торчащий в полосу зад стоящей — тоже препятствие)
-typedef struct { float x, z, r, fx, fz, hw, hl; int own, box; } Obs;   // own — номер машины трафика (-1 прочие): себя не видит
+enum { OBK_NONE, OBK_PLAYER, OBK_MCAR, OBK_HOMER, OBK_PED, OBK_TRAF, OBK_PARK };   // сверка g02-traffic: вид препятствия (T2: свои правила коридора)
+typedef struct { float x, z, r, fx, fz, hw, hl; int own, box, kind; } Obs;   // own — номер машины трафика (-1 прочие): себя не видит; kind — OBK_*
 static void obsCar(Obs *o, const Car *k, int own) {
-  CarBox b; carBox(k, &b); o->x = b.x; o->z = b.z; o->fx = b.fx; o->fz = b.fz; o->hw = b.hw; o->hl = b.hl; o->r = 0.f; o->own = own; o->box = 1;
+  CarBox b; carBox(k, &b); o->x = b.x; o->z = b.z; o->fx = b.fx; o->fz = b.fz; o->hw = b.hw; o->hl = b.hl; o->r = 0.f; o->own = own; o->box = 1; o->kind = OBK_NONE;
 }
-static void obsCircle(Obs *o, float x, float z, float r) { o->x = x; o->z = z; o->r = r; o->own = -1; o->box = 0; }
+static void obsCircle(Obs *o, float x, float z, float r) { o->x = x; o->z = z; o->r = r; o->own = -1; o->box = 0; o->kind = OBK_NONE; }
 // зазор до препятствия впереди машины k (центр кузова bx, bz, курс fx, fz); 1e9 — не впереди и не в полосе
 static float gapOne(const Car *k, float bx, float bz, float fx, float fz, const Obs *o) {
   float dx = o->x - bx, dz = o->z - bz, a = dx * fx + dz * fz, l = -dx * fz + dz * fx, lane = k->p.halfW + .4f;
@@ -564,6 +769,133 @@ static float pathGap(const Traffic *t, const TrCar *c, const Obs *o, int n, cons
   }
   return 1e9f;
 }
+// ---- сверка g02-traffic: что видит машина впереди (T1, T2, 8.5, 8.3), очередь стоп-знака (P16-01, Д11), уворот (8.1), смена полосы (8.2/T5)
+static const Car *svPlayerCar;   // машина игрока этого кадра (ставит trafficUpdate): уворот смотрит её скорость
+typedef struct { float rem, playerD, pedD, dist, homerD; int blocked; } SvLook;   // dist — расстояние между центрами до помехи, которая даёт rem; homerD — до Гомера пешком   // rem — расстояние до остановки по центрам (запас вычтен), м; playerD/pedD — до машины игрока / пешехода в коридоре
+// та же ли полоса: свой путь (полоса, кривая) совпадает с путём другой машины трафика
+static int sameLane(const TrCar *c, const TrCar *o) {
+  if (o->mode != TRM_DRIVE) return 1;   // сбитая и разбитая лежит на дороге — препятствие для любой
+  if (c->elem == 0 && o->elem == 0) return (c->road == o->road && (c->lane == o->lane || (o->chgK > 0.f && o->chgLane == c->lane) || (c->chgK > 0.f && c->chgLane == o->lane))) || (c->next > 0 && o->road == c->nroad && o->lane == c->nlane);
+  if (c->elem == 1 && o->elem == 0) return o->road == c->nroad && o->lane == c->nlane;
+  if (c->elem == 0 && o->elem == 1) return c->next > 0 && o->nroad == c->road && o->nlane == c->lane;
+  return o->nroad == c->nroad && o->nlane == c->nlane;
+}
+// T1/T2/8.5: цели в коридоре впереди: боковое смещение центра ≤ 3 м (машина), ≤ 2 м (пешеход, Гомер); глубина max(15 м, 1,5 с × скорость) по расстоянию до центра;
+// запас остановки по центрам: машина 5,0 м, пешеход 3,0 м; трафик видит трафик только на своей полосе; на кривой перекрёстка — по точкам маршрута вперёд (pathGap)
+static float svLook(const Traffic *t, const TrCar *c, const Obs *obs, int nobs, const Obs *pk, int npk, SvLook *out) {
+  const Car *k = &c->car; float fx = sinf(k->h), fz = cosf(k->h), bx, bz, rem = 1e9f, depth = fmaxf(15.f, 1.5f * c->v);
+  int self = (int)(c - t->car); bodyCenter(k, &bx, &bz);
+  out->playerD = out->pedD = out->homerD = 1e9f; out->dist = 1e9f; out->blocked = 0;
+  for (int pass = 0; pass < 2; pass++) {
+    int n = pass ? npk : nobs;
+    for (int i = 0; i < n; i++) {
+      const Obs *o = pass ? &pk[i] : &obs[i]; if (o->own == self) continue;
+      if (o->kind == OBK_TRAF && o->own >= 0 && o->own < t->maxCars && !sameLane(c, &t->car[o->own])) continue;
+      float dx = o->x - bx, dz = o->z - bz, a = dx * fx + dz * fz, l = -dx * fz + dz * fx, d = sqrtf(dx * dx + dz * dz);
+      int ped = !o->box; float lim = ped ? SV_COR_PED : SV_COR_CAR;
+      if (a <= 0.f || fabsf(l) > lim || d > depth) continue;
+      float r = d - (ped ? SV_STOP_PED : SV_STOP_CAR); if (r < rem) { rem = r; out->dist = d; }
+      if (o->kind == OBK_PLAYER) out->playerD = fminf(out->playerD, d);
+      if (o->kind == OBK_HOMER) out->homerD = fminf(out->homerD, d);   // круг 3 (8.3): сигналит только игроку-машине и Гомеру пешком, не прохожим
+      if (ped) out->pedD = fminf(out->pedD, d);
+    }
+  }
+  if (!TRF_SV_BRAKE_OLD) {   // страховка PSP: длинная машина игрока/миссии/стоящая, чей кузов торчит в нашу полосу, хотя центр дальше 3 м от оси (поперёк дороги) — по кузову, как раньше
+    for (int pass = 0; pass < 2; pass++) {
+      int n = pass ? npk : nobs;
+      for (int i = 0; i < n; i++) {
+        const Obs *o = pass ? &pk[i] : &obs[i]; if (o->own == self || o->kind == OBK_TRAF || o->kind == OBK_NONE) continue;
+        { float ex = o->x - bx, ez = o->z - bz; if (!o->box || fabsf(-ex * fz + ez * fx) <= SV_COR_CAR) continue; }   // центр в коридоре — уже учтён по правилу оригинала
+        float g = gapOne(k, bx, bz, fx, fz, o); if (g > 1e8f || g > depth) continue;
+        float r = g - 1.5f; if (r < rem) rem = r;
+        if (o->kind == OBK_PLAYER) out->playerD = fminf(out->playerD, g + k->p.halfL);
+      }
+    }
+  }
+  if (c->elem == 1 || (c->next > 0 && laneLen(t, c->road, c->lane) - c->s < depth)) {   // кривая перекрёстка: препятствия на маршруте (круги кузова по точкам маршрута)
+    Obs f2[2 + TR_MAXPED + TR_MAXCAR + TR_MAXEXTRA]; int nf = 0;
+    for (int i = 0; i < nobs && nf < (int)(sizeof f2 / sizeof f2[0]); i++) {
+      if (obs[i].kind == OBK_TRAF && obs[i].own >= 0 && obs[i].own < t->maxCars && !sameLane(c, &t->car[obs[i].own])) continue;
+      f2[nf++] = obs[i]; }
+    float pg = pathGap(t, c, f2, nf, pk, npk);
+    if (pg < 1e8f) { float r = pg + k->p.halfL + k->p.bodyOfs - SV_STOP_CAR; if (r < rem) rem = r; }
+  }
+  out->rem = rem; return rem;
+}
+// P16-01 / Д11: очередь дорог на стоп-знаке перекрёстка jn (одна запись на дорогу)
+static void svQueueAdd(Traffic *t, int jn, int road) {
+  if ((unsigned)jn >= 256u) return;
+  for (int i = 0; i < t->jq[jn].n; i++) if (t->jq[jn].q[i] == road) return;
+  if (t->jq[jn].n < 8 && road < 127) t->jq[jn].q[t->jq[jn].n++] = (signed char)road;
+}
+// раз в кадр: очередь пуста — таймер заводится заново на 3,5 с; иначе раз в 3,5 с первая дорога очереди получает зелёный: передние машины её полос трогаются (relJ)
+static void svQueueStep(Traffic *t, float dt) {
+  if (TRF_SV_JUNC_OLD) return;
+  for (uint32_t j = 0; j < t->hd->nJunc && j < 256u; j++) {
+    if (t->junc[j].behaviour != 1) continue;
+    if (!t->jq[j].n) { t->jq[j].tm = SV_QUEUE_T; continue; }
+    if ((t->jq[j].tm -= dt) > 0.f) continue;
+    t->jq[j].tm = SV_QUEUE_T;
+    int road = t->jq[j].q[0]; memmove(t->jq[j].q, t->jq[j].q + 1, (size_t)(t->jq[j].n - 1)); t->jq[j].n--;
+    for (int i = 0; i < t->maxCars; i++) {
+      TrCar *c = &t->car[i];
+      if (c->mode == TRM_DRIVE && c->elem == 0 && c->road == road && t->road[road].endJ == j && laneLen(t, road, c->lane) - c->s < 12.f) c->relJ = (int)j + 1;
+    }
+  }
+}
+// 8.3: сигнал помехе — машина игрока ближе 10 м (пешеход ближе 8 м) в коридоре: первый раз сразу, дальше раз в 5 с
+static void svHonk(Traffic *t, TrCar *c, const SvLook *lk) {
+  int kind = lk->playerD < 10.f ? 1 : lk->homerD < 8.f ? 2 : 0;   // круг 3 (8.3): сигналят машине игрока ближе 10 м и Гомеру пешком ближе 8 м, остальным пешеходам — нет
+  if (kind != c->honkKind) { c->honkKind = kind; if (kind) c->honkT = 0.f; }   // новый объект — сигнал сразу; тот же — раз в 5 с
+  if (kind == 1) c->honkedP = 1;
+  if (!kind || c->honkT > 0.f) return;
+  pushEv(t, TR_EV_CAR_HONK, (int)(c - t->car), c->car.x, c->car.y, c->car.z, 0.f); pushEv(t, TR_EV_CAR_WAY, (int)(c - t->car), c->car.x, c->car.y, c->car.z, 0.f);   // и голос «пробка» (CarWay, g08 P09:3)
+  c->honkT = 5.f;
+}
+// 8.2/T5: можно ли сменить полосу c на lane2; Lm — длина манёвра
+static int svLaneFree(const Traffic *t, const TrCar *c, int lane2, float Lm) {
+  if (lane2 < 0 || lane2 >= t->road[c->road].lanes) return 0;
+  if (laneCars(t, c, c->road, lane2) >= laneDens(t, c->road, lane2)) return 0;   // на соседней машин меньше плотности полосы
+  float lim = 2.f * Lm; lim *= lim;
+  for (int i = 0; i < t->maxCars; i++) {
+    const TrCar *o = &t->car[i]; if (o == c || o->mode == TRM_OFF) continue;
+    if (o->mode == TRM_DRIVE && o->elem == 0 && o->road == c->road && (o->lane == lane2 || (o->chgK > 0.f && o->chgLane == lane2))) {
+      float dx = o->car.x - c->car.x, dz = o->car.z - c->car.z; if (dx * dx + dz * dz < lim) return 0; }   // ни одной не ближе 2 длин манёвра
+  }
+  return 1;
+}
+static int svStartChange(Traffic *t, TrCar *c, float Lm) {
+  int n = t->road[c->road].lanes; if (n < 2 || c->elem != 0 || c->next != 0 || c->v < .5f || c->chgK > 0.f) return 0;
+  float L = laneLen(t, c->road, c->lane); if (L - c->s < Lm + 30.f) return 0;   // впереди должно хватать дороги до выбора выезда
+  int first = rnd(t) < .5f ? -1 : 1;
+  for (int k = 0; k < 2; k++) {
+    int lane2 = c->lane + (k ? -first : first);
+    if (!svLaneFree(t, c, lane2, Lm)) continue;
+    c->chgLane = lane2; c->chgK = 1e-4f; c->chgDur = clampf(Lm / fmaxf(c->v, 1.f), .4f, 6.f); return 1;   // время манёвра = длина манёвра / скорость (круг 3)
+  }
+  return 0;
+}
+static void svChangeStep(Traffic *t, TrCar *c, float dt) {
+  if (c->chgK <= 0.f) return;
+  c->chgK += dt / c->chgDur;
+  if (c->chgK >= 1.f) {   // манёвр закончен: своя полоса — новая, путь пересчитан по длине полосы; следующий бросок не раньше чем через 5 с
+    float L1 = laneLen(t, c->road, c->lane), L2 = laneLen(t, c->road, c->chgLane);
+    c->s = L1 > 1e-3f ? c->s * L2 / L1 : c->s; c->lane = c->chgLane; c->chgK = 0.f; c->rearOk = 0;   // пауза 5 с считается от броска, не от конца манёвра (круг 3)
+  }
+}
+// 8.1/T4: уворот от машины игрока: перед нами именно она, дальше 10 м, игрок быстрее 40 км/ч (11,1 м/с), мы быстрее 30 км/ч (8,3 м/с), линия игрока (3 м шириной,
+// 1,5 с вперёд) накрывает нас. Возврат 1: поворачиваем в сторону от игрока (полный газ и руль 0,8 с, дальний свет мигает), потом ручник — стоим как физическая машина
+static int svDodge(Traffic *t, TrCar *c, const SvLook *lk) {
+  const Car *P = svPlayerCar; if (!P || TRF_SV_DODGE_OLD || c->v < 8.33f || lk->playerD > 1e8f || lk->playerD <= 10.f || c->honkedP) return 0;   // сигналили игроку с ближней дистанции — на него не увёртывается
+  float pvx = P->vel[0], pvz = P->vel[2], pv = sqrtf(pvx * pvx + pvz * pvz); if (pv < 11.1f) return 0;
+  float bx, bz; bodyCenter(&c->car, &bx, &bz);
+  // круг 3 (отчёт проверки): коридор — от игрока вдоль его скорости, поперёк ±3,0 м, вперёд — скорость самой машины трафика × 1,5 с по прямой от игрока, без минимума
+  float ux = pvx / pv, uz = pvz / pv, rx = bx - P->x, rz = bz - P->z, ap = rx * ux + rz * uz, lp = -rx * uz + rz * ux;
+  if (ap <= 0.f || sqrtf(rx * rx + rz * rz) > c->v * 1.5f || fabsf(lp) > 3.f) return 0;
+  float fx = sinf(c->car.h), fz = cosf(c->car.h), side = (P->x - bx) * -fz + (P->z - bz) * fx;   // + : игрок с той стороны, куда указывает (−fz, fx)
+  c->dodgeSide = side > 0.f ? -1 : 1; c->dodgeT = .8f; c->flashT = .8f; c->dodged = 1; c->dodgeHb = 0; c->mode = TRM_PHYS; c->stillT = 0.f; c->honkDone = 1;   // дальний свет — только эти 0,8 с; запрета возврата нет
+  (void)t; return 1;
+}
 // №1001б: разбивка trafficUpdate по частям (на PSP при включённой диагностике, строка TRFSUB): 0 — зоны и удаление, 1 — спавн машин, 2 — спавн пешеходов, 3 — препятствия,
 // 4 — езда и физика машин, 5 — столкновения машин, 6 — стоящие машины, 7 — пешеходы
 unsigned trfProfUs[8]; int trfProfOn; static unsigned trfProfT0;
@@ -576,42 +908,91 @@ static void driveStep(Traffic *t, const ColWorld *w, TrCar *c, const Obs *obs, i
   const TrRoad *r = &t->road[c->road];
   float L = c->elem == 0 ? laneLen(t, c->road, c->lane) : c->bzLen;
   float decide = TRAFFIC_PACE_OLD || c->elem ? DECIDE : fmaxf(DECIDE, L - brakeLine(t, c) + c->v * c->v / (2.f * DECEL) + 1.f);
-  if (c->elem == 0 && !c->next && L - c->s < decide && !chooseNext(t, c)) c->next = -1;   // тупик: стоп у конца, удалится вне кадра
+  if (c->retryT > 0.f) c->retryT -= dt;
+  if (c->honkT > 0.f) c->honkT -= dt;
+  if (c->chgCool > 0.f) c->chgCool -= dt;
+  if (c->flashT > 0.f) c->flashT -= dt;
+  if (c->elem == 0 && !c->next && c->retryT <= 0.f && L - c->s < decide) {
+    int rc = chooseNext(t, c);
+    if (rc == 0) c->next = -1;                  // тупик: стоп у конца, удалится вне кадра
+    else if (rc < 0) c->retryT = 5.f;           // Д2: мест на выездах нет — стоим у конца дороги, выбор повторяется раз в 5 с
+  }
   float vRoad = ROAD_V(t, c->road);
   float vt = vRoad;
+  // скорость в перекрёстке (8.4): стоп-знак (тип 1) 9 м/с, тип 0 — 12, остальные — желаемая; к кривой подходит с тормозным путём DECEL (строка 42)
+  float vJ = vRoad;
+  if (!TRF_SV_JUNC_OLD && c->junc >= 0 && c->junc < (int)t->hd->nJunc) { int bj = (int)t->junc[c->junc].behaviour; vJ = bj == 1 ? SV_JV_STOP : bj == 0 ? SV_JV_FREE : vRoad; }
   // поворот: изменение курса на 10 м вперёд -> радиус
   { float a[3], b[3], e[3]; routeAt(t, c, 0.f, a); routeAt(t, c, 5.f, b); routeAt(t, c, 10.f, e);
     float h1 = atan2f(b[0] - a[0], b[2] - a[2]), h2 = atan2f(e[0] - b[0], e[2] - b[2]), da = fabsf(wrapPi(h2 - h1));
-    float lg = c->elem == 0 && L - c->s > 10.f ? LAT_G_FIT : LAT_G;   // изгиб полосы (записан) / кривая перекрёстка (не записана — прежнее)
-    if (da > .02f) vt = fminf(vt, sqrtf(lg * 5.f / da)); }
-  // перекрёсток: стоп передним бампером у края (behaviour 1), занятый — ждать
+    if (TRF_SV_JUNC_OLD) {
+      float lg = c->elem == 0 && L - c->s > 10.f ? LAT_G_FIT : LAT_G;   // изгиб полосы (записан) / кривая перекрёстка (не записана — прежнее)
+      if (da > .02f) vt = fminf(vt, sqrtf(lg * 5.f / da));
+    } else if (da > .02f && c->elem == 0 && L - c->s > 10.f) vt = fminf(vt, sqrtf(LAT_G_FIT * 5.f / da));   // изгиб полосы; кривую перекрёстка ведёт скорость в перекрёстке vJ
+  }
+  if (!TRF_SV_JUNC_OLD) {
+    if (c->elem == 1) vt = fminf(vt, vJ);
+    else if (c->next > 0 && vJ < vRoad - .5f && c->junc >= 0 && t->junc[c->junc].behaviour == 1) vt = fminf(vt, sqrtf(vJ * vJ + 2.f * DECEL * fmaxf(0.f, L - c->s)));   // круг 3: подъезд тормозит только к стоп-знаку; к типу 0 едет на полной и сбрасывает уже в перекрёстке
+  }
+  // перекрёсток: стоп передним бампером у края (behaviour 1), занятый — ждать (прежнее); с g02-traffic: стоп-знак = очередь дорог, остальные без ожидания
   float stopS = 1e9f;
-  if (c->elem == 0 && c->next != 0) {
+  int waiting = !TRF_SV_CHOOSE_OLD && c->elem == 0 && c->next == 0 && c->retryT > 0.f;   // выезда с местом нет
+  if (c->elem == 0 && (c->next != 0 || waiting)) {
     float sl = brakeLine(t, c); if (c->s > sl + .05f) sl = stopLine(t, c);   // №875: проехал линию у зебры — стоп у прежней
     float toStop = sl - c->s;
-    int jn = c->next > 0 ? c->junc : r->endJ, beh1 = t->junc[jn].behaviour == 1, busy = c->next > 0 && juncBusy(t, c, jn);
-    int mayGo = c->next > 0 && (!busy || (TRAFFIC_JUNC_OLD && c->waitT > JAM_WAIT)) && (!beh1 || c->waitT >= STOP_WAIT);
+    int jn = c->next > 0 ? c->junc : r->endJ, beh1 = t->junc[jn].behaviour == 1, mayGo;
+    if (TRF_SV_JUNC_OLD) {
+      int busy = c->next > 0 && juncBusy(t, c, jn);
+      mayGo = c->next > 0 && (!busy || (TRAFFIC_JUNC_OLD && c->waitT > JAM_WAIT)) && (!beh1 || c->waitT >= STOP_WAIT);
+    } else mayGo = c->next > 0 && (!beh1 || c->relJ == jn + 1);   // P16-01/02: без управления не ждёт; стоп-знак — пока дорога не получит зелёный
     if (!mayGo && toStop > -.05f) {
       stopS = sl; vt = fminf(vt, sqrtf(2.f * DECEL * fmaxf(0.f, toStop - .2f)));
-      if (toStop < 1.5f && c->v < .6f) c->waitT += dt;
+      if (toStop < 1.5f && c->v < .6f) { c->waitT += dt; if (!TRF_SV_JUNC_OLD && beh1 && c->next > 0) svQueueAdd(t, jn, c->road); }
     }
   }
+  float svBrakeRem = 1e9f;   // круг 3: остаток до цели торможения (центры минус запас), 1e9 — помехи нет
   Obs pk[24]; int npk = 0;   // стоящие машины рядом — для пути впереди
   for (int i = 0; i < t->npark && npk < 24; i++) {
     if (!parkLive(t, i)) continue;
     const Car *p = &t->park[i].car; float dx = p->x - c->car.x, dz = p->z - c->car.z;
-    if (dx * dx + dz * dz < 25.f * 25.f) obsCar(&pk[npk++], p, -1);
+    if (dx * dx + dz * dz < 25.f * 25.f) { obsCar(&pk[npk], p, -1); pk[npk++].kind = OBK_PARK; }
   }
-  float gap = fminf(gapAhead(t, c, obs, nobs), pathGap(t, c, obs, nobs, pk, npk) + STOP_GAP - 1.f);
-  if (gap < 1e8f) vt = fminf(vt, sqrtf(2.f * DECEL * fmaxf(0.f, gap - STOP_GAP)));
+  if (TRF_SV_BRAKE_OLD) {
+    float gap = fminf(gapAhead(t, c, obs, nobs), pathGap(t, c, obs, nobs, pk, npk) + STOP_GAP - 1.f);
+    if (gap < 1e8f) vt = fminf(vt, sqrtf(2.f * DECEL * fmaxf(0.f, gap - STOP_GAP)));
+  } else {
+    SvLook lk; float rem = svLook(t, c, obs, nobs, pk, npk, &lk);
+    if (lk.playerD > 1e8f) c->honkedP = 0;
+    if (!TRF_SV_HONK_OLD) svHonk(t, c, &lk);
+    if (rem < 1e8f && svDodge(t, c, &lk)) return;   // 8.1: ушли в физику (газ, руль, ручник)
+    // 8.2/T5 (круг 3): помеха впереди — смена полосы пробуется КАЖДЫЙ кадр без паузы, но только если расстояние между центрами минус 6 м не меньше 15 м (цель дальше 21 м);
+    // длина манёвра = это расстояние. Ближе 21 м смены нет — машина тормозит. Торможение по помехе при манёвре оставлено как страховка PSP
+    if (rem < 1e8f && !TRF_SV_LANECHG_OLD && c->chgK <= 0.f && c->elem == 0 && c->next == 0 && lk.dist >= 21.f) {
+      if (svStartChange(t, c, lk.dist - 6.f)) rem = 1e9f;
+    }
+    // T1/8.5 (круг 3): торможение равномерное, замедление v² / (2 × остаток) каждый кадр; остаток ≤ 0 — нуль. Сглаживание историей позиций (0,33 с, P01-30) не делалось:
+    // у цели скорость не больше остаток / 0,17 с, поэтому остановка приходит ровно в точку запаса без скачка (правило порта вместо «нуля на 0,33 × v + 1 м»)
+    if (rem < 1e8f) { svBrakeRem = rem; }
+  }
+  // 8.2: бросок на смену полосы раз в 5 с, шанс 1/2, если помех нет (не на перекрёстке, дорога с двумя и более полосами, машина движется); пауза — только у этих бросков, таймер сбрасывает бросок
+  if (!TRF_SV_LANECHG_OLD && c->chgK <= 0.f && c->elem == 0 && c->next == 0 && c->v > .5f && t->road[c->road].lanes > 1 && svBrakeRem > 1e8f) {
+    if (c->chgCool <= 0.f) { c->chgCool = 5.f; if (rnd(t) < .5f) svStartChange(t, c, 15.f); }
+  }
+  if (!TRF_SV_LANECHG_OLD) svChangeStep(t, c, dt);
   c->vt = vt;
   c->car.brkLit = (vt < c->v - .3f || (c->v < .3f && vt < .1f)) ? 1.f : 0.f;   // №465: тормозит или ждёт у стоп-линии — стоп-сигналы горят
-  float dv = clampf(vt - c->v, -2.f * DECEL * dt, ACCEL * dt); c->v = fmaxf(0.f, c->v + dv);
+  float dmax = (!TRF_SV_SPEED_OLD && !TRF_SV_JUNC_OLD && c->elem == 1) ? 10.f : 2.f * DECEL;   // круг 3 (8.4): в перекрёстке скорость сбрасывается на −10 м/с²
+  float dv = clampf(vt - c->v, -dmax * dt, ACCEL * dt); c->v = fmaxf(0.f, c->v + dv);
+  if (!TRF_SV_BRAKE_OLD && svBrakeRem < 1e8f) {
+    if (svBrakeRem <= .02f) c->v = 0.f;
+    else { c->v = fmaxf(0.f, c->v - c->v * c->v / (2.f * svBrakeRem) * dt); c->v = fminf(c->v, svBrakeRem / .17f); }
+    if (c->v < c->vt - .3f || svBrakeRem < 3.f) c->car.brkLit = 1.f;
+  }
   if (c->elem == 0 && c->next <= 0 && c->s + c->v * dt > L) c->v = 0.f;   // тупик / выезд не выбран
   if (c->s < stopS && c->s + c->v * dt > stopS) { c->s = stopS; c->v = 0.f; }   // за стоп-линию без разрешения — нет
   c->s += c->v * dt;
-  if (c->elem == 0 && c->next > 0 && c->s >= L) { c->s -= L; c->elem = 1; c->waitT = 0.f; }
-  if (c->elem == 1 && c->s >= c->bzLen) { c->s -= c->bzLen; c->elem = 0; c->road = c->nroad; c->lane = c->nlane; c->next = 0; c->junc = -1; }
+  if (c->elem == 0 && c->next > 0 && c->s >= L) { c->s -= L; c->elem = 1; c->waitT = 0.f; c->chgK = 0.f; }
+  if (c->elem == 1 && c->s >= c->bzLen) { c->s -= c->bzLen; c->elem = 0; c->road = c->nroad; c->lane = c->nlane; c->next = 0; c->junc = -1; c->relJ = 0; }
   float p[3], look[3]; routeAt(t, c, 0.f, p); routeAt(t, c, LOOK, look);
   float dx = look[0] - p[0], dz = look[2] - p[2], hl = sqrtf(dx * dx + dz * dz);
   float h = hl > .05f ? atan2f(dx, dz) : c->car.h, pitch = hl > .05f ? atanf((look[1] - p[1]) / hl) : 0.f;
@@ -633,7 +1014,7 @@ static void driveStep(Traffic *t, const ColWorld *w, TrCar *c, const Obs *obs, i
   c->wheelAng += c->v / fmaxf(.2f, c->car.p.wheelRad) * dt;
 }
 // ближайшая к (x, z) точка полосы с курсом ±60° от h не дальше sqrt(maxd2): дорога, полоса, путь s; 0 — нет
-static int nearestLane(const Traffic *t, float x, float z, float h, float maxd2, int *road, int *lane, float *sOut) {
+static int nearestLaneH(const Traffic *t, float x, float z, float h, float maxd2, float headTol, int *road, int *lane, float *sOut) {
   float best = maxd2; int br = -1, bl = 0; float bs = 0.f;
   for (uint32_t r = 0; r < t->hd->nRoad; r++) {
     if (!roadOk(t, (int)r)) continue;
@@ -643,13 +1024,16 @@ static int nearestLane(const Traffic *t, float x, float z, float h, float maxd2,
         float ax = P[i + 1].x - P[i].x, az = P[i + 1].z - P[i].z, L2 = ax * ax + az * az; if (L2 < 1e-6f) continue;
         float u = clampf(((x - P[i].x) * ax + (z - P[i].z) * az) / L2, 0.f, 1.f);
         float qx = P[i].x + ax * u - x, qz = P[i].z + az * u - z, d2 = qx * qx + qz * qz;
-        if (d2 >= best || fabsf(wrapPi(atan2f(ax, az) - h)) > 1.05f) continue;
+        if (d2 >= best || fabsf(wrapPi(atan2f(ax, az) - h)) > headTol) continue;
         best = d2; br = (int)r; bl = l; bs = P[i].s + (P[i + 1].s - P[i].s) * u;
       }
     }
   }
   if (br < 0) return 0;
   *road = br; *lane = bl; *sOut = bs; return 1;
+}
+static int nearestLane(const Traffic *t, float x, float z, float h, float maxd2, int *road, int *lane, float *sOut) {
+  return nearestLaneH(t, x, z, h, maxd2, 1.05f, road, lane, sOut);
 }
 // правка Роба 117 (30.09: вызванная у будки машина «вдоль проезжей части»): ближайшая к (x, z) точка любой полосы не дальше maxd,
 // без условия курса; p — точка на полосе, *h — курс по ходу полосы. 1 — нашлась
@@ -784,6 +1168,76 @@ int trafficRouteArrow(const Traffic *t, float px, float pz, float ph, float tx, 
   *h = atan2f(b[0] - a[0], b[2] - a[2]);
   return 1;
 }
+// ---- сверка g02-traffic, P16-06 (строка 1): навигация целиком. Путь по дорогам считается ОДИН раз при старте цели (без множителя) и дальше не пересчитывается:
+// свернувший не туда видит красные стрелки позади и зелёные впереди по-прежнему по старому пути. Зелёная стрелка — на каждом перекрёстке пути впереди игрока (смотрит на
+// следующую дорогу), красная «не туда» — на пройденных; игрок ближе 10,95 м (квадрат < 120) к предыдущему перекрёстку — тот ещё впереди. Плюс на той одной дороге пути, где
+// игрок стоит: целая часть от (длина / 40 − 1), от 0 до 5 стрелок через 40 м от начала дороги по её собственному направлению; красная — дальше ~11 м от игрока и позади него;
+// за целью на дороге цели не ставятся. Тип цели «neither» — стрелок нет вовсе (вызывающий не зовёт Build). Рисует и зовёт msn_view.c / game_msn.c (передано);
+// TRF_SV_NAV_OLD=1 — прежнее поведение живёт в trafficRouteArrow, эти две функции просто не вызывают
+#ifndef TRF_SV_NAV_OLD
+#define TRF_SV_NAV_OLD 0   // P16-06: 1 — Build ничего не строит (прежняя стрелка у ближайшего перекрёстка живёт в trafficRouteArrow)
+#endif
+static float navRoadDist(const Traffic *t, int road, float x, float z, float *sOut) {
+  float best = 1e30f, bs = 0.f; const TrPt *P = lanePts(t, road, 0); int n = t->road[road].nPt;
+  for (int i = 0; i + 1 < n; i++) {
+    float ax = P[i + 1].x - P[i].x, az = P[i + 1].z - P[i].z, L2 = ax * ax + az * az; if (L2 < 1e-6f) continue;
+    float u = clampf(((x - P[i].x) * ax + (z - P[i].z) * az) / L2, 0.f, 1.f), qx = P[i].x + ax * u - x, qz = P[i].z + az * u - z, d2 = qx * qx + qz * qz;
+    if (d2 < best) { best = d2; bs = P[i].s + (P[i + 1].s - P[i].s) * u; }
+  }
+  if (sOut) *sOut = bs; return sqrtf(best);
+}
+int trafficNavBuild(Traffic *t, float px, float pz, float ph, float tx, float tz) {
+  if (TRF_SV_NAV_OLD || !t || !t->hd || !t->hd->nJunc) return 0;
+  t->nav.n = 0; t->nav.goalRoad = -1; t->nav.tx = tx; t->nav.tz = tz;
+  int r0 = nearRoad(t, px, pz, 12.f, 1, ph, 0), rg = nearRoad(t, tx, tz, 60.f, 0, 0.f, 0);
+  if (r0 < 0 || rg < 0) return 0;
+  t->nav.goalRoad = rg;
+  if (r0 == rg) { t->nav.road[t->nav.n++] = (short)r0; return 1; }
+  enum { NJ = 256 }; unsigned nj = t->hd->nJunc < NJ ? t->hd->nJunc : NJ;
+  float dist[NJ]; short via[NJ]; unsigned char done[NJ];
+  for (unsigned j = 0; j < nj; j++) { dist[j] = 1e30f; via[j] = -1; done[j] = 0; }
+  unsigned j0 = t->road[r0].endJ, jg = t->road[rg].startJ; if (j0 >= nj || jg >= nj) return 0;
+  dist[j0] = 0.f;
+  for (;;) {
+    unsigned u = nj; float bd = 1e30f;
+    for (unsigned j = 0; j < nj; j++) if (!done[j] && dist[j] < bd) { bd = dist[j]; u = j; }
+    if (u == nj || u == jg) break;
+    done[u] = 1;
+    const TrJunc *J = &t->junc[u];
+    for (int k = 0; k < J->nOut; k++) { int o = t->out[J->firstOut + k]; const TrRoad *R = &t->road[o];
+      if ((R->flags & 1) || R->endJ >= nj) continue;
+      float nd = dist[u] + R->length; if (nd < dist[R->endJ]) { dist[R->endJ] = nd; via[R->endJ] = (short)o; } }
+  }
+  if (jg != j0 && via[jg] < 0) return 0;
+  short rev[48]; int nr = 0;   // от цели назад до выезда из j0
+  for (unsigned j = jg, guard = 0; j != j0 && guard < nj && nr < 46; guard++) { int o = via[j]; if (o < 0) break; rev[nr++] = (short)o; j = t->road[o].startJ; }
+  t->nav.road[t->nav.n++] = (short)r0;
+  for (int i = nr - 1; i >= 0 && t->nav.n < 46; i--) t->nav.road[t->nav.n++] = rev[i];
+  if (t->nav.road[t->nav.n - 1] != rg) t->nav.road[t->nav.n++] = (short)rg;
+  return 1;
+}
+int trafficNavArrows(const Traffic *t, float px, float pz, TrNavArrow *out, int max) {
+  if (!t || !t->hd || t->nav.n <= 0 || max <= 0) return 0;
+  int n = t->nav.n, idx = 0, no = 0; float bd = 1e30f, sPl = 0.f;
+  for (int i = 0; i < n; i++) { float s, d = navRoadDist(t, t->nav.road[i], px, pz, &s); if (d < bd) { bd = d; idx = i; sPl = s; } }
+  for (int i = 0; i + 1 < n && no < max; i++) {   // перекрёстки пути: конец дороги i
+    int rn = t->nav.road[i + 1]; const TrJunc *J = &t->junc[t->road[t->nav.road[i]].endJ];
+    float dx = J->x - px, dz = J->z - pz, d2 = dx * dx + dz * dz;
+    int ahead = i >= idx || d2 < 120.f;
+    float a[3], b[3], p[3]; roadMid(t, rn, 6.f, p); roadMid(t, rn, 0.f, a); roadMid(t, rn, 12.f, b);
+    memcpy(out[no].p, p, sizeof p); out[no].h = atan2f(b[0] - a[0], b[2] - a[2]); out[no].red = !ahead; no++;
+  }
+  { int r = t->nav.road[idx]; float len = t->road[r].length; int cnt = (int)(len / 40.f - 1.f); cnt = cnt < 0 ? 0 : cnt > 5 ? 5 : cnt;
+    float sGoal = 1e30f; if (r == t->nav.goalRoad) navRoadDist(t, r, t->nav.tx, t->nav.tz, &sGoal);
+    for (int j = 1; j <= cnt && no < max; j++) {
+      float s = j * 40.f; if (s > sGoal) break;   // за целью на её дороге — нет
+      float a[3], b[3], p[3]; roadMid(t, r, s, p); roadMid(t, r, s + 0.f, a); roadMid(t, r, s + 8.f, b);
+      float dxx = p[0] - px, dzz = p[2] - pz; int behind = s < sPl, far11 = dxx * dxx + dzz * dzz > 120.f;
+      memcpy(out[no].p, p, sizeof p); out[no].h = atan2f(b[0] - a[0], b[2] - a[2]); out[no].red = behind && far11; no++;
+    }
+  }
+  return no;
+}
 #ifndef TRF_UPRIGHT_OLD
 #define TRF_UPRIGHT_OLD 0   // аудит 09.10: 1 — на полосу через 1,5 с в любом положении (и на боку)
 #endif
@@ -816,7 +1270,7 @@ static void ramLatch(TrCar *c) {   // удар по машине трафика:
 // Historical fallback, retained only for genuine negative/rear-axis controls
 static int backToLane(Traffic *t, TrCar *c) {
   int r, l; float s;
-  if (!nearestLane(t, c->car.x, c->car.z, c->car.h, 16.f, &r, &l, &s)) return 0;
+  if (!nearestLaneH(t, c->car.x, c->car.z, c->car.h, TRF_SV_REJOIN_OLD ? 16.f : 64.f, TRF_SV_REJOIN_OLD ? 1.05f : 3.2f, &r, &l, &s)) return 0;
   c->mode = TRM_DRIVE; c->elem = 0; c->road = r; c->lane = l; c->s = s; c->next = 0; c->v = 0.f; c->waitT = 0.f;
 #ifndef TRAFFIC_REJOIN_REAR_OLD
   // Регресс №400 (aicar 09.10): задняя ось (rearX/Z) оставалась от езды ДО удара. Машину отбросило назад на 1–3 wheelR — прежняя
@@ -873,9 +1327,59 @@ int trafficCarPlace(Traffic *t, const ColWorld *w, float x, float z, float h) {
   c->mode = TRM_DRIVE; c->v = ROAD_V(t, r) * .6f;
   return 0;
 }
+// P03-25 / 8.7: возврат на полосу по условиям оригинала. 1 — вернуть, 0 — ждать, −1 — запретить навсегда. Машина лежит спокойно, не разбита; наклон < 10°;
+// ближайшая полоса не дальше 8 м (на прямой дороге; в перекрёстке и при смене полосы оригинал берёт 4 м — перекрёсток здесь не отличается), курс в пределах 90°
+// от хода полосы; на полосе есть место и впереди нет помех (цель — точка на полосе в 10 м впереди). Нарушены наклон, дальность или курс — запрет навсегда
+// круг 3 (отчёт проверки): полоса — собственная полоса этой машины (на кривой перекрёстка — полоса, куда она шла); расстояние и курс считаются до неё; «нет помех» — коридор впереди
+// цели (±3 м для машин, ±2 м для людей, 15 м): игрок, машины миссий, пешеходы, стоящие и трафик на этой же полосе; при неудаче по месту или помехе таймер ждёт заново 3 с
+static int svLaneClear(const Traffic *t, const TrCar *c, int r, int l, float s) {
+  float a[3], b[3]; lanePos(t, r, l, s, a); lanePos(t, r, l, s + 2.f, b);
+  float hx = b[0] - a[0], hz = b[2] - a[2], hl = sqrtf(hx * hx + hz * hz); if (hl < 1e-4f) return 1; hx /= hl; hz /= hl;
+  struct { float x, z; int ped; } o[2 + TR_MAXEXTRA + TR_MAXPED + 4 + TR_MAXCAR]; int n = 0;
+  if (svPlayerCar) { o[n].x = svPlayerCar->x; o[n].z = svPlayerCar->z; o[n++].ped = 0; }
+  for (int i = 0; i < t->nextra && i < TR_MAXEXTRA; i++) if (t->extra[i]) { o[n].x = t->extra[i]->x; o[n].z = t->extra[i]->z; o[n++].ped = 0; }
+  for (int i = 0; i < t->maxPeds && n < (int)(sizeof o / sizeof o[0]); i++) if (t->ped[i].mode != TRP_OFF) { o[n].x = t->ped[i].x; o[n].z = t->ped[i].z; o[n++].ped = 1; }
+  for (int i = 0; i < t->npark && n < (int)(sizeof o / sizeof o[0]); i++) if (parkLive(t, i)) { o[n].x = t->park[i].car.x; o[n].z = t->park[i].car.z; o[n++].ped = 0; }
+  for (int i = 0; i < t->maxCars && n < (int)(sizeof o / sizeof o[0]); i++) { const TrCar *q = &t->car[i];
+    if (q == c || q->mode != TRM_DRIVE || q->elem != 0 || q->road != r || q->lane != l) continue; o[n].x = q->car.x; o[n].z = q->car.z; o[n++].ped = 0; }
+  for (int i = 0; i < n; i++) {
+    float dx = o[i].x - a[0], dz = o[i].z - a[2], fa = dx * hx + dz * hz, fl = -dx * hz + dz * hx;
+    if (fa > -2.f && fa < 15.f && fabsf(fl) < (o[i].ped ? SV_COR_PED : SV_COR_CAR)) return 0;
+  }
+  return 1;
+}
+static int svRejoinCheck(const Traffic *t, TrCar *c, int *r, int *l, float *s) {
+  const float *q = c->car.q;
+  if (1.f - 2.f * (q[1] * q[1] + q[3] * q[3]) < .9848f) return -1;   // наклон больше 10°
+  *r = c->elem == 1 ? c->nroad : c->road; *l = c->elem == 1 ? c->nlane : c->lane;
+  if (*r < 0 || *r >= (int)t->hd->nRoad) return -1;
+  { const TrPt *P = lanePts(t, *r, *l); int n = t->road[*r].nPt; float best = 1e30f; *s = 0.f;   // ближайшая точка своей полосы
+    for (int i = 0; i + 1 < n; i++) {
+      float ax = P[i + 1].x - P[i].x, az = P[i + 1].z - P[i].z, L2 = ax * ax + az * az; if (L2 < 1e-6f) continue;
+      float u = clampf(((c->car.x - P[i].x) * ax + (c->car.z - P[i].z) * az) / L2, 0.f, 1.f), qx = P[i].x + ax * u - c->car.x, qz = P[i].z + az * u - c->car.z, d2 = qx * qx + qz * qz;
+      if (d2 < best) { best = d2; *s = P[i].s + (P[i + 1].s - P[i].s) * u; } }
+    if (best > 64.f) return -1; }   // дальше 8 м от своей полосы
+  float a[3], b[3]; lanePos(t, *r, *l, *s, a); lanePos(t, *r, *l, *s + 1.f, b);
+  if (fabsf(wrapPi(atan2f(b[0] - a[0], b[2] - a[2]) - c->car.h)) > 1.5707963f) return -1;   // курс дальше 90° от хода полосы
+  if (laneCars(t, c, *r, *l) >= laneDens(t, *r, *l)) return 0;   // места на полосе нет
+  return svLaneClear(t, c, *r, *l, *s + 10.f) ? 1 : 0;           // цель — точка в 10 м впереди
+}
+// возврат на заданную полосу (из svRejoinCheck)
+static int backToLaneAt(TrCar *c, int r, int l, float s) {
+  c->mode = TRM_DRIVE; c->elem = 0; c->road = r; c->lane = l; c->s = s; c->next = 0; c->v = 0.f; c->waitT = 0.f; c->rearOk = 0; c->chgK = 0.f; c->junc = -1; c->relJ = 0; c->dodged = 0;
+  return 1;
+}
 static void physStep(Traffic *t, const ColWorld *w, TrCar *c, float dt) {
   CarInput in = {0.f, 0.f, 0.f, 1.f};
+  if (!TRF_SV_DODGE_OLD && c->dodged) {   // 8.1: 0,8 с полный газ и руль, затем ручник ровно на один кадр, дальше колёса свободны — катится сама
+    if (c->dodgeT > 0.f) { in.throttle = 1.f; in.handbrake = 0.f; in.steer = (float)c->dodgeSide * SV_STEER_SIGN; c->car.wheelMaxOvr = 2.0944f; if ((c->dodgeT -= dt) <= 0.f) c->dodgeHb = 1; }   // сверка g01-cars круг 2 (8.1): на время уворота предел колёс 120°
+    else { c->car.wheelMaxOvr = 0.f; if (c->dodgeHb) { in.handbrake = 1.f; c->dodgeHb = 0; } else in.handbrake = 0.f; }
+  } else c->car.wheelMaxOvr = 0.f;
+  if (c->flashT > 0.f) c->flashT -= dt;
   carUpdate(&c->car, w, &in, dt);
+  { int air = !c->car.grounded && c->car.airT > .3f;   // круг 2 (g08 P09:30): приземление после полёта — подвеска (suspension_ronks), если ударило сильнее 4 м/с
+    if (c->wasAir && c->car.grounded && -c->vy0 > 4.f) pushEv(t, TR_EV_CAR_LAND, (int)(c - t->car), c->car.x, c->car.y, c->car.z, -c->vy0);
+    c->wasAir = air; c->vy0 = c->car.vel[1]; }
   c->wheelAng += c->car.v / fmaxf(.2f, c->car.p.wheelRad) * dt;
   float wv = fabsf(c->car.w[0]) + fabsf(c->car.w[1]) + fabsf(c->car.w[2]);
   c->stillT = (fabsf(c->car.v) < .3f && fabsf(c->car.vl) < .3f && wv < .3f) ? c->stillT + dt : 0.f;
@@ -888,7 +1392,16 @@ static void physStep(Traffic *t, const ColWorld *w, TrCar *c, float dt) {
     // №491: на боку/крыше машина лежит и сама не встаёт (автоподъёма нигде нет: carUpdate не выравнивает лежащее тело, трафик его не
     // переставляет); три колеса на земле при наклоне до 60° — не «перевёрнута» и возвращается
     { const float *q = c->car.q; if (1.f - 2.f * (q[1] * q[1] + q[3] * q[3]) < .5f && c->stillT > 0.f) c->stillT = 0.f; }
-    if (!c->ramStrong) {   // слабый: стоит, гудит, едет дальше
+    if (!TRF_SV_REJOIN_OLD) {   // P03-25 / 8.7 (строки 21, 44, круг 3): слабый и сильный удар — одни условия: через 3 с после съезда, лежит спокойно, своя полоса в 8 м, место и коридор свободны; 13,8 с оглушения нет
+      if (!c->ramStrong && c->stillT > TRF_RAM_WEAK_STOP && !c->honkDone) { c->honkDone = 1; pushEv(t, TR_EV_CAR_HONK, (int)(c - t->car), c->car.x, c->car.y, c->car.z, 0.f); }
+      c->outLaneT += dt;
+      if (!c->noRejoin && c->stillT > .3f && c->outLaneT >= 3.f) {
+        int r, l; float s, rc = (float)svRejoinCheck(t, c, &r, &l, &s);
+        if (rc > 0.f) { backToLaneAt(c, r, l, s); c->hitV = 0.f; c->ramStrong = 0; c->outLaneT = 0.f; }
+        else if (rc < 0.f) c->noRejoin = 1;   // запрет навсегда: остаётся твёрдой до удаления
+        else c->outLaneT = 0.f;               // места нет или помеха: ждёт заново 3 с
+      }
+    } else if (!c->ramStrong) {   // слабый: стоит, гудит, едет дальше
       if (c->stillT > TRF_RAM_WEAK_STOP && !c->honkDone) { c->honkDone = 1; pushEv(t, TR_EV_CAR_HONK, (int)(c - t->car), c->car.x, c->car.y, c->car.z, 0.f); }
       if (c->stillT > TRF_RAM_WEAK_GO) { if (backToLane(t, c)) c->hitV = 0.f; else c->stillT = -1e9f; }
     } else if (c->stillT > 0.f && (c->stunT += dt) > TRF_RAM_STUN) {   // сильный: оглушён, потом возвращается на полосу
@@ -975,8 +1488,9 @@ int trfSpawnOld;
 typedef struct { float eye[3], fwd[3], eye2[3], fwd2[3], dir[2][2], pv[2]; int ndir; } SpawnView;
 static int spawnSpotOk(const Traffic *t, const SpawnView *V, const float ppos[3], const float p[3], float R) {
   float qx = p[0] - ppos[0], qz = p[2] - ppos[2], dp = sqrtf(qx * qx + qz * qz);
-  if (dp < (t->fresh ? INIT_MIN : SPAWN_MIN)) return 0;
-  if (dp < SPAWN_AHEAD_MIN) for (int k = 0; k < V->ndir; k++) if (qx * V->dir[k][0] + qz * V->dir[k][1] > 0.f) return 0;
+  if (dp < (TRF_SV_SPAWN_OLD ? (t->fresh ? INIT_MIN : SPAWN_MIN) : (t->fresh ? INIT_MIN : 25.f))) return 0;   // P03-23: 25 м — геометрия кольца 65 м вокруг точки на 40 м впереди (отдельного «50 м впереди» в оригинале нет)
+  if (TRF_SV_SPAWN_OLD && dp < SPAWN_AHEAD_MIN) for (int k = 0; k < V->ndir; k++) if (qx * V->dir[k][0] + qz * V->dir[k][1] > 0.f) return 0;
+  // кадр камеры оставлен как страховка PSP: у оригинала машина невидима, пока не въехала в 85..105 м (затухание), у порта затухания нет (P03-22 — слово Роба), без этого машина «вылезает» на глазах
   float r = R + SPAWN_PAD;
   if (inView(V->eye, V->fwd, p[0], p[1] + 1.f, p[2], r, t->drawDist)) return 0;
   if (inView(V->eye2, V->fwd2, p[0], p[1] + 1.f, p[2], r, t->drawDist)) return 0;
@@ -989,7 +1503,8 @@ static void spawnCars(Traffic *t, const ColWorld *w, const Car *player, const fl
   float Rmax = 0.f;   // радиус кузова самой длинной модели пула: кандидат годится любой машине
   for (int i = 0; i < t->maxCars; i++) { const CarParams *P = &t->params[t->slot[i].model]; float R = P->halfL + fabsf(P->bodyOfs) + .5f; if (R > Rmax) Rmax = R; }
   struct { uint16_t r; uint8_t l, pad; float s, ds; } cand[SPAWN_CAND]; int nc = 0, seen = 0;
-  float lo = t->fresh ? 0.f : SPAWN_R - SPAWN_BAND, hi = t->fresh ? INIT_R : SPAWN_R + SPAWN_BAND;
+  float bandW = TRF_SV_SPAWN_OLD ? SPAWN_BAND : 5.f;   // P03-23: кольцо 65 м (пересечения полосы с кругом), поэтому уже, чем прежняя полоса ±10 м
+  float lo = t->fresh ? 0.f : SPAWN_R - bandW, hi = t->fresh ? INIT_R : SPAWN_R + bandW;
   float cx = t->fresh ? ppos[0] : cen[0], cz = t->fresh ? ppos[2] : cen[1];   // при сбросе — вокруг игрока до INIT_R
   for (uint32_t r = 0; r < t->hd->nRoad; r++) {
     if (!roadOk(t, (int)r)) continue;
@@ -1001,6 +1516,7 @@ static void spawnCars(Traffic *t, const ColWorld *w, const Car *player, const fl
         float mx = ax + ex * u, mz = az + ez * u;   // отрезок целиком вне кольца — мимо (быстро)
         if (mx * mx + mz * mz > hi * hi || fmaxf(ax * ax + az * az, bx * bx + bz * bz) < lo * lo) continue;
         float L = P[k + 1].s - P[k].s; int m = (int)ceilf(L / SPAWN_STEP); if (m < 1) m = 1;
+        if (!TRF_SV_SPAWN_OLD) { int dn = laneDens(t, (int)r, l), cap = dn < 2 ? dn : 2; if (cap < 1 || laneCars(t, NULL, (int)r, l) >= cap) continue; }   // P18-09/P03-23: на полосе меньше min(плотность полосы, 2) машин
         for (int j = 0; j < m; j++) {
           float u = (j + .5f) / m, s = P[k].s + L * u, p[3] = {P[k].x + (P[k + 1].x - P[k].x) * u, P[k].y + (P[k + 1].y - P[k].y) * u, P[k].z + (P[k + 1].z - P[k].z) * u};
           float dx = p[0] - cx, dz = p[2] - cz, dc = sqrtf(dx * dx + dz * dz);
@@ -1028,7 +1544,12 @@ static void spawnCars(Traffic *t, const ColWorld *w, const Car *player, const fl
       if (!spawnSpotOk(t, V, ppos, p, Rmax)) { s = cand[q].s; lanePos(t, r, l, s, p); }   // сдвиг внутри шага вывел из правила — точка кандидата
       int clash = 0;
       for (int k = 0; k < t->maxCars && !clash; k++) if (t->car[k].mode != TRM_OFF) {
-        float ex = t->car[k].car.x - p[0], ez = t->car[k].car.z - p[2]; clash = ex * ex + ez * ez < 14.f * 14.f; }
+        float ex = t->car[k].car.x - p[0], ez = t->car[k].car.z - p[2], need = 14.f;
+        if (!TRF_SV_SPAWN_OLD) {   // P03-23: от других машин не ближе 5 м + на своей полосе скорость × 1,5 с, иначе сумма радиусов кузовов
+          const TrCar *o = &t->car[k]; const CarParams *P1 = &t->params[t->slot[i].model];
+          int same = o->mode == TRM_DRIVE && o->elem == 0 && o->road == r && o->lane == l;
+          need = 5.f + (same ? ROAD_V(t, r) * 1.5f : P1->halfL + o->car.p.halfL); }
+        clash = ex * ex + ez * ez < need * need; }
       for (int k = 0; k < t->npark && !clash; k++) { if (!parkLive(t, k)) continue;
         float ex = t->park[k].car.x - p[0], ez = t->park[k].car.z - p[2]; clash = ex * ex + ez * ez < 5.f * 5.f; }
       if (player) { float ex = player->x - p[0], ez = player->z - p[2]; clash |= ex * ex + ez * ez < 12.f * 12.f; }
@@ -1038,7 +1559,8 @@ static void spawnCars(Traffic *t, const ColWorld *w, const Car *player, const fl
       c->model = model; c->road = r; c->lane = l; c->s = s; c->junc = -1;
       float a[3]; lanePos(t, r, l, s + LOOK, a); float h = atan2f(a[0] - p[0], a[2] - p[2]);
       carInit(&c->car, &t->params[model], w, p[0], p[1], p[2], h);
-      c->mode = TRM_DRIVE; c->v = ROAD_V(t, r) * (t->fresh ? .5f : 1.f);
+      c->mode = TRM_DRIVE; c->v = ROAD_V(t, r) * (t->fresh && TRF_SV_SPAWN_OLD ? .5f : 1.f);
+      if (!TRF_SV_SPAWN_OLD && laneLen(t, r, l) - s < 10.f) c->v = 0.f;   // P03-24: скорость желаемая, но 0, если точка ближе 10 м до конца дороги
       placed = 1;
     }
   }
@@ -1050,7 +1572,7 @@ static void pedPlay(Traffic *t, TrPed *e, int clip, int loop) {
   int c = t->clip[e->model][clip]; if (c < 0) c = t->clip[e->model][TRC_IDLE];
   skinPlay(&e->sp, c, loop, .2f);
 }
-static int pedStands(const TrPed *e) { return e->mode == TRP_WALK || e->mode == TRP_STAND || e->mode == TRP_GETUP || e->mode == TRP_DODGE; }
+static int pedStands(const TrPed *e) { return e->mode == TRP_WALK || e->mode == TRP_STAND || e->mode == TRP_GETUP || e->mode == TRP_DODGE || e->mode >= TRP_PANIC; }   // TRP_PANIC.. — сверка g02-traffic: тоже на ногах
 // №594 (L3 D5-9, пешеходы «на пару уровней выше земли»): путь пешехода может идти над местом без коллизии земли (замер tests/traffic/ped_ground.c: L3 путь 30
 // у x −347 z −214 — под ногами пусто) — пешеход держал высоту пути и висел в воздухе. Теперь шаг без земли в окне [y−3, y+up] считается; дольше
 // PED_NOGROUND_T пешеход убирается (появится на другом пути). -DPED_GROUND_OLD=1 — прежнее. Возврат 1 — земля найдена
@@ -1096,6 +1618,99 @@ static void spawnPeds(Traffic *t, const ColWorld *w, const float ppos[3], const 
       break;
     }
   }
+}
+// ---- сверка g02-traffic: рождение пешехода по оригиналу (СВЕРКА_ГОМЕР 7.1, 7.2, 7.3, 7.9; P03-12, P03-14, P03-17, P03-18, Д8)
+// Центр зоны — игрок + 30 м вперёд по взгляду камеры; рождение на границе круга 45 м (первое пересечение выбранной случайной тропы с кругом), первые 3 с после
+// загрузки — круг 90 м вокруг игрока. Одна попытка (один кандидат) на каждый второй кадр, первые 3 с — на каждый. Не ближе 4, 7 или 12 м (равновероятно)
+// к другому человеку и к игроку, к машине — не ближе её радиуса + 1 м, на одной тропе не больше 3, модель равновероятно среди моделей группы с остатком лимита
+// (по умолчанию 5), разных одновременно не больше 4. Не в кадре ближе 60 м. Скорость при рождении: 1,0 (40 %), 1,5 (40 %) или бег 3,0 (20 %); тропа в одну сторону
+#define SV_PED_R 45.f
+#define SV_PED_R0 90.f
+#define SV_PED_LEAD 30.f
+static int svCircleCross(const float a[3], const float b[3], float cx, float cz, float R, float *u) {
+  float dx = b[0] - a[0], dz = b[2] - a[2], fx = a[0] - cx, fz = a[2] - cz, A = dx * dx + dz * dz, B = 2.f * (fx * dx + fz * dz), C = fx * fx + fz * fz - R * R;
+  if (A < 1e-8f) return 0;
+  float D = B * B - 4.f * A * C; if (D < 0.f) return 0;
+  float sq = sqrtf(D), u1 = (-B - sq) / (2.f * A), u2 = (-B + sq) / (2.f * A);
+  if (u1 >= 0.f && u1 <= 1.f) { *u = u1; return 1; }
+  if (u2 >= 0.f && u2 <= 1.f) { *u = u2; return 1; }
+  return 0;
+}
+static void pedPlay(Traffic *t, TrPed *e, int clip, int loop);
+static void pedSetSpeedRoll(Traffic *t, TrPed *e, int m) {
+  if (TRF_SV_PEDSPEED_OLD) { e->speed = t->walkV[m]; e->run = 0; return; }
+  float r = rnd(t);   // 7.3: 40 % — 1,0 м/с, 40 % — 1,5 м/с, 20 % — бег 3,0 м/с
+  e->run = r >= .8f; e->speed = r < .4f ? 1.0f : r < .8f ? 1.5f : 3.0f;
+  e->homeRun = e->run; e->homeSpeed = e->speed;   // круг 3: своя скорость не теряется; 1,0 — только на время возврата на тропу
+}
+static void spawnPedsSv(Traffic *t, const ColWorld *w, const float ppos[3], const float eye[3], const float fwd[3]) {
+  if (!t->maxPeds || t->streetRace || t->group < 0 || t->group >= (int)t->hd->nGroup || !t->hd->nPath) return;
+  const TrGroup *g = t->grp + t->group; if (!g->n) return;
+  TrPed *e = 0; for (int i = 0; i < t->maxPeds; i++) if (t->ped[i].mode == TRP_OFF) { e = &t->ped[i]; break; }
+  if (!e) return;
+  int early = t->loadT < 3.f;
+  float fl = sqrtf(fwd[0] * fwd[0] + fwd[2] * fwd[2]), fx = fl > 1e-4f ? fwd[0] / fl : 0.f, fz = fl > 1e-4f ? fwd[2] / fl : 1.f;
+  float cx = early ? ppos[0] : ppos[0] + fx * SV_PED_LEAD, cz = early ? ppos[2] : ppos[2] + fz * SV_PED_LEAD, R = early ? SV_PED_R0 : SV_PED_R;
+  int p = (int)(rnd(t) * t->hd->nPath) % (int)t->hd->nPath; const TrPath *P = &t->path[p];
+  { float dcx = P->cx - cx, dcz = P->cz - cz, dc = sqrtf(dcx * dcx + dcz * dcz); if (dc - P->rad > R || dc + P->rad < R) { t->pedTryT += 1.f; goto fallback; } }
+  {
+    int k = -1; float u = 0.f;
+    for (uint32_t q = 0; q < P->n; q++) { if (svCircleCross(pathP(t, p, (int)q), pathP(t, p, (int)q + 1), cx, cz, R, &u)) { k = (int)q; break; } }
+    if (k < 0) { t->pedTryT += 1.f; goto fallback; }
+    const float *a = pathP(t, p, k), *b = pathP(t, p, k + 1);
+    float x = a[0] + (b[0] - a[0]) * u, y = a[1] + (b[1] - a[1]) * u, z = a[2] + (b[2] - a[2]) * u;
+    float qx = x - ppos[0], qz = z - ppos[2], dp = sqrtf(qx * qx + qz * qz);
+    if (!early && dp < t->pedDrawDist && inView(eye, fwd, x, y + 1.f, z, 1.f, 1e9f)) return;   // в кадре и ближе 60 м не появляется
+    static const float mind[3] = {4.f, 7.f, 12.f}; float md = mind[(int)(rnd(t) * 3.f) % 3];
+    if (qx * qx + qz * qz < md * md) return;                                                   // к игроку
+    int onPath = 0;
+    for (int j = 0; j < t->maxPeds; j++) if (t->ped[j].mode != TRP_OFF) {
+      float ex = t->ped[j].x - x, ez = t->ped[j].z - z; if (ex * ex + ez * ez < md * md) return;   // к любому другому человеку
+      onPath += t->ped[j].path == p; }
+    if (onPath >= 3) return;                                                                   // на одной тропе не больше 3
+    for (int j = 0; j < t->maxCars; j++) if (t->car[j].mode != TRM_OFF) {
+      float ex = t->car[j].car.x - x, ez = t->car[j].car.z - z, r = carR(&t->car[j].car) + 1.f; if (ex * ex + ez * ez < r * r) return; }
+    for (int j = 0; j < t->npark; j++) if (parkLive(t, j)) {
+      float ex = t->park[j].car.x - x, ez = t->park[j].car.z - z, r = carR(&t->park[j].car) + 1.f; if (ex * ex + ez * ez < r * r) return; }
+    if (svPlayerCar) { float ex = svPlayerCar->x - x, ez = svPlayerCar->z - z, r = carR(svPlayerCar) + 1.f; if (ex * ex + ez * ez < r * r) return; }
+    int ok[4], nok = 0, kinds = 0, seenM[TR_MAXPEDMODEL] = {0};   // модель: равновероятно среди моделей группы с остатком лимита, разных одновременно ≤ 4
+    for (int j = 0; j < t->maxPeds; j++) if (t->ped[j].mode != TRP_OFF && !seenM[t->ped[j].model]) { seenM[t->ped[j].model] = 1; kinds++; }
+    for (int j = 0; j < g->n; j++) {
+      int m = g->model[j], lim = g->count[j] ? g->count[j] : 5, have = 0;
+      for (int q = 0; q < t->maxPeds; q++) have += t->ped[q].mode != TRP_OFF && t->ped[q].model == m;
+      if (have < lim && (seenM[m] || kinds < 4)) ok[nok++] = j;
+    }
+    if (!nok) return;
+    int m = g->model[ok[(int)(rnd(t) * nok) % nok]];
+    memset(e, 0, sizeof *e);
+    e->model = m; e->path = p; e->seg = k; e->dir = 1; e->s = u; pedSetSpeedRoll(t, e, m);   // тропа проходится по кругу отрезков в одну сторону (P03-18)
+    e->x = x; e->y = y; e->z = z; e->partner = -1;
+    e->h = atan2f(b[0] - x, b[2] - z);
+    if (!pedGround(w, e, 1.5f)) return;   // №594: рождение над пустотой — другая точка
+    skinInit(&e->sp, &t->peds[m]); e->mode = TRP_WALK; pedPlay(t, e, e->run && t->clip[m][TRC_RUN] >= 0 ? TRC_RUN : TRC_WALK, 1);
+    t->pedTryT = 0.f;
+    return;
+  }
+fallback:
+  if (t->pedTryT > 45.f) {   // «оставить прежний отбор как PSP-страховку, если на границе пусто» (строка 14): около 3 с без единого рождения — прежнее правило, одна попытка
+    t->pedTryT = 0.f;
+    spawnPeds(t, w, ppos, eye, fwd);
+  }
+}
+// 7.4 / P03-16: паника. Пинок игрока, гудок игрока, наезд машины игрока пугают всех пешеходов в 12 м. Паникующий бежит от игрока 3 м/с, раз в 2 с меняет курс случайным
+// разбросом до ±5 м (если дальше 6 м от игрока); кончается, когда упёрся в стену или забор; потом 3 с стоит и идёт по тропе. Заразна: пешеход рядом (3 м — радиус заразности
+// в отчёте не назван, взят на глаз) с паникующим паникует сам
+static void pedPanic(Traffic *t, TrPed *e, float px, float pz) {
+  if (TRF_SV_PANIC_OLD || e->test || e->mode == TRP_OFF || e->mode == TRP_FLY || e->mode == TRP_DOWN || e->mode == TRP_GETUP || e->mode == TRP_PANIC) return;
+  if (!e->homeSpeed) { e->homeSpeed = e->speed; e->homeRun = e->run; }
+  e->mode = TRP_PANIC; e->stT = 0.f; e->pTurnT = 2.f; e->speed = 3.f; e->run = 1; e->retPath = 0; e->avoidSide = 0; e->avoidT = 0.f; e->partner = -1;
+  { float dx = e->x - px, dz = e->z - pz, d = sqrtf(dx * dx + dz * dz); if (d > .01f) { e->pDirX = dx / d; e->pDirZ = dz / d; } else { e->pDirX = sinf(e->h); e->pDirZ = cosf(e->h); } }   // первый курс — прямо от игрока, без разброса
+  pedPlay(t, e, t->clip[e->model][TRC_RUN] >= 0 ? TRC_RUN : TRC_WALK, 1);
+}
+void trafficScare(Traffic *t, float x, float z) {
+  if (!t || !t->hd || TRF_SV_PANIC_OLD) return;
+  for (int i = 0; i < t->maxPeds; i++) { TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF) continue;
+    float dx = e->x - x, dz = e->z - z; if (dx * dx + dz * dz <= 144.f) pedPanic(t, e, x, z); }
 }
 static void pedFly(Traffic *t, int i, float vx, float vz, float vy) {
   TrPed *e = &t->ped[i];
@@ -1185,15 +1800,75 @@ float trafficGetUpLen(const Traffic *t) {
   for (int m = 0; t && m < t->npeds; m++) { int c = t->clip[m][TRC_GETUP]; if (c >= 0) return skinClipLength(&t->peds[m], c); }
   return 1.f;
 }
-static void pedHitBy(Traffic *t, int i, const Car *k) {
+static void pedHitBy(Traffic *t, int i, const Car *k, float dt) {
   // правка 240: лежащего машина тоже толкает и подбрасывает (иначе едущий дальше игрок проезжает по нему, и сбитый «уходит под
   // машину»); новое нарушение Hit & Run — только за удар стоящего (правило порта)
-  TrPed *e = &t->ped[i]; int down = !TR_KNOCK_OLD && e->mode == TRP_DOWN;
+  TrPed *e = &t->ped[i]; int down = !TR_KNOCK_OLD && e->mode == TRP_DOWN, byPlayer = k == svPlayerCar;
   if (!pedStands(e) && !down) return;
+  if (!TRF_SV_PEDHIT_OLD && down && !byPlayer) {   // P02-42: лежащий (физика) от машины трафика быстрее 1 м/с получает лёгкий толчок 1,4 м/с по нормали
+    float sp = sqrtf(k->vel[0] * k->vel[0] + k->vel[2] * k->vel[2]), nx, nz, depth;
+    if (sp > 1.f && fabsf(k->y - e->y) <= 1.8f && boxCircle(k, e->x, e->z, TR_PED_R, &nx, &nz, &depth)) { e->x += nx * 1.4f * dt; e->z += nz * 1.4f * dt; }
+    return;
+  }
   float v[3];
   if (trafficCarHitsBody(k, &e->x, e->y, &e->z, TR_PED_R, v) != 2) return;   // 1 — медленно: уже вытолкнут
-  pedFly(t, i, v[0], v[2], v[1]);
-  if (!down) pushEvW(t, TR_EV_PED_HIT, i, e->x, e->y, e->z, HIT_PED, t->pedm[e->model].name);
+  if (!TRF_SV_PEDHIT_OLD && !byPlayer) {   // 7.6: у трафика в физике скорость нулевая — отлёт придуман: вверх (6…11) × скорость / 28 м/с, вдоль курса машины и по нормали
+    float sp = sqrtf(k->vel[0] * k->vel[0] + k->vel[2] * k->vel[2]);
+    v[1] = (6.f + 5.f * rnd(t)) * sp / 28.f;
+  }
+  pedFly(t, i, v[0], v[2], v[1]); e->knocked = 1; if (byPlayer) e->mouthT = 1.5f;   // возглас при сбитии игроком (P15-06)
+  if (!down && byPlayer) { pushEvW(t, TR_EV_PED_HIT, i, e->x, e->y, e->z, HIT_PED, t->pedm[e->model].name); trafficScare(t, k->x, k->z); }   // игрок сбил — пугает пешеходов в 12 м
+  else if (!down && TRF_SV_PEDHIT_OLD) pushEvW(t, TR_EV_PED_HIT, i, e->x, e->y, e->z, HIT_PED, t->pedm[e->model].name);
+}
+// 7.5 / P02-40: уворот от машины по прогнозу. Каждый кадр: машина ближе 20 м и в течение 1 с столкнётся (машина шириной 1,5 м, пешеход 0,5 м) — пешеход сначала
+// СТАНОВИТСЯ; если машина всё равно едет и игрок в машине — в половине случаев съёживается на месте (лицом к игроку), в половине отпрыгивает вбок 1 м/с в сторону, где
+// пешеход стоит относительно курса машины, потом возврат на тропу; игрок вне машины — больше ничего. Событие «чуть не сбил» (голос) — при съёживании/прыжке
+static int pedWillHit(const TrPed *e, const Car *k, int isPlayerCar) {
+  float sp = sqrtf(k->vel[0] * k->vel[0] + k->vel[2] * k->vel[2]); if (sp < .5f) return 0;
+  float bx, bz; bodyCenter(k, &bx, &bz); float dx = e->x - bx, dz = e->z - bz;
+  if (dx * dx + dz * dz > 400.f || fabsf(k->y - e->y) > 2.5f) return 0;
+  float ux = k->vel[0] / sp, uz = k->vel[2] / sp, a = dx * ux + dz * uz, l = -dx * uz + dz * ux;
+  // круг 3 (проверка по исходнику): допуск поперёк — сумма «машина 1,5 + пешеход 0,5» = 2,0 м в каждую сторону, вперёд — путь за 1 с плюс та же сумма
+  if (a > -2.f && a < sp + 2.f && fabsf(l) < 2.f) return 1;
+  if (e->mode == TRP_WALK && isPlayerCar) {   // идущий пешеход и едущий игрок: грубее — пересекаются два шара движения за 1 с (радиус каждого — половина пути)
+    float ps = e->speed, cx = bx + k->vel[0] * .5f, cz = bz + k->vel[2] * .5f, px = e->x + sinf(e->h) * ps * .5f, pz = e->z + cosf(e->h) * ps * .5f;
+    float r = sp * .5f + ps * .5f; return (cx - px) * (cx - px) + (cz - pz) * (cz - pz) < r * r;
+  }
+  return 0;
+}
+static void pedReactCar(Traffic *t, int i, const Car *k, int driving, float dt) {
+  TrPed *e = &t->ped[i];
+  if ((e->mode != TRP_WALK && e->mode != TRP_STAND) || e->test) return;
+  if (TRF_SV_PEDDODGE_OLD) return;
+  if (!pedWillHit(e, k, k == svPlayerCar)) return;
+  if (e->mode == TRP_WALK) { e->mode = TRP_STAND; e->blockT = .8f; e->stT = 1e-3f; pedPlay(t, e, TRC_IDLE, 1); return; }   // сначала становится
+  if (e->stT <= 0.f) { e->stT = 1e-3f; return; }
+  e->blockT = .8f; e->stT += dt;
+  if (!driving || e->stT < .3f) return;   // игрок вне машины — больше ничего; после остановки наблюдает 0,3 с, потом бросок каждый кадр, пока угроза держится
+  float sp = sqrtf(k->vel[0] * k->vel[0] + k->vel[2] * k->vel[2]), ux = k->vel[0] / sp, uz = k->vel[2] / sp, bx, bz;
+  bodyCenter(k, &bx, &bz);
+  float l = -(e->x - bx) * uz + (e->z - bz) * ux;
+  e->stT = 0.f;
+  if (rnd(t) < .5f) { e->mode = TRP_CRINGE; pedPlay(t, e, TRC_CRINGE, 0); }
+  else { float sg = l >= 0.f ? 1.f : -1.f; e->mode = TRP_SIDE; e->pDirX = -uz * sg; e->pDirZ = ux * sg; pedPlay(t, e, TRC_DODGE, 0); }
+  if (e->nearCool <= 0.f) { e->nearCool = PED_NEAR_COOL; e->mouthT = 1.2f; pushEvW(t, TR_EV_PED_NEAR, i, e->x, e->y, e->z, 0.f, t->pedm[e->model].name); }   // голос — не чаще раза в 4 с
+}
+// 7.8 / P02-39: два пешехода на одной тропе, подошедшие ближе 1,5 м (быстрые) или 2 м (медленные, ≤ 1 м/с) и не дальше 35 м от игрока, останавливаются, поворачиваются друг
+// к другу и говорят. Рот у говорящего двигать нечем (челюстей в риге нет — P15-06, передано), роли меняются по таймеру
+static void pedTalkScan(Traffic *t, const float ppos[3]) {
+  if (TRF_SV_PEDTALK_OLD) return;
+  for (int i = 0; i < t->maxPeds; i++) {   // круг 3: каждый кадр, любой другой идущий пешеход в 35 м от игрока (не только с той же тропы и не только шагом), расстояние трёхмерное
+    TrPed *a = &t->ped[i]; if (a->mode != TRP_WALK || a->test) continue;
+    if ((a->x - ppos[0]) * (a->x - ppos[0]) + (a->z - ppos[2]) * (a->z - ppos[2]) > 35.f * 35.f) continue;
+    float lim = a->speed > 1.f ? 1.5f : 2.f;   // 1,5 м, если сам идёт быстрее 1 м/с, иначе 2 м
+    for (int j = 0; j < t->maxPeds; j++) {
+      TrPed *b = &t->ped[j]; if (j == i || b->mode != TRP_WALK || b->test) continue;
+      float dx = b->x - a->x, dy = b->y - a->y, dz = b->z - a->z;
+      if (dx * dx + dy * dy + dz * dz >= lim * lim) continue;
+      a->mode = b->mode = TRP_TALK; a->partner = j; b->partner = i; a->stT = b->stT = 0.f; a->pTurnT = b->pTurnT = 1.f; a->speaker = 1; b->speaker = 0;
+      pedPlay(t, a, TRC_IDLE, 1); pedPlay(t, b, TRC_IDLE, 1); break;
+    }
+  }
 }
 static void pedNearMiss(Traffic *t, int i, const Car *k) {   // правка 180: «чуть не сбил» — уклонение и событие для голоса
   TrPed *e = &t->ped[i];
@@ -1274,11 +1949,38 @@ static int pedOrbit(Traffic *t, TrPed *e, int driving, const float ppos[3], floa
     int n = (int)t->path[e->path].n; e->seg = ((e->seg + e->dir) % n + n) % n; e->orbStall = 0.f; return 1; }
   return stalled ? 2 : 0;
 }
+// круг 3 (7.3): вышел с тропы (после паники, съёживания, прыжка, уворота, вставания) — идёт назад к ней со скоростью 1,0; вернулся ближе 1 м — снова своя рождённая скорость
+static void pedGoHome(TrPed *e) { if (TRF_SV_PEDSPEED_OLD) { e->speed = 1.f; e->run = 0; return; } if (!e->homeSpeed) { e->homeSpeed = e->speed; e->homeRun = e->run; } e->speed = 1.f; e->run = 0; e->retPath = 1; }
+static float pedPathDist(const Traffic *t, const TrPed *e) {
+  const TrPath *P = &t->path[e->path]; float best = 1e30f;
+  for (uint32_t k = 0; k < P->n; k++) {
+    const float *a = pathP(t, e->path, (int)k), *b = pathP(t, e->path, (int)k + 1); float ax = b[0] - a[0], az = b[2] - a[2], L2 = ax * ax + az * az; if (L2 < 1e-6f) continue;
+    float u = clampf(((e->x - a[0]) * ax + (e->z - a[2]) * az) / L2, 0.f, 1.f), qx = a[0] + ax * u - e->x, qz = a[2] + az * u - e->z; if (qx * qx + qz * qz < best) best = qx * qx + qz * qz;
+  }
+  return sqrtf(best);
+}
+// круг 5 (P15-06): рот двигается у говорящего (разговор пешеходов 7.8) и пока звучит возглас (сбит, пнут, чуть не сбит): ход по SkinMouth в той же мере 0…0,22 рад, что и у героев в msn_view.c
+#ifndef TRF_SV_MOUTH_OLD
+#define TRF_SV_MOUTH_OLD 0
+#endif
+static void pedMouth(Traffic *t, TrPed *e, float dt) {
+  if (TRF_SV_MOUTH_OLD) return;
+  int speaks = e->mouthT > 0.f || (e->mode == TRP_TALK && e->speaker);
+  if (e->mouthT > 0.f) e->mouthT -= dt;
+  if (!speaks) { e->sp.jawOpen = 0.f; return; }
+  float a = skinMouthStep(&e->mouth, t->pedm[e->model].name, dt), lo = -18.f * 0.0174533f, span = e->mouth.hi0 - lo;
+  float u = span > .01f ? (a - lo) / span : 0.f; u = u < 0.f ? 0.f : u > 1.f ? 1.f : u;
+  e->sp.jawOpen = .22f * u;
+}
+static int pedMoveClip(const Traffic *t, const TrPed *e) { return (!TRF_SV_PEDSPEED_OLD && e->run && t->clip[e->model][TRC_RUN] >= 0) ? TRC_RUN : TRC_WALK; }   // 7.3: бег — клип npd_loco_run
 static void pedStep(Traffic *t, const ColWorld *w, int i, const Car *player, int driving, const float ppos[3], float dt) {
   TrPed *e = &t->ped[i];
   switch (e->mode) {
     case TRP_WALK: case TRP_STAND: {
       if (e->test) { if (e->mode != TRP_STAND) { e->mode = TRP_STAND; pedPlay(t, e, TRC_IDLE, 1); } break; }
+      if (!TRF_SV_PEDFACE_OLD && !e->test && (e->mode == TRP_WALK || e->mode == TRP_STAND) && fabsf(ppos[1] - e->y) < 2.f) {   // P02-37: игрок ближе 1,41 м — стоп лицом к нему
+        float fx_ = ppos[0] - e->x, fz_ = ppos[2] - e->z;
+        if (fx_ * fx_ + fz_ * fz_ < 2.f) { e->mode = TRP_FACE; e->stT = 0.f; pedPlay(t, e, TRC_IDLE, 1); break; } }
       int blocked = pedBlocked(t, e, player, driving, ppos);
       if (!TRF_PED_AVOID_OLD) {   // №510
         if (!blocked && (e->avoidT -= dt) < 0.f) { e->avoidT = 0.f; e->avoidSide = 0; }
@@ -1300,14 +2002,16 @@ static void pedStep(Traffic *t, const ColWorld *w, int i, const Car *player, int
           e->waitT = 0.f; e->dir = -e->dir; e->avoidSide = 0; e->avoidT = 0.f; e->blockT = 0.f;
           { const float *a2 = pathP(t, e->path, e->seg), *b2 = pathP(t, e->path, e->seg + 1); float ex2 = (e->dir > 0 ? b2[0] : a2[0]) - e->x, ez2 = (e->dir > 0 ? b2[2] : a2[2]) - e->z;
             if (ex2 * ex2 + ez2 * ez2 > .0025f) e->h = atan2f(ex2, ez2); }   // лицом к новой цели сразу: иначе «впереди машина» держит на месте
-          if (e->mode != TRP_WALK) { e->mode = TRP_WALK; pedPlay(t, e, TRC_WALK, 1); }
+          if (e->mode != TRP_WALK) { e->mode = TRP_WALK; pedPlay(t, e, pedMoveClip(t, e), 1); }
           break; } }
       if (blocked) { e->blockT = .5f; if (e->mode != TRP_STAND) { e->mode = TRP_STAND; pedPlay(t, e, TRC_IDLE, 1); } break; }
-      if (e->mode == TRP_STAND) { if ((e->blockT -= dt) > 0.f) break; e->mode = TRP_WALK; pedPlay(t, e, TRC_WALK, 1); }
+      if (e->mode == TRP_STAND) { if ((e->blockT -= dt) > 0.f) break; e->mode = TRP_WALK; pedPlay(t, e, pedMoveClip(t, e), 1); }
+      if (e->retPath && pedPathDist(t, e) < 1.f) { e->retPath = 0; e->speed = e->homeSpeed; e->run = e->homeRun; pedPlay(t, e, pedMoveClip(t, e), 1); }   // круг 3 (7.3): вернулся на тропу — своя скорость
       const float *a = pathP(t, e->path, e->seg), *b = pathP(t, e->path, e->seg + 1);
       float tx = e->dir > 0 ? b[0] : a[0], tz = e->dir > 0 ? b[2] : a[2];
       float dx = tx - e->x, dz = tz - e->z, d = sqrtf(dx * dx + dz * dz), step = e->speed * dt;
       if (d <= step || d < .05f) { e->x = tx; e->z = tz; e->seg += e->dir; e->seg = (e->seg % (int)t->path[e->path].n + (int)t->path[e->path].n) % (int)t->path[e->path].n; }
+      else if (!TRF_SV_PEDPATH_OLD && d < .5f) { e->seg += e->dir; e->seg = (e->seg % (int)t->path[e->path].n + (int)t->path[e->path].n) % (int)t->path[e->path].n; }   // P02-38: точка пройдена в 0,5 м
       else { e->x += dx / d * step; e->z += dz / d * step; }
       float th = d > .05f ? atan2f(dx, dz) : e->h, dh = wrapPi(th - e->h), mx = 5.f * dt;   // поворот до 5 рад/с
       e->h = wrapPi(e->h + clampf(dh, -mx, mx));
@@ -1318,6 +2022,50 @@ static void pedStep(Traffic *t, const ColWorld *w, int i, const Car *player, int
 #endif
       if (PED_GROUND_FAST_OLD || !(e->gTick++ & 3)) {
         if (!pedGround(w, e, .6f) && !PED_GROUND_OLD) { if ((e->noGroundT += dt * (PED_GROUND_FAST_OLD ? 1.f : 4.f)) > PED_NOGROUND_T) { e->mode = TRP_OFF; break; } } else e->noGroundT = 0.f;
+      }
+      break; }
+    case TRP_PANIC: {   // 7.4: бежит от игрока 3 м/с, раз в 2 с курс с разбросом до ±5 м (дальше 6 м от игрока); упёрся в стену или забор — конец
+      float dx = e->x - ppos[0], dz = e->z - ppos[2], d = sqrtf(dx * dx + dz * dz);
+      if ((e->pTurnT -= dt) <= 0.f) {
+        e->pTurnT = 2.f;
+        float vx = dx, vz = dz;   // вектор «от игрока к пешеходу» в настоящую длину; дальше 6 м к каждой оси отдельно прибавляется 0…5 м со случайным знаком
+        if (d > 6.f) { vx += (rnd(t) < .5f ? -1.f : 1.f) * rnd(t) * 5.f; vz += (rnd(t) < .5f ? -1.f : 1.f) * rnd(t) * 5.f; }
+        float vl = sqrtf(vx * vx + vz * vz);
+        if (vl > .01f) { e->pDirX = vx / vl; e->pDirZ = vz / vl; } else { e->pDirX = sinf(e->h); e->pDirZ = cosf(e->h); }
+      }
+      float nx = e->x + e->pDirX * 3.f * dt, nz = e->z + e->pDirZ * 3.f * dt, a3[3] = {e->x, e->y + TR_BODY_MID, e->z}, b3[3] = {nx, e->y + TR_BODY_MID, nz};
+      if (colRayFrac(w, a3, b3, 0) < 1.f || colCrossFence(w, a3[0], a3[2], b3[0], b3[2], 0, 0) || colCrossFence(w, b3[0], b3[2], a3[0], a3[2], 0, 0)) {   // стена или забор: паника кончается, 3 с стоит и идёт по тропе
+        e->mode = TRP_STAND; e->blockT = 3.f; pedGoHome(e); pedNearest(t, e); pedPlay(t, e, TRC_IDLE, 1); break; }
+      e->x = nx; e->z = nz;
+      { float th = atan2f(e->pDirX, e->pDirZ), dh = wrapPi(th - e->h), mx = 8.f * dt; e->h = wrapPi(e->h + clampf(dh, -mx, mx)); }
+      if (!pedGround(w, e, .6f)) { if ((e->noGroundT += dt) > PED_NOGROUND_T) e->mode = TRP_OFF; } else e->noGroundT = 0.f;
+      break; }
+    case TRP_FACE: {   // P02-37: стоит лицом к игроку не меньше 3 с, потом идёт дальше, если никого рядом (иначе ждёт ещё 3 с)
+      float dx = ppos[0] - e->x, dz = ppos[2] - e->z, want = atan2f(dx, dz), da = wrapPi(want - e->h);
+      e->h = fabsf(da) > .785f ? want : wrapPi(e->h + clampf(da, -3.f * dt, 3.f * dt));   // больше 45° — сразу; 33–45° у оригинала клип turn60 (в риге порта клипа нет — плавный поворот)
+      if ((e->stT += dt) >= 3.f) {
+        if (dx * dx + dz * dz < 2.f && fabsf(ppos[1] - e->y) < 2.f) e->stT = 0.f;
+        else { e->mode = TRP_WALK; pedPlay(t, e, pedMoveClip(t, e), 1); }
+      }
+      break; }
+    case TRP_CRINGE: {   // 7.5: съёжился на месте, лицом к игроку, пока машина не проедет
+      float dx = ppos[0] - e->x, dz = ppos[2] - e->z; e->h = wrapPi(e->h + clampf(wrapPi(atan2f(dx, dz) - e->h), -6.f * dt, 6.f * dt));
+      if ((e->stT += dt) > 1.5f) { e->mode = TRP_WALK; pedGoHome(e); pedPlay(t, e, pedMoveClip(t, e), 1); }
+      break; }
+    case TRP_SIDE: {   // 7.5 / P02-40: отпрыгнул вбок 1 м/с в сторону, где стоит относительно курса машины; потом возврат на тропу
+      float nx = e->x + e->pDirX * dt, nz = e->z + e->pDirZ * dt, a3[3] = {e->x, e->y + TR_BODY_MID, e->z}, b3[3] = {nx, e->y + TR_BODY_MID, nz};
+      if (colRayFrac(w, a3, b3, 0) >= 1.f) { e->x = nx; e->z = nz; }
+      pedGround(w, e, .6f);
+      if ((e->stT += dt) > 1.f) { pedNearest(t, e); e->mode = TRP_WALK; pedGoHome(e); pedPlay(t, e, pedMoveClip(t, e), 1); }
+      break; }
+    case TRP_TALK: {   // 7.8 / P02-39: разговор двух на одной тропе: 3 с говорит, затем раз в секунду проверка — в 2 случаях из 3 роли меняются (разговор идёт), иначе конец
+      TrPed *o = e->partner >= 0 && e->partner < t->maxPeds ? &t->ped[e->partner] : 0;
+      if (!o || o->mode != TRP_TALK || o->partner != i) { e->mode = TRP_WALK; pedPlay(t, e, pedMoveClip(t, e), 1); break; }
+      { float dx = o->x - e->x, dz = o->z - e->z; e->h = wrapPi(e->h + clampf(wrapPi(atan2f(dx, dz) - e->h), -6.f * dt, 6.f * dt)); }
+      e->stT += dt;
+      if (i < e->partner && e->stT >= 3.f && (e->pTurnT -= dt) <= 0.f) {   // решает младший номер пары: раз в секунду бросок; разговор сам не кончается — только когда кто-то сменил состояние
+        e->pTurnT = 1.f;
+        if (rnd(t) * 3.f < 2.f) { e->speaker = !e->speaker; o->speaker = !e->speaker; e->stT = o->stT = 0.f; }   // 2 из 3: роли меняются, новый говорящий снова говорит полные 3 с
       }
       break; }
     case TRP_FLY: {   // правка 240: шаг полёта — trafficBodyFly (тот же у персонажей миссий)
@@ -1332,14 +2080,15 @@ static void pedStep(Traffic *t, const ColWorld *w, int i, const Car *player, int
       break;
     case TRP_DODGE: {   // правка 180: клип уклонения один раз, потом дальше по пути
       e->t += dt; int c = t->clip[e->model][TRC_DODGE]; float len = c >= 0 ? skinClipLength(&t->peds[e->model], c) : .8f;
-      if (e->t >= len) { e->mode = e->test ? TRP_STAND : TRP_WALK; pedPlay(t, e, e->test ? TRC_IDLE : TRC_WALK, 1); }   // служебный (сценарий) — стоит
+      if (e->t >= len) { if (!e->test) pedGoHome(e); e->mode = e->test ? TRP_STAND : TRP_WALK; pedPlay(t, e, e->test ? TRC_IDLE : pedMoveClip(t, e), 1); }   // служебный (сценарий) — стоит; 7.3: вернувшийся на тропу идёт 1,0 м/с
       break; }
     case TRP_GETUP: {
       e->t += dt; int c = t->clip[e->model][TRC_GETUP]; float len = c >= 0 ? skinClipLength(&t->peds[e->model], c) : 1.f;
-      if (e->t >= len) { if (!e->test) pedNearest(t, e); e->mode = e->test ? TRP_STAND : TRP_WALK; pedPlay(t, e, e->test ? TRC_IDLE : TRC_WALK, 1); }
+      if (e->t >= len) { if (!e->test) pedNearest(t, e); if (!e->test) pedGoHome(e); e->mode = e->test ? TRP_STAND : TRP_WALK; pedPlay(t, e, e->test ? TRC_IDLE : pedMoveClip(t, e), 1); }   // 7.3: после вставания идёт 1,0 м/с
       break; }
   }
-  skinTick(&e->sp, dt * (e->mode == TRP_WALK ? e->speed / t->walkV[e->model] : 1.f));
+  pedMouth(t, e, dt);
+  skinTick(&e->sp, dt * (e->mode == TRP_WALK || e->mode == TRP_PANIC ? e->speed / (e->run && !TRF_SV_PEDSPEED_OLD ? t->runV[e->model] : t->walkV[e->model]) : 1.f));
 }
 
 // ================================================================ кадр
@@ -1355,18 +2104,70 @@ static void hitEvents(Traffic *t, int type, int idx, Car *k, float before, float
   if (k->hitSpeed > 1.f && cool <= 0.f) pushEv(t, type, idx, k->x, k->y, k->z, HIT_CAR);
   if (k->destroyed && before < 1.f) pushEv(t, TR_EV_CAR_WRECK, idx, k->x, k->y, k->z, HIT_WRECK);
 }
+// P01-09: смерть не с одного удара. Прочность была больше 2 % (урон < 0,98), а после удара стала бы меньше — остаётся 0,001 (урон 0,999), машина жива, и следующую 1,0 с удары
+// не засчитываются совсем. Взрывной урон правилу не подчиняется. Для машины игрока и миссий правило — в car.c (передано g01-cars); здесь трафик и стоящие
+static void svNoOneHit(Car *k, float *seen, float *win, float dt) {
+  if (TRF_SV_DMG2_OLD) return;
+  if (*win > 0.f) { *win -= dt; if (k->damage > *seen) { k->damage = *seen; k->destroyed = 0; } return; }   // окно: урон не растёт
+  if (*seen < 1.f - SV_ONE_HIT_MIN && k->damage >= 1.f - SV_ONE_HIT_MIN && !carBoomed(k)) { k->damage = .999f; k->destroyed = 0; *win = 1.f; }
+  *seen = k->damage;
+}
+// P03-05: остов (huskA) ставится не у всех моделей — у этих после взрыва машина просто пропадает
+static int svHuskOk(const Traffic *t, int model) {
+  static const char *no[] = {"honor_v", "schoolbu", "willi_v", "hallo", "oblit_v", "mono_v", "knigh_v", "cfire_v", "ccola", "hbike_v", "rocke_v", "atv_v", "dune_v", "coffin", "ship", "witchcar"};
+  if (TRF_SV_HUSK_OLD || model < 0 || model >= (int)t->hd->nModel) return 1;
+  for (unsigned i = 0; i < sizeof no / sizeof no[0]; i++) {
+    const char *a = t->model[model].name, *b = no[i]; int k = 0;
+    for (; k < 16 && a[k] && b[k]; k++) { char ca = a[k] >= 'A' && a[k] <= 'Z' ? (char)(a[k] + 32) : a[k]; if (ca != b[k]) break; }
+    if (k < 16 && !a[k] && !b[k]) return 0;
+  }
+  return 1;
+}
+static int svHuskCount(const Traffic *t) {   // сколько остовов уже стоит (не больше SV_HUSK_MAX на трафик, стоящие, погоню, игрока и ИИ — здесь трафик и стоящие)
+  int n = 0;
+  for (int i = 0; i < t->maxCars; i++) n += t->car[i].mode != TRM_OFF && carBoomed(&t->car[i].car) && svHuskOk(t, t->car[i].model);
+  for (int i = 0; i < t->npark; i++) n += !t->park[i].gone && carBoomed(&t->park[i].car) && svHuskOk(t, t->parkd[i].model);
+  return n;
+}
+void trafficPlayerHorn(Traffic *t, int on, float x, float z) {
+  if (!t || !t->hd) return;
+  if (on) { t->hornOn = 1; t->hornX = x; t->hornZ = z; trafficScare(t, x, z); }   // гудок пугает пешеходов в 12 м (7.4) и будит ответ трафика в 25 м (P03-15)
+}
+void trafficStreetRace(Traffic *t, int on) {
+  if (!t || !t->hd) return;
+  t->streetRace = on != 0;
+  if (on) for (int i = 0; i < t->maxPeds; i++) t->ped[i].mode = TRP_OFF;
+}
+int trfOneTapDeath;
+#ifndef TRF_SV_PROPSCARS_OLD
+#define TRF_SV_PROPSCARS_OLD 0   // круг 2, g11 P11-02: 1 — предметы ломает только машина игрока (звать trafficCarsNear не нужно)
+#endif
+int trafficCarsNear(Traffic *t, float x, float z, float r, Car **out, int max) {
+  int n = 0; if (TRF_SV_PROPSCARS_OLD || !t || !t->hd) return 0;
+  for (int i = 0; i < t->maxCars && n < max; i++) {
+    TrCar *c = &t->car[i]; if (c->mode == TRM_OFF || (c->mode == TRM_DRIVE && c->v < .3f)) continue;   // стоящий на светофоре предмет не будит: касание считает движение
+    float dx = c->car.x - x, dz = c->car.z - z; if (dx * dx + dz * dz < r * r) out[n++] = &c->car;
+  }
+  for (int i = 0; i < t->npark && n < max; i++) {
+    TrParked *P = &t->park[i]; if (P->gone || !P->state) continue;
+    float dx = P->car.x - x, dz = P->car.z - z; if (dx * dx + dz * dz < r * r) out[n++] = &P->car;
+  }
+  return n;
+}
 void trafficReset(Traffic *t, const ColWorld *w) {
   if (!t->hd) return;
   for (int i = 0; i < TR_MAXCAR; i++) t->car[i].mode = TRM_OFF;
   for (int i = 0; i < TR_MAXPED; i++) t->ped[i].mode = TRP_OFF;
   for (int i = 0; i < t->npark; i++) {
     const TrPark *k = &t->parkd[i]; TrParked *P = &t->park[i];
-    carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h);
-    P->state = 0; P->wreck = 0; P->stillT = 0.f; P->gone = P->off;
+    carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4;   // сверка g01 круг 2 (7.4): вид для svBoom — стоящая
+    P->state = 0; P->wreck = 0; P->stillT = 0.f; P->gone = (TRAFFIC_ZONE_PARK && !TRF_SV_ZPARK_OLD) ? 1 : P->off; P->sel = 0;   // круг 5: в зонном режиме сначала пусто, места выбирает загрузка зоны
     if (P->off) { P->car.x = P->car.z = 1e7f; P->car.y = -1000.f; P->car.v = 0.f; }   // место пустое: машины нет
   }
   t->zoneMask = ~0u;   // правка 139: до первых ворот загрузчика загружено всё (ничего не прячем)
   t->zoneGroup = 0; t->group = t->missionPedGroup >= 0 ? t->missionPedGroup : 0; t->fresh = 1; t->scanT = t->pedScanT = 0.f; t->nev = 0; t->solidHave = 0;
+  t->zonePrev = 0; t->loadT = 0.f; t->pedTryT = 0.f; t->pedFrame = 0; t->nhonk = 0; t->hornOn = 0; memset(t->jq, 0, sizeof t->jq);   // сверка g02-traffic (P03-12: первые 3 с после загрузки; очереди стоп-знаков и ответ на гудок — заново)
+  for (int i = 0; i < TR_MAXPED; i++) t->ped[i].partner = -1;
 }
 int trafficHitStill(Traffic *t, const ColWorld *w, const Car *k) {
   if (!t->hd || !k || t->noSolid) return 0;
@@ -1398,7 +2199,8 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
   if (!t->hd || dt <= 0.f) return;
   TP(0);
   if (dt > .1f) dt = .1f;
-  t->time += dt;
+  t->time += dt; t->loadT += dt;
+  svPlayerCar = driving ? player : 0;   // сверка g02-traffic: машина игрока для увора и рождения (пешком — нет)
   float fl = sqrtf(fwd[0] * fwd[0] + fwd[2] * fwd[2]), fx = fl > 1e-4f ? fwd[0] / fl : 0.f, fz = fl > 1e-4f ? fwd[2] / fl : 1.f;
   float cen[2] = {ppos[0] + fx * SPAWN_LEAD, ppos[2] + fz * SPAWN_LEAD};
   // группа пешеходов: игрок в «воротах» зоны
@@ -1416,11 +2218,32 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) continue;
     float dx = c->car.x - cen[0], dz = c->car.z - cen[1], d = sqrtf(dx * dx + dz * dz);
     int seen = inView(eye, fwd, c->car.x, c->car.y + 1.f, c->car.z, carR(&c->car), t->drawDist);
+    if (!TRF_SV_REMOVE_OLD) {   // P03-21: всё дальше 75 м от точки (игрок + 40 м по взгляду камеры) убирается независимо от видимости; плюс вне кадра дольше 5 с
+      c->offT = seen ? 0.f : c->offT + dt;
+      if (t->loadT < 3.f) continue;   // круг 3: первые 3 с после загрузки трафик не удаляется вовсе
+      if (d > REMOVE_R || c->offT > 5.f || (c->next < 0 && c->v < .1f && !seen)) c->mode = TRM_OFF;
+    } else
     if (d > REMOVE_HARD || (d > REMOVE_R && !seen) || (c->next < 0 && c->v < .1f && !seen)) c->mode = TRM_OFF;
+  }
+  // P16-01 / Д11: очереди стоп-знаков; P03-15: ответ на гудок игрока
+  svQueueStep(t, dt);
+  if (!TRF_SV_HONK_OLD) {
+    for (int q = 0; q < t->nhonk; ) {
+      if (t->car[t->honkQ[q].car].mode == TRM_OFF) { t->honkQ[q] = t->honkQ[--t->nhonk]; continue; }   // убранная с дороги выпадает из очереди
+      if ((t->honkQ[q].t -= dt) <= 0.f) { int ci = t->honkQ[q].car; pushEv(t, TR_EV_CAR_HONK, ci, t->car[ci].car.x, t->car[ci].car.y, t->car[ci].car.z, 0.f); t->honkQ[q] = t->honkQ[--t->nhonk]; continue; }
+      q++;
+    }
+    if (t->hornOn && !t->nhonk) {   // очередь пуста: до 3 машин трафика в 25 м, каждая с шансом 10 % (бросок каждый кадр, пока гудок зажат)
+      for (int i = 0; i < t->maxCars && t->nhonk < 3; i++) { TrCar *c = &t->car[i]; if (c->mode != TRM_DRIVE) continue;
+        float dx = c->car.x - t->hornX, dz = c->car.z - t->hornZ; if (dx * dx + dz * dz > 625.f) continue;
+        if (rnd(t) < .1f) { t->honkQ[t->nhonk].car = i; t->honkQ[t->nhonk++].t = .5f + .3f * rnd(t); } }
+    }
+    t->hornOn = 0;   // держится, только пока вызывают trafficPlayerHorn каждый кадр
   }
   TP(1);
   if ((t->scanT -= dt) <= 0.f || t->fresh) {
-    t->scanT = .25f;
+    t->scanT = TRF_SV_REMOVE_OLD ? .25f : .2f;   // P03-21: проход каждые 0,2 с
+    int fresh0 = t->fresh; if (!TRF_SV_REMOVE_OLD && t->loadT < 3.f) t->fresh = 1;   // круг 3: первые 3 с — кольцо 100 м вокруг игрока на каждом проходе (раз в 0,2 с), а не в один кадр
     if (trfSpawnOld) spawnCarsOld(t, w, player, ppos, cen, eye, fwd);
     else {   // правка 328: кадр камеры и кадр камеры «за игроком», направления «впереди» (взгляд камеры, ход машины)
       SpawnView V; memcpy(V.eye, eye, sizeof V.eye); memcpy(V.fwd, fwd, sizeof V.fwd);
@@ -1435,25 +2258,42 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
       V.fwd2[0] = dx; V.fwd2[1] = 0.f; V.fwd2[2] = dz;
       spawnCars(t, w, player, ppos, cen, &V);
     }
+    t->fresh = fresh0;
   }
   TP(2);
+  if (t->streetRace) { for (int i = 0; i < t->maxPeds; i++) t->ped[i].mode = TRP_OFF; }   // P03-13: уличная гонка — пешеходов нет (и на гонках 1–2 они не стоят у дороги — P02-41: сняты вовсе)
+  if (!TRF_SV_PEDSPAWN_OLD) {
+    // 7.2 / P03-12: центр зоны — игрок + 30 м вперёд по взгляду камеры. Дальше 50 м от центра или вне кадра дольше 2 с (не больше одного за проход) — снимается; первые 3 с после загрузки не снимается
+    float fl2 = sqrtf(fwd[0] * fwd[0] + fwd[2] * fwd[2]), gx = fl2 > 1e-4f ? fwd[0] / fl2 : 0.f, gz = fl2 > 1e-4f ? fwd[2] / fl2 : 1.f;
+    float c30x = ppos[0] + gx * SV_PED_LEAD, c30z = ppos[2] + gz * SV_PED_LEAD; int dropped = 0;
+    for (int i = 0; i < t->maxPeds && t->loadT >= 3.f; i++) {
+      TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF || e->test) continue;
+      float dx = e->x - c30x, dz = e->z - c30z;
+      if (dx * dx + dz * dz > 50.f * 50.f) { e->mode = TRP_OFF; continue; }
+      if (inView(eye, fwd, e->x, e->y + 1.f, e->z, 1.f, 1e9f)) e->offT = 0.f;
+      else if ((e->offT += dt) > 2.f && !dropped) { e->mode = TRP_OFF; dropped = 1; }
+    }
+    t->pedFrame++;   // Д8: одна попытка на каждый второй кадр, первые 3 с — на каждый
+    if (t->loadT < 3.f || !(t->pedFrame & 1)) spawnPedsSv(t, w, ppos, eye, fwd);
+  } else {
   for (int i = 0; i < t->maxPeds; i++) {
     TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF || e->test) continue;
     float dx = e->x - ppos[0], dz = e->z - ppos[2], d = sqrtf(dx * dx + dz * dz);
     if (d > PED_REMOVE * 1.5f || (d > PED_REMOVE && !inView(eye, fwd, e->x, e->y + 1.f, e->z, 1.f, t->pedDrawDist))) e->mode = TRP_OFF;
   }
-  if ((t->pedScanT -= dt) <= 0.f || t->fresh) { t->pedScanT = .5f; spawnPeds(t, w, ppos, eye, fwd); }
+  if ((t->pedScanT -= dt) <= 0.f || t->fresh) { t->pedScanT = .5f; if (!t->streetRace) spawnPeds(t, w, ppos, eye, fwd); }
+  }
   t->fresh = 0;
   TP(3);
   // --- препятствия для водителей (стоящие машины gapAhead смотрит сам)
   Obs obs[2 + TR_MAXPED + TR_MAXCAR + TR_MAXEXTRA]; int no = 0, carObs[TR_MAXCAR];
-  if (player) obsCar(&obs[no++], player, -1);
-  for (int i = 0; i < t->nextra && i < TR_MAXEXTRA; i++) if (t->extra[i]) obsCar(&obs[no++], t->extra[i], -1);   // машины миссий
-  if (!driving) obsCircle(&obs[no++], ppos[0], ppos[2], HOMER_RADIUS + .5f);
-  for (int i = 0; i < t->maxPeds; i++) if (t->ped[i].mode != TRP_OFF) obsCircle(&obs[no++], t->ped[i].x, t->ped[i].z, TR_PED_R + .4f);
+  if (player) { obsCar(&obs[no], player, -1); obs[no++].kind = OBK_PLAYER; }
+  for (int i = 0; i < t->nextra && i < TR_MAXEXTRA; i++) if (t->extra[i]) { obsCar(&obs[no], t->extra[i], -1); obs[no++].kind = OBK_MCAR; }   // машины миссий
+  if (!driving) { obsCircle(&obs[no], ppos[0], ppos[2], HOMER_RADIUS + .5f); obs[no++].kind = OBK_HOMER; }
+  for (int i = 0; i < t->maxPeds; i++) if (t->ped[i].mode != TRP_OFF) { obsCircle(&obs[no], t->ped[i].x, t->ped[i].z, TR_PED_R + .4f); obs[no++].kind = OBK_PED; }
   for (int i = 0; i < t->maxCars; i++) {
     carObs[i] = -1; if (t->car[i].mode == TRM_OFF) continue;
-    carObs[i] = no; obsCar(&obs[no++], &t->car[i].car, i);
+    carObs[i] = no; obsCar(&obs[no], &t->car[i].car, i); obs[no++].kind = OBK_TRAF;
   }
   TP(4);
   // --- езда и физика
@@ -1463,7 +2303,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     t->activeCars++; if (c->hitCool > 0.f) c->hitCool -= dt;
     if (c->mode == TRM_DRIVE) {
       driveStep(t, w, c, obs, no, dt);
-      if (carObs[i] >= 0) obsCar(&obs[carObs[i]], &c->car, i);
+      if (carObs[i] >= 0) { obsCar(&obs[carObs[i]], &c->car, i); obs[carObs[i]].kind = OBK_TRAF; }
       if (c->v > .5f) t->movingCars++;
     } else physStep(t, w, c, dt);
   }
@@ -1489,7 +2329,10 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
       if (near2(&c->car, &P->car, .3f) && carHitCar(&c->car, &P->car, w)) { if (c->mode == TRM_DRIVE) { c->mode = TRM_PHYS; c->stillT = 0.f; } parkWake(t, P); }
     }
     carRamCapFrame(&c->car, dmg);   // №176 повтор: один удар не разбивает трафик
+    if (trfOneTapDeath && player && c->car.damage > dmg && c->hitCool > .9f) { c->car.damage = 1.f; c->car.destroyed = 1; }   // чит «One Tap Traffic Death» (P16-17)
+    svNoOneHit(&c->car, &c->dmgSeen, &c->dmgWin, dt);   // P01-09
     if (c->car.destroyed && c->mode != TRM_WRECK) c->mode = TRM_WRECK;
+    if (!TRF_SV_HUSK_OLD && c->mode == TRM_WRECK && carBoomed(&c->car) && (!svHuskOk(t, c->model) || svHuskCount(t) > SV_HUSK_MAX)) c->mode = TRM_OFF;   // P03-05: без остова — пропадает; шестой остов — тоже
   }
   TP(6);
   t->awakePark = 0;
@@ -1502,6 +2345,9 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
       if (P->car.destroyed && dmg < 1.f) pushEv(t, TR_EV_CAR_WRECK, i, P->car.x, P->car.y, P->car.z, HIT_WRECK);
     }
     carRamCapFrame(&P->car, dmg);
+    svNoOneHit(&P->car, &P->dmgSeen, &P->dmgWin, dt);   // P01-09
+    if (!TRF_SV_HUSK_OLD && carBoomed(&P->car) && (!svHuskOk(t, t->parkd[i].model) || svHuskCount(t) > SV_HUSK_MAX)) {   // P03-05: без остова — пропадает
+      P->state = 0; P->wreck = 0; P->car.x = P->car.z = 1e7f; P->car.y = -1000.f; P->car.v = 0.f; P->car.damage = 0.f; P->car.destroyed = 0; continue; }
     if (!P->state) continue;
     for (int j = 0; j < t->npark; j++)   // проснувшаяся толкает соседние
       if (j != i && !t->park[j].gone && near2(&P->car, &t->park[j].car, .3f) && carHitCar(&P->car, &t->park[j].car, w)) parkWake(t, &t->park[j]);
@@ -1518,18 +2364,31 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     float dx = P->car.x - k->x, dz = P->car.z - k->z, px = k->x - ppos[0], pz = k->z - ppos[2];
     int moved = dx * dx + dz * dz > 1.f || fabsf(wrapPi(P->car.h - k->h)) > .2f || P->car.damage > 0.f;
     if (moved && !P->off && !P->state && px * px + pz * pz > PARK_BACK * PARK_BACK && !inView(eye, fwd, P->car.x, P->car.y + 1.f, P->car.z, carR(&P->car), t->drawDist)) {
-      carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->wreck = 0; }
+      carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; }
   }
   TP(7);
   // --- пешеходы
   t->activePeds = 0;
+  if (!TRF_SV_PANIC_OLD) {   // паника заразна: пешеход рядом с паникующим паникует сам
+    for (int i = 0; i < t->maxPeds; i++) if (t->ped[i].mode == TRP_PANIC)
+      for (int j = 0; j < t->maxPeds; j++) { TrPed *o = &t->ped[j]; if (j == i || o->mode != TRP_WALK) continue;   // заражается идущий по тропе: не стоящий и не говорящий
+        float px_ = o->x - ppos[0], pz_ = o->z - ppos[2]; if (px_ * px_ + pz_ * pz_ > 35.f * 35.f) continue;   // не дальше 35 м от игрока
+        float dx = o->x - t->ped[i].x, dy = o->y - t->ped[i].y, dz = o->z - t->ped[i].z, r = o->speed > 1.f ? 1.5f : 2.f;   // 1,5 м (быстрый) или 2 м (медленный), расстояние трёхмерное
+        if (dx * dx + dy * dy + dz * dz < r * r) pedPanic(t, o, ppos[0], ppos[2]); }
+  }
+  if (!TRF_SV_PEDTALK_OLD) pedTalkScan(t, ppos);   // круг 3: каждый кадр
   for (int i = 0; i < t->maxPeds; i++) {
     TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF) continue;
     t->activePeds++;
-    if (player) pedHitBy(t, i, player);
+    if (player) pedHitBy(t, i, player, dt);
     if (e->nearCool > 0.f) e->nearCool -= dt;
+    if (e->talkCool > 0.f) e->talkCool -= dt;
+    if (!TRF_SV_PEDDODGE_OLD) {   // 7.5: прогноз на 1 с по машине игрока и по машинам трафика
+      if (player && driving) pedReactCar(t, i, player, driving, dt);
+      for (int j = 0; j < t->maxCars; j++) if (t->car[j].mode == TRM_DRIVE || t->car[j].mode == TRM_PHYS) pedReactCar(t, i, &t->car[j].car, driving, dt);
+    } else
     if (player && driving) pedNearMiss(t, i, player);
-    for (int j = 0; j < t->maxCars; j++) if (t->car[j].mode == TRM_PHYS || t->car[j].mode == TRM_WRECK) pedHitBy(t, i, &t->car[j].car);
+    for (int j = 0; j < t->maxCars; j++) if (t->car[j].mode == TRM_PHYS || t->car[j].mode == TRM_WRECK || (!TRF_SV_PEDHIT_OLD && t->car[j].mode == TRM_DRIVE)) pedHitBy(t, i, &t->car[j].car, dt);   // 7.6: сбивает любая машина, и едущая по рельсам
     pedStep(t, w, i, player, driving, ppos, dt);
   }
   TP(8);
@@ -1579,12 +2438,25 @@ int trafficSolid(void *u, float *x, float *z, float y, float r, float *top, floa
 }
 int trafficKick(Traffic *t, float x, float y, float z, float r, float dx, float dz) {
   int n = 0; if (!t->hd) return 0;
+  // 3.1 (строка 2): удар задевает ОДИН объект — первый на отрезке; здесь — ближайший к центру удара из задетых (форма отрезка и порядок объектов — у homer.c/game.c, передано)
+  int only = -1; float bd = 1e30f;
+  if (!TRF_SV_KICK_OLD) {
+    for (int i = 0; i < t->maxPeds; i++) { TrPed *e = &t->ped[i]; if (!pedStands(e)) continue;
+      float ex = e->x - x, ey = e->y + .9f - y, ez = e->z - z, R = r + TR_PED_R + .3f, d2 = ex * ex + ey * ey + ez * ez;
+      if (d2 <= R * R && d2 < bd) { bd = d2; only = i; } }
+  }
   for (int i = 0; i < t->maxPeds; i++) {
     TrPed *e = &t->ped[i]; if (!pedStands(e)) continue;
+    if (!TRF_SV_KICK_OLD && i != only) continue;
     float ex = e->x - x, ey = e->y + .9f - y, ez = e->z - z, R = r + TR_PED_R + .3f;
     if (ex * ex + ey * ey + ez * ez > R * R) continue;
-    pedFly(t, i, dx * 5.f, dz * 5.f, 3.f); pushEvW(t, TR_EV_PED_KICK, i, e->x, e->y, e->z, HIT_KICK, t->pedm[e->model].name); n++;
+    { float kv = 400.f / SV_PED_MASS * .70710678f;   // круг 5 (3.3): импульс 400 под 45° вверх, скорость = импульс / масса. Массы пешехода в данных диска не нашлось — по умолчанию 100 (как у предметов без массы, g11)
+      if (TRF_SV_KICKF_OLD) pedFly(t, i, dx * 5.f, dz * 5.f, 3.f); else pedFly(t, i, dx * kv, dz * kv, kv); }
+    if (!TRF_SV_KICKF_OLD) e->mouthT = 1.2f;   // возглас при ударе (P15-06)
+    if (TRF_SV_KICK_OLD || !e->knocked) pushEvW(t, TR_EV_PED_KICK, i, e->x, e->y, e->z, HIT_KICK, t->pedm[e->model].name);   // 3.4: повторный пинок по уже сбитому события не даёт
+    e->knocked = 1; n++;
   }
+  trafficScare(t, x, z);   // 7.4: пинок игрока пугает пешеходов в 12 м (сбитый уже летит — паника его не трогает)
   return n;
 }
 int trafficPedPlace(Traffic *t, const ColWorld *w, int m, float x, float z, float h) {
@@ -1728,7 +2600,7 @@ void trafficDrawCars(Traffic *t, const float eye[3], int (*vis)(const float bb[6
       const Car *k; int model; float ang = 0.f;
       if (!pass) { const TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) continue; k = &c->car; model = c->model; ang = c->wheelAng; }
       else { if (!parkLive(t, i)) continue; k = &t->park[i].car; model = t->parkd[i].model; }
-      if (carShowHusk(k)) model = (int)t->hd->huskModel;
+      if (carShowHusk(k)) { if (!svHuskOk(t, model)) continue; model = (int)t->hd->huskModel; }   // P03-05: у части моделей остова нет — после взрыва машина пропадает
       float dx = k->x - eye[0], dy = k->y - eye[1], dz = k->z - eye[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
 #if CULL_SPHERE_OLD
       float R = carR(k);

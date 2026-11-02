@@ -32,7 +32,7 @@ static void check(const char *name, int ok, const char *fmt, double a, double b,
   printf("CHECK %-7s %s  %s\n", name, ok ? "OK  " : "FAIL", d); checks++; if (!ok) fails++;
 }
 static int delayFrames(float dt) {   // main.c: кадр защёлки (кадр 0) ставит таймер и в том же кадре делает первый шаг
-  float t = 0.f; gameHnrChaseStart(&t, dt);
+  float t = 0.f; gameHnrNewLevel(0); gameHnrChaseStart(&t, dt);   /* сверка g10-flow P03 Д4: каждая запись — первая погоня уровня */
   for (int f = 0; f < 1000; f++) if (gameHnrSpawnDue(&t, dt)) return f;
   return -1;
 }

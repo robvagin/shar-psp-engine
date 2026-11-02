@@ -5,7 +5,7 @@
 
 Только данные диска Роба (hit-and-run-web/source/game, чтение). Опоры: hit-and-run-web/tools (MIT: p3d, convert),
 tools/prp2_export.py (стейтпропы -> SPR1: скелет, PTRN, PVIS, билборды, окна EFX, коллизия), tools/stateprop_dump.py
-(машины состояний StateProp). Утёкший код SHAR не использовался.
+(машины состояний StateProp).
 
 Откуда что:
   карточки  — action-локаторы (вид 9) уровня с событием CollectorCard; номер карточки — строка 0 данных локатора (card11..17:

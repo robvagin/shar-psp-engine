@@ -220,10 +220,12 @@ const char *uiTutorialText(int msg);
 enum { UI_LS_GAGS, UI_LS_WASPS, UI_LS_CARS, UI_LS_SKINS, UI_LS_CARDS, UI_LS_RACES, UI_LS_BONUS, UI_LS_STORY, UI_LS_COUNT };
 typedef struct { int done[UI_LS_COUNT], total[UI_LS_COUNT]; } UiLevelStats;
 // процент уровня (строка Level Complete) — правило порта: всё сделанное / всё, что есть, по восьми строкам (формулы в данных нет)
-int  uiLevelStatsPct(const UiLevelStats *s);
+int  uiLevelStatsPct(const UiLevelStats *s);       // целые проценты (журналы)
+int  uiLevelStatsPct10(const UiLevelStats *s);     // сверка g09a-hud: десятые доли процента, среднее восьми долей с фиксированными делителями (ui.c LS_FIX)
 void uiDrawLevelStats(const UiLevelStats *s, int levelEnd);   // 0 — LEVEL PROGRESS паузы, 1 — конец уровня
 #define UI_LB_BAR 39.5f   // px кадра 272: 0.145 высоты
 void uiDrawLetterbox(float open, int prompt);
+void uiDrawLetterboxCover(float k);                  // сверка g10b-loop круг 3 (M2:23): полосы сходятся к центру, k 0..1 (1 — экран закрыт)
 // правка 206: подпись рядом со значком действия △ (что делает действие: «Get Into Car», «Talk To Marge»); NULL / "" — без подписи
 void uiActionText(const char *s);
 void uiPlaceCode(const char *s);   // №598: текст кода клетки для элемента PlaceCode (поле UI_F_PLACE)
@@ -281,6 +283,13 @@ extern int uiProfOn;   // тест-апка: разбивка кадра HUD п�
 int uiProfTake(char *out, int n);   // строка UIT (среднее мс на кадр HUD за прошедшее время) или 0
 // ----------------------------------------------------------------------------------------
 
+void uiScrNewsT(float t);                          // сверка g09a-hud M1:1: газета на экране загрузки по закону оригинала (1,8 с), t — секунды с запроса загрузки
+void uiPauseCloseNow(void);                        // сверка g09a-hud круг 5: закрыть паузу (ответ «Yes» на вопрос Restart/Abort)
+void uiPauseMissionGrey(int off);                  // сверка g09a-hud P13:Д3: Restart/Abort паузы миссии серые (условия считает вызывающий в момент открытия)
+void uiRadarInCar(int on);                         // сверка g09a-hud M1 Д9: игрок в машине — значки будок и своей машины на радаре скрыты
+void uiTimerUp(int up);                            // круг 3: таймер миссии считает вверх (не прячется при остатке ≤ 1 с)
+void uiTimerBlink(int on, float frac);               // сверка g09a-hud M2:15: окно мигания таймера миссии (on) и доля пройденного окна 0…1; звать раз в кадр
+void uiRadarSetCamera(float yaw);                    // сверка g09a-hud M1 Д2: после uiRadarSetPlayer — направление взгляда главной камеры (те же единицы, что heading)
 void uiCountdownText(const char *text);             // №630: слово отсчёта в центре экрана (NULL — число UI_F_COUNTDOWN)
 void uiHudSet(int field, int value);              // UI_F_*
 int  uiHudGet(int field);
@@ -381,7 +390,8 @@ int  uiScrDrawCredits(int screen, float scroll, UiCredits *info);
 // Всплывание уведомлений (задание, этап/миссия пройдены, карточка, осы, отсчёт ...), пульс △ и ровное кольцо Hit & Run
 // работают сами внутри uiDraw. uiPopHook: fn(ev, on) — тег HUD UI_T_* показан (on=1) / снят (0) в нарисованном кадре
 // (новый текст задания и новое число отсчёта — снова on=1), и события паузы UI_EV_* (звук интерфейса).
-enum { UI_EV_PAUSE = 64, UI_EV_SCROLL, UI_EV_ACCEPT, UI_EV_LOCKED, UI_EV_BACK };   // BACK — △/○ в меню OPTIONS и слотах (frontend.spt back)
+enum { UI_EV_PAUSE = 64, UI_EV_SCROLL, UI_EV_ACCEPT, UI_EV_LOCKED, UI_EV_BACK,
+      UI_EV_STING, UI_EV_TICK };   // STING: образец после остановки ползунка Sound (сверка g09a-hud M1 Д1); on = номер строки + 1 (0: музыка, 1: эффекты, 2: двигатель, 3: голос — порядок строк экрана); звуки подключает ui_sfx.c   // BACK — △/○ в меню OPTIONS и слотах (frontend.spt back)
 void uiPopHook(void (*fn)(int ev, int on));
 void uiPopHookFire(int ev);   // событие интерфейса UI_EV_* (звук: back / accept …) от экранов вне ui.c
 // служебное для гейтов (tools/ui_anim_gate.sh): строки в smoke.txt и отрицательные контроли
@@ -413,6 +423,7 @@ UiStats uiLastStats(void);
 #ifdef __cplusplus
 }
 #endif
+void uiResetFlash(void);   // сверка g09a-hud: белая вспышка сброса машины
 #endif
 extern void (*uiPakProgress1060)(unsigned done, unsigned total);   // №1060б: вызывается после каждого куска чтения пакета (NULL — нет)
 void uiPakSegMax1051(unsigned bytes);   // №1051: потолок куска при чтении пакета (0 — 1 МБ), будка в тесной куче ставит 256 КБ

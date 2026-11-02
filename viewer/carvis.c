@@ -34,6 +34,12 @@
 #define ZONE_OPEN 0.20f       // ...а столько -> её часть отщёлкивается
 #define ALL_TEX (1.f / 3.f)   // общий урон >= 1/3 -> все 4 текстуры битые, капот и багажник отщёлкнуты
 #define ALL_OPEN (2.f / 3.f)  // общий урон >= 2/3 -> отщёлкнуты и двери
+#ifndef SV_DAMVIS_OLD
+#define SV_DAMVIS_OLD 0
+#endif
+#ifndef SV_STOPLIGHT_OLD
+#define SV_STOPLIGHT_OLD 0
+#endif
 #define SHADOW_SOFT 0.35f     // ширина мягкого края тени, м
 #define SHADOW_A 130.f        // непрозрачность середины тени (0..255)
 #ifndef CAR_SHADOW_V2_OLD
@@ -126,13 +132,29 @@ void carVisSetCar(CarVis *v, const char *name) {
 #ifndef FORCEDSPIN955_OLD
 #define FORCEDSPIN955_OLD 0
 #endif
+// сверка g01-cars, P01 Д3 + P01-23: ведущие колёса не вращаются (угол 0), пока держат ручник, газа нет и колесо на земле — на любой скорости, и стоя; при пробуксовке (старт с места, торможение
+// с ходом назад ниже 50 км/ч, разворот задним ходом) крутятся с постоянной скоростью ≈30 % TopSpeed (famil_v 27 рад/с) в сторону газа/тормоза. Было: стоп только в заносе 2, быстрые колёса только в заносе 1.
+// -DSV_WHEELSPIN_OLD=1
+#ifndef SV_WHEELSPIN_OLD
+#define SV_WHEELSPIN_OLD 0
+#endif
+static float wheelSpinRate(const Car *c, int i, float w, float rad) {
+  if (SV_WHEELSPIN_OLD) {
+    if (i >= 2 && c->slip == 2) return 0.f;
+    if (i >= 2 && c->slip == 1) return (c->v >= 0.f ? 1.f : -1.f) * fmaxf(fabsf(w), 25.f);
+    return w;
+  }
+  if (i >= 2) {
+    if (c->lastHb && c->lastThr <= 0.f && c->comp[i] > 0.f) return 0.f;
+    if (c->spinDrive) return (float)c->spinDrive * .3f * c->p.topSpeed / (rad > .05f ? rad : .37f);
+  }
+  return w;
+}
 void carVisSpin(CarVis *v, const Car *c, float dt) {
   if (FORCEDSPIN955_OLD || dt <= 0.f) return;
   float rad = c->p.wheelRad > .05f ? c->p.wheelRad : v->wheelRad, w = rad > .05f ? c->v / rad : 0.f;
   for (int i = 0; i < 4; i++) {
-    float wi = w;
-    if (i >= 2 && c->slip == 2) wi = 0.f;
-    if (i >= 2 && c->slip == 1) wi = (c->v >= 0.f ? 1.f : -1.f) * fmaxf(fabsf(w), 25.f);
+    float wi = wheelSpinRate(c, i, w, rad);
     v->spin[i] = fmodf(v->spin[i] + wi * dt, 2.f * GU_PI * 64.f);
   }
 }
@@ -144,9 +166,7 @@ void carVisUpdate(CarVis *v, const Car *c, const CarInput *in, float dt) {
   // --- колёса: вращение по пройденному пути; ручник — задние стоят; пробуксовка — задние быстрее
   float w = c->v / v->wheelRad;
   for (int i = 0; i < 4; i++) {
-    float wi = w;
-    if (i >= 2 && c->slip == 2) wi = 0.f;
-    if (i >= 2 && c->slip == 1) wi = (c->v >= 0.f ? 1.f : -1.f) * fmaxf(fabsf(w), 25.f);
+    float wi = wheelSpinRate(c, i, w, v->wheelRad);
     v->spin[i] = fmodf(v->spin[i] + wi * dt, 2.f * GU_PI * 64.f);
   }
   // --- урон по зонам: удар из стороны контакта (нормаль от стены к машине)
@@ -189,7 +209,9 @@ void carVisUpdate(CarVis *v, const Car *c, const CarInput *in, float dt) {
   for (int k = 0; k < 3; k++) f[k] = gw[0] * m[4 * k] + gw[1] * m[4 * k + 1] + gw[2] * m[4 * k + 2];
   for (int i = 0; i < v->nhinge; i++) {
     CarHinge *h = &v->hinge[i]; int z = h->zone < 4 ? h->zone : 0;
-    int open = v->zoneDam[z] >= ZONE_OPEN || c->damage >= ALL_OPEN || (h->axis == 0 && c->damage >= ALL_TEX);
+    // сверка g01-cars, P01-10: пороги по общему урону D — створка места удара отпускается при D > 0,1, все четыре при D > 0,3. Было: зона 0,20, всё 1/3 и 2/3. -DSV_DAMVIS_OLD=1
+    int open = SV_DAMVIS_OLD ? (v->zoneDam[z] >= ZONE_OPEN || c->damage >= ALL_OPEN || (h->axis == 0 && c->damage >= ALL_TEX))
+                             : (c->damage > .3f || (c->damage > .1f && v->zoneDam[z] > 0.f));
     if (v->latched[i]) {
       if (!open || c->destroyed) continue;
       v->latched[i] = 0; v->thv[i] = 3.f;                      // отщёлкнулась — с толчком
@@ -213,8 +235,14 @@ void carVisUpdate(CarVis *v, const Car *c, const CarInput *in, float dt) {
     }
   }
   // --- фонари: стоп — тормоз на ходу вперёд; задний ход — едем назад
-  v->brake = in && in->brake > 0.f && c->v > 0.3f;
-  v->reverse = c->v < -0.3f;
+  // сверка g01-cars, P01-25: стоп-сигнал горит при любом нажатом тормозе после ограничения (1 − доля) — и стоя; задний ход включается при нажатом тормозе и скорости назад > 0,5 м/с.
+  // Было: тормоз на ходу вперёд быстрее 0,3 м/с; задний ход — просто едем назад. -DSV_STOPLIGHT_OLD=1
+  if (SV_STOPLIGHT_OLD) { v->brake = in && in->brake > 0.f && c->v > 0.3f; v->reverse = c->v < -0.3f; }
+  else {
+    float br = in ? in->brake : 0.f, ratio = c->p.topSpeed > 0.f ? fminf(1.f, fabsf(c->v) / c->p.topSpeed) : 0.f;
+    if (c->v > .15f) br = fminf(br, 1.f - ratio);
+    v->brake = br > 0.f; v->reverse = in && in->brake > 0.f && c->v < -0.5f;
+  }
 }
 
 int carVisVariantOn(const Car *c, int variant) { return carBoomed(c) ? variant == 1 : variant == 0; }   // правка 199: остов — со взрыва
@@ -226,7 +254,9 @@ int carVisTex(const CarVis *v, int tex) {
     if (d->texNorm != tex || d->texDam == 0xFFFF) continue;
     int z = d->zone < 4 ? d->zone : 0;
     // «целого» урона в data нет: v->prevDamage == car.damage после carVisUpdate
-    if (v->zoneDam[z] >= ZONE_TEX || v->prevDamage >= ALL_TEX) return d->texDam;
+    // сверка g01-cars, P01-10: с створками (игрок) — битая текстура места удара при D > 0,3, все четыре при D > 0,6; без створок (миссии) — при D > 0,1 и D > 0,4. Капот скрыть при 0,6 — не сделано (передано)
+    if (SV_DAMVIS_OLD ? (v->zoneDam[z] >= ZONE_TEX || v->prevDamage >= ALL_TEX)
+                      : (v->nhinge > 0 ? (v->prevDamage > .6f || (v->prevDamage > .3f && v->zoneDam[z] > 0.f)) : (v->prevDamage > .4f || (v->prevDamage > .1f && v->zoneDam[z] > 0.f)))) return d->texDam;
   }
   return tex;
 }

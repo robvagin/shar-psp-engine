@@ -28,6 +28,21 @@ void fxSpawn(int kind, float x, float y, float z, float vx, float vy, float vz);
 enum { FXD_LAND, FXD_BOUNCE, FXD_STEP };
 #define FXD_LAND_MIN 6.f
 int  fxHomerDust(int kind, float x, float y, float z, float power);   // -> сколько частиц пущено (0 — нет пакета/тихо)
+// сверка g11 (fx.c): кольцо пыли при сильном приземлении; частицы удара машины от импульса (Н·с): звёзды об забор, искры вдоль движения (movable 1 — подвижный предмет), крошка
+// машина о машину, 30 искр днищем. fxCrashFxSv = 0 (CRASHFX_SV_OLD=1) — вызовы не нужны, main_loop.h даёт прежние искры от прироста урона. Возврат — сколько частиц пущено
+void fxLandRing(float x, float y, float z, float force);
+int  fxCrashStars(float x, float y, float z, float impulse);
+int  fxCrashSparks(float x, float y, float z, float dx, float dz, float impulse, int movable);
+int  fxCrashPaint(float x, float y, float z, float impulse);
+int  fxCrashUnder(float x, float y, float z);
+extern int fxCrashFxSv;
+// круг 2 (fx.c): приземление героя с силой и кольцом стомпа; дым и брызги из-под задних колёс по типу поверхности; частица листвы при ударе машины о деревья и изгороди
+#ifndef FXLAND_SV_OLD
+#define FXLAND_SV_OLD 0   // 1 — приземление героя как в TEST81 (пыль по скорости падения, без силы и кольца)
+#endif
+int  fxHomerLand(float x, float y, float z, float force, int ring);
+int  fxWheelSpin(float x, float y, float z, int surf, float vx, float vz, float k);
+int  fxFoliageHit(const float pos[3], float v);
 void fxUpdate(float dt);
 // cam: положение глаза и единичное направление взгляда. Сбрасывает состояние GE (вызывать resetState после)
 void fxDraw(float ex, float ey, float ez, float fx, float fy, float fz);

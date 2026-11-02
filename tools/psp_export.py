@@ -876,6 +876,7 @@ def atc_mass_table():
 # m3/m5/m6/m7 на локаторах своих миссий, у шлюза АЭС). Модель — стейтпроп со скелетом и эффектами: тип SPR1 (как ключ/нитро, prp2_export.add_pickup),
 # экземпляр в точке каждого локатора, СКРЫТЫЙ (состояние 0); движок (viewer/msn_view.c state_prop + main_loop.h) включает его на этапе миссии и
 # прячет при подборе. SHR_MSNSPROP_OLD=1 — как раньше (нет в SPR1, предмет невидим). -> [(файл p3d, имя, [позиции порта])]
+LOC_KIND_PREF = []   # сверка g07 круг 5: порядок предпочтения видов локатора (пусто — как раньше, первый найденный)
 def mission_stateprops(level):
     if os.environ.get('SHR_MSNSPROP_OLD') == '1': return []
     import sys as _s
@@ -888,9 +889,15 @@ def mission_stateprops(level):
             want.setdefault(m.group(1).lower(), [])
             if m.group(2).lower() not in want[m.group(1).lower()]: want[m.group(1).lower()].append(m.group(2).lower())
     if not want: return []
-    locs = {}
+    locs, locs_kind = {}, {}
     for p in sorted((GAME / 'art').glob(f'l{level}*.p3d')) + sorted((GAME / f'art/missions/level{level:02d}').glob('*.p3d')):
-        for l in read_locators(p, p.name)[0]: locs.setdefault(l.name.lower(), l.pos)
+        # сверка g12-data круг 2, P18-11: имена локаторов не уникальны между видами (52 имени на L1: r1p1 — точка машины и кнопка, dmv — зона и вход);
+        # предмет стоит на локаторе ВИДА «событие» (0, у всех четырёх бочек L7), поэтому ищем пару (вид, имя). Было: первое найденное по имени.
+        # PSP_LOCKIND_OLD=1 — прежнее. Сейчас на диске имена предметов уникальны (проверено по L1–L7), на результат правка не влияет
+        for l in read_locators(p, p.name)[0]:
+            k = l.name.lower()
+            if os.environ.get('PSP_LOCKIND_OLD') == '1' or k not in locs: locs.setdefault(k, l.pos); locs_kind.setdefault(k, l.type)
+            elif locs_kind.get(k) != 0 and l.type == 0: locs[k] = l.pos; locs_kind[k] = 0
     out = []
     for name, ln in want.items():
         f = GAME / f'art/missions/level{level:02d}/{name}.p3d'
@@ -977,6 +984,9 @@ def atc_rows():
     for _ in range(n):
         a, p = string(d, p); b, p = string(d, p); e, p = string(d, p)
         rows.append((a, b, e, struct.unpack_from('<3f', d, p))); p += 12
+    # сверка g12-data P16-26 (02.11.2026): после загрузки оригинал переписывает строку 0: звук smash, частицы и обломок eNull, масса 100,
+    # трение 1, упругость 1 (на диске «WTF» и нули). Было: строка 0 как на диске. ATC0_OLD=1 — как было
+    if rows and os.environ.get('ATC0_OLD') != '1': rows[0] = ('smash', 'eNull', 'eNull', (1.0, 100.0, 1.0))
     return rows
 
 def col_material(ent, atc):
@@ -1010,6 +1020,7 @@ def col_skeleton_frame(root, name, shapes):
 def col_collect(roots):
     """roots: [(имя сцены, корень p3d)] -> tris (N,4,3), boxes (N,16), cyls (N,12), segs (N,8), отчёт"""
     tris, nrm, boxes, cyls, segs = [], [], [], [], []
+    surfs = []   # сверка g12-data P18-04: байт поверхности каждого треугольника земли (подчанк 0x0300000E), параллельно tris
     atc = atc_rows()
     rep = dict(static={}, skipped={}, errors=[], ortho=0.0, flat_cyl=0, spheres=0, zero_box=0, foliage=[], boxnames=[], cylnames=[])
     for scene, root in roots:
@@ -1020,6 +1031,15 @@ def col_collect(roots):
                 nn, = struct.unpack_from('<I', c.data, p)
                 fn = np.frombuffer(c.data, '<f4', 3 * nn, p + 4).reshape(-1, 3) if nn * 3 == ni else np.zeros((ni // 3, 3), np.float32)
                 tris.append(pos[idx[:ni // 3 * 3]].reshape(-1, 3, 3)); nrm.append(fn[:ni // 3])
+                # сверка g12-data P18-04 (02.11.2026): тип поверхности — подчанк 0x0300000E (u32 версия 0, u32 число = число треугольников,
+                # байт на треугольник: 0 дорога, 1 трава, 2 песок, 3 гравий, 4 вода, 5 настил, 6 металл, 7 грунт, бит 0x80 помещение).
+                # Было: подчанк отбрасывался, везде асфальт. SHR_SURF_OLD=1 — блока SRF1 в COL1 нет (файл побайтно прежний)
+                sf = next((k_ for k_ in c.children if k_.id == 0x300000E), None)
+                nt_ = ni // 3
+                if sf is not None and len(sf.data) >= 8 + nt_ and struct.unpack_from('<II', sf.data)[1] == nt_:
+                    surfs.append(np.frombuffer(sf.data, np.uint8, nt_, 8))
+                else:
+                    surfs.append(np.zeros(nt_, np.uint8))
             elif c.id == 0x3000000 and (scene.endswith('_terra') or (TRACK_FENCES and re.fullmatch(r'b0\d', scene))):   # забор: начало, конец, нормаль
                 segs.append(np.frombuffer(c.data, '<f4', 9).reshape(3, 3))
         for ent in root.children:
@@ -1062,13 +1082,15 @@ def col_collect(roots):
     emax = np.max([np.linalg.norm(T[:, (i + 1) % 3] - T[:, i], axis=1) for i in range(3)], 0)
     ok = (a2 >= COL_MIN_2A) & (a2 / np.maximum(emax, 1e-12) >= COL_MIN_H)
     rep['tri_src'], rep['tri_degenerate'] = len(T), int((~ok).sum())
-    T, FN, n = T[ok], FN[ok], n[ok] / a2[ok, None]
+    SF = np.concatenate(surfs) if surfs else np.zeros(0, np.uint8)
+    T, FN, n, SF = T[ok], FN[ok], n[ok] / a2[ok, None], SF[ok]
     # одинаковые треугольники из соседних зон — один раз
     q = np.round(T * 1000).astype(np.int64)                                   # мм; вершины по порядку внутри треугольника
     order = np.lexsort((q[..., 2], q[..., 1], q[..., 0]), axis=-1)
     key = np.take_along_axis(q, order[..., None], axis=1).reshape(-1, 9)
     _, first = np.unique(key, axis=0, return_index=True); first.sort()
-    rep['tri_duplicate'] = len(T) - len(first); T, FN, n = T[first], FN[first], n[first]
+    rep['tri_duplicate'] = len(T) - len(first); T, FN, n, SF = T[first], FN[first], n[first], SF[first]
+    rep['surf'] = SF   # g12-data P18-04: по строкам TR (порядок после фильтра и дедупликации)
     # ориентация: n.y >= 0; строго вертикальные — в сторону нормали из файла (после зеркала)
     flip = np.where(np.abs(n[:, 1]) > COL_VERT_NY, n[:, 1] < 0, (n * FN).sum(1) < 0)
     T[flip] = T[flip][:, [0, 2, 1]]; n[flip] *= -1   # (зеркало z разворачивает обход почти у всех — это нормально)
@@ -1880,7 +1902,7 @@ def col_seg_cells(SG, ox, oz, cell, W, H, margin=COL_SEG_MARGIN):
         cells.append(gz[hit] * W + gx[hit]); ids.append(np.full(int(hit.sum()), i))
     return (np.concatenate(cells), np.concatenate(ids)) if cells else (np.zeros(0, int), np.zeros(0, int))
 
-def col_section(TR, BX, CY, SG, cell=COL_CELL, sweep=None, jmp=b''):
+def col_section(TR, BX, CY, SG, cell=COL_CELL, sweep=None, jmp=b'', surf=None):
     """-> bytes секции COL1 и статистика сетки. sweep {('box'|'cyl', номер): (x0, z0, x1, z1)} — живые объёмы
     (tools/animobj_export.py): в сетку идут все клетки, которые объём заметает за клип, не только поза кадра 0.
     jmp — блок JMP1 (tools/jumps_export.py: зоны прыжка машин и подкидывающие точки Гомера) после ссылок, выровнен
@@ -1915,6 +1937,12 @@ def col_section(TR, BX, CY, SG, cell=COL_CELL, sweep=None, jmp=b''):
     body = [TR.astype('<f4').tobytes(), BX.astype('<f4').tobytes(), cy.tobytes(),
             SG.astype('<f4').tobytes(), start.astype('<u4').tobytes(), pr.astype('<u4').tobytes()]
     sec = bytearray(head + b''.join(body)); sec += b'\0' * (-len(sec) % 16)
+    # сверка g12-data P18-04: блок SRF1 сразу за ссылками (до JMP1): 'SRF1', u32 версия 1, u32 число треугольников, u32 0, затем байт
+    # поверхности на строку TR (0 дорога, 1 трава, 2 песок, 3 гравий, 4 вода, 5 настил, 6 металл, 7 грунт, | 0x80 помещение), выровнен на 16.
+    # Движок (viewer/surface.c) ищет его по смещению конца ссылок; прежний col.c блок не читает и пропускает (смещение JMP1 — в flags).
+    # SHR_SURF_OLD=1 или surf=None — блока нет, секция как была
+    if surf is not None and len(surf) == len(TR) and len(TR) and os.environ.get('SHR_SURF_OLD') != '1':
+        sec += b'SRF1' + struct.pack('<3I', 1, len(TR), 0) + np.asarray(surf, np.uint8).tobytes(); sec += b'\0' * (-len(sec) % 16)
     if jmp:
         struct.pack_into('<I', sec, 44, len(sec)); sec += jmp; sec += b'\0' * (-len(sec) % 16)
     per = np.diff(start); ne = per[per > 0]
@@ -1961,7 +1989,25 @@ CAR_REF_GEOM = dict(halfW=1.10, halfL=2.675, bodyOfs=-0.32, wheelX=0.91, wheelF=
 CAR_REF_BAND = (0.35, 1.6)       # слой стен кузова famil_v: ниже — бордюры (колёса заезжают), выше крыши — нет
 CAR_STEP = 0.35                  # ступенька под колесом — свойство мира (бордюры), одно на все машины
 CAR_REF_DOOR = (-1.475, 0.57)    # viewer/homer.c HOMER_DOOR_X/Z до 29.09: якорь посадки famil_v (x, z модели)
-CAR_INFO_FMT = '<16s12f3f4f7fI'
+CAR_INFO_FMT = '<16s12f3f4f7fI4B'
+# сверка g12-data P01-22 (02.11.2026): команды машин, которые оригинал читает из scripts/cars/*.con, а порт не выгружал. flags (u32 в конце info):
+# бит 1 — SetHasDoors (как было); добавлены бит 2 — SetHighRoof(1) (28 машин: у Мардж волосы не прижимаются к потолку), бит 4 —
+# SetCharactersVisible(0) (ccella..ccelld: сидящих не рисуют), бит 8 — SetAllowSeatSlide(0) (4 машины). Следом 4 байта (раньше добивка
+# нулями): байт 0 — SetCharacterScale в процентах (0 — не задан, 100; у 30 машин 80..99, у одной 25: масштаб сидящих), байт 1 —
+# SetShininess ×255 (отражения; 0 — не задано), байт 2 — SetGamblingOdds ×10 (круг 2, P06-3, g07b; 0 — нет), байт 3 — 0. Читает движок (viewer/car*.c, окно
+# g01-cars). SHR_CARCMD_OLD=1 — прежние байты (флаги только бит 1, четыре нуля)
+CARCMD_OLD = os.environ.get('SHR_CARCMD_OLD') == '1'
+def car_cmds(con):
+    """-> (биты флагов 2|4|8, процент масштаба сидящих, блеск ×255, множитель ставки ×10) из текста .con. Круг 2, g07b-msnview P06-3: SetGamblingOdds
+    (87 машин; 1,0 / 2,0 / 3,0 ...) — третий из четырёх запасных байт информации машины, множитель × 10 (0 — команды нет, карточка берёт умолчание уровня).
+    Выплата = вход + trunc(множитель × вход) считает msn_view.h (mvWagerPay); читатель — CAR1 -> mvCarOdds. Под тем же SHR_CARCMD_OLD=1"""
+    def num(name):
+        m = re.search(name + r'\s*\(\s*([-+0-9.eE]+)', con)
+        return float(m.group(1)) if m else None
+    bits = (2 if num('SetHighRoof') == 1 else 0) | (4 if num('SetCharactersVisible') == 0 else 0) | (8 if num('SetAllowSeatSlide') == 0 else 0)
+    sc, sh = num('SetCharacterScale'), num('SetShininess')
+    od = num('SetGamblingOdds')
+    return bits, (int(round(sc * 100)) if sc else 0), (min(255, int(round(sh * 255))) if sh else 0), (min(255, int(round(od * 10))) if od else 0)
 CAR_ROOF_BAND = 0.6              # крыша — верх кузова ближе к оси, чем 0.6 полуширины (зеркала и ручки по бокам — не крыша)
 CAR_SUN =np.array([0.35, 0.85, -0.40]); CAR_SUN = CAR_SUN / np.linalg.norm(CAR_SUN)   # сверху, спереди-справа (модель смотрит в -Z)
 CAR_AMB, CAR_DIF = 0.50, 0.55   # светотень: ambient + диффуз (подобрано на глаз, AMBI шейдеров не берём)
@@ -2405,13 +2451,14 @@ def car_info(car, carp):
     far = next((c for c in m['cams'] if c[0] >= 256), None)
     con = (GAME / 'scripts' / 'cars' / f'{car}.con').read_text(errors='replace')
     hd = re.search(r'SetHasDoors\s*\(\s*(\d+)', con)
+    bits, scale, shin, odds = (0, 0, 0, 0) if CARCMD_OLD else car_cmds(con)
     return dict(car=car, **g, seat=tuple(dl), seatA=sa, door=door, cam=tuple(near[1:7]), camFar=far[3] if far else 0.0,
-                flags=1 if (not hd or hd.group(1) != '0') else 0)
+                flags=(1 if (not hd or hd.group(1) != '0') else 0) | bits, cmd=(scale, shin, odds))
 
 
 def car_info_bytes(inf):
     g = [inf[k] for k in ('halfW', 'halfL', 'bodyOfs', 'wheelX', 'wheelF', 'wheelR', 'wheelRad', 'bodyLo', 'bodyHi', 'bandLo', 'bandHi', 'step')]
-    b = struct.pack(CAR_INFO_FMT, inf['car'].encode()[:15], *g, *inf['seat'], *inf['seatA'], *inf['door'], *inf['cam'], inf['camFar'], inf['flags'])
+    b = struct.pack(CAR_INFO_FMT, inf['car'].encode()[:15], *g, *inf['seat'], *inf['seatA'], *inf['door'], *inf['cam'], inf['camFar'], inf['flags'], *(tuple(inf.get('cmd', (0, 0, 0))) + (0,) * 3)[:3], 0)
     return b + b'\0' * (-len(b) % 16)
 
 
@@ -3162,7 +3209,8 @@ def main(level, out_path=None, scenes=None, coins=True, backdrop_level=None):
     sweep = None
     if aobj: BX, CY, sweep = aobj.col_extend(BX, CY)   # объёмы AnimCollision: статичные + живые (заметание клипа — в сетку)
     jmp, jz, jp = jumps_export.jmp1(level)   # зоны прыжка машин и подкидывающие точки Гомера из данных (правки 46, 47)
-    col, cst = col_section(TR, BX, CY, SG, sweep=sweep, jmp=jmp)
+    SURF = np.concatenate([rep['surf'], np.zeros(len(TR) - len(rep['surf']), np.uint8)])   # g12-data P18-04: добавленная опора по видимой земле (11.3) — без типа (дорога)
+    col, cst = col_section(TR, BX, CY, SG, sweep=sweep, jmp=jmp, surf=SURF)
     out += b'\0' * (-len(out) % 16); struct.pack_into('<I', out, 92, len(out)); out += col
     if aobj: rep['skipped'].pop('AnimCollision', None)   # объёмы AnimCollision теперь в COL1 (статичные и живые, ANM1)
     col_report(rep, cst, TR, BX, CY, SG); jumps_export.report(jz, jp)

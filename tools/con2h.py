@@ -8,9 +8,9 @@ python tools/con2h.py [--src hit-and-run-web/source/game/scripts/cars] [--out vi
 
 Смысл и единицы — в комментарии, который пишется в carparams.h (FIELDS ниже). Источники: hit-and-run-web
 (src/vehicle-physics.ts — их модель ссылается на разбор PAL-версии игры, адреса 0x2801e8/0x280388; MIT),
-donut (GPL: там команды .con только объявлены, без физики), общеизвестное о движке. Утёкший исходник не открывался.
+donut (GPL: там команды .con только объявлены, без физики), общеизвестное о движке.
 """
-import argparse, re
+import argparse, os, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,7 +55,19 @@ FIELDS = [
     ('SetWheelieRange', 'wheelieRange', 0.0, 'вилли: полный газ ниже этой доли TopSpeed сдвигает центр масс на WheelieOffset'),
     ('SetWheelieOffsetY', 'wheelieOffsetY', 0.0, 'сдвиг центра масс при вилли по высоте, м'),
     ('SetWheelieOffsetZ', 'wheelieOffsetZ', 0.0, 'сдвиг центра масс при вилли вдоль, м (минус — назад: нос поднимается)'),
+    ('SetGamblingOdds', 'gamblingOdds', 1.0, 'шансы машины в гонке на ставку (круг 2, P01-20): выплата = ставка + trunc(шансы × ставка); 1 / 2 / 3'),
 ]
+
+
+# Сверка g01-cars (02.11.2026, P01-21): начальные значения, когда команды нет в .con, у оригинала другие, чем взяты из famil_v.
+# CON2H_DEFAULTS_OLD=1 — прежние умолчания (famil_v). Для реальных машин сказывается только: SetWeebleOffset у cklimo, dune_v, huska, rocke_v (−1,0 против −0,75),
+# SetSlipSteeringNoEBrake и SetSlipEffectNoEBrake у huska (50 и 0,1 против 35 и 0)
+ORIG_DEFAULTS = {'mass': 1000.0, 'gasScale': 4.0, 'brakeScale': 3.0, 'topSpeedKmh': 220.0, 'maxWheelTurnDeg': 35.0, 'hsSteeringDrop': 0.0,
+                 'tireGrip': 4.0, 'normalSteering': 110.0, 'slipSteering': 35.0, 'eBrakeEffect': 0.5, 'slipSteeringNoEBrake': 50.0,
+                 'slipEffectNoEBrake': 0.1, 'suspensionLimit': 0.4, 'springK': 0.5, 'damperC': 0.2, 'hitPoints': 2.0, 'burnoutRange': 0.3,
+                 'donutTorque': 10.0, 'weebleOffset': -1.0}
+if os.environ.get('CON2H_DEFAULTS_OLD') != '1':
+    FIELDS = [(c, f, ORIG_DEFAULTS.get(f, d), doc) for (c, f, d, doc) in FIELDS]
 
 
 def strip_comments(s):

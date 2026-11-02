@@ -42,6 +42,8 @@ typedef struct MsnAudioBackend {
   void  (*dialogue_mode)(void *u, int on);             // режим звука «Dialogue» на время разговора (шины диска)
   void  (*log)(void *u, const char *line);             // строка в smoke.txt / вывод бота
   int   logNow;                                        // 1 — строки сразу (бот); 0 — по одной за кадр (EBOOT: запись в файл)
+  void  (*always_on)(void *u, int on);                 // круг 3 (g08, P09:1): этап «музыка всегда» включён/снят — фон улицы после выхода из машины не возвращается; NULL — ничего
+  void  (*time_warn)(void *u);                         // сверка g08-sound (P09:20, P06 Д4): таймер пересёк 10 с вниз — реплика героя «Time» (музыки 10sec нет); NULL — ничего
 } MsnAudioBackend;
 
 typedef struct MsnAudio {
@@ -55,6 +57,8 @@ typedef struct MsnAudio {
   // музыка
   char code[16];                                        // "M3", "Bonus", "StreetRace01"
   char stateCode[8], stateValue[16], currentEvent[40]; /* RMS state selector, emitted event before @value */
+  float prevLeft;                                       // остаток таймера в прошлом кадре (пересечение 10 с)
+  int startPend;                                        // сверка g08-sound (СВЕРКА_С_ИСХОДНИКОМ 4.1): миссия началась пешком — «_start» ждёт посадки в машину
   int started, alwaysOn, onFoot, tensec, out;           // музыка миссии идёт; этап «музыка всегда»; пешком; 10 с было; вышел из машины
   char logq[MSN_AUDIO_LOGQ][160]; int log0, nlog;       // строки журнала: наружу по одной за кадр
 } MsnAudio;

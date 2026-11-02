@@ -55,7 +55,7 @@ static SkinModel hm; static SkinPlayer *hp; static int haveHomer;
 // слой), рисует их камерой гостиной FE_Camera и стоит в MainMenu.scr ПЕРЕД 3dFE.pag (сценка рисуется до комнаты: до всего
 // смешиваемого гостиной); глаза — дорожка текстур TEX_* по времени клипа (ключи CHR1, blinkFps 0 — без случайного мигания
 // skin.c); клип сценки — один раз (флаг цикла 0), перенос корня играет (Мэгги ползёт 3,5 м и обратно).
-// Из исполняемого файла диска (SLES_518.97, CGuiScreenMainMenu: конструктор 0x1b8180, обновление 0x1b9088–0x1b952c):
+// Из исполняемого файла диска (SLES_518.97, экран главного меню: конструктор 0x1b8180, обновление 0x1b9088–0x1b952c):
 //   * часы сценок — мс экрана главного меню; первая сценка на 15000 мс (FE_GAG_FIRST_MS);
 //   * за 2000 мс до запуска выбирается номер: (rand()/10 % 97) % число слоёв (8) — повтор той же разрешён;
 //     для Gag0 ещё отрезок Гомера: (rand()/10 % 97) % 5;
@@ -90,8 +90,14 @@ static FeGagClock gagClock; static int gagMenuActive = 1; static unsigned lastT;
 int feGagForce = -1, feGagAuto = 1, feGagSeg = -1; float feGagAt = -1.f;   // служебное (смоук «flag fegag N», «fegagat С», «fegagauto 0», «fegagseg K»)
 void (*feGagLog)(const char *line);
 void (*feGagEvent)(int event, int index, int segment);
+// сверка g09b-menu (M3 №14, 02.11.2026): при выходе из главного меню в любое другое место голос сценки Gag останавливается, если следующая сценка ещё не выбрана
+// (gagClock.pending < 0). Событие 182 — обратный вызов feGagEvent; обрабатывает main_frontend.h (feVoiceEvent). FE_VOICESTOP_OLD=1 — голос доигрывает, как было
+#ifndef FE_VOICESTOP_OLD
+#define FE_VOICESTOP_OLD 0
+#endif
 void feGagMenu(int active) {
   active = active != 0;
+  if (!active && gagMenuActive && !FE_VOICESTOP_OLD && feGagEvent && gagClock.pending < 0) feGagEvent(182, -1, -1);
   if (feGagLog && active != gagMenuActive) { char ln[112]; snprintf(ln, sizeof ln, "FEMENU active=%d elapsed_ms=%u pending=%d\n", active, gagClock.elapsed, gagClock.pending); feGagLog(ln); }
   if (active != gagMenuActive && !FE_GAG_CLOCK_OLD) lastT = 0;   // exclude the interval without feDraw (e.g. title)
   gagMenuActive = active;
@@ -330,6 +336,14 @@ int feFly(int item, int mode) {
   }
   capArm = feCapReq > 0 && mode == FE_GO && !sweepOn; capSeen = 0;   // правка 293 (fecap): этот перелёт — по кадрам в ОЗУ, один раз
   if (capArm) { capWant = feCapReq; feCapReq = 0; capFrom = feCapFrom; capTagNow = feCapTag; }
+  return 1;
+}
+// сверка g09b-menu (M3 №1, №3; 02.11.2026): перелёт по кадрам таймлайна камеры данных от a до b (30 к/с) — подэкраны OPTIONS (SOUND 660–690 и обратно 690–720, титры 600–630 / 630–660,
+// ролики 914–944 / 944–974, просмотр ролика 975–1005 / 1005–1035) и наезд камеры после титульного (721–770). Таблица FLT1 их не знает (строится от главного вида к предмету).
+// 0 — нет данных или кадры вне таймлайна: камера стоит
+int feFlyRange(int a, int b) {
+  if (!H || a < 0 || b <= a || (unsigned)b >= H->nFrames) return 0;
+  tlPos = (float)a; tlEnd = (float)b; flying = 1; lastT = 0; sweepOn = 0; capArm = 0;
   return 1;
 }
 int feFlying(void) { return flying; }

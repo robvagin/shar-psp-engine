@@ -4,6 +4,7 @@
 // --nowrite — отрицательный контроль «сборка без записи»: запись не попадает в файл, после «перезапуска» прогресс слетает,
 // гейт обязан упасть. Сборка с -DSV_BROKEN_CRC (без сверки CRC) обязана провалить проверку испорченного файла.
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "world.h"
@@ -209,7 +210,9 @@ int main(int argc, char **argv) {
   // ================================================= чекпоинт миссии и защита от чужой/испорченной записи
   { MsnProgress q = {1, 1, 1, 1, 2, {0}, 1u}; char err[160]; static BotWorld W3; bwNew(&W3);
     gameMsnOpenAt(&W3.msn, &W3.G, mpack, msize, NULL, &q, err, sizeof err);
-    check("resume.checkpoint", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 1 && W3.msn.rt.stage == 2, "m1 с чекпоинта: миссия %d фаза %d этап %d",
+    // сверка g07 (P14:16): запись оригинала хранит только уровень и номер миссии — загрузка начинает миссию заново с её начала (вступление, этап 0); точка повтора
+    // (MSN_CP5_OLD) — этап-чекпоинт вступления, не этап из записи. Прежнее ожидание (с этапа 2 основной части) — красный контроль: сборка -DGAME_RESUME33_OLD=1
+    check("resume.checkpoint", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage == 0, "m1 с начала миссии: миссия %d фаза %d этап %d",
           W3.msn.rt.cur, W3.msn.rt.phase, W3.msn.rt.stage);
     q.stage = 200; gameMsnOpenAt(&W3.msn, &W3.G, mpack, msize, NULL, &q, err, sizeof err);
     check("resume.bad_stage", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage == 0, "этап вне миссии -> старт m1 с начала (%d/%d/%d)",
@@ -218,6 +221,15 @@ int main(int argc, char **argv) {
     check("resume.other_level", W3.msn.rt.cur == 0 && W3.msn.rt.completed == 0, "запись другого уровня -> новая игра уровня (m%d, маска %08x)",
           W3.msn.rt.cur, (unsigned)W3.msn.rt.completed);
     bwFree(&W3); }
+  { // сверка g10-flow 02.11 (P01 Д1): прочность личных машин переживает запись -> файл -> чтение; запись без поля — «поля нет»
+    SaveGame a, b; uint8_t buf[SV_BYTES]; svClear(&a); svClear(&b);
+    uint16_t h[3] = {0x1234, 0xBEEF, 7}; float f[3] = {.4f, 0.f, 1.f};
+    svCarHealthPut(&a, 3, h, f); int w = svWrite(&a, buf); int r = svRead(buf, SV_BYTES, &b);
+    uint16_t h2[8]; float f2[8]; int n = svCarHealthGet(&b, h2, f2); uint16_t h3[8]; float f3[8];
+    check("carhp.roundtrip", w > 0 && r == SV_OK && n == 3 && h2[0] == 0x1234 && h2[1] == 0xBEEF && h2[2] == 7 && fabsf(f2[0] - .4f) < .005f && f2[1] == 0.f && f2[2] == 1.f,
+          "3 машины: n=%d h0=%04x f0=%.3f f1=%.3f f2=%.3f", n, h2[0], f2[0], f2[1], f2[2]);
+    SaveGame c; svClear(&c); check("carhp.absent", svCarHealthGet(&c, h3, f3) == -1, "запись без поля — -1");
+  }
   printf("RESULT %s %d\n", fails ? "FAIL" : "OK", fails);
   return fails ? 1 : 0;
 }

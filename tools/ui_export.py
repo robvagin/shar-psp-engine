@@ -14,7 +14,7 @@ edge anchors (never stretched), and writes the binary pack that viewer/ui.c draw
     python tools/ui_export.py dump ingame.p3d Hud.pag ...   # raw element listing
 
 Reads only: the disc (hit-and-run-web/source/game) and hit-and-run-web/tools/{p3d,textures,
-convert}.py (MIT).  Nothing here comes from the leaked SHAR source.
+convert}.py (MIT).
 
 ADAPTATION RULES (the contract; see also the report):
   R1  uniform scale S = 272/480 for every element (height based) -> aspect ratio always kept.

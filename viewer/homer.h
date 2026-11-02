@@ -23,6 +23,153 @@
 #ifndef DRIVER_BOX_OLD
 #define DRIVER_BOX_OLD 0    // №520: =1 — рамка «водитель вне кадра» от прежнего place (после сброса машины водитель пропадал)
 #endif
+// ===== Внедрение сверки с исходником, окно g04-homer (02.11.2026, правки 1077–1081). Каждый выключатель: =1 — поведение TEST81 =====
+// Ссылки «ГОМЕР x.y», «P02-n», «P05-n», «P08-n» — отчёты docs/handoff/СВЕРКА_ГОМЕР.md и СВЕРКА_ПОЛНАЯ/*.md
+#ifndef HOMER_STICK_SQ_OLD
+#define HOMER_STICK_SQ_OLD 0     // ГОМЕР 1.1: ходьба — скорость по (отклонение²)/0,69 до 1, ×4 м/с; 1 — линейно
+#endif
+#ifndef HOMER_RUN_FACE_OLD
+#define HOMER_RUN_FACE_OLD 0     // ГОМЕР 1.3: бег — ход вдоль лица, лицо тянется к стику с темпом 2/с; 1 — ход в сторону стика, поворот 720°/с
+#endif
+#ifndef HOMER_DASH_SPEED_OLD
+#define HOMER_DASH_SPEED_OLD 0   // P02-3, ГОМЕР 1.4: бег — желаемая скорость сразу 8 м/с при любом ненулевом стике, без разгона; 1 — как ходьба (отклонение×8, разгон 20)
+#endif
+#ifndef HOMER_TURN_EXP_OLD
+#define HOMER_TURN_EXP_OLD 0     // P02-4, ГОМЕР 1.2/2.4: лицо догоняет по экспоненте с темпом 10 (ходьба) / 2 (бег) / 4 (воздух) в секунду; 1 — линейно 720°/с
+#endif
+#ifndef HOMER_BACKSTICK_OLD
+#define HOMER_BACKSTICK_OLD 0    // P02-1, P17-10: стик в задней полуплоскости лица при отклонении < 0,6 гасится до 1 %; 1 — любое отклонение ведёт и разворачивает
+#endif
+#ifndef HOMER_AIR_PS2_OLD
+#define HOMER_AIR_PS2_OLD 0      // ГОМЕР 2.2/2.3, P02-9/10, Д1: воздух — прибавка по стику (0,078 × желаемая скорость за кадр 1/30 с), без стика скорость не меняется, потолок max(4|8, скорость) − (○? 4 : 0); 1 — цель-скорость и потолок скорости отрыва
+#endif
+#ifndef HOMER_FRAME_PS2_OLD
+#define HOMER_FRAME_PS2_OLD 0    // P02-2: направление стика от камеры каждый кадр; на смене камеры держится прежнее, пока стик в 15° от запомненного; 1 — схема №704/836/916/920/947б/1059
+#endif
+#ifndef HOMER_JUMP_WALL_OLD
+#define HOMER_JUMP_WALL_OLD 0    // P02-Д5: в отрыве (прыжок, сход с края) горизонталь 0, если в прошлом шаге касался твёрдого (стена, ящик, персонаж); 1 — горизонталь сохраняется
+#endif
+#ifndef HOMER_KICK_STOP_OLD
+#define HOMER_KICK_STOP_OLD 0    // P02-17: удар на земле — стоп сразу, клип ничем не прерывается, нажатия теряются; 1 — торможение 10 м/с², отмена ходьбой/✕, повтор □
+#endif
+#ifndef HOMER_JKICK_ONCE_OLD
+#define HOMER_JKICK_ONCE_OLD 0   // P02-11, P02-10: удар в прыжке один раз, кадр 6 (0,2 с), после него второй прыжок и стомп закрыты; после схода с края удара нет; 1 — как было
+#endif
+#ifndef HOMER_STOMP_VY_OLD
+#define HOMER_STOMP_VY_OLD 0     // P02-12: стомп — вертикаль на нажатии сохраняется и продолжается после замаха (×3,22); 1 — 0 на замахе и −4 м/с после
+#endif
+#ifndef HOMER_LANDPOW_OLD
+#define HOMER_LANDPOW_OLD 0      // P02-14, ГОМЕР 2.7: приземление — сила пыли в событии LAND (dx: 0,5 / 0,7 после второго прыжка / 1,0 после стомпа; dz: 1 — кольцо); 1 — dx = 0
+#endif
+#ifndef HOMER_AIR_ACT_OLD
+#define HOMER_AIR_ACT_OLD 0      // P02-18: пока идёт действие (воздух, удар, посадка) △ не читается — homerCanEnter только на земле и стоя; 1 — как было
+#endif
+#ifndef HOMER_ENTER_BOX_OLD
+#define HOMER_ENTER_BOX_OLD 0    // ГОМЕР 5.1/6.2: сесть можно внутри объёма «габарит кузова + 1 м во все стороны»; 1 — 5 м от двери / 3,5 м от кузова
+#endif
+#define HOMER_ENTER_PAD 1.0f
+#ifndef HOMER_SLOPE30_OLD
+#define HOMER_SLOPE30_OLD 0      // ГОМЕР 4.1: земля круче 30° (нормаль.y ≤ 0,866) — не опора: на неё не ступить; 1 — любой наклон
+#endif
+#define HOMER_SLOPE_NY 0.866f
+#define HOMER_SLOPE_RISE 0.5f   // порт: бордюры и ступени с крутой гранью (до 0,5 м) берутся, сопка круче 30° — нет
+#ifndef HOMER_CARHIT_ALL_OLD
+#define HOMER_CARHIT_ALL_OLD 0   // ГОМЕР 5.7: на ногах сбивают только машины ИИ миссий (HomerCar.hostile), порог 1 м/с; 1 — любая быстрее 3 м/с
+#endif
+#ifndef HOMER_STUN_OLD
+#define HOMER_STUN_OLD 0         // ГОМЕР 8.6: оса — оглушение 0,5 с с мерцанием (homerStun), без отлёта и падения; 1 — вызывающий зовёт homerHurt как раньше
+#endif
+#ifndef HOMER_STEPFX_OLD
+#define HOMER_STEPFX_OLD 0       // P02-Д2: событие STEP на каждое касание ноги при желаемой скорости > 1 м/с (r = желаемая скорость); 1 — только бег
+#endif
+#ifndef HOMER_STEPSND_OLD
+#define HOMER_STEPSND_OLD 1      // P02-34: звук шага на каждое касание ноги (sndFootstep), набор по svSurfaceAt (бетон/металл/дерево; в помещении бетон); 1 — без звука шагов
+#endif
+#ifndef HOMER_IDLE_PS2_OLD
+#define HOMER_IDLE_PS2_OLD 0     // P02-36, ГОМЕР 1.9: ожидание — 10–20 с случайно, клипы 5/10, 3/10, 2/10, подряд один и тот же не берётся; 1 — 8 с и по очереди
+#endif
+#ifndef HOMER_JUMP_LAUNCH_OLD
+#define HOMER_JUMP_LAUNCH_OLD 0  // P02-7, ГОМЕР 2.8: прыжок с места — сначала клип заводки (без движения и гравитации), отрыв и звук после него; на ходу и при падении сразу; 1 — отрыв в тот же кадр
+#endif
+#ifndef HOMER_DOOR_WALK_OLD
+#define HOMER_DOOR_WALK_OLD 0    // P02-32, P05-13: к двери машины пешком (не бежит), скорость min(расстояние/0,1 с, 4); таймаут 1,5 × путь / 4 м/с — ставит в точку у двери; 1 — бег 8 м/с, таймаут 4 с
+#endif
+#ifndef HOMER_DOOR_PTS_OLD
+#define HOMER_DOOR_PTS_OLD 0     // P05-23, ГОМЕР 5.3: угловые точки обхода на 0,53 м по каждой оси от габарита кузова; 1 — на 0,8 / 0,7 м
+#endif
+#ifndef HOMER_ENTER_WAIT_OLD
+#define HOMER_ENTER_WAIT_OLD 0   // P05-24, ГОМЕР 5.2, P02-31: △ у едущей машины — стоит без управления, пока скорость не упадёт до 1 км/ч (запас HOMER_ENTER_WAIT_MAX, затем ирис); 1 — садится на ходу
+#endif
+#define HOMER_ENTER_WAIT_MAX 3.0f
+#ifndef HOMER_CTRL_EARLY_OLD
+#define HOMER_CTRL_EARLY_OLD 0   // P02-27, P05-14, P05-Д8: посадка — управление и «в машине» по концу get_into_car, закрытие двери 0,2 с идёт за рулём; выход — закрытие двери обрывается стиком > 0,5 (дверь остаётся как была); 1 — всё до конца клипа
+#endif
+#ifndef HOMER_GESTURE_OLD
+#define HOMER_GESTURE_OLD 0      // P02-29, P05-Д2: жесты водителя — пороги и держание оригинала (руль 0,5 и > 5 км/ч, газ > 8 м/с² и < 20 км/ч, тормоз > 10 м/с² и > 50 км/ч, удар > 25); 1 — пороги порта
+#endif
+#ifndef HOMER_SEATBOB_OLD
+#define HOMER_SEATBOB_OLD 0      // P05-Д1: фигура за рулём качается по вертикали вслед за толчками машины (порог 1 м/с², k 0,003, предел 0,11 м); 1 — жёстко на якоре
+#endif
+#ifndef HOMER_EXIT_TOP_OLD
+#define HOMER_EXIT_TOP_OLD 0     // P02-28: выход, когда у двери занято — ирис, Гомер на крыше на 0,2 м выше без подскока; 1 — подскок 0,5 м без ириса
+#endif
+#ifndef HOMER_PAD_ANY_OLD
+#define HOMER_PAD_ANY_OLD 0      // P02-Д4, P02-16: подкидывающая точка срабатывает при входе в объём в любой фазе (стоя, бег, воздух); горизонталь не больше 25 м/с; 1 — только стоя
+#endif
+#ifndef HOMER_AIRCLIP_OLD
+#define HOMER_AIRCLIP_OLD 0      // P02-Д6, P05-26: клип воздуха замедляется, чтобы дойти до конца к приземлению (скорость min(1, остаток/время до земли)); 1 — скорость 1
+#endif
+#ifndef HOMER_RIDE_OLD
+#define HOMER_RIDE_OLD 0         // P02-22: на крыше едущей машины Гомер едет вместе с ней (положение и поворот), + сёрфинг (P02-23, P05-17); 1 — крыша лишь высота земли
+#endif
+#ifndef HOMER_STEP6_OLD
+#define HOMER_STEP6_OLD 0        // ГОМЕР 4.2: ступенька до 0,6 м (луч вниз от прошлой высоты + 0,6); 1 — 0,4 м
+#endif
+#ifndef HOMER_LANDCLIP_OLD
+#define HOMER_LANDCLIP_OLD 0     // P02-15, ГОМЕР 2.7: клип «приземление на месте» играет без стика и обрывается любым ненулевым стиком или ✕ (не только > 0,1); 1 — порог 0,1
+#endif
+#ifndef HOMER_SURF_OLD
+#define HOMER_SURF_OLD 0         // P02-23, P05-17: сёрфинг на крыше едущей (> 10 м/с) машины без ввода — surf_in, surf_cycle, surf_out; 1 — без сёрфинга
+#endif
+#ifndef HOMER_CAMLAG_OLD
+#define HOMER_CAMLAG_OLD 0       // P08-3/4 (+ поправка), 2.x: камера пешком — глаз догоняет Гомера с запаздыванием 0,08 за 16 мс (τ≈0,19 с), точка взгляда отдельным фильтром 0,044 за 16 мс (63 % за 0,29 с, вдвое быстрее при падении > 1 м/с); высота взгляда замирает, если камера не выше цели больше чем на 0,5 м; 1 — всё жёстко
+#endif
+#ifndef HOMER_CAMAIR_OLD
+#define HOMER_CAMAIR_OLD 0       // P08-6, P08-50, 2.5: в воздухе (прыжок, отлёт, выброс) высота камеры замирает на высоте отрыва, курс — по закону 1059 с настоящей скоростью; 1 — +0,6 м и коэффициент 1,6
+#endif
+#ifndef HOMER_CAMFLIP_D_OLD
+#define HOMER_CAMFLIP_D_OLD 0    // P08-5: после перескока у стены расстояние 4,26 м (минимум камеры из данных); 1 — 4,0 м
+#endif
+#ifndef HOMER_CAMGOAL_OLD
+#define HOMER_CAMGOAL_OLD 0      // P08-Д1: пешком ближе 10 м к предмету цели миссии — камера становится за спину Гомера лицом к предмету (homerCamGoal); 1 — без притяжения
+#endif
+#ifndef HOMER_CAMLOOK_MIN_OLD
+#define HOMER_CAMLOOK_MIN_OLD 0  // P08-Д10: расстояние от глаза до точки взгляда не меньше 1 м; 1 — без проверки
+#endif
+#ifndef HOMER_CEIL_OLD
+#define HOMER_CEIL_OLD 0         // P02-13: голова о потолок — вертикаль в ноль, падение, позиция на 0,1 ниже; 1 — потолка нет
+#endif
+#ifndef HOMER_TALK_OLD
+#define HOMER_TALK_OLD 0         // P15-15: новая реплика не прерывает играющий жест; 1 — заменяет
+#endif
+#ifndef HOMER_KICKSEG_OLD
+#define HOMER_KICKSEG_OLD 0      // круг 2, ГОМЕР 3.1: пинок на земле — точка в 0,7 м вперёд и 0,7 м вверх, радиус 0,5 м, момент 0,25 с (отрезок 2 м под 45°); 1 — сфера 1 м в 0,85 вперёд и 0,45 вверх, 8/30 с
+#endif
+#ifndef HOMER_SWITCHCLIP_OLD
+#define HOMER_SWITCHCLIP_OLD 0   // круг 2, P05:3: нажатие выключателя играет клип hit_switch; 1 — без клипа
+#endif
+#ifndef HOMER_DODGE_OLD
+#define HOMER_DODGE_OLD 0        // круг 5, ГОМЕР 5.5 / P05-22 / P02-33: выход из уничтоженной машины — ждёт 0,5 с, поворот лицом наружу от водительской двери, на землю, клип уворота (npd_dodge) с его движением корня, потом управление; 1 — полёт головой вперёд по записи PS2 (правки 73, 147)
+#endif
+#ifndef HOMER_LOOKBACK_OLD
+#define HOMER_LOOKBACK_OLD 0     // круг 5, P02-29: задний ход — взгляд назад (ndr_look_back), держится на кадре 25 и ещё 22 тика после конца реверса; 1 — без взгляда
+#endif
+#ifndef HOMER_INTERIOR_OLD
+#define HOMER_INTERIOR_OLD 0     // P02-6, ГОМЕР 1.6/3.6: внутри интерьера бег и прыжок отключены, удар играет клип но не бьёт (homerIndoor); 1 — без ограничений
+#endif
+#ifndef HOMER_BODY_R_OLD
+#define HOMER_BODY_R_OLD 0       // P02-21: тело — круг радиуса 0,35, центр на 0,05 назад от оси; 1 — 0,30 по оси
+#endif
 #include "skin.h"
 #include "col.h"
 #include "car.h"
@@ -57,10 +204,20 @@ extern "C" {
 #define HOMER_AIR_ACCEL   4.68f    // 0.078 * 60
 #define HOMER_STOMP_G     3.22f
 // ---- наше
+#if HOMER_BODY_R_OLD
 #define HOMER_RADIUS      0.30f    // капсула по xz
+#define HOMER_BODY_BACK   0.f
+#else
+#define HOMER_RADIUS      0.35f    // сверка g04-homer P02-21: цилиндр тела радиуса 0,35 (было 0,30); центр на 0,05 назад от оси
+#define HOMER_BODY_BACK   0.05f
+#endif
 #define HOMER_HEIGHT      1.80f
 #ifndef HOMER_STEP
+#if HOMER_STEP6_OLD
 #define HOMER_STEP        0.40f    // ступенька/бордюр, на которые заходит сам (-DHOMER_STEP=0.004f — красный контроль гейта garage_ramp)
+#else
+#define HOMER_STEP        0.60f    // сверка g04-homer ГОМЕР 4.2: луч вниз с высоты прошлой позиции + 0,6 м — ступенька до 0,6 м
+#endif
 #endif
 #ifndef HOMER_STAIR_UP
 #define HOMER_STAIR_UP 0      // №гараж АЭС L1: лесенка из плит (уступы до HOMER_STAIR_MAX) — Гомер встаёт сам; 0 до эталона PS2
@@ -152,6 +309,7 @@ typedef struct {
   float seatA[2];              // якорь посадки (car.p.seatAx/Az): конец клипа посадки ставит Гомера на сиденье; у машины, где
                                // дверь дальше от борта (коробка кузова шире кабины), якорь доезжает от двери за время клипа посадки
   int husk;                    // правка 355: остов после взрыва — посадка/выход без двери и ириса (HOMER_HUSK_SEAT)
+  int hostile;                 // сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (погоня, цель) — только такая сбивает пешего (ставит вызывающий после homerCarFrom)
   int iris;                    // правка 333: в .con машины SetIrisTransition(1) (car.c carIrisFor) — посадка и выход ирисом, без клипов двери
 } HomerCar;
 void homerCarFrom(HomerCar *hc, const Car *c, float lift);
@@ -249,6 +407,28 @@ typedef struct {
   // --- подкидывающие точки (правка Роба 46; блок JMP1 COL1, tools/jumps_export.py): последняя точка (-1 — вне точек;
   // пока стоит в той же, второй раз не подбрасывает), полёт с неё (без стика воздух скорость не гасит), счётчик для тестов
   int padLast, bouncing, bounces; float padApex[3];
+  // --- сверка g04-homer (02.11.2026)
+  float supY;                  // ГОМЕР 4.1: высота последней опоры не круче 30° (подъём по круче больше чем на HOMER_SLOPE_RISE над ней — стена)
+  float wantV;                 // желаемая скорость от стика в этом кадре, м/с (событие шага, звук шага)
+  int wallHit;                 // в прошлом подшаге касался твёрдого (стена, ящик, персонаж) — P02-Д5
+  int jkicked, edgeFall;       // удар в прыжке был (до приземления); сошёл с края без прыжка — P02-11 / P02-10
+  float stompVy;               // вертикаль в момент стомпа — P02-12
+  float stunT;                 // оглушение осой, с (homerStun)
+  float frameHold, frameStick; int frameLatch; float prevCamYaw, frameOffT;   // P02-2: держание направления на смене камеры
+  float launchWait;            // P02-7: сколько ещё идёт заводка прыжка с места, с
+  float idleWait; int idleLast;   // P02-36: случайная пауза до длинного idle и прошлый выбор
+  float lkX, lkY, lkZ; int lkInit;   // точка взгляда камеры пешком (фильтр, P08-3/4)
+  float stepPh; int indoor;    // шаги: фаза; признак интерьера (homerIndoor)
+  float airCap; int airRun, dashHeld;   // круг 3: потолок горизонтальной скорости в полёте и бег на отрыве (запоминаются при отрыве)
+  int cDodge, cDrvBack, cCarVic[2]; float gRevT;   // круг 5: клипы уворота, взгляда назад, радости за рулём (малый, большой); время после реверса
+  int rockOut;                 // круг 2: этап с AllowRockOut
+  float celT; int celKind;     // праздничный клип: 0 нет, 1 малый (стик прерывает), 2 большой (не прерывает)
+  int celClip;                 // клип праздника, который играет
+  int cSurf[3], surfSt;        // сёрфинг на крыше едущей машины: surf_in / surf_cycle / surf_out; 0 нет, 1 вход, 2 цикл, 3 выход
+  int onCar, carPrevOk; float carPrevX, carPrevZ, carPrevAng, carPrevRoof;   // стоит на крыше машины и её прошлое положение (едет вместе с ней)
+  float waitCar, doorT, doorBudget; int doorHold;   // посадка: ожидание остановки машины, время подхода к двери и его бюджет, дверь остаётся открытой при выходе
+  int gKind; float gHold, drvPrevSpd;               // жест водителя: 1 руль, 2 газ, 3 тормоз; кадр держания, с; прошлая скорость машины
+  float bobOff, bobPrevY, bobPrevVy; int bobInit;   // качание фигуры водителя
 } Homer;
 
 // модель — skinLoad("homer.shr"); 0 = ок, <0 — в модели нет нужных клипов
@@ -267,6 +447,18 @@ int homerExitCar(Homer *H, const HomerCar *car, const HomerCarCb *cb);
 void homerSetInCar(Homer *H, const HomerCar *car);
 // удар током / сбит машиной: откинуть от (fromX, fromZ), флейл, встаёт. Событие HURT
 void homerHurt(Homer *H, float fromX, float fromZ, float power);
+// сверка g04-homer ГОМЕР 8.6: попадание осы — оглушение на sec (0,5) с мерцанием модели, без отлёта и падения; событий не шлёт (5 монет и размытие экрана — у вызывающего, collect.c / game.c)
+void homerStun(Homer *H, float sec);
+// сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (c->hostile = 1) наехала на пешего — сбить (падает и встаёт); 1 — сбит. Зовёт traffic.c / car.c, передано g02-traffic / g03-aicars
+int homerKnockedByCar(Homer *H, const HomerCar *c);
+// круг 2, P05:3: Гомер нажимает выключатель (клип hom_hit_switch, стоя). yaw — курс лицом по локатору (NAN — не поворачивать). 1 — клип запущен
+int homerPressButton(Homer *H, float yaw);
+// круг 2, P06:Д5: AllowRockOut — пока этап идёт, в покое играет рок-стойка (клипа в homer.shr нет: флаг хранится, играет, когда клип выгрузят)
+void homerRockOut(Homer *H, int on);
+// сверка g04-homer P02-6: игрок внутри интерьера (комната, магазин) — бег и прыжок отключены, удар играет клип, но по предметам не бьёт; ставит game.c каждый кадр до homerUpdate
+static inline void homerSetIndoor(Homer *H, int on) { H->indoor = on; }
+// сверка g04-homer P05-1 / P02-24: праздничный клип — big=0 малый (конец этапа; обрывается стиком), big=1 большой (карточка, миссия пройдена; ничем не прерывается). В машине водителя — in_car_victory_*_driver. 1 — запущен
+int homerCelebrate(Homer *H, int big);
 // взрыв машины (Роб 28.09: «в оригинале при взрыве персонаж вылетал из машины»): Гомер в машине / садится / выходит —
 // вылетает от центра взрыва (fromX, fromZ) со стороны двери водителя (занята — с крыши в другую сторону), флейл, встаёт.
 // Пешком к двери — просто останавливается. События ON_FOOT и EJECT (без HURT: монеты не разлетаются). 1 — выброшен
@@ -300,6 +492,8 @@ int homerHitTest(const HomerEvent *e, float cx, float cy, float cz, float r);
 void homerCoinPoint(const Homer *H, float p[3]);
 static inline int homerOnFoot(const Homer *H) { return H->state != HS_IN_CAR && H->state != HS_GET_IN && H->state != HS_GET_OUT && H->state != HS_TO_DOOR; }
 static inline int homerDriving(const Homer *H) { return H->state == HS_IN_CAR; }
+// сверка g04-homer P10-Д7: кабинный мотор (звук) выключается и позиционный холостой ход включается в КОНЦЕ анимации выхода, а не в начале. Для звука main_loop.h (передано g08-sound / g10-flow); управление по-прежнему homerDriving
+static inline int homerCabEngine(const Homer *H) { return H->state == HS_IN_CAR || H->state == HS_GET_OUT; }
 // можно ли сесть (у двери водителя ближе HOMER_ENTER_DIST или у кузова ближе HOMER_ENTER_BODY)
 int homerCanEnter(const Homer *H, const HomerCar *car);
 // правки 220/231: руль (−1 влево .. 1 вправо), газ, тормоз 0..1, скорость машины м/с, удар в этом кадре — для жестов водителя
@@ -309,7 +503,7 @@ extern float (*homerCamRayExtra)(const float a[3], const float b[3]);   // пр�
 extern int homerCamHeroOld;   // правка 361: 1 — прежнее: после выброса камера по курсу машины, в полёте курс не догоняет (красный контроль)
 void homerCamera(Homer *H, const ColWorld *w, float dt, float eye[3], float look[3]);
 // Правка 349 / ДОБИВКА 18 ([PS2] В86, knowledge/facts/ps2-r6-foot-death.yaml; запись ps2-w build/twins/o4/
-// ps2_v86_r6_foot_death_physics/trace.tsv, кадры 606–906): после переноса пешком зоной DEATH активной остаётся WalkerCam, её глаз
+// ps2_v86_r6_foot_death_physics/trace.tsv, кадры 606–906): после переноса пешком зоной DEATH активной остаётся камера пешком оригинала, её глаз
 // переставляется сразу (кадр 608, первый после переноса) — по горизонтали 4,165 м от Гомера С ЛИЦА (по его курсу), на 1,891 м выше
 // ступней, взгляд в точку 1,0 м над ступнями (= HOMER_CAM_LOOK_H); стоя так и остаётся (до кадра 906). Здесь: камера сразу в эту
 // позу; пошёл / повернул камеру — дистанция и высота уходят к обычным 2,5 м/с (правило порта, как отпуск стены — правка 40)
@@ -369,6 +563,8 @@ static inline void homerJaw(Homer *H, float rad) { H->jawOpen = rad; }
 #endif
 #define HOMER_CAM_UPDN .35f
 #define HOMER_CAM_MARGIN .35f        // зазор от стены до глаза (ближняя плоскость 0.3 м — стена не режет кадр)
+// сверка g04-homer P08-Д1: предмет цели миссии, к которому пешком тянется камера (ближе 10 м). on=0 — цели нет. Ставит game_msn.c каждый кадр по этапу «дойти» с рисуемым предметом
+void homerCamGoal(int on, float x, float y, float z);
 // поза для кадра (после homerUpdate; для невидимого — можно не звать)
 void homerPose(Homer *H);
 extern int (*homerDoorCan)(void);   // №667: 1 — у рисуемой машины водительская дверь может открыться (NULL — да, как прежде)

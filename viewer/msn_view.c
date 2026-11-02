@@ -84,7 +84,7 @@ static int preFail;   // modelFor: файл не открылся / повреж
 static int prePending(const char *name) { for (int i = 0; i < NPRE; i++) if (pre[i].p && msn_streq(pre[i].name, name)) return 1; return 0; }
 #define NANIM 10
 typedef struct { char name[24]; const SkinModel *m; SkinPlayer p; int idle, walk; int talkLine, gest; float gestT;
-                 int flail, land, getup, poseTick; float lift; int liftInit; } NpcAnim;   // правка 240: сбит машиной — клипы рига flail / fall_land / get_up (-1 — нет); №510: lift — подъём стоп
+                 int flail, land, getup, poseTick; float lift; int liftInit; SkinMouth mouth; } NpcAnim;   // правка 240: сбит машиной — клипы рига flail / fall_land / get_up (-1 — нет); №510: lift — подъём стоп
 static NpcAnim *anim[NANIM];
 static void dropModel(int k) {   // модель и все её анимации — из кучи (слот фонового персонажа отдан персонажу миссии)
   bbOp("npc-", model[k].name, 0);   // правка 103: самописец
@@ -243,12 +243,37 @@ static struct {
   char talk[24]; float talkH;          // собеседник цели talkto и высота значка (SetTalkToTarget, 3-й аргумент)
   struct { int type; float x, z; char name[24]; } giver[16]; int ngiver;
   int stages;                          // сколько этапов начато (служебно)
-  int briefing, brFirst, brLoaded, brQueued, brPicLost, brWager; unsigned brT0; char present[32], title[96], info[256];   // брифинг миссии (MissionLoad.scr): картинка SetPresentationBitmap
+  int briefing, brFirst, brLoaded, brQueued, brPicLost, brWager, brFee; unsigned brT0; char present[32], title[96], info[256];   // брифинг миссии (MissionLoad.scr): картинка SetPresentationBitmap
   int levelDone; float levelDoneAt;    // MSN_EV_LEVEL_COMPLETE: 1 — уровень, 2 — игра пройдена; когда отдать main.c (clock_)
   int levelEnd;                        // открыт экран конца уровня (LevelEnd.scr), ждёт X
   char fmv[32]; int fmvWait;           // цель «fmv» (SetFMVInfo): ролик ждёт main.c (mvFmvPending / mvFmvDone)
+  char dynaFiles[160]; unsigned dynaSeq;   // сверка g11b-collect круг 5 (P12-10): последняя строка файлов SetDynaLoadData и сколько раз команда выполнялась (старт, рестарт, этап)
   char dynaRoom[32];                   // последний SetDynaLoadData: интерьер («…@», "SimpsonsHouse"; "" — город), как в оригинале до следующего
 } H;
+// сверка g07b-msnview (P13-3, P13-6, P13-2, P06-6): попытки и пропуск миссий. Число учтённых «сбросов» миссии растёт при старте основной части и при каждом перезапуске
+// (Restart паузы, Yes на экране провала); Skip на экране провала — после 7 учтённых (сбросы / 2), на L7 никогда для 5-й, 6-й и 7-й сюжетной миссии. Пропущенная миссия не
+// пройдена, но значок в MISSION SELECT у неё жёлтая черта; крест — только при попытках и без пропуска. Данные живут сессию (запись прогресса — передано main_save.h / savegame.h).
+// Было: счётчика и пропуска нет, крестом помечалась текущая сюжетная миссия всегда. SV_SKIP_OLD=1 — прежнее
+#ifndef SV_SKIP_OLD
+#define SV_SKIP_OLD 0
+#endif
+static unsigned char msTries[32]; static unsigned msSkipped;
+static void msTryBump(void) { if (!SV_SKIP_OLD && M.rt.cur >= 0 && M.rt.cur < 32 && msTries[M.rt.cur] < 255) msTries[M.rt.cur]++; }
+// сверка g07b-msnview (M2:6): «Item Dropped!» мигает вкл/выкл каждые 0,25 с и висит, пока активных предметов больше нуля; снимается на нуле. Было: фиксированные 2 с без мигания.
+// Въезд на 21 % высоты за 0,2 с — в ui.c (передано). SV_DROP_OLD=1 — прежнее
+#ifndef SV_DROP_OLD
+#define SV_DROP_OLD 0
+#endif
+static int dropOn; static float dropT0;
+#ifndef SV_BONUS_REPEAT_OLD
+#define SV_BONUS_REPEAT_OLD 0
+#endif
+static void dropTick(void) {
+  if (!dropOn) return;
+  int left = 0; for (int i = 0; i < M.rt.nitems && i < MSN_MAX_ITEMS; i++) if (!M.rt.done[i]) left++;
+  if (!left || M.rt.status != MSN_RUNNING) { dropOn = 0; uiForceShow(UI_T_ITEM_DROPPED, 0.f); return; }
+  uiForceShow(UI_T_ITEM_DROPPED, (int)((clock_ - dropT0) / .25f) % 2 == 0 ? .2f : 0.f);
+}
 static int levelEndOld;   // служебное (flag uilevelendold): прежняя вспышка 3 с вместо экрана LevelEnd (отрицательный контроль)
 static int iconIndex(const char *icon) {   // значок задания: из msnicons (msnart.shr, может ещё дочитываться) — иначе без значка
   return icon && *icon ? UI_OBJICON_EXTERNAL : -1;
@@ -287,15 +312,50 @@ static void objectiveShow(const char *text, const char *icon) {
   if (text && *text) { msnartSetObjIcon(icon); uiMessage(text, iconIndex(icon), 0.f); iconLv = mvPackLevel(); iconNote("set"); }
   else { uiMessage(NULL, -1, 0.f); iconNote("off"); }
 }
-static void uiTimerCb(void *u, int ms, int up) { (void)u; (void)up; uiHudSet(UI_F_TIMER, ms < 0 ? 0 : ms); uiHudShow(UI_T_TIMER, ms >= 0); }
+// сверка g09a-hud круг 3 (С16, M2:15): мигание таймера (белый–красный, период 0,5 с, ×0,67 после половины окна, ×0,5 после 0,8). Границы окна мигания в скриптах миссий не найдены
+// (tools/missions не несёт такой команды), поэтому окно — правило порта: последние SV_TIMERBLINK_S секунд обратного отсчёта; таймер «вверх» не мигает и не прячется.
+// ВОПРОС Робу/g07: если окно задаётся данными, подставить их. SV_TIMERBLINK_OLD=1 — без мигания
+#ifndef SV_TIMERBLINK_OLD
+#define SV_TIMERBLINK_OLD 0
+#endif
+#define SV_TIMERBLINK_S 10
+extern void uiTimerBlink(int on, float frac) __attribute__((weak));
+extern void uiTimerUp(int up) __attribute__((weak));
+static void uiTimerCb(void *u, int ms, int up) {
+  (void)u; uiHudSet(UI_F_TIMER, ms < 0 ? 0 : ms); uiHudShow(UI_T_TIMER, ms >= 0);
+  if (uiTimerUp) uiTimerUp(ms >= 0 && up);
+  if (uiTimerBlink) { int in = !SV_TIMERBLINK_OLD && ms > 1000 && !up && ms <= SV_TIMERBLINK_S * 1000; uiTimerBlink(in, in ? 1.f - (float)ms / (SV_TIMERBLINK_S * 1000.f) : 0.f); }
+}
 static void uiParCb(void *u, int ms) { (void)u; uiHudSet(UI_F_PARTIME, ms < 0 ? 0 : ms); uiHudShow(UI_T_PARTIME, ms >= 0); }
 static void uiCounterCb(void *u, int done, int total) {   // гонка по кругам — прогресс показывают круги, не точки
   (void)u; int race = M.rt.obj == MSN_OBJ_RACE && M.rt.laps > 1;
   uiHudSet(UI_F_COLLECTED, done); uiHudSet(UI_F_COLLECT_TOTAL, total); uiHudShow(UI_T_COLLECTIBLES, total > 0 && !race);
 }
-static void uiLapCb(void *u, int lap, int laps) { (void)u; uiHudSet(UI_F_LAP, lap); uiHudSet(UI_F_LAPS, laps); uiHudShow(UI_T_LAP, laps > 1); }
+// сверка g07b-msnview (M2:16): при круге больше первого группа кругов переключает видимость каждые 0,25 с, 8 переключений (4 мигания) и играет событие обновления круга.
+// Звук обновления круга — передано (имя события в таблицах звука нужно владельцу ui_sfx.c). Было: просто показ. SV_LAPBLINK_OLD=1 — прежнее
+#ifndef SV_LAPBLINK_OLD
+#define SV_LAPBLINK_OLD 0
+#endif
+static float lapT0 = -1.f; static int lapShow, lapLast;
+static void uiLapCb(void *u, int lap, int laps) {
+  (void)u; uiHudSet(UI_F_LAP, lap); uiHudSet(UI_F_LAPS, laps); lapShow = laps > 1; uiHudShow(UI_T_LAP, laps > 1);
+  if (!SV_LAPBLINK_OLD && lap > 1 && lap != lapLast && laps > 1) lapT0 = clock_;
+  lapLast = lap;
+}
+static void lapTick(void) {
+  if (lapT0 < 0.f) return;
+  int n = (int)((clock_ - lapT0) / .25f);
+  if (n >= 8) { lapT0 = -1.f; uiHudShow(UI_T_LAP, lapShow); return; }
+  uiHudShow(UI_T_LAP, lapShow && n % 2 == 0);
+}
+// сверка g07b-msnview круг 2 (g09a-hud, M2:3): длительность позиции отсчёта из сценария передаётся в ui.c через uiCountdownDur (слабая ссылка: переменная появится вместе с CDOWN_POP_OLD g09a;
+// пока её нет — ничего не делается). Пустой кадр между позициями — ветка !text ниже. SV_CDOWN_DUR_OLD=1 — не передавать
+#ifndef SV_CDOWN_DUR_OLD
+#define SV_CDOWN_DUR_OLD 0
+#endif
+extern float uiCountdownDur __attribute__((weak));
 static void uiCountdownCb(void *u, const char *text, float s) {   // "3" "2" "1" — число HUD; "GO!" и прочее — строка задания
-  (void)u; (void)s;
+  (void)u; if (!SV_CDOWN_DUR_OLD && &uiCountdownDur && text && s > 0.f) uiCountdownDur = s;
   if (!text) { uiHudShow(UI_T_COUNTDOWN, 0); return; }   // слово остаётся для угасания; следующая цифра его сбросит (uiCountdownText(0))
   if (text[0] >= '0' && text[0] <= '9') { uiCountdownText(0); uiHudSet(UI_F_COUNTDOWN, atoi(text)); uiHudShow(UI_T_COUNTDOWN, 1); }
   else if (!text[0]) uiHudShow(UI_T_COUNTDOWN, 0);   // пустая строка — не слово: без устаревшего числа на экране
@@ -305,17 +365,38 @@ static void uiCountdownCb(void *u, const char *text, float s) {   // "3" "2" "1"
   else { uiHudShow(UI_T_COUNTDOWN, 0); uiMessage(text, -1, s > 0.f ? s : 1.f); }
 #endif
 }
+#ifndef SV_MCOMPLETE_OLD
+#define SV_MCOMPLETE_OLD 0
+#endif
+#ifndef SV_STAGEFLASH_OLD
+#define SV_STAGEFLASH_OLD 0
+#endif
 static void uiFlashCb(void *u, int what, const char *text) {
   (void)u;
-  if (what == MSN_FLASH_STAGE_COMPLETE) H.stageFlash = clock_ + 2.f;          // MissionProgress ("этап пройден")
+  if (what == MSN_FLASH_STAGE_COMPLETE) H.stageFlash = clock_ + (SV_STAGEFLASH_OLD ? 2.f : 1.f);   // сверка g07b СВЕРКА_С_ИСХОДНИКОМ 7.1: «этап пройден» 1 с (было 2 с; SV_STAGEFLASH_OLD=1)          // MissionProgress ("этап пройден")
   else if (what == MSN_FLASH_MISSION_COMPLETE || what == MSN_FLASH_BONUS_COMPLETE) {   // правка 122: текст вспышки — из пакета миссий
-    H.missionFlash = clock_ + 3.f; uiMessage(NULL, -1, 0.f);                             // (MISSION_COMPLETE / BONUS_MISSION_COMPLETE)
+    H.missionFlash = clock_ + (SV_MCOMPLETE_OLD ? 3.f : 2.5f); uiMessage(NULL, -1, 0.f);   /* сверка g07b круг 2 (С_ИСХ 7.2): MISSION COMPLETE 2,5 с (было 3 с; SV_MCOMPLETE_OLD=1) */                             // (MISSION_COMPLETE / BONUS_MISSION_COMPLETE)
     uiMissionDoneText(text && *text ? text : (what == MSN_FLASH_BONUS_COMPLETE ? "BONUS MISSION\nCOMPLETE!" : "MISSION COMPLETE!")); }
   else uiMessage(text, -1, 3.f);                                              // уровень / игра пройдены
   logf_("MSN flash %d %s t=%.1f\n", what, text ? text : "", clock_);
 }
+// сверка g07b-msnview круг 2 (g08-sound, M2:Д1): экран провала миссии — режим звука «Store» (sndStore(2)), на выходе из экрана снимается. SV_STORE_OLD=1 — прежнее
+#ifndef SV_STORE_OLD
+#define SV_STORE_OLD 0
+#endif
+static int failStore;
+// сверка g07b-msnview круг 2 (g07-missions, P06 Д3 / P07-12 «не выходи из машины»; P06-4 / P07-4 пар-время ставки; P06-10 SetIrisWipe): показ событий рантайма.
+// OUTOFVEHICLE: игрок вышел — таймер окна «сядь в машину» (HUD-таймер со своими секундами, value = окно) и строка; вернулся/сброс — таймер прячется.
+// PAR_LATE: ставка дольше пар-времени — раз в секунду текст GAMBLING_RACE_FAILURE (и секунды до провала). IRIS: закрыть на конце этапа (1,0 с) и открыть на старте следующего — слоем затемнения msn_view.
+// Было: событий никто не показывал. SV_EVENTS2_OLD=1 — прежнее
+#ifndef SV_EVENTS2_OLD
+#define SV_EVENTS2_OLD 0
+#endif
+static int oovOn; static float oovWin, oovT0;
+static void failStoreOff(void) { if (failStore) { failStore = 0; sndStore(0); } }
 static void uiFailedCb(void *u, int reason, const char *text, const char *hint) {   // экран MissionOver: причина, подсказка
   (void)u; H.failed = 1; H.failSel = 0;
+  if (!SV_STORE_OLD && !failStore) { failStore = 1; sndStore(2); }
   { static const char *const why[] = {"none", "timeout", "outofvehicle", "damage", "position", "race", "followdistance", "keepbarrel",
                                       "partime", "abort", "hitnrun"};   // правка 281: причина провала — в чёрный ящик (на PSP видно, отчего fail)
     bbOp("fail", reason >= 0 && reason < (int)(sizeof why / sizeof *why) ? why[reason] : "?", 1); }
@@ -325,7 +406,15 @@ static void uiFailedCb(void *u, int reason, const char *text, const char *hint) 
 }
 static int mkShadowOld;   // 04.10: 1 — маркер цели без пятна <рисунок>_shadow (как до правки; флаг сценария mkshadowold)
 void mvMarkerShadowOld(int on) { mkShadowOld = on; }
+// сверка g07b-msnview круг 2 (g02-traffic, P16-06): путь навигации целиком строится ОДИН раз при старте цели (gameMsnNavBuild: дороги трафика от машины игрока до цели), потом каждый кадр
+// рисуются зелёные стрелки на перекрёстках впереди, красные на пройденных (набор darrow / warrow на каждую), на длинных дорогах по формуле g02. Пешком путь не строится — повтор раз в секунду.
+// Нет пути — прежняя одна стрелка у ближайшего перекрёстка (trafficRouteArrow). Высоты стрелок — пробы земли раз в 60 кадров. SV_NAVPATH_OLD=1 — только прежняя стрелка
+#ifndef SV_NAVPATH_OLD
+#define SV_NAVPATH_OLD 0
+#endif
+static int navBuilt, navTry; static float navRetry;
 static void navMarkerCb(void *u, const MsnMarker *m) { (void)u; H.markerOn = m != 0; if (m) H.marker = *m;
+  navBuilt = 0; navTry = m != 0; navRetry = 0.f;
   if (m && m->drawable && *m->drawable) {   // 04.10: служебная строка — маркер цели и его пятно на земле (<рисунок>_shadow)
     char sh[48]; snprintf(sh, sizeof sh, "%s_shadow", m->drawable);
     logf_("MSN marker %s shadow=%s at=%.1f,%.1f,%.1f t=%.1f\n", m->drawable, !mkShadowOld && msnartHas(sh) ? sh : "-", m->pos.x, m->pos.y, m->pos.z, clock_); }
@@ -477,6 +566,9 @@ static void presentationCb(void *u, const char *bitmap) {   // SetPresentationBi
 // короче BRIEF_FIRST_LOAD (там же дочитывается всё, что миссии нужно), у следующих — сколько грузится картинка
 #define BRIEF_FIRST_LOAD 1.25f
 #define BRIEF_BLINK 0.25f
+#ifndef SV_LOADBLINK_OLD
+#define SV_LOADBLINK_OLD 0
+#endif
 #ifndef BRIEF_PIC_OLD
 #define BRIEF_PIC_OLD 0   // №512: =1 — ждать картинку брифинга без предела, как раньше
 #endif
@@ -484,6 +576,33 @@ static void presentationCb(void *u, const char *bitmap) {   // SetPresentationBi
 static int brBriefed;          // брифинг уже был на этом уровне (mvInit сбрасывает)
 static int brOld;              // служебное (mvBriefOld): отрицательный контроль гейта — прежняя карточка
 void mvBriefOld(int on) { brOld = on; }
+// сверка g07b-msnview (P06-3, P07-3, P01-20): выплата ставки = вход + целая часть (SetGamblingOdds машины игрока × вход). Коэффициент даёт main/car через mvCarOdds;
+// пока машинных данных нет (CAR1 их не несёт, передано g01/g12) — стартовая машина уровня по диску: L1–L5 2,0 (famil_v honor_v lisa_v marge_v apu_v), L6–L7 1,0 (bart_v homer_v).
+// Было: всегда 2 × вход. SV_WAGER_ODDS_OLD=1 — прежнее. Платит рантайм (mission/msn_run.c), он обязан звать эту же функцию, иначе карточка и выплата разойдутся
+#ifndef SV_WAGER_ODDS_OLD
+#define SV_WAGER_ODDS_OLD 0
+#endif
+float (*mvCarOdds)(void);
+int mvWagerPay(int fee) {
+  if (SV_WAGER_ODDS_OLD) return 2 * fee;
+  float o = mvCarOdds ? mvCarOdds() : -1.f;
+  if (o < 0.f) o = mvPackLevel() >= 6 ? 1.f : 2.f;
+  return fee + (int)(o * (float)fee);
+}
+// сверка g07b-msnview (P13-10, Д1/P13-10 второго читателя): ставка больше банка — Accept скрыт, вместо описания «нужно N монет»; ✕ не работает, ○ остаётся выходом.
+// Было: Accept всегда виден. SV_WAGER_COINS_OLD=1 — прежнее. Строки библии «нужно N монет» в пакете нет (передано: tools/missions/compile.py UI_TEXT_KEYS) — пока свой английский текст
+#ifndef SV_WAGER_COINS_OLD
+#define SV_WAGER_COINS_OLD 0
+#endif
+static int wagerShort(void) { return !SV_WAGER_COINS_OLD && H.brWager && H.brFee > shopCoins(&M.shop); }
+// сверка g07b-msnview (M2:25): на карточке миссии приглушаются все звуки кроме голоса (режим брифинг-экрана MISSIONSCREEN, как у подсказок обучения), на выходе возвращаются.
+// Звук ✕ Continue (FE_CONTINUE) играет ui.c через pop-хук (передано). Было: звук шёл как в игре. SV_BRIEFMODE_OLD=1 — прежнее
+#ifndef SV_BRIEFMODE_OLD
+#define SV_BRIEFMODE_OLD 0
+#endif
+static int brSavedMode = -1;
+static void brModeOn(void) { if (SV_BRIEFMODE_OLD || brSavedMode >= 0) return; brSavedMode = sndModeCur(); sndMode(SND_MODE_MISSIONSCREEN); }
+static void brModeOff(void) { if (brSavedMode < 0) return; if (sndModeCur() == SND_MODE_MISSIONSCREEN) sndMode(brSavedMode); brSavedMode = -1; }
 static float briefSec(void) { return (unsigned)(sceKernelGetSystemTimeLow() - H.brT0) * 1e-6f; }
 // №629 (Роб: между миссиями газеты нет, есть только карточка): Continue не срабатывает, пока фоновое чтение персонажей этапа не кончилось, но не дольше BRIEF_RA_MAX сверх
 // прежней готовности (картинка). Машины этапа читаются синхронно в mvPump-кадрах газеты/в кадрах карточки сразу при открытии. MSN_READAHEAD_OLD=1 — без ожидания
@@ -494,6 +613,18 @@ static float briefSec(void) { return (unsigned)(sceKernelGetSystemTimeLow() - H.
 #define BRIEF_CONTINUE_READY_OLD 0   // 1 — Continue появляется по готовности картинки, не дожидаясь чтения впрок (прежнее)
 #endif
 #define BRIEF_RA_MAX 1.5f
+#ifndef SV_RACE_MSTART3_OLD
+#define SV_RACE_MSTART3_OLD 0   // круг 3 (проверка g07b): 1 — реплика старта молчит и у ставочных гонок (прежнее); в оригинале только у уличных
+#endif
+#ifndef SV_RACE_MSTART_OLD
+#define SV_RACE_MSTART_OLD 0
+#endif
+#ifndef SV_ABORTOK_OLD
+#define SV_ABORTOK_OLD 0   // сверка g07b круг 2 (g07 30, P07:23): 1 — Cancel вступления и ставки не учитывают AllowMissionAbort("false") (прежнее)
+#endif
+#ifndef SV_WAGER_CANCEL_OLD
+#define SV_WAGER_CANCEL_OLD 0   // сверка g07b (M2 Д3, P13 Д1): 1 — на ставочной карточке отказаться нельзя (прежнее)
+#endif
 static float brReadyT = -1.f;   // с какого времени брифинга всё прежнее готово (для предела ожидания чтения)
 static int readaheadBusy(void) { for (int q = 0; q < NPRE; q++) if (pre[q].p && !skinPreReady(pre[q].p)) return 1; return 0; }
 static int briefReadyBase(void);
@@ -520,6 +651,7 @@ static int briefReadyBase(void) {
 static void titleCb(void *u, const char *id, const char *title, const char *info, int bonus) {   // основная часть миссии: брифинг
   (void)u; uiBriefingBonus(bonus);   // сверка 30.09: бонусная — бордовая карточка
   strncpy(H.title, title ? title : "", sizeof H.title - 1); strncpy(H.info, info ? info : "", sizeof H.info - 1);
+  msTryBump();   // сверка g07b P13-3: старт основной части = один учтённый сброс
   // «переходная» миссия конца уровня (L2/L5/L6 m8: ролик SetFMVInfo + таймер SetLevelOver; у L7 m8 — SetGameOver): названия в
   // библии нет (tools/missions/compile.py MF_TRANSITION), брифинга нет — игра не ждёт ✕ перед концом уровня
   if (M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions && (M.f.missions[M.rt.cur].flags & MSN_MF_TRANSITION)) {
@@ -530,10 +662,10 @@ static void titleCb(void *u, const char *id, const char *title, const char *info
       for (uint32_t s_ = 0; s_ < ph->stage_count; s_++) { const MsnStage *st = &M.f.stages[ph->first_stage + s_];
         for (uint32_t i_ = 0; i_ < st->cmd_count; i_++) { const MsnCmd *c = &M.f.cmds[st->cmd_first + i_];
           if (c->op == MSN_OP_SETCOINFEE) fee = msn_arg_i(&M.f, c, 0); else if (c->op == MSN_OP_SETPARTIME) par = msn_arg_i(&M.f, c, 0) * 1000;
-          else if (c->op == MSN_OP_SETRACEENTERYFEE) pay = 2 * msn_arg_i(&M.f, c, 0); } }
+          else if (c->op == MSN_OP_SETRACEENTERYFEE) pay = mvWagerPay(msn_arg_i(&M.f, c, 0)); } }
       logf_("MSN wager fee=%d par=%d pay=%d t=%.1f\n", fee, par, pay, clock_); }
-    uiHudSet(UI_F_WAGER_FEE, fee); uiHudSet(UI_F_WAGER_PAR, par); uiHudSet(UI_F_WAGER_PAY, pay); uiSetWager(gm && fee > 0); H.brWager = gm && fee > 0; }
-  H.briefing = 1; uiMessage(NULL, -1, 0.f); uiBriefAnim(1); if (!BRIEF_ANIM_AT_LOAD_OLD) uiBriefHold();   // №512: карточка въезжает слева; №994: пока не готова — только LOADING, въезд стартует при готовности
+    uiHudSet(UI_F_WAGER_FEE, fee); uiHudSet(UI_F_WAGER_PAR, par); uiHudSet(UI_F_WAGER_PAY, pay); uiSetWager(gm && fee > 0); H.brWager = gm && fee > 0; H.brFee = fee; }
+  H.briefing = 1; brModeOn(); uiMessage(NULL, -1, 0.f); uiBriefAnim(1); if (!BRIEF_ANIM_AT_LOAD_OLD) uiBriefHold();   // №512: карточка въезжает слева; №994: пока не готова — только LOADING, въезд стартует при готовности
   brReadyT = -1.f; H.brT0 = sceKernelGetSystemTimeLow(); H.brFirst = !brBriefed; H.brLoaded = H.brQueued = H.brPicLost = 0; brBriefed = 1;   // правка 52: LOADING до загрузки
   logf_("MSN briefing %s \"%s\" bitmap=%s first=%d path=%s t=%.1f\n", id ? id : "", H.title, H.present[0] ? H.present : "-", H.brFirst, H.brFirst ? "newspaper" : "card-only", clock_);
 }
@@ -549,6 +681,7 @@ static void featureCb(void *u, int feature, const MsnCall *c) {   // LoadP3DFile
     const char *fl = msn_arg_s(c->f, c->cmd, 0); size_t n = fl ? strlen(fl) : 0;
     const char *in = n && fl[n - 1] == '@' && msn_argc(c->cmd) > 1 ? msn_arg_s(c->f, c->cmd, 1) : "";
     snprintf(H.dynaRoom, sizeof H.dynaRoom, "%s", in ? in : "");
+    snprintf(H.dynaFiles, sizeof H.dynaFiles, "%s", fl ? fl : ""); H.dynaSeq++;   // круг 5 (P12-10)
     logf_("MSN dyna room=%s t=%.1f\n", H.dynaRoom[0] ? H.dynaRoom : "-", clock_);
     return;
   }
@@ -628,15 +761,39 @@ void mvMsgBoxInput(unsigned hit) {
 // из чёрного за FADE_IN. Рисует main.c (mvFadeAlpha) поверх мира, под интерфейсом
 #define FADE_IN .5f
 static float fadeA, fadeLen = 1.f; static int fadeDir, stayBlack;
-static void fadeCb(void *u, int out, float t) { (void)u; if (out) { fadeDir = 1; fadeLen = t > .05f ? t : .05f; } else { fadeDir = -1; fadeLen = t > .05f ? t : FADE_IN; } }
+// сверка g07b-msnview (P06-9): SetFadeOut число не читает — уход в чёрное 0,25 с, чёрный держится не меньше 2,0 с (отсчёт от полного ухода), выход из чёрного 0,25 с.
+// Было: длина = число скрипта (0,1; 1,0; 2), выход 0,5 с сразу. Ждёт рантайм: mission/msn_run.c:426 (пауза этапа = число; нужно 0,25 + 2,0) — передано g07-missions.
+// SV_FADE_OLD=1 — прежнее
+#ifndef SV_FADE_OLD
+#define SV_FADE_OLD 0
+#endif
+#define SV_FADE_OUT .25f
+#define SV_FADE_HOLD 2.0f
+static int rsPend;   // перезапуск ждёт чёрного экрана: 1 — Restart паузы, 2 — Retry (restartIris)
+static void restartRun(int kind);
+static float blackAt = -1.f; static int fadeInPend, fadeHoldNeed;   // blackAt — когда экран стал полностью чёрным; fadeInPend — выход из чёрного ждёт конца выдержки
+static void fadeInStart(void) {   // выход из чёрного (конец этапа StayInBlack / начало следующего этапа)
+  if (SV_FADE_OLD) { fadeDir = -1; fadeLen = FADE_IN; return; }
+  if (fadeHoldNeed && (fadeDir > 0 || blackAt < 0.f || clock_ < blackAt + SV_FADE_HOLD)) { fadeInPend = 1; return; }   // чёрный ещё не выдержан — выход отложен до fadeTick
+  fadeDir = -1; fadeLen = SV_FADE_OUT; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f;
+}
+static void fadeCb(void *u, int out, float t) {
+  (void)u;
+  if (out) { fadeDir = 1; fadeLen = SV_FADE_OLD ? (t > .05f ? t : .05f) : SV_FADE_OUT; fadeHoldNeed = !SV_FADE_OLD; fadeInPend = 0; blackAt = -1.f; }
+  else if (SV_FADE_OLD) { fadeDir = -1; fadeLen = t > .05f ? t : FADE_IN; }
+  else fadeInStart();
+}
 static void stayBlackCb(void *u) { (void)u; stayBlack = 1; fadeA = 1.f; fadeDir = 0; }
 float mvFadeAlpha(void) { return active ? fadeA : 0.f; }
 void mvServiceFade(int out, float t) { fadeCb(0, out, t); }   // служебное: flag fadeout / fadein (проверка затемнения)
 static void fadeTick(float dt) {
-  if (fadeDir) { fadeA += (float)fadeDir * dt / fadeLen; if (fadeA >= 1.f) { fadeA = 1.f; fadeDir = 0; } if (fadeA <= 0.f) { fadeA = 0.f; fadeDir = 0; } }
+  if (fadeDir) { fadeA += (float)fadeDir * dt / fadeLen; if (fadeA >= 1.f) { fadeA = 1.f; fadeDir = 0; if (blackAt < 0.f) blackAt = clock_; } if (fadeA <= 0.f) { fadeA = 0.f; fadeDir = 0; } }
+  if (rsPend && fadeA >= 1.f && fadeDir == 0) { int k = rsPend; rsPend = 0; restartRun(k); fadeA = 1.f; fadeDir = -1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; }   // сверка g07b M2 Д4: ирис закрыт — перезапуск и открытие
+  if (!SV_FADE_OLD && fadeInPend && fadeDir == 0 && fadeA < 1.f) { fadeInPend = 0; fadeHoldNeed = 0; }
+  if (!SV_FADE_OLD && fadeInPend && fadeA >= 1.f && fadeDir == 0 && blackAt >= 0.f && clock_ >= blackAt + SV_FADE_HOLD) fadeInStart();   // сверка g07b P06-9: выдержка кончилась — выходим из чёрного
 }
 static void cleanupCb(void *u) {
-  (void)u; raceOff(); fadeA = 0.f; fadeDir = 0; stayBlack = 0;   // правка 122: пропы и заборы гонки — до конца гонки
+  (void)u; brModeOff(); failStoreOff(); oovOn = 0; dropOn = 0; lapT0 = -1.f; lapLast = 0; raceOff(); if (!rsPend) { fadeA = 0.f; fadeDir = 0; } stayBlack = 0; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f;   // правка 122: пропы и заборы гонки — до конца гонки
   H.failed = 0; H.markerOn = 0; H.talk[0] = 0; uiMessage(NULL, -1, 0.f); iconNote("cleanup");
   uiHudShow(UI_T_MISSION_FAILED, 0); uiHudShow(UI_T_TIMER, 0); uiHudShow(UI_T_COLLECTIBLES, 0); uiHudShow(UI_T_COUNTDOWN, 0);
   animPrune();
@@ -653,7 +810,15 @@ static char voRival[16];            // водитель-соперник тек�
 static int voPending = -1; static float voAt;   // 0 — победа, 1 — провал; когда сказать (clock_)
 static float voDmg[MC_MAX];
 static unsigned char voDestroyed[MC_MAX];
-static void voMissionEnd(int fail) { if (!MV_VO_OLD) { voPending = fail; voAt = clock_ + .6f; } }
+// сверка g07b-msnview круг 2 (g08-sound, P09:11): реплики соперника V_* по условиям оригинала. V_Damage / V_HitCar — машина игрока ударила машину соперника этапа ближе 8,7 м
+// (квадрат 75), соперник не стоит; V_Damage если цель «уничтожить», иначе V_HitCar. V_Mvic — только цель «уничтожить». V_Mfail — только в погоне (цель losetail: за игроком гонятся).
+// V_Tail — когда игрок потерял слежку (провал followdistance); из гонок (смена места) V_Tail убран. Было: V_Damage при росте урона соперника на 5 %, V_HitCar при ударе соперника,
+// V_Tail при смене позиции в гонке, V_Mvic/V_Mfail всегда. SV_VOICE_COND_OLD=1 — прежнее
+#ifndef SV_VOICE_COND_OLD
+#define SV_VOICE_COND_OLD 0
+#endif
+static int voReason, voObj;
+static void voMissionEnd(int fail) { if (!MV_VO_OLD) { voPending = fail; voAt = clock_ + .6f; voObj = M.rt.obj; } }
 static void voTick(void) {
   if (MV_VO_OLD) return;
   if (M.rt.status == MSN_RUNNING) {   // соперник этой миссии и удары по нему
@@ -666,24 +831,37 @@ static void voTick(void) {
       voDestroyed[i] = c->car.destroyed;
       if (c->driver[0] && strcasecmp(c->driver, "none") && sndRivalHas(c->driver)) {
         snprintf(voRival, sizeof voRival, "%s", c->driver);
-        #ifndef SND_VO_EXTRA_OLD
+                if (!SV_VOICE_COND_OLD) {
+          const Car *pc = M.g ? M.g->pCar : 0;
+          if (pc && pc->carHitV > 0.f && c->mode != MC_PARKED) { float dx = pc->x - c->car.x, dz = pc->z - c->car.z;
+            if (dx * dx + dz * dz < 75.f) sndRivalSay(c->driver, M.rt.obj == MSN_OBJ_DESTROY ? SND_V_DAMAGE : SND_V_HITCAR, 0); }
+        } else {
+#ifndef SND_VO_EXTRA_OLD
         if (c->car.carHitV > 0.f) sndRivalSay(c->driver, SND_V_HITCAR, 0);
         else
 #endif
         if (c->car.damage > voDmg[i] + .05f) sndRivalSay(c->driver, SND_V_DAMAGE, 0);
+        }
       }
       voDmg[i] = c->car.damage;
     }
   }
   if (voPending >= 0 && clock_ >= voAt) {
     int f = voPending; voPending = -1;
-    if (!(voRival[0] && sndRivalSay(voRival, f ? SND_V_MFAIL : SND_V_MVIC, 1))) sndSay(f ? SND_SAY_MFAIL : SND_SAY_MVIC, 1);
+    int said = 0;
+    if (voRival[0]) {
+      if (SV_VOICE_COND_OLD) said = sndRivalSay(voRival, f ? SND_V_MFAIL : SND_V_MVIC, 1);
+      else if (f) said = voReason == MSN_FAIL_FOLLOWDISTANCE ? sndRivalSay(voRival, SND_V_TAIL, 1) : voObj == MSN_OBJ_LOSETAIL ? sndRivalSay(voRival, SND_V_MFAIL, 1) : 0;
+      else said = voObj == MSN_OBJ_DESTROY ? sndRivalSay(voRival, SND_V_MVIC, 1) : 0;
+    }
+    if (!said) sndSay(f ? SND_SAY_MFAIL : SND_SAY_MVIC, 1);
   }
 }
 static void voRace(int pos, int prev) {   // место игрока сменилось (1 — впереди)
   if (MV_VO_OLD || pos <= 0 || prev <= 0 || pos == prev) return;
   static int alt;
   if (pos < prev) sndSay(SND_SAY_PASS, 0);
+  else if (!SV_VOICE_COND_OLD) sndSay(SND_SAY_PASSED, 0);   // сверка g07b круг 2 (P09:11): V_Tail из гонок убран
   else if (!(voRival[0] && (alt ^= 1) && sndRivalSay(voRival, SND_V_TAIL, 0))) sndSay(SND_SAY_PASSED, 0);
 }
 // №629 (Роб: загрузка может стать дольше, лишь бы потом без перегруза): TEST18 — машина гонки (MCR load 40 мс в кадре) и NPC следующей фазы читались ПОСЛЕ Continue, потому что
@@ -721,7 +899,7 @@ static void eventCb(void *u, const MsnEvent *e) {
   switch (e->type) {
     case MSN_EV_MISSION_START: H.present[0] = 0; logf_("MSN mission %s \"%s\" t=%.1f\n", e->name ? e->name : "", e->text ? e->text : "", clock_); msnartMissionStart(); break;
     case MSN_EV_STAGE_START: H.stages++;
-      if (!stayBlack && fadeA > 0.f && fadeDir >= 0) { fadeDir = -1; fadeLen = FADE_IN; }   // правка 122: из чёрного   // talk_target этого этапа уже пришёл (msn_game зовёт его до хвоста событий)
+      if (!stayBlack && fadeA > 0.f && fadeDir >= 0) { fadeInStart(); }   // правка 122: из чёрного   // talk_target этого этапа уже пришёл (msn_game зовёт его до хвоста событий)
       logf_("MSN stage %s.%d.%d obj=%s text=\"%s\" icon=%s t=%.1f\n", m->rt.cur >= 0 ? msn_str(&m->f, m->f.missions[m->rt.cur].id) : "-",
             m->rt.phase, m->rt.stage, e->index >= 0 && e->index < MSN_OBJ_COUNT ? msn_objective_name[e->index] : "?", e->text ? e->text : "",
             e->name ? e->name : "", clock_);
@@ -734,9 +912,20 @@ static void eventCb(void *u, const MsnEvent *e) {
         MsnWorld w; gameMsnWorld(m, &w); cfxAt(stageEffect(), &w.player, "goto", m->rt.stage); }   // света у машины, а не в центре локатора: объём у дома Фландерса 44 x 72 м)
       break;   // правка 122: stayBlack — StayInBlack только на свой этап
     case MSN_EV_MISSION_COMPLETE: logf_("MSN complete %s t=%.1f\n", e->name ? e->name : "", clock_); voMissionEnd(0); break;
-    case MSN_EV_MISSION_FAILED: voMissionEnd(1); break;   // аудит 09.10: реплика провала (экран провала — свой обработчик)
-    case MSN_EV_DROP: uiForceShow(UI_T_ITEM_DROPPED, 2.f);   // таран машины с грузом: «Item Dropped!» (Scrooby HUD), 2 с — правило порта
+    case MSN_EV_MISSION_FAILED: voReason = e->index; voMissionEnd(1); break;   // аудит 09.10: реплика провала (экран провала — свой обработчик)
+    case MSN_EV_DROP: if (SV_DROP_OLD) uiForceShow(UI_T_ITEM_DROPPED, 2.f); else { dropOn = 1; dropT0 = clock_; }   // таран машины с грузом: «Item Dropped!» (Scrooby HUD), 2 с — правило порта
       logf_("MSN drop %d at %.1f %.1f t=%.1f\n", e->index, e->pos.x, e->pos.z, clock_); break;
+    case MSN_EV_IRIS: if (SV_EVENTS2_OLD) break;
+      if (e->index) { fadeDir = 1; fadeLen = 1.f; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; }
+      else if (fadeA > 0.f) { fadeDir = -1; fadeLen = 1.f; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f; }
+      logf_("MSN iris %s t=%.1f\n", e->index ? "close" : "open", clock_); break;
+    case MSN_EV_PAR_LATE: if (SV_EVENTS2_OLD) break;
+      { const char *t = msn_text(&M.f, "GAMBLING_RACE_FAILURE"); char b[160]; snprintf(b, sizeof b, "%s %d", t && *t ? t : "TOO SLOW", (int)e->value); uiMessage(b, -1, 1.1f); }
+      logf_("MSN par-late over=%d left=%.0f t=%.1f\n", e->index, e->value, clock_); break;
+    case MSN_EV_OUTOFVEHICLE: if (SV_EVENTS2_OLD) break;
+      oovOn = e->index != 0; oovWin = e->value; oovT0 = clock_;
+      if (!oovOn) uiHudShow(UI_T_TIMER, 0);
+      logf_("MSN out-of-vehicle %d win=%.1f t=%.1f\n", oovOn, e->value, clock_); break;
     case MSN_EV_LEVEL_COMPLETE:   // последняя сюжетная миссия (AddMission) или SetLevelOver / SetGameOver — вспышка 3 с, потом main.c
       H.levelDone = e->index ? 2 : 1; H.levelDoneAt = clock_ + MV_LEVEL_DONE_S;
       if (!e->index && !levelEndOld) { H.levelEnd = 1; H.levelDoneAt = 1e30f; uiMessage(NULL, -1, 0.f); }   // уровень: экран LevelEnd.scr до X
@@ -764,12 +953,14 @@ static void abMode(void *u, int on) {
   else if (abSavedMode >= 0) { sndMode(abSavedMode); abSavedMode = -1; }
 }
 static void abLog(void *u, const char *s) { (void)u; if (logFn) logFn(s); }
-static const MsnAudioBackend audioBackend = {0, abTrack, abSec, abPlay, abPlaying, abMusic, abRelease, abMode, abLog};
+static void abAlways(void *u, int on) { (void)u; sndMusicAlways(on); }   // круг 3 (g08 P09:1): этап «музыка всегда»
+static void abTimeWarn(void *u) { (void)u; sndSay(SND_SAY_TIME, 0); }   // сверка g08-sound (P09:20, P06 Д4): таймер пересёк 10 с — реплика Time вместо музыки 10sec
+static const MsnAudioBackend audioBackend = {0, abTrack, abSec, abPlay, abPlaying, abMusic, abRelease, abMode, abLog, 0, abAlways, abTimeWarn};
 
 static void mvGameNote(const char *line) { logf_("%s\n", line); }   // №1073: строки game_msn.c (CARNEAR1073) в журнал
 int mvInit(const char *ebootPath, int level) {
   ambElapsed = 0.f; gameMsnNote = mvGameNote;
-  brBriefed = 0;   // правка 52: первая карточка уровня — с загрузкой
+  brBriefed = 0; memset(msTries, 0, sizeof msTries); msSkipped = 0;   // правка 52: первая карточка уровня — с загрузкой; сверка g07b: попытки и пропуски — на уровень
   strncpy(dir, ebootPath, sizeof dir - 1); char *sl = strrchr(dir, '/'); if (sl) sl[1] = 0; else dir[0] = 0;
   char art[sizeof dir + 8]; if (level > 1) snprintf(art, sizeof art, "%sl%d/", dir, level); else snprintf(art, sizeof art, "%s", dir);   // msnart.shr: 2–7 — в l<N>/
   msnartInit(art);
@@ -847,6 +1038,7 @@ int mvLevelDone(void) {   // 1 — уровень пройден, 2 — игра
   if (!active || !H.levelDone || clock_ < H.levelDoneAt) return 0;
   int r = H.levelDone; H.levelDone = 0; return r;
 }
+const char *mvDynaFiles(unsigned *seq) { if (seq) *seq = active ? H.dynaSeq : 0; return active ? H.dynaFiles : ""; }   // круг 5 (P12-10): строка файлов последнего SetDynaLoadData и счётчик выполнений
 const char *mvDynaRoom(void) { return active ? H.dynaRoom : ""; }   // интерьер последнего SetDynaLoadData ("" — город)
 const char *mvFmvPending(void) { return active && H.fmvWait ? H.fmv : 0; }
 void mvFmvDone(void) { if (!active || !H.fmvWait) return; H.fmvWait = 0; msn_notify(&M.rt, MSN_IN_FMV_DONE, NULL, 0); }
@@ -930,16 +1122,38 @@ int mvCanSave(void) {
   return M.rt.cur >= 0 && M.rt.cur == M.rt.story && M.rt.phase == 0 && M.rt.status == MSN_RUNNING && !H.briefing && !M.talk.on;
 }
 int mvInMission(void) { return active && M.rt.cur >= 0 && (M.rt.status == MSN_RUNNING || M.rt.status == MSN_COUNTDOWN) && M.rt.phase == 1 && !msn_free_roam(&M.rt); }
-void mvPauseRestart(void) {
+#ifndef SV_RESTART_OLD
+#define SV_RESTART_OLD 0   // сверка g07b (P13-2, P06-6): 1 — Restart паузы с первого этапа основной части и стирает контрольную точку (прежнее)
+#endif
+// сверка g07b-msnview (M2 Д4, P13-2): перезапуск из паузы и Yes на экране провала идут цепочкой — реплика обрывается, ирис закрывается (0,25 с), миссия перезапускается, ирис открывается (0,25 с);
+// отмена миссии обрывает реплику и сразу, без ириса. Было: мгновенно, реплика договаривала. SV_RESTART_IRIS_OLD=1 — прежнее
+#ifndef SV_RESTART_IRIS_OLD
+#define SV_RESTART_IRIS_OLD 0
+#endif
+static void restartNow(void) {
   if (!active || M.rt.cur < 0) return;
-  H.failed = 0; uiHudShow(UI_T_MISSION_FAILED, 0);
-  if (M.f.missions[M.rt.cur].main != MSN_NONE16) {   // основная часть с первого этапа: как переход вступление -> миссия
+  if (!SV_RESTART_OLD && M.f.missions[M.rt.cur].main != MSN_NONE16) {   // сверка g07b P13-2/P06-6: Restart идёт тем же путём, что Retry — на этап ResetToThisStage (контрольную точку), точка не стирается
+    msn_retry(&M.rt, 0);
+  } else if (M.f.missions[M.rt.cur].main != MSN_NONE16) {   // прежнее (SV_RESTART_OLD=1): основная часть с первого этапа, точка перезаписывается на этап 0
     M.rt.cp_phase = 1; M.rt.cp_stage = 0; M.rt.cp_timer = 0; M.rt.cp_remaining = 0; msn_retry(&M.rt, 0);
   } else msn_retry(&M.rt, 1);
   logf_("MSN pause-restart %s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), clock_);
 }
+static void restartRun(int kind) { if (kind == 1) restartNow(); else if (active && M.rt.cur >= 0) msn_retry(&M.rt, 0); }
+static void restartIris(int kind) {   // kind 1 — Restart паузы, 2 — Yes на экране провала
+  if (SV_RESTART_IRIS_OLD) { restartRun(kind); return; }
+  msnAudioStopVoice(&M.audio);
+  fadeDir = 1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; rsPend = kind;
+}
+void mvPauseRestart(void) {
+  if (!active || M.rt.cur < 0) return;
+  H.failed = 0; uiHudShow(UI_T_MISSION_FAILED, 0);
+  msTryBump();   // сверка g07b P13-3: перезапуск = один учтённый сброс
+  restartIris(1);
+}
 void mvPauseAbort(void) {
   if (!active || M.rt.cur < 0) return;
+  if (!SV_RESTART_IRIS_OLD) msnAudioStopVoice(&M.audio);   // сверка g07b M2 Д4: отмена обрывает реплику
   logf_("MSN pause-abort %s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), clock_);
   gameMsnAbort(&M);
 }
@@ -998,7 +1212,14 @@ int mvTakeWorldCar(int i) { return active ? gameMsnTakeWorld(&M, i) : 0; }
 int mvHnrOff(void) { return active && gameMsnHnrOff(); }   // перепроверка 96
 int mvPhoneCar(const char *car) { return active ? gameMsnPhoneCar(&M, car) : 0; }   // правка 94
 int mvSummon(void) { return active ? gameMsnSummon(&M) : 1; }
+int mvBoothBlocked(void) { return active && gameMsnBoothBlocked(&M); }   // сверка g07 круг 5 (P05-25)
+void mvSetState(int transition, int arrested, const char *entering) { if (active) gameMsnSetState(&M, transition, arrested, entering); }   // сверка g10b-loop круг 2
+void mvWorldCarsStep(float px, float pz) { if (active) gameMsnWorldCarsStep(&M, px, pz); }   // сверка g10b-loop круг 5
+int mvShopAllowed(void) { return active ? gameMsnShopAllowed(&M) : 1; }   // сверка g10b-loop круг 2
 void mvPolice(int on) { if (active) gameMsnHnrPolice(&M,on); }
+void mvPoliceAdd(void) { if (active) gameMsnHnrPoliceAdd(&M); }
+int mvPoliceLimit(void) { return active ? gameMsnHnrPoliceLimit(&M) : 1; }
+void mvPoliceFar(float px, float pz, float R) { if (active) gameMsnHnrPoliceFar(&M, px, pz, R); }
 void mvPoliceHold(void) { if (active) gameMsnHnrPoliceHold(&M); }
 float mvHnrDecay(void) { return active ? M.hnr.decay : 3.f; }
 int mvIsPolice(const char *name) { return !strcasecmp(name,active ? M.hnr.car : "cPolice"); }
@@ -1068,6 +1289,14 @@ static float talkJaw(float t) {
   float a = .5f - .5f * cosf(2.f * 3.14159265f * TALK_JAW_HZ * t), b = .5f + .5f * sinf(2.f * 3.14159265f * 1.3f * t);
   return TALK_JAW_MAX * a * (.55f + .45f * b);
 }
+// сверка g07b-msnview круг 2 (g04-homer, P15-02): рот говорящего — skinMouthStep (угол с постоянной скоростью между −18° и верхней границей персонажа, разворот со случайным сдвигом границ)
+// вместо синуса. Знак «открыто» по оригиналу не подтверждён записью PS2 (вопрос 1 отчёта P15) — угол нормируется в 0…TALK_JAW_MAX (вся полоса хода, темп и случайность — из числа оригинала). SKIN_MOUTH_OLD=1 — синус
+static SkinMouth homerMouth; static float talkDt = 1.f / 60.f;
+static float mouthJaw(SkinMouth *mo, const char *model, float dt) {
+  float a = skinMouthStep(mo, model, dt), lo = -18.f * 0.0174533f, span = mo->hi0 - lo; if (span < .01f) return 0.f;
+  float u = (a - lo) / span; if (u < 0.f) u = 0.f; if (u > 1.f) u = 1.f;
+  return TALK_JAW_MAX * u;
+}
 static int homerLine = -1;
 static int tlLine = -1, tlPc; static float tlJawH, tlJawN;   // служебное: итог реплики — рот (TALKLINE)
 static void talkHomer(int line, int pcSpeaks) {   // Гомер: жест своей реплики и рот (viewer/homer.c homerTalk / homerJaw)
@@ -1075,7 +1304,7 @@ static void talkHomer(int line, int pcSpeaks) {   // Гомер: жест сво
   Homer *Hm = g->pHomer;
   if (line >= 0) {
     if (line != homerLine) { homerLine = line; homerTalk(Hm, gameMsnTalkAnim(&M, 0, line)); }
-    homerJaw(Hm, pcSpeaks ? talkJaw(talkClock) : 0.f);
+    homerJaw(Hm, pcSpeaks ? (SKIN_MOUTH_OLD ? talkJaw(talkClock) : mouthJaw(&homerMouth, "homer", talkDt)) : 0.f);   // сверка g07b круг 2 (P15-02)
     if (Hm->jawOpen > tlJawH) tlJawH = Hm->jawOpen;
   } else if (homerLine >= 0) { homerLine = -1; homerTalk(Hm, NULL); homerJaw(Hm, 0.f); }
 }
@@ -1152,7 +1381,7 @@ void mvDraw3D(float ex, float ey, float ez, float dt) {
     if (tlLine >= 0) logf_("TALKLINE line=%d pc=%d jawmax=%.3f,%.3f t=%.1f\n", tlLine, tlPc, tlJawH, tlJawN, clock_);
     tlLine = line; tlPc = pcSpeaks; tlJawH = tlJawN = 0.f;
   }
-  talkClock += dt; talkHomer(line, pcSpeaks);
+  talkClock += dt; talkDt = dt; talkHomer(line, pcSpeaks);
   if (line >= 0 && logFn && (int)(clock_ * 2.f) != talkLogT) {   // где стоят, куда смотрят, кто говорит, жесты
     talkLogT = (int)(clock_ * 2.f); const GameNpc *tn = M.talk.npc[0] ? gameMsnNpc(&M, M.talk.npc) : 0; const Homer *Hm = M.g->pHomer;
     NpcAnim *ta = tn ? animFor(npcKey(tn), 0, 0) : 0;
@@ -1169,10 +1398,12 @@ void mvDraw3D(float ex, float ey, float ez, float dt) {
     else if (n->knock == TRP_DOWN) { clip = a->land >= 0 ? a->land : a->flail >= 0 ? a->flail : a->idle; loop = 0; }
     else if (n->knock == TRP_GETUP && a->getup >= 0) { clip = a->getup; loop = 0; }
     if (line >= 0 && msn_streq(n->name, M.talk.npc)) {   // собеседник: жест своей реплики, рот, когда говорит он
-      if (line != a->talkLine) { const char *g = gameMsnTalkAnim(&M, 1, line); a->talkLine = line; a->gest = g ? skinFindClip(a->m, g) : -1; a->gestT = 0.f; }
+      // сверка g07b-msnview круг 2 (g04-homer, P15-15): играющий жест не прерывается новой репликой, если новая жеста не задаёт. HOMER_TALK_OLD=1 — прежнее
+      if (line != a->talkLine) { const char *g = gameMsnTalkAnim(&M, 1, line); a->talkLine = line;
+        if (HOMER_TALK_OLD || g) { a->gest = g ? skinFindClip(a->m, g) : -1; a->gestT = 0.f; } }
       a->gestT += dt;
       if (a->gest >= 0 && a->gestT < skinClipLength(a->m, a->gest)) { clip = a->gest; loop = 0; }
-      a->p.jawOpen = pcSpeaks ? 0.f : talkJaw(talkClock + .37f);
+      a->p.jawOpen = pcSpeaks ? 0.f : (SKIN_MOUTH_OLD ? talkJaw(talkClock + .37f) : mouthJaw(&a->mouth, a->name, dt));   // сверка g07b круг 2 (P15-02)
       if (a->p.jawOpen > tlJawN) tlJawN = a->p.jawOpen;
     } else { a->talkLine = a->gest = -1; a->p.jawOpen = 0.f; }
     if (clip >= 0) skinPlay(&a->p, clip, loop, .2f);
@@ -1206,6 +1437,20 @@ int mvNpcFeet(float (*out)[4], int max, float ex, float ey, float ez, float r) {
   }
   return k;
 }
+// сверка g07b-msnview (запрос g06-camera, СВЕРКА_КАМЕРА 2.9 — автозум камеры пешком к ближнему персонажу): позиции персонажей миссии (AddNPC, бонус-персонажи, продавцы)
+// в радиусе r от точки (x, z); out[k] = {x, y, z, радиус тела}; без проверки видимости и модели (камере нужна позиция). Сортировка по возрастанию расстояния. -> сколько записано
+int mvNpcNearList(float (*out)[4], int max, float x, float z, float r) {
+  if (!active || !out || max <= 0) return 0;
+  float dd[32], q[32][4]; int k = 0;
+  for (int i = 0; i < M.nnpc && k < 32; i++) {
+    const GameNpc *n = &M.npc[i]; float dx = n->pos.x - x, dz = n->pos.z - z, d2 = dx * dx + dz * dz; if (d2 > r * r) continue;
+    int j = k++; while (j > 0 && dd[j - 1] > d2) { dd[j] = dd[j - 1]; memcpy(q[j], q[j - 1], sizeof q[0]); j--; }
+    dd[j] = d2; q[j][0] = n->pos.x; q[j][1] = n->pos.y; q[j][2] = n->pos.z; q[j][3] = .35f;
+  }
+  if (k > max) k = max;
+  memcpy(out, q, (size_t)k * sizeof q[0]);
+  return k;
+}
 // Правка 122 (сверка 30.09, запись PS2 2:13, 2:20, 4:03): зелёные стрелки на дороге к цели задания — набор darrow местности
 // (art/l1_terra.p3d: три стрелки через 4 м и свечения, лежат на асфальте) на выезде ближайшего перекрёстка по пути к метке цели
 // (game_msn.c gameMsnRouteArrow: дороги трафика). Только за рулём и в городе; путь пересчитывается 4 раза в секунду
@@ -1224,10 +1469,51 @@ static float routeT, routeP[3], routeH; static int routeOn;
 #endif
 float gArrowForce[4]; static int forceArrowOn; static float forceArrowP[4];   // №1025 служебно: «flag arrowat X Y Z ГРАД» — набор стрелок в точке без миссии (замер на склоне, лист)
 void mvForceArrow(int on, float x, float y, float z, float h) { forceArrowOn = on; forceArrowP[0] = x; forceArrowP[1] = y; forceArrowP[2] = z; forceArrowP[3] = h; }
+// сверка g07b-msnview (P16-07, P16-Д4, P13-15): дорожные стрелки к цели — только у целей goto, gooutside, talkto, interior и предметных (race, delivery, dump, pickupitem); у getin, follow, destroy,
+// destroyboss, losetail, timer, dialogue, fmv, coins, buycar, buyskin их нет даже в режиме по умолчанию. Режим стрелки этапа (AddObjective, последний аргумент): neither — стрелок нет;
+// nearest road — только плавающая стрелка у ближней дороги (её у нас нет — дорожного набора не рисуем); intersection/both/по умолчанию — как было. Переключатель «Intersect Nav System» в Settings
+// паузы гасит стрелки: хук mvIntersectNavOn (NULL — включено; ставит main_save.h, передано). Было: стрелка для любой метки цели. SV_NAVARROW_OLD=1 — прежнее
+#ifndef SV_NAVPICK_OLD
+#define SV_NAVPICK_OLD 0
+#endif
+#ifndef SV_NAVARROW_OLD
+#define SV_NAVARROW_OLD 0
+#endif
+int (*mvIntersectNavOn)(void);
+static int routeAllowed(void) {
+  if (SV_NAVARROW_OLD) return 1;
+  if (mvIntersectNavOn && !mvIntersectNavOn()) return 0;
+  if (H.marker.nav == MSN_NAV_NEITHER || H.marker.nav == MSN_NAV_NEAREST_ROAD) return 0;
+  switch (M.rt.obj) {
+    case MSN_OBJ_PICKUPITEM: return SV_NAVPICK_OLD;   // круг 3 (проверка g07b): у «подобрать предмет» (бочка) дорожных стрелок нет (в оригинале их три предметных типа: гонка, доставка, сброс груза)
+    case MSN_OBJ_GETIN: case MSN_OBJ_FOLLOW: case MSN_OBJ_DESTROY: case MSN_OBJ_DESTROYBOSS: case MSN_OBJ_LOSETAIL: case MSN_OBJ_TIMER:
+    case MSN_OBJ_DIALOGUE: case MSN_OBJ_FMV: case MSN_OBJ_COINS: case MSN_OBJ_BUYCAR: case MSN_OBJ_BUYSKIN: return 0;
+    default: return 1;
+  }
+}
+static void drawNavPath(float ex, float ey, float ez, float t) {
+  static TrNavArrow arr[24]; static struct { float x, z, y; } yc[24]; static int nyc; static unsigned fr;
+  int n = gameMsnNavArrows(&M, arr, 24); routeOn = n > 0;
+  if ((fr++ % 60u) == 0u) nyc = 0;   // высоты — раз в 60 кадров
+  if (!roadArrowOld) sceGuDepthOffset(ROAD_ARROW_BIAS);
+  for (int k = 0; k < n; k++) {
+    float P[3] = {arr[k].p[0], arr[k].p[1], arr[k].p[2]};
+    if (mvGround) { int f = -1; for (int j = 0; j < nyc; j++) if (fabsf(yc[j].x - P[0]) < .5f && fabsf(yc[j].z - P[2]) < .5f) { f = j; break; }
+      if (f < 0 && nyc < 24) { yc[nyc].x = P[0]; yc[nyc].z = P[2]; yc[nyc].y = raLiftedY(mvGround, P, arr[k].h); f = nyc++; }
+      if (f >= 0) P[1] = yc[f].y; }
+    const char *nm = arr[k].red ? "warrow" : "darrow"; if (arr[k].red && !msnartHas("warrow")) continue;
+    msnartDrawRot(nm, P, arr[k].h + 3.14159265f, ex, ey, ez, t);
+  }
+  if (!roadArrowOld) sceGuDepthOffset(0);
+}
 static void drawRouteArrow(float ex, float ey, float ez, float t) {
   if (forceArrowOn) { routeOn = 1; routeP[0] = forceArrowP[0]; routeP[1] = forceArrowP[1]; routeP[2] = forceArrowP[2]; routeH = forceArrowP[3]; routeT = 1e9f; }
   else
-  if (!H.markerOn || M.interior || M.rt.status != MSN_RUNNING || !pointVisible(H.marker.pos.x, H.marker.pos.y, H.marker.pos.z, NULL)) { routeOn = 0; return; }
+  if (!H.markerOn || M.interior || M.rt.status != MSN_RUNNING || !routeAllowed() || !pointVisible(H.marker.pos.x, H.marker.pos.y, H.marker.pos.z, NULL)) { routeOn = 0; return; }
+  if (!SV_NAVPATH_OLD && !forceArrowOn) {   // сверка g07b круг 2 (P16-06)
+    if (navTry && (navRetry -= 1.f / 60.f) <= 0.f) { navRetry = 1.f; navBuilt = gameMsnNavBuild(&M, H.marker.pos.x, H.marker.pos.z) > 0; if (navBuilt) navTry = 0; }
+    if (navBuilt) { drawNavPath(ex, ey, ez, t); return; }
+  }
   if ((routeT -= 1.f / 60.f) <= 0.f) {
     routeT = ROUTE_DT; int was = routeOn; float wp[3] = {routeP[0], routeP[1], routeP[2]};
     { unsigned r0_ = sceKernelGetSystemTimeLow(); routeOn = gameMsnRouteArrow(&M, &H.marker.pos.x, routeP, &routeH); mvMkUs[3] += 0 * r0_; mvRouteCalcUs += sceKernelGetSystemTimeLow() - r0_; }
@@ -1268,6 +1554,7 @@ static void drawItems(float ex, float ey, float ez, float t) {
   if (!MV_ITEMS_OLD && M.rt.status == MSN_RUNNING && (M.rt.obj == MSN_OBJ_DELIVERY || M.rt.obj == MSN_OBJ_DUMP))
     for (int i = 0; i < M.rt.nitems && i < MSN_MAX_ITEMS; i++) {
       if (M.rt.done[i]) continue;
+      if (M.rt.released[i] && M.rt.drop_blink[i] && ((int)(M.rt.drop_life[i] / .256f) & 1)) continue;   // сверка g07 круг 3: последние 5 с жизни выпавшего груза мигает (период 256 мс)
       const char *dr = msn_arg_s(&M.f, M.rt.items[i], 1); if (!dr || !*dr) continue;
       float p[3];
       if (M.rt.released[i]) { p[0] = M.rt.relpos[i].x; p[1] = M.rt.relpos[i].y; p[2] = M.rt.relpos[i].z; }
@@ -1329,9 +1616,17 @@ void mvDrawMarkers(float ex, float ey, float ez, float t) {
   unsigned k3_ = sceKernelGetSystemTimeLow(); mvMkUs[3] += k3_ - k2_;
   if (!M.interior) for (int i = 0; i < M.nnpc; i++) {
     const GameNpc *n = &M.npc[i]; int mi = n->bonus - 1;
-    if (mi < 0 || (uint32_t)mi >= M.f.nmissions || mi >= 32 || ((M.rt.completed & (1u << mi)) && !M.rt.dev_bonus_replay)) continue;
+    if (mi < 0 || (uint32_t)mi >= M.f.nmissions || mi >= 32) continue;
     const MsnMission *ms = &M.f.missions[mi]; if (ms->bonus_npc == 0xFFFFFFFFu) continue;
+    int doneB = (M.rt.completed & (1u << mi)) && !M.rt.dev_bonus_replay;
+    // сверка g07b-msnview (P06-2): одноразовым персонаж становится, только если 7-й аргумент AddNPCCharacterBonusMission равен 1 (bm1 Скиннера, Клетуса, Дедушки…). Уличные гонки и bm1 со
+    // Смитерсом остаются: после победы второй значок (checkeredfinish у гонок, exclamation_shadow у bm1) и миссию можно запускать снова. Запуск и удаление персонажа — mission/msn_run.c (передано).
+    // Было: любая завершённая бонус-миссия пропадала. SV_BONUS_REPEAT_OLD=1 — прежнее
+    int once = msn_arg_i(&M.f, &M.f.cmds[ms->bonus_npc], 6) == 1;
+    if (doneB && (SV_BONUS_REPEAT_OLD || once)) continue;
     const char *icon = msn_arg_s(&M.f, &M.f.cmds[ms->bonus_npc], 4); if (!icon || !*icon) continue;
+    if (doneB && !strcmp(icon, "checkered")) icon = "checkeredfinish";
+    else if (doneB && !strcmp(icon, "exclamation")) icon = "exclamation_shadow";
     float dx = n->pos.x - ex, dz = n->pos.z - ez; if (dx * dx + dz * dz > 100.f * 100.f) continue;
     int rt=!strcmp(icon,"checkered")?UI_R_STREETRACE:!strcmp(icon,"dice")?UI_R_WAGER:!strcmp(icon,"exclamation")?UI_R_BONUS:-1;
     float p[3] = {n->pos.x, n->pos.y, n->pos.z}; msnartDrawNpcMarker(icon, rt, p, ex, ey, ez, t);
@@ -1376,10 +1671,15 @@ void mvBriefingInput(unsigned hit) {   // X — Continue, △ — Cancel Mission
     return;
   }
   if (!brOld && !H.brLoaded) { if (hit & PSP_CTRL_CROSS) H.brQueued = 1; return; }   // правка 52: ✕ во время LOADING — после загрузки
-  if (hit & PSP_CTRL_CROSS) { H.briefing = 0; uiBriefAnim(0); logf_("MSN briefing-continue t=%.1f\n", clock_); if (M.mg.hud.objective && *M.mg.hud.objective) uiObjectiveCb(&M, M.mg.hud.objective, M.mg.hud.objective_msg, M.mg.hud.icon);
+  if (wagerShort() && (hit & PSP_CTRL_CROSS)) hit &= ~PSP_CTRL_CROSS;   // сверка g07b: монет не хватает — ✕ ничего не делает (P13-10)
+  if (hit & PSP_CTRL_CROSS) { H.briefing = 0; brModeOff(); uiBriefAnim(0); logf_("MSN briefing-continue t=%.1f\n", clock_); if (M.mg.hud.objective && *M.mg.hud.objective) uiObjectiveCb(&M, M.mg.hud.objective, M.mg.hud.objective_msg, M.mg.hud.icon);
     // правка 345: [PS2] через 3 кадра после ✕ Continue — реплика водителя на старте миссии W_Mstart_<код>_* (3 из 3, выбор случайный)
-    if (sndSay(SND_SAY_MSTART, 1)) logf_("MSN say mstart %s t=%.1f\n", sndSayLastName(), clock_); }
-  else if (brOld && (hit & PSP_CTRL_TRIANGLE)) { H.briefing = 0; logf_("MSN briefing-cancel t=%.1f\n", clock_); gameMsnAbort(&M); }   // только прежняя карточка (отр. контроль): в эталоне PS2 «Cancel Mission» на карточке нет
+    // сверка g07b-msnview (P09 Д8): принятие брифинга в гонке (уличная, на ставку) реплику Mstart не даёт. Было: в любой миссии. SV_RACE_MSTART_OLD=1 — прежнее
+    if ((SV_RACE_MSTART_OLD || !(M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions && (M.f.missions[M.rt.cur].flags & (SV_RACE_MSTART3_OLD ? (MSN_MF_STREETRACE | MSN_MF_GAMBLE) : MSN_MF_STREETRACE)))) && sndSay(SND_SAY_MSTART, 1)) logf_("MSN say mstart %s t=%.1f\n", sndSayLastName(), clock_); }
+  else if (brOld && (hit & PSP_CTRL_TRIANGLE)) { H.briefing = 0; brModeOff(); logf_("MSN briefing-cancel t=%.1f\n", clock_); gameMsnAbort(&M); }   // только прежняя карточка (отр. контроль): в эталоне PS2 «Cancel Mission» на карточке нет
+  // сверка g07b-msnview: M2 Д3 / P13 Д1 — на карточке гонки на ставку после загрузки две кнопки: ✕ принять и ○ отказаться (△ как у подэкранов); отказ = Abort миссии (ирис, свободная езда, игрок у локатора).
+  // Было: ○ и △ на новой карточке ничего не делали, ставку нельзя было отклонить. SV_WAGER_CANCEL_OLD=1 — прежнее
+  else if (!SV_WAGER_CANCEL_OLD && H.brWager && (hit & (PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))) { H.briefing = 0; brModeOff(); uiBriefAnim(0); logf_("MSN briefing-cancel wager t=%.1f\n", clock_); uiPopHookFire(UI_EV_BACK); gameMsnAbort(&M); }   /* круг 5 (M2 Д3): звук отмены (FE_CANCEL = «назад» меню) */
 }
 // Разбивка mvHud (15.10, TEST18: «mvhud» 2,0–2,9 мс на кадр в погонях, 0,03 вне миссий): метки MVPF(k), мкс по кускам, строка MVHUD раз в секунду (mvProfTake). Только тест-апка (mvProfOn)
 int mvProfOn; static unsigned mvPf[9], mvPfN, mvPfT;
@@ -1409,17 +1709,20 @@ void mvHud(float dt) {
   if (H.briefing) {   // картинка может ещё дочитываться (msnart асинхронно) — берём каждый кадр
     const void *pix = 0; int tw = 0, th = 0, w = 0, h = 0;
     if (H.present[0]) msnartImageData(H.present, &pix, &tw, &th, &w, &h);
-    uiSetBriefing(H.title, H.info, pix, tw, th, w, h);
+    { static char need[64]; if (wagerShort()) snprintf(need, sizeof need, "YOU NEED %d COINS", H.brFee);   /* сверка g07b P13-10: вместо описания */
+    uiSetBriefing(H.title, wagerShort() ? need : H.info, pix, tw, th, w, h); }
     if (!H.brLoaded && briefReady()) { H.brLoaded = 1; logf_("MSN briefing-loaded path=%s ra_wait=%.2f wait=%.2f first=%d queued=%d pic=%s lost=%d title=\"%s\" t=%.1f\n", H.brFirst ? "newspaper" : "card-only", brReadyT < 0.f ? 0.f : briefSec() - brReadyT, briefSec(), H.brFirst, H.brQueued, H.present[0] ? H.present : "-", H.brPicLost, uiBriefTitle(), clock_);
       if (!BRIEF_ANIM_AT_LOAD_OLD) uiBriefAnim(1);   // №612: въезд карточки и руки — с момента, когда карточку видно (до этого экран газеты LOADING); на видео TEST17 въезд проходил под газетой
       if (H.brQueued) { H.brQueued = 0; mvBriefingInput(PSP_CTRL_CROSS); } }
-    float bs = briefSec(); int blinkOn = (int)(bs / BRIEF_BLINK) % 2 == 0;
-    uiShow(UI_SCREEN_MISSIONLOAD, UI_T_PRESS_START, H.brLoaded);                 // ✕ Continue
+    float bs = briefSec(); int blinkOn = SV_LOADBLINK_OLD ? (int)(bs / BRIEF_BLINK) % 2 == 0 : (int)(bs / BRIEF_BLINK) % 2 == 1;   // сверка g07b M2:27 (Н): LOADING скрыта при входе, первый переключатель через 0,25 с (SV_LOADBLINK_OLD=1 — горит с первого кадра)
+    uiShow(UI_SCREEN_MISSIONLOAD, UI_T_PRESS_START, H.brLoaded && !wagerShort());                // ✕ Continue
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_GAMBLE, H.brWager && H.brLoaded);       // строки ставки — вместе с текстом карточки
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_LOADING, !H.brLoaded && blinkOn);         // LOADING мигает
-    uiShow(UI_SCREEN_MISSIONLOAD, UI_T_SKIP, brOld);                             // Cancel Mission — только прежняя карточка
+    uiShow(UI_SCREEN_MISSIONLOAD, UI_T_SKIP, brOld || (!SV_WAGER_CANCEL_OLD && H.brWager && H.brLoaded && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))));                             // Cancel Mission — только прежняя карточка
   }
   MVPF(1);
+  dropTick(); lapTick();
+  if (oovOn && !SV_EVENTS2_OLD) { float left = oovWin - (clock_ - oovT0); if (left < 0.f) left = 0.f; uiHudSet(UI_F_TIMER, (int)(left * 1000.f)); uiHudShow(UI_T_TIMER, 1); }   // окно «сядь в машину»
   uiHudShow(UI_T_STAGE_COMPLETE, clock_ < H.stageFlash);
   uiHudShow(UI_T_MISSION_COMPLETE, clock_ < H.missionFlash);
   uiHudShow(UI_T_MISSION_FAILED, 0);   // FAILED рисует экран MissionOver
@@ -1482,10 +1785,11 @@ int mvFailedScreen(int *sel) { if (!H.failed) return 0; *sel = H.failSel; return
 int mvInput(unsigned *hit) {   // MissionOver: «Retry Mission?» YES — повтор с чекпоинта, NO — выход из миссии
   if (!H.failed) return 0;
   int act = uiMenuInput(UI_MENU_MISSIONOVER, &H.failSel, *hit);
+  if (act == 2 && mvFailSkipOk()) { mvFailSkip(); *hit = 0; return 1; }   // сверка g07b P13-3: пункт SKIP (включает ui.c через mvFailSkipOk; без пункта — не достижим)
   if (act == 0 || act == 1) {
-    H.failed = 0; uiHudShow(UI_T_MISSION_FAILED, 0);
-    logf_("MSN %s t=%.1f\n", act ? "abort" : "retry", clock_);
-    if (active) { if (act) gameMsnAbort(&M); else msn_retry(&M.rt, 0); }
+    H.failed = 0; failStoreOff(); uiHudShow(UI_T_MISSION_FAILED, 0);
+    logf_("MSN %s t=%.1f\n", act ? "abort" : "retry", clock_); if (!act) msTryBump();   /* сверка g07b P13-3: Retry = учтённый сброс */
+    if (active) { if (act) { if (!SV_RESTART_IRIS_OLD) msnAudioStopVoice(&M.audio); gameMsnAbort(&M); } else restartIris(2); }
   }
   *hit = 0; return 1;
 }
@@ -1529,7 +1833,38 @@ static void mvSwitchTo(int mi, const char *why) {   // смена миссии �
         M.mg.marker_on, msn_reg_mission_count(&M.rt), M.mg.hud.objective ? M.mg.hud.objective : "", H.talk[0] != 0, H.briefing, clock_);
   msn_start_mission(&M.rt, mi, 0);
 }
-static int msnSelStatus(int i) { return i < 0 ? 0 : (M.rt.completed >> i & 1u) ? 2 : i == M.rt.story ? 1 : 0; }
+static int msnSelStatus(int i) {   // 0 закрыта, 1 текущая, 2 пройдена или пропущена (выбрать можно)
+  if (i < 0) return 0;
+  if (M.rt.completed >> i & 1u) return 2;
+  if (!SV_SKIP_OLD && i < 32 && (msSkipped >> i & 1u)) return 2;   // сверка g07b P13-6: пропущенная открыта для выбора
+  return i == M.rt.story ? 1 : 0;
+}
+static int msCur(void);
+// сверка g07b P13-6: значок строки (поле UI_F_MS0+k): 2 галка — пройдена; 1 крест — были попытки и не пропущена; 0 черта — попыток нет или пропущена. Строки другого уровня — как были
+static int msRowIcon(int k, int st) {
+  if (SV_SKIP_OLD || st <= 0) return st;
+  if (!msOld && msLv != msCur()) return st;
+  int i = selList[k]; if (i < 0 || i >= 32) return st;
+  if (M.rt.completed >> i & 1u) return 2;
+  return msTries[i] && !(msSkipped >> i & 1u) ? 1 : 0;
+}
+// сверка g07b P13-3: Skip на экране провала. Номер сюжетной миссии (с 1) на уровне; L7 5-я, 6-я, 7-я — без пропуска; порог 7 учтённых (сбросы / 2)
+static int msStoryOrd(int mi) { int o = 0; for (int i = 0; i <= mi && i < (int)M.f.nmissions; i++) { if (M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) continue; o++; } return o; }
+int mvFailSkipOk(void) {
+  if (SV_SKIP_OLD || !active || !H.failed || M.rt.cur < 0 || M.rt.cur >= 32) return 0;
+  if (M.f.missions[M.rt.cur].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) return 0;
+  if (M.f.hdr && M.f.hdr->level == 7 && msStoryOrd(M.rt.cur) >= 5) return 0;
+  return msTries[M.rt.cur] / 2 >= 7;
+}
+void mvFailSkip(void) {   // миссия прерывается, включается следующая сюжетная, прежняя помечена «пропущена»
+  if (!active || M.rt.cur < 0) return;
+  int cur = M.rt.cur, nx = -1;
+  if (cur < 32) msSkipped |= 1u << cur;
+  for (int i = cur + 1; i < (int)M.f.nmissions; i++) if (!(M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION))) { nx = i; break; }
+  H.failed = 0; failStoreOff(); uiHudShow(UI_T_MISSION_FAILED, 0);
+  logf_("MSN skip %s -> %d tries=%d t=%.1f\n", msn_str(&M.f, M.f.missions[cur].id), nx, cur < 32 ? msTries[cur] : 0, clock_);
+  if (nx >= 0) mvSwitchTo(nx, "skip"); else gameMsnAbort(&M);
+}
 static int msCur(void) { return M.f.hdr ? (int)M.f.hdr->level : 1; }
 static int msRowStatus(int k) {   // строка k экрана: 0 закрыта, 1 текущая, 2 пройдена
   if (k < 0 || k >= 7) return 0;
@@ -1554,7 +1889,7 @@ unsigned mvMissionRows(void) {
   return r;
 }
 static void msRefresh(void) {
-  for (int k = 0; k < 7; k++) { int st = msRowStatus(k); uiHudSet(UI_F_MS0 + k, st); uiScrEnable(UI_PX_MISSIONSELECT, k, st > 0); }
+  for (int k = 0; k < 7; k++) { int st = msRowStatus(k); uiHudSet(UI_F_MS0 + k, msRowIcon(k, st)); uiScrEnable(UI_PX_MISSIONSELECT, k, st > 0); }
   uiHudSet(UI_F_MS_LEVEL, (msOld ? msCur() : msLv) - 1);
 }
 static int msLevelOk(int n) { return n == msCur() || (!msOld && msOpen && n >= 1 && n <= 7 && msOpen(n)); }
@@ -1595,6 +1930,9 @@ int mvMissionSelectAvail(int rows) {   // пункт ДОБИВКИ 26: есть
 #endif
 static int msLR1058Old = MSLR1058_OLD;
 void mvMsLR1058Set(int old) { msLR1058Old = old; }
+#ifndef SV_MS_START_OLD
+#define SV_MS_START_OLD 0
+#endif
 int mvMissionSelect(int on, unsigned hit) {
   if (!active) return 0;
   if (on && !selOn) {   // открыть: пройденные и текущая сюжетная, в порядке расписания (как в оригинале)
@@ -1647,6 +1985,8 @@ int mvMissionSelect(int on, unsigned hit) {
     if (!selRows || msRowStatus(selIdx)) break;
   }
   if (selIdx != was && (hit & (PSP_CTRL_UP | PSP_CTRL_DOWN))) uiPopHookFire(UI_EV_SCROLL);
+  // сверка g07b-msnview (P13-7): START на подэкранах паузы выходит из паузы в игру целиком (возврат 4 — main_loop.h закрывает пакет и паузу); назад в меню паузы — ○ и △. SV_MS_START_OLD=1 — START как ○ (прежнее)
+  if (!SV_MS_START_OLD && (hit & PSP_CTRL_START) && !(hit & (PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE))) { selOn = 0; uiPauseMenuHide(0); uiPopHookFire(UI_EV_BACK); return 4; }
   if (hit & (PSP_CTRL_CIRCLE | PSP_CTRL_START | PSP_CTRL_TRIANGLE)) { selOn = 0; uiPauseMenuHide(0); uiPopHookFire(UI_EV_BACK); return 1; }   // назад в паузу
   if ((hit & PSP_CTRL_CROSS) && selRows && !msOld && msLv != msCur() && msRowStatus(selIdx) > 0) {   // правка 348: миссия другого уровня
     uiPopHookFire(UI_EV_ACCEPT);
@@ -1857,14 +2197,23 @@ static int talkIsStart(void) {   // разговор — последний эт
   unsigned ph = M.f.missions[rt->cur].intro;
   return ph != MSN_NONE16 && ph < M.f.nphases && rt->stage == (int)M.f.phases[ph].stage_count - 1;
 }
-int mvTalkPrompt(void) { return !mvTalkActive() ? UI_LB_NONE : talkIsStart() ? UI_LB_START : UI_LB_SKIP; }
+// сверка g07b-msnview круг 2 (g07-missions 30, P07:23): AllowMissionAbort("false") — Accept/Cancel вступления не показываются и △ не отменяет (подпись «Start Mission / Cancel» заменена на ✕ SKIP). SV_ABORTOK_OLD=1 — прежнее
+int mvTalkPrompt(void) { return !mvTalkActive() ? UI_LB_NONE : (talkIsStart() && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))) ? UI_LB_START : UI_LB_SKIP; }
+// круг 3 (проверка g10b-loop, M2:23): на последнем этапе свободной езды (разговор, после которого брифинг миссии) и в разговоре Пэтти с Сельмой полосы на выходе сходятся к
+// центру, а не уезжают. Диалог гонки в данных нашего порта отдельным признаком не отличается — не включён (см. журнал)
+int mvTalkConverge(void) {
+  if (!active || !M.talk.on) return 0;
+  if (talkIsStart()) return 1;
+  const char *a = M.talk.npc, *b = M.talk.npc2;
+  return (!strcasecmp(a, "patty") && !strcasecmp(b, "selma")) || (!strcasecmp(a, "selma") && !strcasecmp(b, "patty")) || (!strcasecmp(a, "patty") && b[0]) || (!strcasecmp(a, "selma") && b[0]);
+}
 int mvTalkInput(unsigned hit) {
   if (!mvTalkActive()) return 0;
   int start = talkIsStart();
   if (hit & PSP_CTRL_CROSS) {   // SKIP / Start Mission: разговор кончается сразу — дальше брифинг или следующий этап
     logf_("TALKSKIP start=%d line=%d t=%.1f\n", start, TC.line, clock_);
     msnAudioStopVoice(&M.audio); msn_notify(&M.rt, MSN_IN_DIALOGUE_DONE, 0, 0);
-  } else if (start && (hit & PSP_CTRL_TRIANGLE)) {   // Cancel: миссия не начинается, назад к её вступлению
+  } else if (start && (hit & PSP_CTRL_TRIANGLE) && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))) {   // Cancel: миссия не начинается, назад к её вступлению
     logf_("TALKCANCEL line=%d t=%.1f\n", TC.line, clock_);
     msnAudioStopVoice(&M.audio); gameMsnTalkCancel(&M);   // В85: на места до разговора, окно повторного △ (game_msn.h)
   }

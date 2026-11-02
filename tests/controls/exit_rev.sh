@@ -16,7 +16,7 @@ MSN=${3:-$(newest ${MSN1:-} build/missions/level01.msn build/t*/data/level01.msn
 for f in "$L1" "$HM" "$MSN"; do [ -n "$f" ] && [ -f "$f" ] || { echo "FAIL: нет данных (LEVEL1=$L1 HOMER=$HM MSN=$MSN): нужен level.shr текущего набора с traffic.shr рядом; задайте аргументами или LEVEL1/HOMER/MSN1"; exit 1; }; done
 echo "данные: $L1 ($(date -r "$L1" '+%d.%m %H:%M')), $HM, $MSN"
 ARGS="$L1 $HM $MSN ${EXIT_REV_SEC:-1.5}"
-$CC -DGAME_EXIT_REV_OLD=1 tests/controls/exit_rev_host.c $BOTS_LIB -lm -o "$OUT/exit_rev_red" || { echo "FAIL: сборка красного"; exit 1; }
+$CC -DGAME_EXIT_PS2_OLD=1 -DGAME_EXIT_REV_OLD=1 tests/controls/exit_rev_host.c $BOTS_LIB -lm -o "$OUT/exit_rev_red" || { echo "FAIL: сборка красного"; exit 1; }
 "$OUT/exit_rev_red" $ARGS > "$OUT/exit_rev_red.txt" 2>&1; rr=$?
 if grep -q "трафик: .* не читается" "$OUT/exit_rev_red.txt"; then echo "FAIL: рядом с $L1 нет traffic.shr (город без трафика, красный не краснеет): возьмите level.shr текущего набора с traffic.shr"; exit 1; fi
 if [ $rr = 0 ]; then echo "КРАСНЫЙ НЕ ПОЙМАН: на 10 м/с $(grep -m1 ' 10.0 м/с' "$OUT/exit_rev_red.txt" | cut -c1-110); нужен level.shr текущего набора"; red=0

@@ -1,6 +1,7 @@
 // SHAR PSP v8: город клетками 40x40 м подгружается по мере езды, PVS, отсечение пирамидой видимости,
 // swizzle текстур, HUD через GE, тест-прогон v2 (кнопка O).
 #include "bisect.h"
+#include "sverka_shared.h"   // сверка g10b-loop: общие точки окон (svBoom — взрыв машины, svSurfaceAt — поверхность земли)
 #include <pspkernel.h>
 #include <pspsuspend.h>   // исследование 03.10 П3: проба volatile
 #include <pspdisplay.h>
@@ -508,10 +509,12 @@ static unsigned regEye = 0xFFFFu;
 // (viewer/zonegate.h, блок GAT1 секции REG1 v2). regRes — набор регионов: старт уровня — набор ближайшего места (AddTeleportDest),
 // въезд в ворота — выгрузить/загрузить, перенос дальше 50 м за кадр (goto, сброс, сценарий) — набор места; в комнате набор не
 // меняется. stream() держит в памяти только клетки регионов набора, рисуются тоже только они. Нет GAT1 — как раньше (REG1 по месту)
+static char regNm[16][16]; static int regNn;   // сверка g11b-collect круг 5 (P12-10): имена файлов-регионов уровня из REG1 (в нижнем регистре, без .p3d)
 static ZoneGate *zg; static ZonePlace *zp; static int nzg, nzp, zgOn, zgInit, zgStart; static unsigned regRes = 0xFFFFu;
 static unsigned char zgWas[ZG_MAX]; static float zgPx, zgPz; static unsigned zgFired, zgUnloads;
 static char path[256];
 static ColWorld world; static int haveCol, autodrive, slowmo; static float adT, adStop; static Car car;
+static float svOddsHook(void) { return carOddsFor(car.p.name); }   // сверка g01-cars круг 2 (P01-20): SetGamblingOdds машины игрока для mvCarOdds
 // №914: служебный автопилот (flag drive / walk). AD_CLOCK_OLD=1 — часы adT шли дважды за кадр (строка «if (autodrive)» перед шагом машины
 // плюс свой шаг режима 4 и 5): срок вдвое короче заданного. AD_SEAT_OLD=1 — flag drive пешком не сажал Гомера в машину (в L2/L4/L6/L7 она стоит
 // в координатах L1, путь 0 м). Красные контроли гейта tests/tour/drive914.sh: flag adclockold 1 / flag adseatold 1
@@ -579,13 +582,29 @@ static void onPropKickFx(void *u, unsigned i, const float pos[3], float carV, fl
     else coinsDrop(&coins, KRUSTY_GLASS_COINS, pos[0], pos[1], pos[2], fl);
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "COINS krusty-glass n=%d at=%.1f,%.1f,%.1f floor=%.1f t=%.1f\n", KRUSTY_GLASS_COINS, pos[0], pos[1], pos[2], fl, smkT); smkWrite(s); }
   }
-  if (part >= 3) fxBurst(fxFindInst(part), pos, NULL);
+  // сверка g11 круг 2 (P11-13 от g12-data): оригинал знает девять имён частиц удара; eSpark (фонари, светофоры) — «нет частиц» (14 искр убраны), eStars — 10 жёлтых штрихов и 10 серых клубков пыли,
+  // eParkingMeter (24), ePineTreeNeedles (7), ePopsicles (26) — по их системам (если в l0N_fx.p3d систем нет — частиц нет). PROPFX_SV_OLD=1 — 14 искр у типа 1, звёзд нет
+#ifndef PROPFX_SV_OLD
+#define PROPFX_SV_OLD 0
+#endif
+  if (part >= 3) { int id_ = fxFindInst(part); if (id_ >= 0) fxBurst(id_, pos, NULL); }
+  else if (!PROPFX_SV_OLD && part == 2) fxCrashStars(pos[0], pos[1] + .6f, pos[2], 25000.f);
+  else if (!PROPFX_SV_OLD && part == 1) { }
   else if (part == 1)
     for (int k = 0; k < 14; k++) {
       float r1 = rand() * (1.f / RAND_MAX) - .5f, r2 = rand() * (1.f / RAND_MAX), r3 = rand() * (1.f / RAND_MAX) - .5f;
       fxSpawn(FX_SPARK, pos[0], pos[1] + .8f, pos[2], r1 * 8.f + dx * 3.f, r2 * 5.f + 1.f, r3 * 8.f + dz * 3.f);
     }
 }
+void uiRadarSetCamera(float yaw) __attribute__((weak));   // круг 2: g09a-hud (ui.c), слабая ссылка до слияния
+void uiRadarInCar(int on) __attribute__((weak));
+void uiPauseMissionGrey(int off) __attribute__((weak));
+static int jmRoomOn;   // круг 2: 1 — режим «только музыка» включён на переходе в помещение
+static float lbConvT = -1.f;   // круг 3 (M2:23): время сходящихся полос после разговора, с; <0 — не идут
+static int camBArc;   // круг 3 (P08:11): 1 — переход камеры идёт по дуге вокруг точки взгляда (угол и расстояние отдельно), не по прямой; ставит камера разговора
+static int lvSaveAsk;   // сверка g10b-loop (P13:4): номер следующего уровня, пока открыт вопрос «сохранить?» после пройденного уровня; 0 — вопроса нет
+static int movieNoSkipSv;   // сверка g10b-loop (P14:14): 1 — ролик идёт без пропуска по START (ставит menuStartGame на время ролика новой игры, читает msnMovie)
+static int rearViewOn;   // сверка g10b-loop (СВЕРКА_КАМЕРА 1.12): 1 — зажата стрелка вниз, камера машины на заднем виде
 static CarVis cv, oldCv; static int haveCarVis, carSeq; static float camAng;   // carSeq/camAng — служебное (carseq.txt, camang.txt)   // CAR1: визуальный слой машины (viewer/carvis.c)
 static CarParams lvlCar; static int lvlCarOk = -9;   // машина уровня из CAR1 v2 (car.h carParamsFromCar1): 1 — прочитана; иначе famil_v
 // свет уровня (LGT1 в CAR1 v3): персонажам — солнце и фон skin.h × множители группы sun уровня; машины запечены экспортом.
@@ -672,6 +691,9 @@ static void homerEvFx(void *u, const HomerEvent *ep) {   // звук событ�
   // в sound.c (hitbyc / turbo / longjump), но их никто не вызывал. Наезд — HOMER_EV_HURT; ускорение — первый шаг бега после паузы
   // 2 с без шагов; длинный прыжок — второй прыжок в воздухе (jump_dash_in_air). «Уклонение» (dodge) без своего события — не подключено.
   // HOMER_VO_OLD=1 — как было (молчит)
+#ifndef TURBO_TIRED_OLD
+#define TURBO_TIRED_OLD 0   // сверка g10b-loop, P10-23: 1 — реплика Turbo на первом шаге бега после паузы шагов больше 2 с (прежнее)
+#endif
 #ifndef HOMER_VO_OLD
 #define HOMER_VO_OLD 0
 #endif
@@ -680,9 +702,9 @@ static void homerEvFx(void *u, const HomerEvent *ep) {   // звук событ�
     unsigned nowUs = sceKernelGetSystemTimeLow();
     if (e.type == HOMER_EV_HURT) sndSay(SND_SAY_HITBYC, 0);
     else if (e.type == HOMER_EV_JUMP && e.r > 1.5f) sndSay(SND_SAY_LONGJUMP, 0);
-    else if (e.type == HOMER_EV_STEP) { if (nowUs - lastStepUs > 2000000u) sndSay(SND_SAY_TURBO, 0); lastStepUs = nowUs; }
+    else if (e.type == HOMER_EV_STEP) { if (TURBO_TIRED_OLD && nowUs - lastStepUs > 2000000u) sndSay(SND_SAY_TURBO, 0); lastStepUs = nowUs; /* круг 3 (g08, проверка P02-34): звук шага один — sndFootstep из homer.c, 2D; здесь не дублируется */ }   // сведение дирижёра: шаг по поверхности (g08-sound, P02-34, P09:4); реплика «устал» — таймер 5 с турбо в main_loop.h (g10b-loop, P10-23), в sndStepFoot не дублируется (run=0)
   }
-  if (e.type == HOMER_EV_LAND) fxHomerDust(FXD_LAND, e.x, e.y, e.z, e.r);   // правка 45: клуб пыли cloud.tga, не дым машины
+  if (e.type == HOMER_EV_LAND) { if (FXLAND_SV_OLD || !fxHomerLand(e.x, e.y, e.z, e.dx, e.dz > .5f)) fxHomerDust(FXD_LAND, e.x, e.y, e.z, e.r); }   // сверка g11 круг 2 (P02-14 от g04-homer): пыль на каждое приземление, сила в dx, кольцо стомпа в dz   // правка 45: клуб пыли cloud.tga, не дым машины
   if (e.type == HOMER_EV_STEP && (DASH847_OLD || fxFind("dashShape") < 0)) fxHomerDust(FXD_STEP, e.x, e.y, e.z, e.r);   // №847: есть dashShape — пыль бега она   // правка 45: клуб пыли на шаг бега, как в записи PS2
   if (e.type == HOMER_EV_BOUNCE) { fxHomerDust(FXD_BOUNCE, e.x, e.y, e.z, e.r); sndPlay("trampoline", e.x, e.y, e.z, 1.f);   // правка 46
     sndSay(SND_SAY_SPRINGBOARD, 0); }   // аудит 09.10: W_Springboard «Bouncy bouncy!» — подкидывающая точка (шанс — правило порта)
@@ -690,11 +712,17 @@ static void homerEvFx(void *u, const HomerEvent *ep) {   // звук событ�
 // Аудит 09.10 п. 12/58: W_Fall («AHHH! I'm gonna go boom!») — Гомер пешком падает. ПРАВИЛО ПОРТА: ниже точки отрыва больше
 // FALL_SAY_H и всё ещё летит вниз — одна реплика на полёт (высоту, с которой оригинал кричит, запись PS2 не дала)
 #define FALL_SAY_H 8.f
+#ifndef FALL_CAR_OLD
+#define FALL_CAR_OLD 0   // сверка g10b-loop, P09:10: 1 — реплика Fall пешком с высоты 8 м (прежнее, правило порта)
+#endif
+// сверка g10b-loop, P09:10: у оригинала Fall говорится только за рулём, когда машина игрока попадает в зону смерти (провал за карту, вода), пешком — нет, высота падения роли не
+// играет. Теперь пешая реплика молчит, а в зоне смерти (deathCheck, main_frontend.h) Fall звучит у водителя. FALL_CAR_OLD=1 — прежнее
 static int fallSaid;
 static void afterHomerHud(void *u, const HomerCar *hc) { (void)u; int can = onFoot() && homerCanEnter(&homer, hc);
-  if (onFoot() && !homer.grounded && homer.vy < 0.f && homer.airFrom - homer.y > FALL_SAY_H) { if (!fallSaid) fallSaid = sndSay(SND_SAY_FALL, 0) | 1; }
+  if (FALL_CAR_OLD && onFoot() && !homer.grounded && homer.vy < 0.f && homer.airFrom - homer.y > FALL_SAY_H) { if (!fallSaid) fallSaid = sndSay(SND_SAY_FALL, 0) | 1; }
   else if (homer.grounded || !onFoot()) fallSaid = 0;
   if (uiReady) uiHudShow(UI_T_ACTION, !uiPaused() && can); if (can) { tutEvent(TUT_GETIN); uiActionText("Get Into Car"); } }   // правка 206: TUTORIAL «PRESS @ TO GET INTO CAR»   // подсказка «△ — сесть» (PS2 1:45)
+static void coinLoseSnd(void *u, const float p[3]) { (void)u; sndCoinLose(p[0], p[1], p[2]); }   // сверка g10-flow круг 2 (P09 Д5): потеря монет — звук
 static void coinSnd(void *u) { (void)u; sndCoin(); tutEvent(TUT_COINS); }   // подсказка «монеты — на машины и одежду» (PS2 2:30)
 static void resetMusic(void *u, int wasOnFoot) { (void)u; if (wasOnFoot) { sndMusic(SND_MUS_FREEROAM); sndMode(SND_MODE_NORMAL); } }
 static unsigned char spSt[512]; static int spStInit;   // прошлые состояния стейтпропов (звук, шкала H&R); NEW GAME сбрасывает spStInit

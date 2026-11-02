@@ -13,6 +13,8 @@ extern "C" {
 #endif
 
 extern int propsPole968Old;   // №968: 1 — столб (высокий предмет без обломка) падает физикой коробки, как до правки (flag pole968old)
+extern unsigned propsHitIter;   // №1086: обойдено экземпляров в propsHitCar (служебный счётчик стенда)
+extern int propsKickOther;   // круг 3 (g11): 1 — удар наносит машина трафика или ИИ, а не игрока
 extern int pole1046Old;   // №1046: 1 — столб валится вяло, как в TEST73 (flag pole1046 0)
 float propsPoleKick1046(float v, float w0, float wk, float v0);   // №1046: начальная угловая скорость столба от скорости машины (толчок бампера)
 extern int propsTallFallOld;   // №946: 1 — высокий предмет падает медленно, как было (flag tallfall946old)
@@ -35,6 +37,8 @@ typedef struct {
   float fadeT;                // №589: время после сбития для ухода в фейд
   int pole;                   // №968: 1 — столб падает на шарнире у основания (кинематика по PS2), 2 — упал; 0 — обычная физика коробки
   float poleTh, poleW, poleB[3], poleD[2], poleQ0[4];   // №968: угол от вертикали и его скорость, основание, направление падения (xz), исходная ориентация
+  int kicked;                 // сверка g11 P11-02: предмет уже тронут машиной (повторное касание на малой скорости его не будит); сбрасывается возвратом домой
+  int gone;                   // сверка g11 P11-17/Д6: ударенный высокий предмет (тип 10) вышел из вида и убран из мира до перезагрузки зоны (hidden=1 навсегда)
 } PropState;
 
 typedef struct {
@@ -52,12 +56,17 @@ typedef struct {
   // удар машиной по спящему пропу i (направление удара dirx, dirz). Вернуть 1 — проп спрятать (играет обломок)
   int (*onKick)(void *user, unsigned i, float dirx, float dirz); void *kickUser;
   CarBox previousCar; int havePreviousCar;
+  // №1086 (g11): предметы рядом с игроком — список раз в кадр (propsUpdate), чтобы машины трафика и ИИ не перебирали все предметы уровня: в список идут предметы в радиусе PROP_NEAR_R от игрока и все
+  // не спящие; nearOk — список построен; ownCar — машина игрока (остальные — «чужие»: слабый вызов, без шкалы Hit & Run)
+  unsigned *nearList; unsigned nearN; float nearC[2]; int nearOk; const Car *ownCar;
   float *trunk;            // №488: по типу [x, z центра ствола в осях модели, радиус ствола] в полосе кузова; радиус 0 — не тонкий, бьёт по ty->radius
 } Props;
 
 // section — PRP1 (заголовок 32 Б) или PRP2 (64 Б: первые 32 как PRP1; @32 смещение SPR1, @36 её размер, @40 размер
 // всей секции; @44 смещение таблицы частиц типов, @48 число типов — 0 нет). 0 = ок, <0 = ошибка формата/памяти
 int propsInit(Props *p, const void *section, unsigned size);
+// сверка g11 (props.c): толчок вверх всем подвижным предметам в шаре r вокруг точки (RADIATE_FORCE статуй Иедедайи: сила 200 / масса); возврат — сколько тронуто
+int propsRadiate(Props *p, float x, float y, float z, float r, float force);
 void propsFree(Props *p);
 // частицы удара типа t из таблицы PRP2 (*particle: 0 нет, 1 искры, 2 звёзды, 3.. InstParticleSystem; *breakIdx: -1 нет)
 void propsTypeFx(const Props *p, unsigned t, int *particle, int *breakIdx);
@@ -73,6 +82,8 @@ int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float 
 // Обычные пропы возвращаются только далеко и вне вида (исходное И текущее место), после 5 с
 void propsRespawnStep(Props *p, float ex, float ez, float dt,
                       int (*seen)(void *, float, float, float, float), void *user);
+// сверка g09b-menu круг 5 (P12-03): перезагрузка зон — все обычные пропы (кроме миссионных и ещё целых) сразу возвращаются на свои места, как после выгрузки и новой загрузки зон
+void propsZoneReload(Props *p);
 // матрица кусочка пропа для GE (как carPieceMatrix): мир = T + R(q) * (o + sc*v), столбцы как ScePspFMatrix4
 void propPieceMatrix(const PropState *st, float ox, float oy, float oz, float sc, float m[16]);
 

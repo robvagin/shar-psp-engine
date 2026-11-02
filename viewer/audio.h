@@ -109,7 +109,16 @@ void audioCarSndOld(int on);           // 413а: красный контроль
 void audioWorldEngine(int slot,int source,int profile,float x,float y,float z,
                       float speedKmh,float topKmh,float throttle01,float dt);
 void audioEngine(float speedKmh, float topKmh, float throttle01, unsigned flags);
+// сверка g08-sound (P10-8…16): состояние машины игрока для модели мотора, раз в кадр до audioEngine; audioClockUs — монотонные микросекунды
+void audioEngineEx(float skid01, int spinInPlace, int air, int parked, float life01);
+unsigned audioClockUs(void);
 void audioHorn(int on);
+// сверка g08-sound (P10-1,2,21): мотор трафика и ИИ миссий — один клип на вид, до AUDIO_SV_SLOTS слотов каждого; audioSvReady — клипы ferrari и
+// mission_ai_vehicle есть в пакете (иначе вызывающий остаётся на прежнем пути)
+#define AUDIO_SV_SLOTS 5
+int audioSvReady(void);
+int audioSvEngine(int kind, int slot, int on, int profile, float x, float y, float z, float speed, float ref, float mult, float dt);
+void audioSvStopAll(void);
 void audioSkid(float amount01, int dirt);      // 0 = silent; loops while > 0
 void audioResumeOld(int on);                    // №560: 1 — откат возобновления музыки после сна PSP (красный контроль)
 

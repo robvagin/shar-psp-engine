@@ -57,12 +57,14 @@ int main(int argc, char **argv) {
   const ColWrench *K2 = &C->wrench[1]; float g2 = K2->p[1]; { float g; if (colGround(C, K2->p[0], K2->p[2], K2->p[1] + 3.f, K2->p[1] - 10.f, &g, 0)) g2 = g; }
   W.car.damage = .6f; bwPlace(&W, K2->p[0], g2, K2->p[2], 0.f); W.car.damage = .6f; steps(3);
   check("car", (G->wrenchTaken >> 1 & 1u) && W.car.damage == 0.f, "битая машина (0.6) у ключа 1: взят %d, урон %.2f", (int)(G->wrenchTaken >> 1 & 1u), W.car.damage);
-  // ---- возврат: рядом — нет; далеко и 5 с вне вида — да
+  // ---- возврат (сверка g10-flow 02.11, P07 №7): ровно через 30 с после подбора по таймеру, независимо от расстояния и вида: 8 с рядом, потом игрок далеко —
+  // до 30 с ключ лежит взятым (старое правило вернуло бы его через 5 с вне вида), после 30 с вернулся
   steps(60 * 8); int stay = (G->wrenchTaken >> 1 & 1u) != 0;
   const ColWrench *Kf = &C->wrench[0]; float best = 0; for (unsigned k = 0; k < C->nwrench; k++) { float d = hypotf(C->wrench[k].p[0] - K2->p[0], C->wrench[k].p[2] - K2->p[2]); if (d > best) { best = d; Kf = &C->wrench[k]; } }
   { float g; float fy = Kf->p[1]; if (colGround(C, Kf->p[0] + 8.f, Kf->p[2], Kf->p[1] + 3.f, Kf->p[1] - 10.f, &g, 0)) fy = g; bwPlace(&W, Kf->p[0] + 8.f, fy, Kf->p[2], 0.f); }
-  steps(60 * 7); int back = (G->wrenchTaken >> 1 & 1u) == 0 && (G->wrenchInst[1] < 0 || W.sp.run[G->wrenchInst[1]].alive);
-  check("respawn", stay && back, "рядом 8 с — лежит взятым %d; игрок за %.0f м, 7 с — вернулся %d", stay, best, back);
+  steps(60 * 15); int early = (G->wrenchTaken >> 1 & 1u) != 0;   // 23 с после подбора
+  steps(60 * 10); int back = (G->wrenchTaken >> 1 & 1u) == 0 && (G->wrenchInst[1] < 0 || W.sp.run[G->wrenchInst[1]].alive);   // 33 с
+  check("respawn", stay && early && back, "8 с рядом — лежит взятым %d; игрок за %.0f м, 23 с — лежит %d; 33 с — вернулся %d", stay, best, early, back);
   printf("RESULT %s %d\n", fails ? "FAIL" : "OK", fails);
   return fails ? 1 : 0;
 }

@@ -391,13 +391,22 @@ def build_pack(out, car_name, sfx_names, music_sel, amb_sel=(), dialog_sel=(), e
                 continue
             if p not in fidx:
                 rs = read_rsd(p)
+                ls, le, hist, seam = 0, rs['nsamp'], [(0, 0)] * rs['ch'], None
+                if r['loop']:
+                    # круг 4 (банк в 2112 КБ, правка №1069): зацикленный клип длиннее 8 с (сирена пожарной и скорой, 14,2 с, 195 КБ) режется до окна 4,5 с с поиском
+                    # шва внутри окна; хвост за концом петли не хранится. LOOPCAP_OLD=1 — целиком
+                    if os.environ.get('LOOPCAP_OLD') != '1' and rs['ch'] == 1 and rs['nsamp'] / rs['rate'] > 8.0:
+                        import numpy as np
+                        K = int(4.5 * rs['rate']); K -= K % 28
+                        seam, hist = loop_points(rs, np.asarray(ffmpeg_decode(rs['path']))[:K])
+                        nb = ((seam['end'] + 27) // 28) * 16
+                        rs = dict(rs); rs['data'] = rs['data'][:nb]; rs['nsamp'] = nb // 16 * 28
+                    else:
+                        seam, hist = loop_points(rs)
+                    ls, le = seam['start'], seam['end']
                 off = len(blob)
                 blob += rs['data']
                 blob += b'\0' * (-len(blob) % 64)
-                ls, le, hist, seam = 0, rs['nsamp'], [(0, 0)] * rs['ch'], None
-                if r['loop']:
-                    seam, hist = loop_points(rs)
-                    ls, le = seam['start'], seam['end']
                 fidx[p] = len(files)
                 files.append((off, rs, ls, le, hist))
                 report['sfx'].append(dict(file=os.path.relpath(p, GAME), res=n, rate=rs['rate'], ch=rs['ch'],
@@ -442,7 +451,8 @@ def build_pack(out, car_name, sfx_names, music_sel, amb_sel=(), dialog_sel=(), e
         for key in ('shift', 'lo', 'hi', 'drop'):
             row += struct.pack('<5f', *[car[key].get(g, car[key].get(g - 1, 1.0)) for g in range(1, 6)])
         row += struct.pack('<6f', fl('AttackTimeMsecs', 100), fl('DelayTimeMsecs', 40), fl('DecayTimeMsecs', 250),
-                              fl('DecayFinishTrim', 0.8), fl('DownshiftDamperSize', 0.1), fl('ClipRPM', 0))
+                              fl('DecayFinishTrim', 0.8), fl('DownshiftDamperSize', 0.05), fl('ClipRPM', 0))
+        # сверка g08-sound круг 2 (g12 P10-27): умолчание DownshiftDamperSize 0,05 (было 0,1)
         assert len(row) == 152, len(row)
         return row
     carbin = b''.join(encode_car(name) for name in car_names)

@@ -11,12 +11,13 @@
 #define SHAR_TUTORIAL_H
 
 enum { TUT_WALK, TUT_GETIN, TUT_GAS, TUT_BREAK, TUT_COINS, TUT_INSIDE, TUT_WRENCH, TUT_WASP, TUT_RACE, TUT_BONUS, TUT_DESTROYED,
-       TUT_CARD, TUT_GAG, TUT_TIMETRIAL, TUT_UNLOCKED, TUT_PHONE, TUT_COUNT };
+       TUT_CARD, TUT_GAG, TUT_TIMETRIAL, TUT_UNLOCKED, TUT_PHONE, TUT_FOREIGN, TUT_COUNT };   // TUT_FOREIGN — круг 5 (g07b, P15-10): «PRESS @ TO GET INTO THE CAR» (TUTORIAL_010) при угоне машины трафика
 
 void tutReset(int levelMode);                // новая игра: EnableTutorialMode уровня (0 — подсказок нет); показанные сбрасываются
 void tutSetUser(int on);                     // строка Tutorial в Settings паузы (и □ «Disable Tutorials»)
 int  tutUser(void);
 int  tutPending(int ev);                     // 1 — подсказка ev ещё покажется (включены, не была): её текст не дублировать сообщением
+void tutForeignCar(void);                    // круг 5 (g07b, P15-10): угнали машину трафика: «в свою» ещё не показана — показывается она, «в чужую» считается показанной; иначе один раз «в чужую»; «газ» на эту посадку не показывается
 void tutEvent(int ev);                       // событие игры: подсказка ev, если ещё не показана и подсказки включены
 void tutEventIn(int ev, float sec);          // то же через sec секунд игрового времени (взрыв машины: Гомер успевает упасть)
 void tutSetBusy(int busy);                   // 1 — разговор, брифинг, облёт, пауза: события копятся в очереди, покажутся потом
@@ -24,6 +25,7 @@ void tutTick(float dt);                      // игровое время (не 
 int  tutActive(void);                        // 1 — подсказка на экране (мир стоит)
 // кадр подсказки: hit — нажатия; wallDt — время кадра. 1 — подсказка закрыта в этом кадре; *disabled = 1 — нажат □
 int  tutInput(unsigned hit, float wallDt, int *disabled);
+int  tutVoiceBusy(void);                     // сверка g10b-loop (P13:17): 1 — на экране подсказка и её реплика ещё звучит
 int  tutDraw(void);
 int  tutDrawExit(float wallDt);                      // №516: уход подсказки (обратный масштаб) поверх игры, после закрытия; 0 — нечего рисовать                          // вместо HUD; 0 — нет экрана в пакете
 unsigned tutShown(void);                     // бит ev — подсказка показана (сохранения / гейт)

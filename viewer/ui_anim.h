@@ -58,7 +58,16 @@ static inline float uiSpring(float t, float from, float zeta, float hz) {   // �
 #ifndef BRIEF_PS2_TIMING_OLD
 #define BRIEF_PS2_TIMING_OLD 0   // 1 — короткие вход/выезд (рука 0,40 / 0,45 с), как в TEST17
 #endif
-#define UI_BR_EXIT (BRIEF_PS2_TIMING_OLD ? 0.45f : 0.95f)
+// Сверка g09a-hud круг 5 (M2:24): времена карточки миссии по цифрам оригинала — въезд 0,4 с, рука-зажим стоит 0,3 с и уезжает влево за 0,3 с (между 0,7 и 1,0 с); выезд: правая рука
+// въезжает 0,3 с, пауза 0,3 с, карточка уезжает вправо 0,4 с (всего 1,0 с). Было (замер PS2, правки 512/542/568/612): рука 0,6–0,85 с, выезд 0,95 с. BRIEF_SV_OLD=1 — прежнее
+#ifndef BRIEF_SV_OLD
+#define BRIEF_SV_OLD 0
+#endif
+#define UI_BR_EXIT (BRIEF_PS2_TIMING_OLD ? 0.45f : (BRIEF_SV_OLD ? 0.95f : 1.0f))
+#define UI_BR_HAND_OUT0 (BRIEF_SV_OLD ? 0.60f : 0.70f)
+#define UI_BR_HAND_OUT1 (BRIEF_SV_OLD ? 0.85f : 1.00f)
+#define UI_BR_ARM_IN   (BRIEF_SV_OLD ? 0.38f : 0.30f)
+#define UI_BR_CARD_GO  (BRIEF_SV_OLD ? 0.56f : 0.60f)
 static inline float uiBriefInProg(float t) {   // доля пути карточки при въезде, t с
   static const float k[9] = {0.f, .115f, .237f, .415f, .532f, .677f, .824f, .948f, 1.f};
   if (t <= 0.f) return 0.f; if (t >= UI_BR_IN) return 1.f;
@@ -83,8 +92,8 @@ static inline void uiBriefPose(int leaving, float t, float cardL, float cardR, f
       *showR = 0;
       if (BRIEF_PS2_TIMING_OLD) { if (t >= UI_BR_IN) *showL = 0; }
       else if (t >= UI_BR_IN) {   // запись PS2 (4_карточка_руки, вход): рука-зажим остаётся у карточки ещё ~0,2 с и уходит влево к 0,85 с
-        if (t >= 0.85f) *showL = 0;
-        else if (t > 0.60f) { float u = (t - 0.60f) / 0.25f; *armL = -(armLR + 16.f) * u * u; }
+        if (t >= UI_BR_HAND_OUT1) *showL = 0;
+        else if (t > UI_BR_HAND_OUT0) { float u = (t - UI_BR_HAND_OUT0) / (UI_BR_HAND_OUT1 - UI_BR_HAND_OUT0); *armL = -(armLR + 16.f) * u * u; }
       }
     }
     return;
@@ -93,8 +102,8 @@ static inline void uiBriefPose(int leaving, float t, float cardL, float cardR, f
   if (!BRIEF_PS2_TIMING_OLD && !BRIEF_ARMS_OLD) {
     // запись PS2 (4_карточка_руки, выезд, ~0,95 с): правая рука выезжает к карточке за 0,38 с, карточка стоит до 0,56 с, затем с ускорением вправо
     // поверх мира; затемнение уходит за 0,05–0,55 с, карточка не бледнеет
-    float u = t / 0.38f; if (u > 1.f) u = 1.f; u = 1.f - (1.f - u) * (1.f - u);
-    float tau = (t - 0.56f) / (UI_BR_EXIT - 0.56f); if (tau < 0.f) tau = 0.f; if (tau > 1.f) tau = 1.f;
+    float u = t / UI_BR_ARM_IN; if (u > 1.f) u = 1.f; u = 1.f - (1.f - u) * (1.f - u);
+    float tau = (t - UI_BR_CARD_GO) / (UI_BR_EXIT - UI_BR_CARD_GO); if (tau < 0.f) tau = 0.f; if (tau > 1.f) tau = 1.f;
     *card = far * tau * tau; *armL = *card; *showL = 0;
     *armR = *card + (1.f - u) * (scrW - armRL + 8.f);
     *cardA = t >= UI_BR_EXIT ? 0.f : 1.f;
@@ -200,12 +209,72 @@ static inline float uiPillScale(float t) {   // t — секунды с пока
 // 3:46–3:55, 4:53–5:05): счёт не висит всегда — при сборе въезжает сверху с проявлением (≈0.25 с), держится 2 с после
 // последней монеты и уезжает вверх (≈0.25 с). Порядок чисел: 4:53.75 «21» въехал, 4:55.75 ещё виден, 4:56.0 уехал;
 // 4:58.75 «26» последняя, 5:00.75 уезжает; 5:03.25 «27», 5:05.25 уехал.
-#define UI_COIN_IN   0.25f
-#define UI_COIN_OUT  0.25f
+// Сверка g09a-hud, СВЕРКА_С_ИСХОДНИКОМ 7.4 / M2:10: въезд сверху 0,2 с, держится 2,0 с, выезд 0,2 с (новая монета во время удержания только перезапускает 2,0 с). Было 0,25 / 0,25 (замер PS2).
+// COIN_SLIDE_SV_OLD=1 — прежнее
+#ifndef COIN_SLIDE_SV_OLD
+#define COIN_SLIDE_SV_OLD 0
+#endif
+#define UI_COIN_IN   (COIN_SLIDE_SV_OLD ? 0.25f : 0.20f)
+#define UI_COIN_OUT  (COIN_SLIDE_SV_OLD ? 0.25f : 0.20f)
 #define UI_COIN_HOLD 2.0f
 #define UI_POP_IN   0.35f
 #define UI_POP_FADE 0.12f
 #define UI_POP_OUT  0.20f
+// ---- 2г2. Газета уровня на экране загрузки (сверка g09a-hud, M1:1 и поправка второго читателя): вход 1,8 с. Масштаб растёт линейно от 0,25 до 1,95 размера картинки, то есть от 0,13
+// до 1 от конечного; прозрачность равна доле времени; угол = t / период в оборотах, период растёт линейно от 60 до 120 мс (60·(1+доля)): к 0,9 с около 10 оборотов, к 1,8 с ровно 15,
+// скорость падает с 16,7 до 4,2 об/с; по окончании газета неподвижна и прямая. Направление вращения — как у прежнего разворота (угол растёт к нулю). Часы разворота идут с запроса загрузки,
+// картинка остаётся невидимой, пока файл не пришёл (если чтение дольше 1,8 с, газета встаёт сразу на место) — это решает main_frontend.h (g09b).
+// Выключатель — LOAD_NEWS18_OLD в main_frontend.h (1 — прежний разворот 0,9 с)
+#define UI_NEWS_DUR 1.8f
+static inline void uiNewsPose(float t, float *ang, float *scale, float *alpha) {
+  float u = t <= 0.f ? 0.f : (t >= UI_NEWS_DUR ? 1.f : t / UI_NEWS_DUR);
+  float revs = u >= 1.f ? 15.f : (t <= 0.f ? 0.f : t / (0.06f * (1.f + u)));
+  *ang = 2.f * UI_PI * (revs - 15.f);   // оборотов от конца назад: целое число оборотов = прямая газета
+  *scale = (0.25f + 1.7f * u) / 1.95f; *alpha = u;
+}
+// ---- 2д. Сверка с исходником (02.11, окно g09a-hud): три баннера со своими кривыми вместо общей пружины -------------------------
+// Строки сверки M2_движение_в_игре 1, 2, 3 (и поправки второго читателя). Числа и формулы — поведение оригинала, код свой.
+//  «этап пройден» (1): 1,0 с; размер 1,25·√доли времени, полностью виден до 64 % времени, дальше гаснет линейно до нуля;
+//  MISSION COMPLETE (2): 2,5 с; размер 1,25·доля^(1/8) (к 72 % времени уже 1,2), виден до 72 %, дальше гаснет до нуля;
+//  отсчёт гонки (3): цифра или слово растёт от нуля до 3,0 по корню 4-й степени доли позиции, виден, пока размер ниже 2,5
+//  (первые 48 % позиции), дальше гаснет до нуля к концу позиции; длительность позиции — uiCountdownDur (по умолчанию 1,0 с).
+// STAGE_POP_OLD=1 / MCOMP_POP_OLD=1 / CDOWN_POP_OLD=1 — прежнее (общая пружина UI_POP_BANNER, держится сколько просит msn_view)
+#ifndef STAGE_POP_OLD
+#define STAGE_POP_OLD 0
+#endif
+#ifndef MCOMP_POP_OLD
+#define MCOMP_POP_OLD 0
+#endif
+#ifndef CDOWN_POP_OLD
+#define CDOWN_POP_OLD 0
+#endif
+// Круг 2 (g09a-hud): радар проявляется и гаснет 0,25 / 0,25 с (С_ИСХ 7.12, RADAR_FADE_OLD); карточка коллекционного — вход 0,5 с «вылетом» из центра, выход 0,3 с (7.5, CARDPOP_OLD);
+// надпись Hit & Run — прозрачность и размер 0→1 за 0,2 с, держится, уходит обратно за 0,2 с (7.7 и g09b M2:4, HNRTXT_POP_OLD); «Item Dropped» въезжает 0,2 с и мигает
+// каждые 0,25 с, пока висит (M2:6, DROP_BLINK_OLD). Длительность удержания задаёт вызывающий (msn_view / collect)
+#ifndef RADAR_FADE_OLD
+#define RADAR_FADE_OLD 0
+#endif
+#ifndef CARDPOP_OLD
+#define CARDPOP_OLD 0
+#endif
+#ifndef HNRTXT_POP_OLD
+#define HNRTXT_POP_OLD 0
+#endif
+#ifndef DROP_BLINK_OLD
+#define DROP_BLINK_OLD 0
+#endif
+enum { UI_POP_STAGE = 4, UI_POP_MCOMP = 5, UI_POP_CDOWN = 6, UI_POP_RADAR = 7, UI_POP_CARD = 8, UI_POP_HNR = 9, UI_POP_DROP = 10 };
+#define UI_STAGE_DUR 1.0f
+#define UI_MCOMP_DUR 2.5f
+extern float uiCountdownDur;   // ui.c: секунды одной позиции отсчёта (данные миссии), msn_view может выставить из сценария
+// размер = amp·доля^p; пока размер не выше порога thr, альфа 1, дальше альфа линейна по РАЗМЕРУ (круг 3, проверка по исходнику): 1 − (размер − thr) / (amp − thr);
+// после dur — нечего рисовать. Пороги: этап пройден 1,0, MISSION COMPLETE 1,2, отсчёт 2,5
+static inline int uiPopCurve(float t, float dur, float amp, float p, float thr, float *scale, float *alpha) {
+  float f = dur > 0.f ? (t < 0.f ? 0.f : t) / dur : 1.f;
+  if (f >= 1.f) { *scale = amp; *alpha = 0.f; return 0; }
+  float z = amp * powf(f, p); *scale = z; *alpha = z <= thr ? 1.f : 1.f - (z - thr) / (amp - thr);
+  return 1;
+}
 static inline float uiEaseOutBack(float x) { const float c1 = 1.70158f, c3 = c1 + 1.f; x -= 1.f; return 1.f + c3 * x * x * x + c1 * x * x; }
 // on: 1 — показан с момента t (секунды с показа), 0 — снят, t — секунды со снятия. Выход: масштаб и альфа 0..1.
 // Возвращает 0, когда рисовать уже нечего (выход закончен).
@@ -213,6 +282,23 @@ static inline int uiPopState(int kind, int on, float t, float *scale, float *alp
   if (kind == UI_POP_PILL) {   // строка задания: масштаб — по высоте (ui.c: xf.sy), альфа 1; снята — сразу нет (один кадр)
     if (!BUBBLE_UNIFORM_OLD) { *scale = on ? uiBubScale(t) : 1.f; *alpha = (on && t < 0.06f && !uiBubble1040) ? 0.3f + 0.7f * (t < 0.f ? 0.f : t) / 0.06f : 1.f; return on ? 1 : 0; }
     *alpha = 1.f; *scale = on ? uiPillScale(t) : 1.f; return on ? 1 : 0;
+  }
+  if (kind >= UI_POP_RADAR && kind <= UI_POP_DROP) {
+    float in = kind == UI_POP_RADAR ? .25f : kind == UI_POP_CARD ? .5f : .2f, out = kind == UI_POP_RADAR ? .25f : kind == UI_POP_CARD ? .3f : .2f;
+    if (t < 0.f) t = 0.f;
+    if (!on && t >= out) { *scale = 1.f; *alpha = 0.f; return 0; }
+    float f = on ? (t < in ? t / in : 1.f) : 1.f - t / out;
+    *scale = 1.f; *alpha = f;
+    if (kind == UI_POP_CARD && on) *scale = 1.f - (1.f - f) * (1.f - f);   // вылет из центра с торможением
+    if (kind == UI_POP_HNR) *scale = f;                                    // размер 0…1 от конечного (1,75 — размер самой надписи в раскладке)
+    if (kind == UI_POP_DROP && on && t >= in && ((int)(t / .25f) & 1)) *alpha = .3f;
+    return 1;
+  }
+  if (kind == UI_POP_STAGE || kind == UI_POP_MCOMP || kind == UI_POP_CDOWN) {   // сверка M2:1,2,3 (п. 2д): снятый баннер пропадает сразу
+    if (!on) { *scale = 1.f; *alpha = 0.f; return 0; }
+    if (kind == UI_POP_STAGE) return uiPopCurve(t, UI_STAGE_DUR, 1.25f, 0.5f, 1.0f, scale, alpha);
+    if (kind == UI_POP_MCOMP) return uiPopCurve(t, UI_MCOMP_DUR, 1.25f, 0.125f, 1.2f, scale, alpha);
+    return uiPopCurve(t, uiCountdownDur, 3.0f, 0.25f, 2.5f, scale, alpha);
   }
   float from = kind == UI_POP_BOX ? 0.8f : 0.4f;
   if (t < 0.f) t = 0.f;

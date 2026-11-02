@@ -55,6 +55,7 @@ SFX = [
     # world.spt
     'coin_collect_01', 'coin_lose', 'wrench_collect', 'card_collect', 'character_zapped', 'pop_up',
     # осы-камеры (world.spt; В5, viewer/main.c collFrame): появление, жужжание (петля), выстрел, промах, уничтожение
+    'wasp_charging', 'wasp_charged_idle', 'traffic_coffin',   # сверка g08-sound круг 2 (g11b P10-19, P10-31): стадии осы и гроб Хэллоуина (10-100 м)
     'wasp_fade_in', 'wasp_idle', 'wasp_attack', 'wasp_lasers', 'laser_miss', 'wasp_destroyed',
     'mission_complete', 'busted', 'stage_complete', 'switch', 'payphone_pickup', 'trampoline', 'rage_warning',
     # homer.spt
@@ -62,6 +63,13 @@ SFX = [
     'feet_dirt', 'feet_dirt_jump', 'jump', 'homer_stomp',
     # frontend.spt (locked_out — затемнённый пункт меню, как в паузе: 29.09, звуки главного меню и OPTIONS)
     'accept', 'back', 'scroll', 'pause_on', 'pause_off', 'locked_out',
+    # сверка g08-sound (02.11.2026; СВЕРКА_ПОЛНАЯ/P09, P10, P05): мотор трафика и ИИ миссий (P10-1, P10-2), подбор предмета миссии по уровням (P09:23),
+    # взлёт птиц (P09:24), звуки меню (P09:29, Д14), звуки подвижных объектов (P05:8). Имена, которых нет в скриптах диска, exporter пропускает
+    'ferrari', 'mission_ai_vehicle',
+    'level_1_pickup_sfx', 'level_2_pickup_sfx', 'level_3_pickup_sfx', 'level_4_pickup_sfx', 'level_5_pickup_sfx', 'level_6_pickup_sfx',
+    'monkey_collect', 'nuclear_waste_collect', 'pigeon_takeoff', 'gull_takeoff',
+    'phonebusy', 'cheat_success', 'cheat_fail', 'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger', 'continue', 'cancel',
+    'trapdoor', 'platform_01', 'platform_02', 'aplatform6', 'duff_truck', 'plantdoor', 'elevator', 'gag_library', 'hit_switch_quick',
 ]
 
 # ---------------------------------------------------------------- music (l<N>_music.rms -> роли движка)
@@ -866,7 +874,32 @@ def main():
         from ticket_audio import streams as ticket_streams
         have_ticket = {n for n, _ in dialog}
         dialog += [(n, p) for n, p in ticket_streams(lv) if n not in have_ticket]
+    # сверка g08-sound круг 2 (g07b P09:Д8): провал гонки заменяется разговором с Патти C_fail1/2_*_noboxconv_Pat_L<уровень>R<гонка>; дорожки в пакет
+    if not os.environ.get('RACEFAIL_SV_OLD') == '1':
+        have_rf = {n for n, _ in dialog}
+        for p_ in sorted((GAME / 'conversations').glob(f'c_fail[12]_*_noboxconv_*_l{lv}r*.rsd')):
+            tn = voice_track_name(str(p_))
+            if tn and tn not in have_rf: dialog.append((tn, str(p_))); have_rf.add(tn)
     mtracks, mevents, mrep = mission_music(lv)
+    # сверка g08-sound (P09 Д3, Д4, 18, 17): вставки поверх музыки (карточка пешком OF_found_card, фанфары Win_3Street_Races / Destroy_Camera_Bonus /
+    # Gated_Mission) и особые куски зон атмосферы (OF_Apu_Oasis, ScaryMusic01, DuffBeer, StoneCutters); kind 6 — один проход, 7 — держится до следующей зоны.
+    # Дорожки: первые шаги региона события (event_alts), до трёх. Музыка дома (OF_House: Tuba_005/012) — дорожки of_house, of_house~1.. (viewer/sound.c sndRoom)
+    if not os.environ.get('MUSIC_SVERKA_OLD') == '1':
+        known = {t[0] for t in mtracks}
+        for ev, kind, loop in (('OF_found_card', 6, False), ('Win_3Street_Races', 6, False), ('Destroy_Camera_Bonus', 6, False), ('Gated_Mission', 6, False),
+                               ('OF_Apu_Oasis', 7, True), ('ScaryMusic01', 7, True), ('DuffBeer', 7, True), ('StoneCutters', 7, True)):
+            alts = event_alts(lv, ev)[:3]; ts = []
+            for j, k in enumerate(alts):
+                path = str(SND / 'music' / (k + '.rsd'))
+                if not Path(path).is_file(): continue
+                nm = ('x_' + ev.lower())[:23] + ('' if not j else '~%d' % j)
+                if nm not in known: mtracks.append((nm, path, loop, None)); known.add(nm)
+                ts.append(nm)
+            if ts: mevents.append((ev, ts, kind))
+        for j, k in enumerate(list(dict.fromkeys(event_alts(lv, 'OF_House')))[:2]):
+            path = str(SND / 'music' / (k + '.rsd'))
+            nm = 'of_house' if not j else 'of_house~%d' % j
+            if Path(path).is_file() and nm not in known: mtracks.append((nm, path, False, None)); known.add(nm)
     have = {m[1] for m in music}; nroles = len(music); names = {m[0] for m in music}
     graph = os.environ.get('MUSIC_GRAPH_OLD') != '1'
     for n, p, lp, nx in mtracks:
@@ -885,6 +918,19 @@ def main():
     # objects with sounds -> OBJS
     objs = sound_objects(lv, res)
     sfx = list(SFX)
+    # круг 4 (дирижёр, банк в 2112 КБ, правка №1069): резидентный sfx.sab должен вмещаться в фиксированный участок на PSP. Из новых клипов круга 1-3 остаются только те,
+    # что игра вызывает: звуки подвижных объектов (sndAnimObj не подключён: у AoObj нет имени) и взлёт птиц (событий нет) не выгружаются; подбор предмета миссии —
+    # клип только своего уровня; monkey_collect — L2, nuclear_waste_collect и traffic_coffin — L7. SND4_FULL=1 — весь список как в круге 3
+    if os.environ.get('SND4_FULL') != '1':
+        drop = {'trapdoor', 'platform_01', 'platform_02', 'aplatform6', 'duff_truck', 'plantdoor', 'elevator', 'gag_library', 'hit_switch_quick',
+                'pigeon_takeoff', 'gull_takeoff'}
+        drop |= {'level_%d_pickup_sfx' % k for k in range(1, 7) if k != lv}
+        if lv != 2: drop.add('monkey_collect')
+        if lv != 7: drop |= {'nuclear_waste_collect', 'traffic_coffin'}
+        # не вызываются игрой, пока нет событий интерфейса (UI_EV_STING g09a, uiSfxPlayNamed) — вернутся потоком music.sap, когда события подключат; wasp_charged_idle: g11b
+        # при отсутствии клипа играет wasp_idle на этой стадии (того же размера)
+        drop |= {'phonebusy', 'cheat_success', 'cheat_fail', 'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger', 'continue', 'cancel', 'wasp_charged_idle'}
+        sfx = [n for n in sfx if n not in drop]
     for o in objs:
         if o[5] not in sfx:
             sfx.append(o[5])
@@ -913,7 +959,9 @@ def main():
     sec.append((b'ZONE', bytes(b), len(zones), 96))
     b = bytearray()
     for e in emits:
-        b += struct.pack('<6fHHf', e['x'], e['y'], e['z'], e['r'], e['mn'], e['mx'], track_index[e['track']], 0, e['trim'] * e['prob'])
+        b += struct.pack('<6fHHf', e['x'], e['y'], e['z'], e['r'], e['mn'], e['mx'], track_index[e['track']],
+                         0 if os.environ.get('POSLOOP_SV_OLD') == '1' else int(round(e['prob'] * 1000)) + 1,   # сверка g08-sound (P09:26): pad = вероятность·1000 + 1, громкость — трим (бросок при входе в объём)
+                         e['trim'] if not os.environ.get('POSLOOP_SV_OLD') == '1' else e['trim'] * e['prob'])
     sec.append((b'EMIT', bytes(b), len(emits), 32))
     b = bytearray()   # MEVT 36 B: char event[28], i16 track[3] (индексы music.sap, -1 нет), u8 n, u8 kind (MEV_KIND)
     for e, ts, k in mevents:

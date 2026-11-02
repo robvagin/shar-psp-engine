@@ -25,6 +25,33 @@ static int inRoom(void) { return rg.mem && rs.room >= 0; }
 #ifndef ZONE_ROOM_JUMP_OLD
 #define ZONE_ROOM_JUMP_OLD 0
 #endif
+#ifndef ZONE_STAND_ENTRY_OLD
+#define ZONE_STAND_ENTRY_OLD 0
+#endif
+#ifndef ZONE_FOOT_EXACT_OLD
+#define ZONE_FOOT_EXACT_OLD 0
+#endif
+// сверка g11b-collect круг 5 (P12-10, P12-16): старт, рестарт и выбор миссии ставят набор зон из команды миссии SetDynaLoadData (строка файлов
+// «l3z1.p3d;l3r1.p3d;...»), а не ближайшего места телепорта. Строку отдаёт msn_view (mvDynaFiles), имена регионов уровня лежат в REG1 (regNm).
+// Если место старта вне набора миссии (данные не сошлись), остаётся набор места. Перенос героя в течение 2 с после команды не перебивает набор
+// миссии (игрока ставят на старт чуть позже команды). ZONE_MSN_SET_OLD=1 — как было: набор всегда по ближайшему месту
+#ifndef ZONE_MSN_SET_OLD
+#define ZONE_MSN_SET_OLD 0
+#endif
+static unsigned zgMsnSeq, zgMsnMask; static int zgMsnFr;
+static unsigned zoneMsnMask(const char *fl) {
+  unsigned m = 0;
+  for (const char *a = fl; *a;) {
+    const char *e = a; while (*e && *e != ';' && *e != ':' && *e != '@') e++;
+    char nm[24]; size_t n = (size_t)(e - a); if (n >= sizeof nm) n = sizeof nm - 1;
+    memcpy(nm, a, n); nm[n] = 0;
+    for (size_t k = 0; nm[k]; k++) if (nm[k] >= 'A' && nm[k] <= 'Z') nm[k] = (char)(nm[k] + 32);
+    if (n > 4 && !strcmp(nm + n - 4, ".p3d")) nm[n - 4] = 0;
+    if (*e == ';') for (int r = 0; r < regNn; r++) if (!strncmp(nm, regNm[r], 16) && nm[0]) m |= 1u << r;
+    a = *e ? e + 1 : e;
+  }
+  return m;
+}
 static int zgRoomGap;
 static void zoneGatesFrame(void) {
   if (!zgOn || !haveCol) return;
@@ -32,16 +59,28 @@ static void zoneGatesFrame(void) {
   int foot = onFoot(); float px = foot ? homer.x : car.x, py = foot ? homer.y : car.y, pz = foot ? homer.z : car.z;
   float dx = px - zgPx, dz = pz - zgPz; int jump = (zgInit || (zgRoomGap && !ZONE_ROOM_JUMP_OLD)) && dx * dx + dz * dz > 50.f * 50.f;
   zgRoomGap = 0;
+  if (zgMsnFr > 0) zgMsnFr--;
+  if (!ZONE_MSN_SET_OLD && regNn && !zgStart) {   // круг 5 (P12-10): команда миссии выполнилась (старт, рестарт, этап) — её набор зон
+    unsigned sq; const char *fl = mvDynaFiles(&sq);
+    if (sq != zgMsnSeq) {
+      zgMsnSeq = sq; unsigned m = fl[0] ? zoneMsnMask(fl) : 0;
+      if (m && (regAt(px, pz) & m)) { zgMsnMask = m; zgMsnFr = 120; regRes = m; zgInit = 0; }
+      else zgMsnMask = 0;
+      if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "ZONE msn \"%.60s\" mask %04x ok %d t=%.1f\n", fl, m, zgMsnMask != 0, smkT); smkWrite(s_); }
+    }
+  }
   if (zgStart || jump) {   // старт уровня или перенос: набор ближайшего места (оригинал при телепорте ставит набор места)
     unsigned b = regRes; regRes = zonePlaceNear(zp, nzp, px, pz, 0xFFFFu); zgStart = 0; zgInit = 0;
+    if (!ZONE_MSN_SET_OLD && zgMsnFr > 0 && zgMsnMask && (regAt(px, pz) & zgMsnMask)) regRes = zgMsnMask;   // круг 5 (P12-10): сразу после команды миссии её набор главнее места
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "ZONE %s res %04x -> %04x at %.0f %.0f t=%.1f\n", jump ? "jump" : "start", b, regRes, px, pz, smkT); smkWrite(s); }
   }
   if (!zgInit) {   // въезды считаются с этого места: объёмы, в которых игрок уже стоит, не срабатывают
-    for (int i = 0; i < nzg; i++) zgWas[i] = (unsigned char)zoneGateIn(&zg[i], px, py, pz, 1.5f);
+    // сверка g11b, P12-16 / Д4 (СВЕРКА_ПОЛНАЯ/P12_загрузка_и_зоны.md): после старта, переноса героя и сброса объём, в котором игрок стоит, срабатывает на первом кадре, как вход (ZONE_STAND_ENTRY_OLD=1 — как TEST81)
+    for (int i = 0; i < nzg; i++) zgWas[i] = ZONE_STAND_ENTRY_OLD ? (unsigned char)zoneGateIn(&zg[i], px, py, pz, 1.5f) : 0;
     zgInit = 1; zgPx = px; zgPz = pz; return;
   }
   int fired = -1; unsigned b = regRes;
-  regRes = zoneGatesStep(zg, nzg, zgWas, regRes, px, py, pz, 1.5f, &fired);
+  regRes = zoneGatesStep(zg, nzg, zgWas, regRes, px, py, pz, (foot && !ZONE_FOOT_EXACT_OLD) ? 0.f : 1.5f, &fired);   // сверка g11b P12-05: Гомер пешком — точка строго внутри объёма, запаса нет; у машины запас 1,5 м заменяет четыре угла кузова (нужна проверка по точкам в zonegate.h, передано)
   zgPx = px; zgPz = pz;
   if (regRes != b) { zgFired++;
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "ZONE gate %d res %04x -> %04x at %.0f %.0f t=%.1f\n", fired, b, regRes, px, pz, smkT); smkWrite(s); } }
@@ -90,9 +129,45 @@ static void roomsLoad(void) {   // один раз после уровня: SHI1
   }
   snprintf(roomsMsg, sizeof roomsMsg, "ROOMS pkg=ok rooms=%d doors=%d gfx=%d\n", rooms.nroom, rooms.ndoor, rgN);
 }
+// сверка g11b-collect круг 5 (P16-11): анимация текстур комнаты (экран автомата Kwik-E-Mart, помехи телевизора Moe's, огни обсерватории) — блок ANI1 в хвосте
+// блоба комнаты (tools/interior_export.py, подвал RAN1 в последних 16 байтах). Текстура-основа заменяется по часам: кадр = время x кадров/с по кругу длины записи,
+// между ключами кадр держится. Блока нет (старый пакет) — комната статична. ROOM_ANIM_OLD=1 — не читать блок
+#ifndef ROOM_ANIM_OLD
+#define ROOM_ANIM_OLD 0
+#endif
+#define ROOM_ANIMS 4
+#define ROOM_ANIM_KEYS 16
+typedef struct { int base; int nk; float len, fps; unsigned short fr[ROOM_ANIM_KEYS], tx[ROOM_ANIM_KEYS]; } RoomAnim;
+static RoomAnim roomAn[ROOM_ANIMS]; static int roomAnN; static unsigned roomAnT0;
+static void roomAnimParse(const unsigned char *m, unsigned sz, unsigned ntx) {
+  roomAnN = 0; if (ROOM_ANIM_OLD || sz < 16 + 128 || memcmp(m + sz - 16, "RAN1", 4)) return;
+  unsigned off = rdU(m + sz - 12), n = rdU(m + sz - 8);
+  if (off + 8 > sz - 16 || n > ROOM_ANIMS || memcmp(m + off, "ANI1", 4)) return;
+  const unsigned char *q = m + off + 8; const unsigned char *end = m + sz - 16;
+  for (unsigned i = 0; i < n; i++) {
+    if (q + 16 > end) { roomAnN = 0; return; }
+    RoomAnim *a = &roomAn[roomAnN]; unsigned nk = rdU(q + 4); float f2[2]; memcpy(f2, q + 8, 8);
+    if (rdU(q) >= ntx || nk == 0 || nk > ROOM_ANIM_KEYS || q + 16 + 4 * nk > end || !(f2[0] > 0.f) || !(f2[1] > 0.f)) { roomAnN = 0; return; }
+    a->base = (int)rdU(q); a->nk = (int)nk; a->len = f2[0]; a->fps = f2[1]; q += 16;
+    for (unsigned k = 0; k < nk; k++, q += 4) { a->fr[k] = (unsigned short)(q[0] | q[1] << 8); a->tx[k] = (unsigned short)(q[2] | q[3] << 8); if (a->tx[k] >= ntx) { roomAnN = 0; return; } }
+    roomAnN++;
+  }
+  roomAnT0 = sceKernelGetSystemTimeLow();
+}
+// номер текстуры куска комнаты с учётом анимации
+static int roomAnimTex(int t) {
+  if (!roomAnN || t < RTEX0) return t;
+  float sec = (float)(sceKernelGetSystemTimeLow() - roomAnT0) * 1e-6f;
+  for (int i = 0; i < roomAnN; i++) { const RoomAnim *a = &roomAn[i];
+    if (t != RTEX0 + a->base) continue;
+    float f = fmodf(sec * a->fps, a->len); int k = 0; for (int j = 0; j < a->nk; j++) if (a->fr[j] <= f) k = j;
+    return RTEX0 + a->tx[k]; }
+  return t;
+}
 static void roomClose(void) {   // блоб комнаты — обратно в кучу (GE прошлый кадр закончил: sceGuSync в конце кадра)
   if (rg.mem) bbOp("room-", rg.room >= 0 && rg.room < rooms.nroom ? rooms.room[rg.room].name : "-", 0);   // правка 103: самописец
   toneBlkDel(rg.mem); free(rg.pc); free(rgTex); free(rg.mem); nrcam = 0; rcs.cur = -1; roomCamOn = 0;
+  roomAnN = 0;   // круг 5 (P16-11)
   rg.pc = 0; rgTex = 0; rgNtex = 0; rg.mem = 0; rg.npc = 0; rg.room = -1; bound = -2;
 }
 static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0; e1002N = 14; }   // RESET CAR / NEW GAME: Гомер снова в городе
@@ -150,7 +225,8 @@ static int roomOpen(void *u, int room) {
   sceKernelDcacheWritebackRange(m, sz);
   toneBlkAdd(m, sz, TF_ROOM, g->off);   // правка 144: палитры комнаты — из interiors-lN-gfx.bin заново
   rg.room = room; rg.mem = m; rg.pc = pp; rg.npc = np; rg.size = sz; rgTex = tx; rgNtex = ntx; bound = -2;
-  rg.clear = rdU(m + 20); rg.amb = rdU(m + 24); rg.nlit = (int)rdU(m + 28); rcs.cur = -1; rcs.in = 0; memset(rcs.inT, 0, sizeof rcs.inT); rcs.newWins = !roomCamStickyOld; rcs.switchOld = roomCamSwitchOld;   // правка 186; файл roomcamswitchold — задержка 172 до школы
+  roomAnimParse(m, sz, ntx);   // круг 5 (P16-11)
+  rg.clear = rdU(m + 20); rg.amb = rdU(m + 24); rg.nlit = (int)rdU(m + 28); rcs.cur = -1; rcs.in = 0; memset(rcs.inT, 0, sizeof rcs.inT); if (!CUT1085_OLD) roomCamRestart(&rcs);   /* №1085 (сверка g06): вход в помещение — первая камера срезом */ rcs.newWins = !roomCamStickyOld; rcs.switchOld = roomCamSwitchOld;   // правка 186; файл roomcamswitchold — задержка 172 до школы
   for (int i = 0; i < rg.nlit; i++) { memcpy(rg.lit[i], m + 32 + 16 * i, 12); rg.litc[i] = rdU(m + 32 + 16 * i + 12); }
   // №1076: комната читается при закрытом экране (дверь) — персонажи миссии и бонусные у её старта (Дедушка в доме L1) дочитываются здесь же, а не на глазах
   // после открытия; не дольше 1,5 с (тёмный экран держится чуть дольше). Служебное flag npcwaitold 1 — как до правки
@@ -164,6 +240,16 @@ static int roomOpen(void *u, int room) {
 #include "wardrobe_view.h"
 static int skinTargetMain(float px, float py, float pz, float out[3]) { return roomsSpotTarget(&rooms, rs.room, wardrobeSpot, px, py, pz, out); }
 static void roomLog(int ev);
+// Сверка g11b, P05_ии_действия №16 / Д6, P16-12: после входа в комнату управление выключено ещё 0,5 с после раскрытия ириса, после выхода — 1,0 с («пока камера оглянется»).
+// ROOM_HOLD_OLD=1 — управление сразу, как в TEST81. Поворот Гомера к двери и ходьба во время ириса — анимация перехода (transit.c, main_loop.h), передано.
+#ifndef ROOM_HOLD_OLD
+#define ROOM_HOLD_OLD 0
+#endif
+#define ROOM_HOLD_ENTER_S .5f
+#define ROOM_HOLD_EXIT_S 1.f
+static float roomHoldT;
+static void roomHoldStart(int ev) { if (!ROOM_HOLD_OLD) roomHoldT = ev > 0 ? ROOM_HOLD_ENTER_S : ROOM_HOLD_EXIT_S; }
+static int roomHoldActive(float dt) { if (roomHoldT <= 0.f) return 0; roomHoldT -= dt; return 1; }   // 1 — ввод игрока этого кадра обнулить
 // Сценарий миссии ставит Гомера в комнату (данные диска: SetMissionResetPlayerOutCar с локатором в комнате и SetDynaLoadData
 // ("…;l4i02.p3d@", "SimpsonsHouse") — L4 m1sd, L7 m1sd «Гомер дома», L7 m4sd «школа»; у уровня 1 таких стартов нет): движок
 // входит в эту комнату (рисование, коллизия, камеры; выход — к её двери, как после входа с улицы). Какая комната — интерьер
@@ -202,6 +288,18 @@ static void roomLog(int ev) {   // smoke.txt: вход/выход, куча до
   if (ev == ROOM_EV_ENTER && rs.room >= 0) { char e_[120]; snprintf(e_, sizeof e_, "ROOMEXIT1002 room=%s exit=%.2f,%.2f,%.2f start=%.2f,%.2f,%.2f\n", rooms.room[rs.room].name, rooms.room[rs.room].exit[0], rooms.room[rs.room].exit[1], rooms.room[rs.room].exit[2], rooms.room[rs.room].start[0], rooms.room[rs.room].start[1], rooms.room[rs.room].start[2]); smkWrite(e_); }
 }
 static int rdTexKey(int tex) { if (tex >= RTEX0) tex -= RTEX0; return tex < 0 || tex > 510 ? 511 : tex; }   // правка 498: номер текстуры комнаты (RTEX0 + номер в блобе) -> ключ сортировки
+// сверка g11b-collect круг 5 (P16-10): Moe's (moes) и BartRoom рисуются в два прохода. Первый — камера, отражённая через плоскость края комнаты
+// (moes: x = 54,75; bartroom: z = 447, оси порта; экспорт хранит только половину комнаты), без отсечения по пирамиде, обход граней обратный, без
+// полупрозрачного. Потом глубина очищается и идёт обычный проход поверх: отражение остаётся только там, где обычный кадр пуст (стена-зеркало). Физика,
+// локаторы и свет не отражаются. Цена: комната дважды, только в этих двух. ROOM_MIRROR_OLD=1 — как было (один проход)
+#ifndef TVGAP1083_OLD
+#define TVGAP1083_OLD 0
+#endif
+#ifndef ROOM_MIRROR_OLD
+#define ROOM_MIRROR_OLD 0
+#endif
+static int roomMirrorOn;
+static int roomNameIs(const char *n, const char *w) { if (!n) return 0; for (; *n && *w; n++, w++) if ((*n | 32) != *w) return 0; return !*n && !*w; }
 static void roomDraw(void) {   // куски комнаты: пирамида видимости, ближняя версия; полупрозрачное — в очередь tq
   // правка Роба 27: камеры комнат оригинала стоят за стенами — оболочка повёрнута лицом в комнату и рисуется с отсечением
   // изнанки (флаг 128, tools/roomorient.py), мебель, видимая изнутри с обеих сторон, — двусторонняя (флаг 8); старый пакет
@@ -216,19 +314,42 @@ static void roomDraw(void) {   // куски комнаты: пирамида в
   static unsigned short rdOrd[4096], rdCnt[2048]; unsigned rdN = 0;
   if (!ROOM_TEXSORT_OLD && rg.npc <= 4096) {
     memset(rdCnt, 0, sizeof rdCnt);
-    for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; if (visBox(d->r.bb, 0, 0, 0)) {
+    for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; if (roomMirrorOn ? !(d->r.flags & 3) : visBox(d->r.bb, 0, 0, 0)) {
         int t = rdTexKey(d->r.tex); rdOrd[rdN++] = (unsigned short)i; rdCnt[((d->r.flags & 3) << 9) | t]++; } }
     unsigned s_ = 0; for (int k = 0; k < 2048; k++) { unsigned c_ = rdCnt[k]; rdCnt[k] = (unsigned short)s_; s_ += c_; }
     static unsigned short rdSorted[4096];
     for (unsigned j = 0; j < rdN; j++) { Piece *d = &rg.pc[rdOrd[j]]; int t = rdTexKey(d->r.tex); rdSorted[rdCnt[((d->r.flags & 3) << 9) | t]++] = rdOrd[j]; }
     for (unsigned j = 0; j < rdN; j++) rdOrd[j] = rdSorted[j];
   } else { for (unsigned i = 0; i < rg.npc; i++) rdOrd[rdN++ & 4095] = (unsigned short)i; if (rg.npc > 4096) rdN = 4096; }
-  for (unsigned j = 0; j < rdN; j++) { unsigned i = rdOrd[j]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? visBox(d->r.bb, 0, 0, 0) : 1) {
+  // №1083 (= №1075, щель у телевизора, фото PSP IMG_8110): в данных комнаты щели нет (спинка телевизора на z 400,73 двусторонняя и сходится с верхним скосом по общему
+  // ребру; сверка tests/rooms/tvgap1083.py). Щель — точность GE: комната лежит в 500 м от начала, куски рисовались с переносом = центр куска в мировых координатах, а GE считает
+  // вершины во float24 (шаг у 500 м ~ 4-8 мм): общая вершина двух кусков (скос и спинка — разные куски со своими центрами) округляется по-разному и ребро расходится на пиксель.
+  // Так же город чинили правками 224/237/251: вид без переноса (глаз в начале), перенос куска = центр - глаз считает процессор во float32. Тот же приём для куска комнаты.
+  // Общее правило для всех комнат (не координаты одного места). Отражённый проход Moe's/BartRoom (круг 5) остаётся прежним. TVGAP1083_OLD=1 — как было
+  ScePspFMatrix4 vAbs_; int rel_ = !TVGAP1083_OLD && !roomMirrorOn;
+  if (rel_) { sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&vAbs_); sceGumMatrixMode(GU_MODEL); ScePspFMatrix4 vr_ = vAbs_; vr_.w.x = vr_.w.y = vr_.w.z = 0.f; sceGuSetMatrix(GU_VIEW, &vr_); }
+  for (unsigned j = 0; j < rdN; j++) { unsigned i = rdOrd[j]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? (roomMirrorOn ? !(d->r.flags & 3) : visBox(d->r.bb, 0, 0, 0)) : 1) {
       if (trLeft == TR_FRAMES && trDetail) {   // след 259: кусок комнаты в первом кадре камеры миссии — до отправки на GE
         const Tex *x_ = texAt(d->r.tex); char t_[200];
         int l_ = snprintf(t_, sizeof t_, "TRR i=%u fl=%x ni=%d v=%p idx=%p tex=%d pal=%p lv0=%p slv0=%p lv=%d list=%d\n", i, d->r.flags, d->r.ni, (void *)d->v, (void *)d->idx,
                           d->r.tex, x_ ? (void *)x_->pal : 0, x_ ? (void *)x_->lv[0] : 0, x_ ? (void *)x_->slv[0] : 0, x_ ? x_->levels : -1, (int)sceGuCheckList());
         trLine(t_, l_); }
-      drawPiece(d, 0, 0.f, 0.f, 0.f, 1.f, 0.f); } }
+      int t0_ = d->r.tex; if (roomAnN) d->r.tex = roomAnimTex(t0_);   // круг 5 (P16-11): анимация текстуры
+      if (rel_ && !(tqOn && (d->r.flags & 2) && !(d->r.flags & 4))) drawPiece(d, 0, -ggE[0], -ggE[1], -ggE[2], 1.f, 0.f);   // №1083: перенос = центр - глаз (полупрозрачное идёт в очередь с обычным видом, как у города)
+      else drawPiece(d, 0, 0.f, 0.f, 0.f, 1.f, 0.f);
+      d->r.tex = t0_; } }
+  if (rel_) sceGuSetMatrix(GU_VIEW, &vAbs_);
+}
+static void roomDrawMirrored(void) {   // круг 5 (P16-10): вызывается вместо roomDraw
+  const char *nm = roomName(); int k = ROOM_MIRROR_OLD ? 0 : roomNameIs(nm, "moes") ? 1 : roomNameIs(nm, "bartroom") ? 2 : 0;
+  if (k) {
+    ScePspFMatrix4 v0, rf; memset(&rf, 0, sizeof rf); rf.x.x = rf.y.y = rf.z.z = rf.w.w = 1.f;
+    if (k == 1) { rf.x.x = -1.f; rf.w.x = 2.f * 54.75f; } else { rf.z.z = -1.f; rf.w.z = 2.f * 447.f; }
+    sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&v0); sceGumMultMatrix(&rf); sceGumMatrixMode(GU_MODEL);
+    sceGuFrontFace(GU_CW); roomMirrorOn = 1; roomDraw(); roomMirrorOn = 0; sceGuFrontFace(GU_CCW);
+    sceGumMatrixMode(GU_VIEW); sceGumLoadMatrix(&v0); sceGumMatrixMode(GU_MODEL);
+    sceGuClear(GU_DEPTH_BUFFER_BIT);
+  }
+  roomDraw();
 }
 

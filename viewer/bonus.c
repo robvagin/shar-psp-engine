@@ -67,6 +67,8 @@ void brInit(BonusRace *b, const BnsTrack *t, int laps, int reverse, int n, int h
     float h; brStart(b, i, r->lastPos, &h);
   }
   b->state = BR_COUNT; b->count = BR_COUNT_S;
+  for (int i = 0; i < BR_MAX; i++) { b->nitro[i] = BR_NITRO3_OLD ? 0 : BR_NITRO_CHARGES; b->aiHornT[i] = BR_AIHORN3_OLD ? 0.f : BR_AI_HORN_GAP_S; b->aiChkT[i] = 0.f; }   // круг 3: таймер между гудками ИИ стартует с полного значения, первый гудок не раньше 10 с гонки   // сверка g07b P17-14: 3 заряда в начале заезда
+  b->rng = 0x2545F491u ^ (uint32_t)(t->h ? t->h->track : 0u) * 2654435761u; b->dnfOn = 0; b->dnfT = 0.f;
 }
 
 void brStart(const BonusRace *b, int i, float pos[3], float *h) {
@@ -99,6 +101,7 @@ unsigned brUpdate(BonusRace *b, const float (*pos)[3], float dt) {
   }
   if (b->state == BR_DONE) return 0;
   b->time += dt;
+  for (int i = 0; i < BR_MAX; i++) if (b->nitroGap[i] > 0.f) b->nitroGap[i] -= dt;   // сверка g07b: пауза между гудками
   for (int i = 0; i < b->n; i++) {
     BrRacer *r = &b->r[i]; if (r->finished) continue;
     r->lapT += dt; r->totalT += dt;
@@ -126,7 +129,10 @@ unsigned brUpdate(BonusRace *b, const float (*pos)[3], float dt) {
 #define BONUS_DNF_HUMAN_OLD 0
 #endif
   int hd = b->human >= 0 && b->r[b->human].finished;
-  int timedOut = BONUS_DNF_HUMAN_OLD ? (hd && b->time - b->r[b->human].finishT >= BR_DNF_S)
+  // сверка g07b-msnview (P17-15): 10 с до DNF начинаются, когда доехал предпоследний (n−1 из n) или доехали все люди; последний финишёр обрывает отсчёт сразу (finishedN == n ниже).
+  // Было: 20 с от первого финишёра (BR_DNF_S). BR_DNF10_OLD=1 — прежнее
+  if (!BR_DNF10_OLD) { if (!b->dnfOn && ((b->n > 1 && b->finishedN >= b->n - 1) || hd)) { b->dnfOn = 1; b->dnfT = 0.f; } if (b->dnfOn) b->dnfT += dt; }
+  int timedOut = !BR_DNF10_OLD ? (b->dnfOn && b->dnfT >= BR_DNF10_S) : BONUS_DNF_HUMAN_OLD ? (hd && b->time - b->r[b->human].finishT >= BR_DNF_S)
                                   : (b->finishedN && b->sinceFirst >= BR_DNF_S);
   if (b->finishedN == b->n || timedOut) {
     for (int i = 0; i < b->n; i++) if (!b->r[i].finished) b->r[i].dnf = 1;
@@ -339,9 +345,10 @@ int brPick(BonusRace *b, int i, Car *k) {
     if (b->pickTaken >> q & 1u) continue;
     float dx = p[0] - P->p[0], dy = p[1] - P->p[1], dz = p[2] - P->p[2], r = P->r + b->grow[i];
     if (dx * dx + dy * dy + dz * dz > r * r) continue;
-    b->pickTaken |= 1u << q; b->pickAway[q] = BR_PICK_RESPAWN_S;
+    b->pickTaken |= 1u << q; b->pickAway[q] = BR_RESPAWN_KIND_OLD ? BR_PICK_RESPAWN_S : (P->kind == BNS_PK_NITRO ? BR_RESPAWN_NITRO_S : BR_RESPAWN_WRENCH_S);   // сверка g07b P17-18: нитро 15 с, ключ 30 с
     if (P->kind == BNS_PK_WRENCH) { k->damage = 0.f; k->destroyed = 0; k->deadT = 0.f; b->nWrench++; }   // вся машина, как ключ уровня
-    else { b->boostT[i] = BR_NITRO_S; b->nNitro++; }
+    else if (BR_NITRO3_OLD) { b->boostT[i] = BR_NITRO_S; b->nNitro++; }
+    else { b->nitro[i]++; b->nNitro++; }   // сверка g07b P17-14: подбор «нитро» — один заряд
     return (int)q;
   }
   return -1;
@@ -362,6 +369,35 @@ int brBoost(BonusRace *b, int i, Car *k, float thr, float dt) {
     k->vel[0] += sinf(k->h) * a; k->vel[2] += cosf(k->h) * a;
   }
   return 1;
+}
+
+// сверка g07b-msnview (P17-14, P04 B1, P17-20): гудок = нитро. Человек жмёт ↑ крестовины (bonus_play.h), ИИ — сам
+int brHorn(BonusRace *b, int i, Car *k) {
+  if (BR_NITRO3_OLD || i < 0 || i >= BR_MAX || b->state != BR_RACE || b->r[i].finished || b->nitro[i] <= 0 || b->nitroGap[i] > 0.f) return 0;
+  b->nitro[i]--; b->nitroGap[i] = BR_HORN_GAP_S; b->nHorn++;
+  k->vel[0] += sinf(k->h) * BR_HORN_KICK; k->vel[2] += cosf(k->h) * BR_HORN_KICK;   // +10 м/с вдоль курса
+  return 1;
+}
+static float brRnd(BonusRace *b) { b->rng = b->rng * 1664525u + 1013904223u; return (float)((b->rng >> 8) & 0xffff) / 65536.f; }
+static int pathDirAt(const BonusRace *b, const float p[3], float *h);
+int brAiHorn(BonusRace *b, int i, Car *k, float dt) {
+  if (BR_NITRO3_OLD || i < 0 || i >= BR_MAX || i == b->human) return 0;
+  if (b->aiHornT[i] > 0.f) { b->aiHornT[i] -= dt; return 0; }
+  if (!BR_AIHORN3_OLD) { b->aiChkT[i] += dt; if (b->aiChkT[i] < BR_AI_HORN_CHECK_S) return 0; b->aiChkT[i] = 0.f; }   // круг 3: решение раз в 2 с
+  float h; if (b->state != BR_RACE || b->nitro[i] <= 0 || !pathDirAt(b, (float[3]){k->x, k->y, k->z}, &h)) return 0;
+  float d = atan2f(sinf(h - k->h), cosf(h - k->h));   // путь впереди в пределах 10° от курса
+  if (fabsf(d) > 10.f * 3.14159265f / 180.f) return 0;
+  if (!brHorn(b, i, k)) return 0;
+  b->aiHornT[i] = BR_AI_HORN_GAP_S; return 1;
+}
+int brGoNitro(BonusRace *b, Car *const *cars) {   // «GO!»: до (ИИ − 1) машин, каждая с шансом 3/7; никто не взял и ИИ больше одного — одна случайная
+  if (BR_NITRO3_OLD) return 0;
+  int ai[BR_MAX], na = 0; for (int i = 0; i < b->n; i++) if (i != b->human) ai[na++] = i;
+  if (na == 0) return 0;
+  int used = 0, cap = na > 1 ? na - 1 : 1;
+  for (int a = 0; a < na && used < cap; a++) if (brRnd(b) < 3.f / 7.f && brHorn(b, ai[a], cars[ai[a]])) { used++; b->aiHornT[ai[a]] = BR_AI_HORN_GAP_S; }
+  if (!used && na > 1) { int a = (int)(brRnd(b) * na); if (a >= na) a = na - 1; if (brHorn(b, ai[a], cars[ai[a]])) { used++; b->aiHornT[ai[a]] = BR_AI_HORN_GAP_S; } }
+  return used;
 }
 
 static int pathDirAt(const BonusRace *b, const float p[3], float *h) {   // курс плотного пути хода у ближней к p точки
@@ -404,6 +440,33 @@ int brDeath(BonusRace *b, int i, Car *k, const ColWorld *w) {
 unsigned brTrapStep(BonusRace *b, const float (*pos)[3], int n, float dt) {
   if (BONUS_PICKUPS_OLD || !b->ntrap) return 0;
   int any = 0;
+  if (!BR_TRAP_LEADER_OLD) {   // сверка g07b-msnview (P17-17): ловушку переключает только лидер — вход в первый датчик по ходу включает клип вперёд, вход во второй пускает назад; без выдержки; при обратном ходе датчики меняются местами
+    int sens[BNS_MAXHAZ], ns = 0; for (unsigned q = 0; q < b->t.nhaz && ns < BNS_MAXHAZ; q++) if (b->t.hz[q].kind == BNS_HZ_TRAP) sens[ns++] = (int)q;
+    if (ns >= 2) {
+      int lead = -1; for (int j = 0; j < n && j < BR_MAX; j++) if (b->r[j].place == 1) { lead = j; break; }
+      unsigned fired2 = 0;
+      for (int s2 = 0; s2 < 2; s2++) {
+        const BnsHaz *H = &b->t.hz[sens[s2]];
+        int in = lead >= 0 && volIn(H->rect, H->c, H->ax, H->h, pos[lead], b->grow[lead]);
+        int role = b->reverse ? 1 - s2 : s2;   // 0 — вперёд (выход), 1 — назад
+        if (in && !b->trapIn[s2]) for (int t = 0; t < b->ntrap; t++) {
+          BrTrap *T = &b->trap[t];
+          if (role == 0 && (T->state == BR_TRAP_IDLE || T->state == BR_TRAP_LOWER)) { T->state = BR_TRAP_RISE; b->launched = 0; b->nTrap++; fired2 |= 1u << t; }
+          else if (role == 1 && (T->state == BR_TRAP_RISE || T->state == BR_TRAP_HOLD)) T->state = BR_TRAP_LOWER;
+        }
+        b->trapIn[s2] = in;
+      }
+      for (int t = 0; t < b->ntrap; t++) {
+        BrTrap *T = &b->trap[t];
+        switch (T->state) {
+          case BR_TRAP_RISE: T->f += dt * T->fps; if (T->f >= T->last) { T->f = T->last; T->state = BR_TRAP_HOLD; T->hold = 1e9f; } break;
+          case BR_TRAP_LOWER: T->f -= dt * T->fps; if (T->f <= 0.f) { T->f = 0.f; T->state = BR_TRAP_IDLE; } break;
+          default: break;
+        }
+      }
+      return fired2;
+    }
+  }
   for (int j = 0; j < n && j < BR_MAX && !any; j++)
     for (unsigned q = 0; q < b->t.nhaz; q++) {
       const BnsHaz *H = &b->t.hz[q];
@@ -424,7 +487,7 @@ unsigned brTrapStep(BonusRace *b, const float (*pos)[3], int n, float dt) {
 }
 
 int brLaunch(BonusRace *b, int i, Car *k) {
-  if (BONUS_PICKUPS_OLD || i < 0 || i >= BR_MAX || (b->launched >> i & 1u)) return 0;
+  if (BONUS_PICKUPS_OLD || !BR_LAUNCH_OLD || i < 0 || i >= BR_MAX || (b->launched >> i & 1u)) return 0;   // сверка g07b P17 Д3: событие 63 в оригинале без обработчика — поршни не подбрасывают (BR_LAUNCH_OLD=1 — прежнее)
   int rising = 0; for (int t = 0; t < b->ntrap; t++) rising |= b->trap[t].state == BR_TRAP_RISE;
   if (!rising) return 0;
   float p[3] = {k->x, k->y + .5f, k->z};

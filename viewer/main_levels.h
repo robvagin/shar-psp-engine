@@ -3,6 +3,9 @@
 // загрузки loading{N} (load.shr, 7 кадров), свой радар l{N}hudmap и фон паузы ingamel{N} (ui.shr уровня), своя музыка и звуки
 // (audio/ уровня). Порт: levelUnload освобождает всё, что прочитали levelLoad и levelLoadAfter; levelUiSnd переоткрывает
 // интерфейс и звук уровня. Куча после круга 1 -> 2 -> 1 — та же ±64 КБ (гейт tests/levels/switch.sh, строки LEVEL)
+void svSurfaceBind(const ColWorld *w, const void *section, unsigned size); void svSurfaceFree(void);   // сверка g12-data P18-04, viewer/surface.c
+static unsigned char *svSideBuf;   // файл surf-l<N>.shr (читает svSurfaceSideLoad ниже)
+int svSurfaceSide(const void *side, unsigned n); int svSurfaceHave(void);   // сверка g12-data круг 4: тип поверхности из файла surf-l<N>.shr рядом с уровнем
 #include "lmap.h"   // загрузка 2 п.2: сжатая карта высот и стен (lmap.shr)
 static void lspReset(void);   // lightsprite.h подключается позже (main.c): сброс таблицы света при выгрузке уровня
 static void coinSprPreload(void);   // coinspr.h (позже): лента монеты — с карты под газетой загрузки, а не на первой монете в кадре (проверка 17.10: заминка ~25 мс)
@@ -131,7 +134,7 @@ static void uiMenusSetup(void) {   // пункты главного меню и 
   pauseRowsSvc();
 }
 static void uiOpen(void) {   // ui.shr уровня gameLevel (нет своего — уровня 1): HUD в VRAM сразу за буфером глубины
-  char fn[256]; levelFile(fn, "ui.shr"); uiReady = uiInit(fn) == 0;
+  char fn[256]; levelFile(fn, "ui.shr"); uiReady = uiInit(fn) == 0; carResetFlash = uiResetFlash;   // сверка: вспышка сброса машины
   if (!uiReady && gameLevel > 1) { sibling(fn, "ui.shr"); uiReady = uiInit(fn) == 0; }
   uiLevel = gameLevel;
   if (uiReady) { unsigned vo = BUF_W * SCR_H * ((fb16 ? 2 : 4) * 2 + 2), ve = 0x200000 - (fb16 && !JITTER_HIST_OLD ? JIT_HIST_BYTES : 0); int uu_ = uiUseVram(vo, ve - vo); tvBase = (vo + (unsigned)uu_ + 63u) & ~63u; tvEnd = ve & ~63u; }   // №657: остаток VRAM под текстуры города (flag texvram)   // последние 272 КБ VRAM — история мира для jitter.h
@@ -392,6 +395,7 @@ static unsigned toonLinesDraw(float ex, float ey, float ez) {
   tlDrawn = n + nr; return n + nr;
 }
 
+static const char *skinNameMain(void) { return skinWorn > 0 ? wardrobeName(skinWorn) : "homer"; }   // сверка g07 круг 3: надетый костюм для замка этапа «locked skin»
 static void levelLoadAfter(void) {   // после newGame (порядок как раньше): комнаты, камеры старта миссий и зон уровня
   {char pd[256];levelFile(pd,"");phoneViewWarm(pd);}ldStep("phone-warm");
   roomsLoad(); ldStep("rooms");    // 11.2: комнаты (interiors-l<N>.bin + таблица interiors-l<N>-gfx.bin); нет — двери не открываются
@@ -400,9 +404,10 @@ static void levelLoadAfter(void) {   // после newGame (порядок ка�
 #ifndef CAR_ZONE_CAM_OLD
   carzoneLoad(); ldStep("carzone");  // №408: камеры зон машины (carzone-l<N>.shr)
 #endif
+  jumpdirLoad();   // сверка g01-cars круг 5, P01-07: курс зон прыжка (jumpdir-l<N>.shr)
   if (roomsMsg[0]) smkWrite(roomsMsg);
   msnRoomSync();     // первая фаза уровня в комнате (L4, L7: Гомер дома)
-  { char sd[256]; levelFile(sd, ""); if (pcOld && gameLevel > 1) strcat(sd, "pcold/"); wardrobeInit(sd); gameMsnSetSkinTarget(skinTargetMain); }   // правка 107: костюмы и места их выбора (skins.txt) — на каждом входе в уровень; 352: pcold — без костюмов уровня 2–7, как было
+  { char sd[256]; levelFile(sd, ""); if (pcOld && gameLevel > 1) strcat(sd, "pcold/"); wardrobeInit(sd); gameMsnSetSkinTarget(skinTargetMain); gameMsnSetSkinNameFn(skinNameMain); }   // правка 107: костюмы и места их выбора (skins.txt) — на каждом входе в уровень; 352: pcold — без костюмов уровня 2–7, как было
   if (skinWorn) homerWear(0);   // (новая игра, загрузка, смена уровня, служебный запуск), не только в newGame; уровень — в своём (правило порта)
   coinSprPreload();
 }
@@ -446,7 +451,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   haveCoins = 0;
   if (haveProps) propsFree(&props);
   haveProps = 0; lvaFree(propSec); propSec = 0; propSecN = 0;
-  if (!lvLeak) { if (haveCol) colFree(&world); lvaFree(colMem); }
+  if (!lvLeak) { if (haveCol) { svSurfaceFree(); free(svSideBuf); svSideBuf = 0; colFree(&world); } lvaFree(colMem); }
   haveCol = 0; colMem = 0; memset(&world, 0, sizeof world);  chaseView = 0;   // №639: вид по SELECT не переходит на другой уровень
   haveCarVis = 0; doorHinge = -1; lvlCarOk = -9;   // машина следующего уровня — из его CAR1
   lvlLightOk = -9; skinLightLevel(0, 0, 0, 0);       // свет следующего уровня — из его CAR1 (пока — свет уровня 1)
@@ -457,7 +462,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   dalFree(); dripFree();   // №877, №770
   pvsEnt = 0; pvsPool = 0; pvsW = pvsH = 0; pvsRange = PVS_RANGE;
   free(regMask); regMask = 0; regW = regH = 0; regEye = 0xFFFFu;   // правка 95: маска регионов уровня
-  free(zg); free(zp); zg = 0; zp = 0; nzg = nzp = zgOn = zgInit = zgStart = 0; regRes = 0xFFFFu;   // правка 181
+  free(zg); free(zp); zg = 0; zp = 0; nzg = nzp = zgOn = zgInit = zgStart = 0; regRes = 0xFFFFu; regNn = 0;   // правка 181
   for (unsigned i = 0; i < ntex; i++) if (!tex[i].pre && tex[i].slv[0] && tex[i].slv[0] != tex[i].lv[0]) free(tex[i].slv[0]);   // swizzleAll
   skinToonFlush();   // правка 428: оболочки персонажей прежнего уровня (модели уходят вместе с ним)
   road934Free();   // №934: дальние дороги и мосты прежнего уровня
@@ -588,9 +593,25 @@ static void phMark(const char *what) {   // загрузка 2: время пе�
   unsigned now = sceKernelGetSystemTimeLow(); if (smkOn && LOADPH) { char s[80]; snprintf(s, sizeof s, "LOADPH2 %s ms=%u\n", what, (now - phT0) / 1000u); smkWrite(s); } phT0 = now;
 }
 static unsigned mcColHash;   // хеш сырого COL1 текущего уровня (msncar.c mcProbeHash)
+// сверка g12-data круг 4, строка P18-04 (тип поверхности земли): уровни TEST81 собраны не нынешним рецептом, блока SRF1 в их COL1 нет, а COL1 менять
+// нельзя (хеш проб машин миссий). Те же байты лежат рядом с уровнем, surf-l<N>.shr, по полубайту на треугольник (tools/sv_overlay.py, формат — viewer/surface.c).
+// Файла нет или он не от этого COL1 — «везде дорога», как было. SURF_SIDE_OLD=1 — файл не читается.
+#ifndef SURF_SIDE_OLD
+#define SURF_SIDE_OLD 0
+#endif
+static void svSurfaceSideLoad(void) {
+  free(svSideBuf); svSideBuf = 0;
+  if (SURF_SIDE_OLD || svSurfaceHave()) return;
+  char fn[256]; levelFile(fn, "surf-l%d.shr"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;
+  int n = (int)sceIoLseek(f, 0, PSP_SEEK_END); sceIoLseek(f, 0, PSP_SEEK_SET);
+  unsigned char *b = n > 16 && n < (1 << 20) ? malloc(n) : 0;
+  if (b && sceIoRead(f, b, n) == n && svSurfaceSide(b, (unsigned)n)) svSideBuf = b; else free(b);
+  sceIoClose(f);
+  if (smkOn) { char s[64]; snprintf(s, sizeof s, "SURF side=%d\n", svSideBuf != 0); smkWrite(s); }
+}
 static void levelColAdopt(void *m, unsigned sz) {   // COL1 прочитан в m: хеш сырого (до colInit) и разбор
   if (!MCPROBE_BAKE_OLD) mcColHash = mcProbeHash(m, sz);
-  if (colInit(&world, m, sz) == 0) { haveCol = 1; colMem = m; } else lvaFree(m);
+  if (colInit(&world, m, sz) == 0) { haveCol = 1; colMem = m; svSurfaceBind(&world, m, sz); svSurfaceSideLoad(); } else lvaFree(m);   // сверка g12-data P18-04: тип поверхности земли (viewer/surface.c)
 }
 static int propKickLog946(void *u, unsigned i, float dx, float dz) {   // №946 служебно (смоук): строка на каждый удар по предмету PRP1 и что игра сделала с ним
   int r = gamePropKick(u, i, dx, dz); if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "PROPKICK i=%u type=%u r=%d t=%.2f\n", i, props.def[i].type, r, smkT); smkWrite(l_); } return r; }
@@ -971,6 +992,7 @@ static void levelLoad(void **fbp) {
             void *m = memalign(16, sz);
             if (m && sceIoLseek32(fd, mo, PSP_SEEK_SET) == (int)mo && sceIoRead(fd, m, sz) == (int)sz) {
               regMask = m; regW = (int)w; regH = (int)h; regOx = rf[0]; regOz = rf[1]; regCell = rf[2] > 0.f ? rf[2] : 20.f;
+              regNn = 0; if (sceIoLseek32(fd, at + 32, PSP_SEEK_SET) == (int)(at + 32) && sceIoRead(fd, regNm, nreg * 16) == (int)(nreg * 16)) regNn = (int)nreg;   // круг 5 (P12-10): имена регионов
               unsigned go = (mo + sz + 15u) & ~15u; unsigned char gh[16];   // правка 181: GAT1 за маской (версия 2)
               if (ru[0] >= 2 && go + 16 <= end && sceIoLseek32(fd, go, PSP_SEEK_SET) == (int)go && sceIoRead(fd, gh, 16) == 16 && !memcmp(gh, "GAT1", 4)) {
                 unsigned ng = *(unsigned *)(gh + 4), np = *(unsigned *)(gh + 8);
@@ -1210,6 +1232,7 @@ static void levelLoad(void **fbp) {
   if (ldOn) loadFrame(5 * LOAD_RES_SHARE / 6, fbp);   // В5: карточки, осы, гэги (collect-l1.shr рядом с EBOOT; нет — уровень без них)
   ldStep("ticket");
   if (haveCol) carInit(&car, lvlCarOk == 1 ? &lvlCar : NULL, &world, spawnP[0], spawnP[1], spawnP[2], spawnP[3]);   // машина уровня (CAR1 v2)
+  if (haveCol) gameCarHealthApply(&G, "", &car);   // сверка g10-flow P01 Д1: прочность машины уровня переживает смену уровня
   ldStep("carinit"); if (haveTraffic) trafficReset(&traffic, &world); ldStep("trafficreset");   // этап 5: стоящие машины на места
   bound = -2; loadedLevel = gameLevel; lvGen++; __asm__ volatile("" ::: "memory");
   levelLog("load", lt0, lh0);
@@ -1264,8 +1287,10 @@ static void loadOneAt(float c[3]) {   // где игрок начнёт: в ко
     snprintf(s, sizeof s, "LOADONE level=%d row=%d tele=%d foot=%d room=%s at=%.1f,%.1f spawn_m=%.0f t=%.1f\n", gameLevel, loadOneRow, loadOneTele, ft,
              room ? roomName() : "-", c[0], c[2], sqrtf(dx * dx + dz * dz), smkT); smkWrite(s); }
 }
+static SaveGame menuSnap; static int menuSnapOn;   // сверка g10b-loop, P14:1: снимок игры в памяти для RESUME GAME после выхода в меню (снимается в main_loop.h при toMenu)
 static void menuStartGame(void **fbp, unsigned t0, int after) {   // NEW GAME: экран загрузки Loading.scr уже открыт; новая игра и город вокруг игрока
-  char s[128]; int fresh = !svResumeOn; gameMsnResumeStart(svResumeOn);   // after: набор уровня только что прочитан — комнаты и камеры уровня (levelLoadAfter) читаются здесь
+  char s[128]; int fresh = !svResumeOn; if (fresh) menuSnapOn = 0;   // сверка g10b-loop, P14:1: новая игра гасит признак «игра загружена» и снимок в памяти
+  gameMsnResumeStart(svResumeOn);   // after: набор уровня только что прочитан — комнаты и камеры уровня (levelLoadAfter) читаются здесь
   gameMsnDeferStart = !lvDeferOld && !loadOneOld && svResumeOn && msPendRow >= 0;   // №943: выбранная строка стартует сама, стартовая цель уровня не ставится
   audioDefer = 1; newGame(); audioDefer = 0; gameMsnDeferStart = 0; if (svResumeOn) { saveApply(&svPending); svResumeOn = 0; saveLog("load"); } else { memset(&lvKeep, 0, sizeof lvKeep); if (svmOn()) saveLog("new"); }   // облако 05.10: новая игра — прогресс уровней пуст   // LOAD / RESUME GAME
   bonusSession = 1; if (haveColl) bonusOpenFromColl(fresh ? "new" : "load"); else bonusOpenFromSave(fresh ? NULL : &svPending, "load");   // правка 421
@@ -1283,7 +1308,10 @@ static void menuStartGame(void **fbp, unsigned t0, int after) {   // NEW GAME: �
   else if (ldAudio) { ldAudio = 0; levelAudioPending = 1; if (smkOn) { snprintf(s, sizeof s, "LEVELAUDIO pend noload t=%.1f\n", smkT); smkWrite(s); } }
 #endif
   sndMaster(1.f);
-  if (fmv) { msnMovie("fmv1a.rmv", fbp); if (audio) levelAudioPending = 1; }   // правка 105: звук — с первым кадром облёта
+#ifndef NEWGAME_FMV_NOSKIP_OLD
+#define NEWGAME_FMV_NOSKIP_OLD 0   // сверка g10b-loop, P14:14: 1 — ролик новой игры пропускается START (прежнее)
+#endif
+  if (fmv) { movieNoSkipSv = !NEWGAME_FMV_NOSKIP_OLD && !svcMode; msnMovie("fmv1a.rmv", fbp); movieNoSkipSv = 0; if (audio) levelAudioPending = 1; }   // сверка g10b-loop, P14:14: у оригинала ролик новой игры пропустить нельзя (служебный режим — можно)   // правка 105: звук — с первым кадром облёта
   if (smkOn) { snprintf(s, sizeof s, "GAME n=%d t=%.1f cells=%d ms=%.0f car=%.2f,%.2f\n", nMenu, smkT, n,
                         (sceKernelGetSystemTimeLow() - t0) / 1000.f, car.x, car.z); smkWrite(s); }
   msnRoomSync();   // старт уровня / загрузка в комнате (комнаты этого уровня уже в памяти; иначе — levelLoadAfter)
@@ -1331,7 +1359,7 @@ static void levelAdvance(int n, void **fbp) {
   int unl_ = 0;   // №1065: газета не открылась — предыдущий уровень выгружается ДО неё (куча пуста), открытие повторяется
   { int rc_ = scrOpen1065("levelup"); if (memLoad1065 && rc_ == -3) { levelUnload(); unl_ = 1; scrOpen1065("levelup-unloaded"); } scrTvOver = 0; }   // экран загрузки: газета уровня n
   sndMaster(1.f); feStinger("newspaper_spin");   // правка 20: газета следующего уровня влетает — стингер Newspaper_Spin
-  ldBase = LOAD_RES_SHARE; loadBegin(fbp);
+  ldMenuNew = 0; ldBase = LOAD_RES_SHARE; loadBegin(fbp);   // сверка g09b-menu круг 2: смена уровня — не из меню, звук мира приглушён
   if (!unl_) levelUnload();
   levelLoad(fbp);
   svPending = carry; svResumeOn = 1;
@@ -1435,13 +1463,22 @@ static void menuRun(void **fbp) {
 #ifndef MENU_RESUME_DEFAULT_OLD
 #define MENU_RESUME_DEFAULT_OLD 0   // 1 — прежнее: главное меню всегда открывается на NEW GAME
 #endif
+#ifndef MENU_SNAP_OLD
+#define MENU_SNAP_OLD 0   // сверка g10b-loop, P14:1 / P14:2 / M3:Д8 / P14:9: 1 — прежнее (RESUME GAME только по записи на карте, курсор на RESUME лишь при первом входе, SCRAP BOOK серый без записи)
+#endif
   static int menuFirstOpen = 1;   // PS2 (knowledge/facts/ps2-resume-save-flow.yaml): при старте с сохранением меню открывается на RESUME GAME; возврат в меню после QUIT картой не описан — как раньше (NEW GAME)
-  int sel = (!MENU_RESUME_DEFAULT_OLD && menuFirstOpen && hl_ && mainResume >= 0) ? mainResume : mainNew, act = -1; char s[128];
+  // сверка g10b-loop, P14:1: «игра загружена» — признак с момента старта игры, загрузки слота или автозагрузки; после QUIT GAME пункт RESUME GAME есть всегда и ведёт
+  // на снимок игры в памяти (menuSnap, снимается при выходе в меню), а не на карту. Сбрасывает его только новая игра (NEW GAME). P14:2: при каждом входе, где игра загружена,
+  // курсор на RESUME GAME (было: только при первом входе после запуска). P14:9 / M3:Д8: SCRAP BOOK всегда доступен (серым бывает только MINI GAME). MENU_SNAP_OLD=1 — прежнее
+  int snapOn_ = !MENU_SNAP_OLD && menuSnapOn, haveRes_ = hl_ || snapOn_;
+  int sel = (!MENU_RESUME_DEFAULT_OLD && ((menuFirstOpen && hl_) || snapOn_) && mainResume >= 0) ? mainResume : mainNew, act = -1; char s[128];
   menuFirstOpen = 0;
+  if (introFlyDue) { introFlyDue = 0; menuFlyRange(721, 770, sel, fbp); feHome(); }   // сверка g09b-menu (M3 №3): наезд камеры после титульного, потом меню
   SaveGame menuLoaded; int menuLoadOn = 0;   // правка 448: слот, загруженный на этом экране меню (LOAD GAME возвращает в меню, RESUME GAME берёт его)
-  if (mainResume >= 0) uiMenuEnable(UI_MENU_MAIN, mainResume, hl_);   // RESUME GAME — есть целое сохранение
-  if (mainScrap >= 0) uiMenuEnable(UI_MENU_MAIN, mainScrap, !SCRAP862_OLD && (hl_ || (bonusSession && haveColl)));   // №862: SCRAP BOOK — есть запись или игра этой сессии
-  if (mainResume >= 0 && !MENU_RESUME_DEFAULT_OLD) uiMenuHide(UI_MENU_MAIN, mainResume, !hl_);   // PS2: на чистой карте пункта RESUME GAME в меню нет (NEW GAME, LOAD GAME…); стрелки обходят
+  if (snapOn_) { menuLoaded = menuSnap; menuLoadOn = 1; }   // P14:1: игра из памяти — RESUME GAME берёт её, как загруженный слот
+  if (mainResume >= 0) uiMenuEnable(UI_MENU_MAIN, mainResume, haveRes_);   // RESUME GAME — есть целое сохранение (или игра в памяти)
+  if (mainScrap >= 0) uiMenuEnable(UI_MENU_MAIN, mainScrap, MENU_SNAP_OLD ? (!SCRAP862_OLD && (hl_ || (bonusSession && haveColl))) : 1);   // №862: SCRAP BOOK — было: есть запись или игра этой сессии; P14:9: всегда
+  if (mainResume >= 0 && !MENU_RESUME_DEFAULT_OLD) uiMenuHide(UI_MENU_MAIN, mainResume, !haveRes_);   // PS2: на чистой карте пункта RESUME GAME в меню нет (NEW GAME, LOAD GAME…); стрелки обходят
   while (act != mainNew) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
@@ -1482,8 +1519,11 @@ static void menuRun(void **fbp) {
       menuLevel = n; if (smkOn) { snprintf(s, sizeof s, "MENULEVEL n=%d t=%.1f\n", menuLevel, smkT); smkWrite(s); }
       hit &= ~(PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER); }
     act = uiMenuInput(UI_MENU_MAIN, &sel, hit);
+    if (act >= 0 && act == mainNew && menuNewAsk(hl_ || menuLoadOn || menuNoGame, sel, fbp)) {   // сверка g09b-menu (M3 №7, P14 №3): «Restart anyway?» — No возвращает в меню
+      act = -1; sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = idleT0 = sceKernelGetSystemTimeLow(); }
     if (act >= 0 && act == mainMini) {   // правка 420: MINI GAME — бонус-игра (перелёта к треку в данных нет: камера стоит)
-      feGagMenu(0); menuFly(act, FE_GO, sel, fbp); bonusRun(sel, fbp); feHome(); feGagMenu(1); hit = 0;
+      feGagMenu(0); menuFly(act, FE_GO, sel, fbp); if (!MINIFLY_OLD) menuFlyRange(880, 913, sel, fbp);   // сверка g09b-menu круг 2 (M3:8): камера летит к треку 880–913; дубль машины в первые 11 кадров не делается
+      bonusRun(sel, fbp); feHome(); feGagMenu(1); hit = 0;
       act = -1; sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = idleT0 = sceKernelGetSystemTimeLow(); }
     if (act >= 0 && act == mainScrap) {   // №862: SCRAP BOOK — перелёт к альбому, карточки всех уровней (main_save.h scrapRun), перелёт назад
       unsigned char c_[SV_LEVELS]; scrapCards(c_, menuLoadOn ? &menuLoaded : NULL);
@@ -1528,6 +1568,7 @@ static void menuRun(void **fbp) {
   if (smkOn) { SndStats ss; sndStats(&ss); snprintf(s, sizeof s, "FEMUS n=%d music=%s state=%d flights=%d t=%.1f\n", nMenu,   // музыка меню —
                                                     ss.music, ss.musicState, feStats.flights, smkT); smkWrite(s); }   // до стингера NEW GAME
   feGagMenu(0);
+  if (svResumeOn && !MENUMUTE_OLD) sndMode(SND_MODE_JUSTMUSIC);   // сверка g09b-menu (M3 №14): выбран RESUME GAME — все звуки, кроме музыки, приглушены (режим сбрасывает старт уровня)
   if (!svResumeOn) { if (feMusicMode == 2) feStinger("loading_screen"); menuFly(act, FE_GO, sel, fbp); }
   if (transitBusy()) transitStep(100.f);   // правка 154: ирис титульного не доигран — в игру он не переходит
   // загрузка уровня: музыка меню и прочее не звучат, звучит только стингер газеты (правка 20; дальше тишина до игры)
@@ -1559,7 +1600,7 @@ static void menuRun(void **fbp) {
   int unl_ = 0;   // №1065: см. levelAdvance
   { int rc_ = scrOpen1065("menustart"); if (memLoad1065 && rc_ == -3 && sw) { levelUnload(); unl_ = 1; scrOpen1065("menustart-unloaded"); } scrTvOver = 0; }   // загрузка уровня: Loading.scr (газета уровня gameLevel) — на время загрузки
   feNewsStinger("newspaper_spin");   // правки 20, 134: газета влетает — один Newspaper_Spin с доли темы меню
-  ldBase = levelReady && !sw ? 0 : LOAD_RES_SHARE; loadBegin(fbp);   // правка Роба 35: газета влетает до чтения, огонь без возврата
+  ldMenuNew = !svResumeOn; ldBase = levelReady && !sw ? 0 : LOAD_RES_SHARE; loadBegin(fbp);   // сверка g09b-menu круг 2 (ldMenuNew: NEW GAME из меню, газета со стингером); правка Роба 35: газета влетает до чтения, огонь без возврата
   if (!svResumeOn && !musOld) { audioHoldStreams(1); levelHold = 1;   // правка 155: NEW GAME — звук уровня после газеты и ролика
     if (smkOn) { snprintf(s, sizeof s, "SNDHOLD on t=%.1f\n", smkT); smkWrite(s); } }
   menuT0 = t0;
@@ -1587,7 +1628,7 @@ static void introRun(void **fbp, unsigned first, unsigned end) {
     SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
     unsigned prev = pad.Buttons | smokePad();   // зажатое с заставки — не нажатие
     for (unsigned i = first; i < end && i < sizeof clip / sizeof *clip; i++) {
-      int err, skip = 0, shot = 0; sibling(fn, clip[i]); Movie *m = movieOpen(fn, &err);
+      int err, skip = 0, shot = 0; sibling(fn, clip[i]); movieVolSync(); Movie *m = movieOpen(fn, &err);
       unsigned t0 = sceKernelGetSystemTimeLow(), last = t0;
       while (m && movieUpdate(m)) {
         unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
@@ -1618,7 +1659,10 @@ static void introRun(void **fbp, unsigned first, unsigned end) {
 
 // лицензия держится не меньше LICENSE_MS (число порта: в данных длительности нет, на эталоне PS2 build/ps2ref/boot_15s — один
 // кадр), служебные запуски без интро не ждут; потом BootupLoad — до конца загрузки игры
-#define LICENSE_MS 3000
+#ifndef LICENSE5S_OLD
+#define LICENSE5S_OLD 0   // сверка g10b-loop, P17-1: 1 — лицензия 3,0 с (прежнее)
+#endif
+#define LICENSE_MS (LICENSE5S_OLD ? 3000 : 5000)   // сверка g10b-loop, P17-1: на PS2-релизе экран лицензии не короче 5,0 с (на других платформах 1,0), дальше BootupLoad до конца чтения
 static void bootLicense(unsigned t0, void **fbp) {
   if (uiScrReady() && (!svcStartP() || smokeWantsIntro(path)))
     while (sceKernelGetSystemTimeLow() - t0 < LICENSE_MS * 1000u) scrFrame(UI_BOOT_LICENSE, 0, 1, fbp);

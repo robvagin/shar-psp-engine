@@ -23,6 +23,7 @@
 #include "msn_audio.h"
 #include "shop.h"
 #include "msncar.h"
+#include "traffic.h"   // сверка g07b круг 2: TrNavArrow
 
 #define GAME_NPC_MAX 24       // персонажи уровня 1: 11 фоновых + 2 продавца машин + 5 бонус-миссий + миссионные
 // Правка 140 (Роб 01.10 «некоторых продавцов машин нет вообще»): модели фоновых и продавцов (не миссионных) — ближайшим к
@@ -107,8 +108,10 @@ typedef struct {
   float dist;                              // на каком расстоянии поставлены (служебно, журнал / гейт)
   unsigned starts;                         // сколько разговоров поставлено (служебно)
   int off;                                 // служебно: 1 — разговор не ставится (отрицательный контроль гейта tests/ui/rob_rows_check.py)
+  int noReturn;                            // сверка g07 (P06-16 / P07-14): SetDialoguePositions, 4-й аргумент 1 — после реплик персонажей на прежние места не возвращать
+  char npc2[24];                           // сверка g07 (P15-14): вторая из пары Пэтти/Сельма — тоже лицом к игроку (пустая — нет)
 } GameTalk;
-typedef struct { int on; char npc[24]; MsnVec3 hp, np; float hh, nh; } GamePreTalk;   // В85: Гомер и собеседник до разговора
+typedef struct { int on; char npc[24]; MsnVec3 hp, np; float hh, nh; int hCar; } GamePreTalk;   // hCar (круг 3): разговор начат за рулём — Гомера на прежнее место не возвращать   // В85: Гомер и собеседник до разговора
 
 // AddSafeZone(локатор, радиус) этапа (уровень 2, бонус-миссия bm1: у Мо, у Squidport, у дедушки — радиус 30): пока игрок ближе
 // радиуса по плоскости к локатору, шкала Hit & Run обнуляется и не копится (правило порта: машин полиции в порте нет — шкала и
@@ -167,6 +170,23 @@ typedef struct {
   int racePlace, raceRacers; float raceDp;   // правка 326: место игрока в гонке этого кадра (gameMsnTick -> raceTrack), до его точки, м
   // №967: тарелка «Planet Express Ship» L7 (AddFlyingActorByLocator leveli.mfk, место — локатор l7_spaceship) и её луч; заряд — секунды, что машина простояла в луче
   float ufoPos[3], ufoCharge; int ufoOn, ufoSent, ufoKey;
+  // сверка g07 (02.11.2026): состояние мира, что ставит main (переходы) и что считает миссия
+  int transition, arrested; char entering[24];   // идёт вход/выход из помещения; арест; интерьер, в который входит игрок (начало перехода)
+  int hudHidden;                                 // P06-21: ShowHUD("false")
+  char hideName[24];                             // P06-21: SetCharacterToHide этапа — на выходе из этапа персонаж убирается
+  int safeIn;                                    // P06-13: игрок в машине внутри зоны AddSafeZone (полиция стоит)
+  int trafficStage;                              // P03-Д5: лимит трафика этапа (-1 — как на уровне); пешком набирается до полного
+  float ufoY, ufoT; int ufoGrab; char ufoCar[8]; // UFO_BEAM: машина игрока тянется лучом (grab 1 — тянется, 2 — забрана)
+  int carHidden;                                 // круг 5, P06-15
+  int buyTried;                                  // круг 5, P06-24: купленная машина уже ставилась игроку на этом этапе
+  float hitTgtT; int aiWaitSeen[16];             // круг 2: окно после удара игрока по цели; счётчик waitEvt по машинам миссии
+  float navTx, navTz; int navOn;                 // круг 2, g02 P16-06: куда строился путь навигации
+  float ufoHome[4]; int missionDone;             // круг 3: где стояла машина до луча; миссия завершена (для правки «выданная машина»)
+  float forcedPt[3];                             // круг 3: точка выданной машины
+  int animStale;                                 // круг 2, P15-15: жесты прошлого этапа живут, пока новый этап не задаст свои
+  float dmgHold; int dmgHoldOn;                  // круг 2, P07 Д6: неуязвимость машины игрока на время цели dump с несколькими предметами
+  unsigned aiArrived;                            // g03 A10: счёт кадров с событием «ИИ добрался» (служебно, пока включено MC_G03_FIELDS)
+  float forcedStart[3]; int forcedStartOn;       // P (5.2): где стоял Гомер, когда миссия выдала машину
 } GameMsn;
 
 // Звук миссий (msn_audio.h): поставить ДО gameMsnOpen; NULL — без звука (разговоры кончаются сами, как раньше)
@@ -182,20 +202,38 @@ float gameMsnRaceFracLen(const GameMsn *m);   // 03.10: доля пройден�
 void gameMsnCarjack(GameMsn *m, const char *model, const CarParams *P, float lift, float x, float y, float z, float h);   // правка 63
 GameHnrConfig gameMsnHnrConfig(const MsnFile *f);
 void gameMsnHnrPolice(GameMsn *m, int on);
+void gameMsnHnrPoliceAdd(GameMsn *m);   // сверка g09b-menu круг 5 (P03-08): ставит ОДНУ машину погони (проход раз в 0,7 с)
+int gameMsnHnrPoliceLimit(const GameMsn *m);   // сколько машин погони положено уровню (SetNumChaseCars)
+void gameMsnHnrPoliceFar(GameMsn *m, float px, float pz, float R);   // снимает по одной машины погони дальше R м от игрока
 void gameMsnHnrPoliceHold(GameMsn *m);   // №627: полиция после ареста стоит на месте
 void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n);   // правка 64: погоня Hit & Run
 int gameMsnSummon(GameMsn *m);   // правка 62: будка — назад на машину уровня (0 — машина миссии, нельзя)
 int gameMsnPhoneCar(GameMsn *m, const char *car);   // правка 94: машина из галереи будки (1 — сменилась)
 void gameMsnWorldCar(GameMsn *m, const char *car, const float p[3], float h);   // правка 53: машина мира (ракетная)
 void gameMsnWorldCarsReset(void);
+void gameMsnWorldCarsStep(GameMsn *m, float px, float pz);   // сверка g10b-loop круг 5 (P03-20): свободная машина уходит и возвращается с зоной (200 м, 10 м от машины миссии)
 int  gameMsnWorldCarNear(GameMsn *m, float x, float z, float r, float out[4]);   // -> номер или -1; out: x y z h
 int  gameMsnTakeWorld(GameMsn *m, int i);                                      // 1 — игрок пересел
 int  gameMsnHnrOff(void);   // перепроверка 96: DisableHitAndRun миссии
+// ---- сверка g07 (02.11.2026): точки для других модулей (подробно — game_msn.c и docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g07-missions_журнал.md)
+void gameMsnSetState(GameMsn *m, int transition, int arrested, const char *entering);   // main: идёт переход в интерьер / арест / интерьер, в который входят (начало перехода)
+int  gameMsnShopAllowed(const GameMsn *m);    // лавка и гардероб (main_loop.h:774) — только в вступлении и вне миссий
+int  gameMsnAbortAllowed(const GameMsn *m);   // 0 — AllowMissionAbort("false"): Accept/Cancel вступления не показывать
+int  gameMsnTalking(const GameMsn *m);        // идёт разговор: шкала H&R и счёт стоят
+int  gameMsnHudHidden(const GameMsn *m);      // ShowHUD("false")
+void gameMsnSetSkinNameFn(const char *(*fn)(void));   // main: имя надетого костюма (замок "locked" "skin")
+extern int gameMsnCarHide;                             // круг 5: 1 — машину игрока не рисовать (диалог бонус-миссии)
+int gameMsnBoothBlocked(const GameMsn *m);              // круг 5: будка закрыта (миссия провалена, арест)
+extern void (*gameMsnSafeHook)(int active);           // полиция: 1 — игрок в машине внутри AddSafeZone, погоню остановить; 0 — продолжить
 const char *gameMsnForcedCar(const GameMsn *m);
 // машина-цель этапа (SetObjTargetVehicle: destroy / dump / follow / losetail / гонка против неё), NULL — нет
 const McCar *gameMsnTargetCar(const GameMsn *m);
 int gameMsnRouteArrow(GameMsn *m, const float tgt[3], float p[3], float *h);
+// сверка g07b-msnview круг 2 (P16-06): путь навигации целиком по дорогам трафика (traffic.h trafficNavBuild/Arrows); roadsT приватный — две обёртки. Build — один раз при старте цели (0 — пешком/нет дорог)
+int gameMsnNavBuild(GameMsn *m, float tx, float tz);
 int gameMsnGroundY(GameMsn *m, float x, float z, float *y);   // правка 122: высота земли (заборы трассы гонки)   // правка 122: стрелка на дороге к цели (1 — есть)
+
+int  gameMsnNavArrows(GameMsn *m, TrNavArrow *out, int max);   // круг 2, g02 P16-06: стрелки пути по дорогам (зелёные впереди, красные пройденные) для вида
 
 // 0 = ок; msn_level_start (первая сюжетная миссия уровня — m0). view может быть NULL (боты)
 int gameMsnOpen(GameMsn *m, Game *g, const void *pack, size_t size, const MsnGameApi *view, char *err, int errlen);

@@ -358,7 +358,7 @@ void skinPalette(const SkinModel *m, const SkinXf *xf, ScePspFMatrix4 *pal, SceP
 void skinInit(SkinPlayer *p, const SkinModel *m) {
   memset(p, 0, sizeof *p);
   p->m = m; p->clip = p->prev = -1; p->speed = 1.f; p->eyeTex = -1; p->seed = 12345u;
-  p->blinkWait = 2.f; p->blinkT = -1.f; p->jaw = skinFindJoint(m, "Jaw"); p->jawOpen = 0.f;
+  p->blinkWait = SKIN_BLINK_OLD ? 2.f : 0.f; p->blinkT = -1.f; p->jaw = skinFindJoint(m, "Jaw"); p->jawOpen = 0.f;
   skinSample(m, -1, 0, p->xf); skinPalette(m, p->xf, p->pal, p->world);
 }
 
@@ -399,7 +399,7 @@ void skinTick(SkinPlayer *p, float dt) {
       float f = p->blinkT * m->h->blinkFps; const SkinBlinkKey *k = m->blink; int n = (int)m->h->nBlink;
       if (f > k[n - 1].frame + 1.f) {
         p->blinkT = -1.f; p->seed = p->seed * 1103515245u + 12345u;
-        p->blinkWait = 2.f + (float)((p->seed >> 16) & 1023) * (4.f / 1023.f);
+        p->blinkWait = SKIN_BLINK_OLD ? 2.f + (float)((p->seed >> 16) & 1023) * (4.f / 1023.f) : 2.f + (float)((p->seed >> 16) & 1023) * (2.f / 1023.f);   // сверка g04-homer P15-01: 2,0…4,0 с
       } else {
         int i = 0; while (i + 1 < n && k[i + 1].frame <= f) i++;
         p->eyeTex = k[i].tex; p->blinkT += dt;
@@ -427,6 +427,40 @@ void skinJawOpen(SkinXf *xf, int j, float rad) {
 }
 
 void skinUpdate(SkinPlayer *p, float dt) { skinTick(p, dt); skinPose(p); }
+
+// сверка g04-homer P15-02: ход рта говорящего по оригиналу. Угол идёт с постоянной скоростью до границы (нижняя −18° у всех, верхняя своя), на каждом развороте границы заново
+// сдвигаются внутрь на случайное 0…shift и выбирается новая скорость в диапазоне персонажа; первый ход от нуля в минус. Размах ≈ 36°, ход вверх или вниз ≈ 0,22…0,25 с
+static float mouthRnd(SkinMouth *mo) { mo->seed = mo->seed * 1664525u + 1013904223u; return (float)((mo->seed >> 8) & 0xFFFF) / 65535.f; }
+float skinMouthStep(SkinMouth *mo, const char *model, float dt) {
+  if (!mo->init) {
+    static const struct { const char *n; float hi, vlo, vhi, sh; } T[] = {   // круг 3: таблица по проверке исходника (верхний угол °, скорость от…до, сдвиг границ °)
+      {"homer", 24.1f, 2.00f, 3.44f, 7.83f}, {"bart", 29.9f, 2.50f, 4.00f, 7.2f}, {"lisa", 27.0f, 2.50f, 4.00f, 7.2f}, {"marge", 24.1f, 1.66f, 3.44f, 7.45f},
+      {"apu", 28.1f, 2.20f, 3.78f, 7.45f},
+      {"snake", 32.0f, 2.56f, 4.12f, 7.45f}, {"gil", 32.0f, 2.56f, 4.12f, 7.45f}, {"willie", 32.0f, 2.56f, 4.12f, 7.45f}, {"hibbert", 32.0f, 2.56f, 4.12f, 7.45f},
+      {"wiggum", 32.0f, 2.56f, 4.12f, 7.45f}, {"barney", 32.0f, 2.56f, 4.12f, 7.45f}, {"captain", 32.0f, 2.56f, 4.12f, 7.45f}, {"cbg", 32.0f, 2.56f, 4.12f, 7.45f}, {"zombie", 32.0f, 2.56f, 4.12f, 7.45f},
+      {"milhouse", 29.9f, 2.22f, 4.00f, 7.2f}, {"ralph", 27.0f, 2.22f, 4.00f, 7.2f}, {"moleman", 25.9f, 1.56f, 3.54f, 7.2f}, {"mole", 25.9f, 1.56f, 3.54f, 7.2f},
+      {"grandpa", 24.1f, 2.20f, 3.56f, 7.83f}, {"grampa", 24.1f, 2.20f, 3.56f, 7.83f}, {"krusty", 24.1f, 2.20f, 3.56f, 7.83f}, {"patty", 24.1f, 2.20f, 3.56f, 7.83f}, {"selma", 24.1f, 2.20f, 3.56f, 7.83f},
+      {"skinner", 28.1f, 2.00f, 3.78f, 7.45f}, {"burns", 28.1f, 2.00f, 3.78f, 7.45f}, {"carl", 28.1f, 2.00f, 3.78f, 7.45f}, {"lenny", 28.1f, 2.00f, 3.78f, 7.45f}, {"louie", 28.1f, 2.00f, 3.78f, 7.45f},
+      {"moe", 28.1f, 2.00f, 3.78f, 7.45f}, {"otto", 28.1f, 2.00f, 3.78f, 7.45f}, {"smithers", 28.1f, 2.00f, 3.78f, 7.45f},
+      {"ned", 28.1f, 1.78f, 3.78f, 7.45f}, {"cletus", 24.1f, 1.88f, 3.78f, 7.45f}, {"frink", 24.1f, 1.88f, 3.78f, 7.45f},
+      {"jimbo", 27.0f, 1.88f, 3.78f, 7.45f}, {"teen", 27.0f, 1.88f, 3.78f, 7.45f}, {"nriviera", 27.0f, 1.88f, 3.78f, 7.45f}, {"kearney", 29.9f, 2.34f, 3.78f, 7.2f} };
+    float hi = 25.9f, vlo = 1.66f, vhi = 3.44f, sh = 7.45f;   // по умолчанию (и для имён вне таблицы)
+    char low[48]; int n = 0; for (; model && model[n] && n < 47; n++) low[n] = (char)((model[n] >= 'A' && model[n] <= 'Z') ? model[n] + 32 : model[n]); low[n] = 0;
+    for (unsigned i = 0; i < sizeof T / sizeof T[0]; i++) if (strstr(low, T[i].n)) { hi = T[i].hi; vlo = T[i].vlo; vhi = T[i].vhi; sh = T[i].sh; break; }
+    mo->hi = mo->hi0 = hi * 0.0174533f; mo->lo = -18.f * 0.0174533f; mo->vlo = vlo; mo->vhi = vhi; mo->shift = sh * 0.0174533f;
+    mo->a = 0.f; mo->dir = -1; mo->seed = mo->seed ? mo->seed : 2463534242u; mo->v = vlo + (vhi - vlo) * mouthRnd(mo); mo->init = 1;
+  }
+  float tgt = mo->dir < 0 ? mo->lo : mo->hi;   // граница, к которой идёт; она сдвигается внутрь на каждом развороте (ниже)
+  mo->a += mo->dir * mo->v * dt;
+  if (mo->dir < 0 ? mo->a <= tgt : mo->a >= tgt) {
+    mo->a = tgt; mo->dir = -mo->dir;
+    mo->v = mo->vlo + (mo->vhi - mo->vlo) * mouthRnd(mo);
+    // границы заново сдвигаются внутрь на случайное 0…shift (относительно исходных −18° и верхней)
+    mo->lo = -18.f * 0.0174533f + mouthRnd(mo) * mo->shift;
+    mo->hi = mo->hi0 - mouthRnd(mo) * mo->shift;
+  }
+  return mo->a;
+}
 
 float skinClipSpeed(const SkinModel *m, int clip) {
   if (clip < 0 || clip >= (int)m->h->nClips || m->c[clip].length <= 0.f) return 0.f;

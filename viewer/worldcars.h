@@ -3,6 +3,10 @@
 // стояла твёрдой и невидимой). Координаты движка (z отзеркален), heading — как у локатора
 #ifndef SHAR_WORLDCARS_H
 #define SHAR_WORLDCARS_H
+// сверка g02-traffic круг 2 (g10b P03-20): «свободная машина» грузится с загрузкой зоны, уходит с выгрузкой, если игрок дальше WORLD_CAR_FAR_R, и уходит, когда миссия ставит свою машину ближе
+// WORLD_CAR_MISSION_R. Здесь только числа; сама привязка (убрать/вернуть wcar[], game_msn.c) — окно g07/game_msn.c (передано)
+#define WORLD_CAR_FAR_R 200.f
+#define WORLD_CAR_MISSION_R 10.f
 static const struct { int level; const char *name; float p[3]; float h; } WORLD_CAR_LIST[] = {
   {1, "rocke_v", {-90.2f, -0.77f, 211.6f}, 0.f},   // ракетная машина Гомера, локатор «rocke» l1r3.p3d (запись PS2 32:35), G10-1
 #ifndef WORLD_CARS_OLD

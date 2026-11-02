@@ -139,6 +139,7 @@ int main(int argc, char **argv) {
     if (!smkOn) sndSeed(sceKernelGetSystemTimeLow());   // №685: в игре семя случайного звука от времени старта
     if (sndInit(ad) == 0) { sndLevel = 1; sndMode(SND_MODE_NORMAL); sndMaster(1.f); sndMusic(SND_MUS_FREEROAM); } }
 #endif
+  G.hk.coinLose = coinLoseSnd;   // сверка g10-flow круг 2: звук потери монет
   G.hk.wrench = onWrench;   // пункт 4: гаечные ключи (крючок после u — позиционная инициализация G выше не сдвигается)
   int th = sceKernelCreateThread("cb", cbThread, 0x11, 0x4000, 0, 0);   // правка 103: выход по HOME пишет чёрный ящик (snprintf, запись) — 4000 Б было впритык
   if (th >= 0) sceKernelStartThread(th, 0, 0);
@@ -545,13 +546,24 @@ int main(int argc, char **argv) {
       if (ms == 1 && !mvMissionSelectOn() && !vcOpen && pauseSub < 0) SCR_CLOSE();   // список закрыт — пакет pextra.shr из кучи
       if (svmOn()) { int mvCanSave(void); uiMenuEnable(UI_MENU_PAUSE, UI_P_SAVE_GAME, mvCanSave()); }   // SAVE GAME — свободная езда и вся «прогулка» миссии (правка 330)
       pauseMsAccess();                                 // пункт ДОБИВКИ 26: MISSION SELECT серый, когда выбрать нечего
-      if (svmActive()) { if (svmInput(hit) == SVM_R_QUIT) { if (mainNew >= 0) toMenu = 1; else { blackBox(1); exitSafeNow(); } } }   // SaveGame.scr
+      if (svmActive()) { int sr_ = svmInput(hit);
+                         if (pauseAskAct && (sr_ == SVM_R_YES || sr_ == SVM_R_NO || sr_ == SVM_R_BACK)) {   // сверка g09a-hud круг 5 (M2:Д6): ответ на вопрос Restart / Abort Mission
+                           int a_ = pauseAskAct; pauseAskAct = 0;
+                           if (sr_ == SVM_R_YES) { uiPauseCloseNow(); if (a_ == UI_P_RESTART_MISSION) { mvPauseRestart(); chase.init = 0; } else { mvPauseAbort(); chase.init = 0; hnrAbortMsn = 1; } } } if (sr_ == SVM_R_QUIT && !lvSaveAsk) { if (mainNew >= 0) toMenu = 1; else { blackBox(1); exitSafeNow(); } }   // SaveGame.scr   // сверка g10b-loop (P13:4): вопрос «сохранить?» перед следующим уровнем выход в меню не даёт
+                         else if (sr_ == SVM_R_UNPAUSE) uiPause(0); }   // сверка g09b-menu (P13-Д5): START на экране записи закрывает паузу целиком
       else if (pauseSub >= 0) pauseSubInput(hit);       // OPTIONS паузы (pmenu.shr): Sound / Settings
-      else if (lsOpen) { if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE | PSP_CTRL_START)) { lsOpen = 0; uiPopHookFire(UI_EV_BACK); } }   // LEVEL PROGRESS: Back
-      else if (vcOpen) vcInput(hit);                     // VIEW CARDS (pextra.shr)
-      else if (ms == 2) { SCR_CLOSE(); uiPause(0); if (!MS_NEWS_OLD) msNewsPend = MS_NEWS_WAIT + 1;   // миссия выбрана: в игру (№893: газета всегда)
+#ifndef SUBSTART_OLD
+#define SUBSTART_OLD 0   // сверка g10b-loop круг 2 (g07b P13:7): 1 — START на Level Progress и View Cards возвращает в меню паузы (прежнее)
+#endif
+      // круг 2 (g07b P13:7): START на подэкранах паузы закрывает паузу целиком (○ и △ — назад в меню паузы)
+      else if (lsOpen) { if (!SUBSTART_OLD && (hit & PSP_CTRL_START) && !(hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))) { lsOpen = 0; uiPopHookFire(UI_EV_BACK); uiPause(0); }
+                         else if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE | PSP_CTRL_START)) { lsOpen = 0; uiPopHookFire(UI_EV_BACK); } }   // LEVEL PROGRESS: Back
+      else if (vcOpen) { if (!SUBSTART_OLD && (hit & PSP_CTRL_START) && !(hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) && !vcZoom) { uiPopHookFire(UI_EV_BACK); uiPause(0); } else vcInput(hit); }   // VIEW CARDS (pextra.shr)
+      else if (ms == 2) { zoneReloadWorld("msel"); SCR_CLOSE(); uiPause(0);   // сверка g09b-menu круг 5 (P12-03): выбор миссии — зоны заново
+         if (!MS_NEWS_OLD) msNewsPend = MS_NEWS_WAIT + 1;   // миссия выбрана: в игру (№893: газета всегда)
         if (!msFlowOld) { msSetupWait = 0; msLateWin = 0; msMusPend = 1; sndMusicRelease(); sndMusic(SND_MUS_OFF);   // №1070: музыка прежней миссии и места — сразу
           if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "MSFLOW1070 select t=%.1f\n", smkT); smkWrite(s_); } } }
+      else if (ms == 4) { SCR_CLOSE(); uiPause(0); }   // сверка g07b-msnview P13-7: START на MISSION SELECT — выход из паузы в игру целиком (мир без выбора миссии)
       else if (ms == 3) { int lv, row; SCR_CLOSE(); uiPause(0);   // правка 348: миссия другого уровня — тот уровень (ниже, levelAdvance)
                           if (mvMissionSelectWant(&lv, &row) && msLevelOpen(lv)) { toLevel = lv; msPendRow = row; msPendDev = msDevSession; } }
       else if (!ms) { act = uiPauseInput(hit); if (act == UI_P_MISSION_SELECT) { char fn[256]; pausePackFile(fn, "pextra.shr");
@@ -566,9 +578,10 @@ int main(int argc, char **argv) {
       if (!uiPaused()) { lsOpen = 0; if (vcOpen) { SCR_CLOSE(); vcOpen = 0; } }
       if (smkOn && act != UI_P_NONE) { char s[48]; snprintf(s, sizeof s, "PAUSEACT act=%d t=%.1f\n", act, smkT); smkWrite(s); }   // правка 137
       if (act == UI_P_RESET_CAR) resetCar = 1;
-      else if (act == UI_P_RESTART_MISSION) { mvPauseRestart(); chase.init = 0; }   // PauseMission.scr (29.09)
-      else if (act == UI_P_ABORT_MISSION) { mvPauseAbort(); chase.init = 0; }
-      else if (act == UI_P_QUIT_GAME && !(svmOn() && mvFreeRoam() && savePauseOpen(1) == 0)) {   // «Do you want to save your game?»
+      else if ((act == UI_P_RESTART_MISSION || act == UI_P_ABORT_MISSION) && !PAUSE_CONFIRM_OLD && svmOn() && savePauseOpen(act == UI_P_RESTART_MISSION ? 4 : 8) == 0) pauseAskAct = act;   // сверка g09a-hud круг 5 (M2:Д6): сначала «Yes / No», пауза остаётся
+      else if (act == UI_P_RESTART_MISSION) { if (!PAUSE_CONFIRM_OLD) uiPauseCloseNow(); mvPauseRestart(); chase.init = 0; }   // PauseMission.scr (29.09)
+      else if (act == UI_P_ABORT_MISSION) { if (!PAUSE_CONFIRM_OLD) uiPauseCloseNow(); mvPauseAbort(); chase.init = 0; hnrAbortMsn = 1; }   // сверка g09b-menu круг 3: отмена миссии — не победа (шкала Hit & Run)
+      else if (act == UI_P_QUIT_GAME && !(svmOn() && (mvFreeRoam() || svmQuitAsks()) && savePauseOpen(svmQuitAsk(mvFreeRoam())) == 0)) {   // «Do you want to save your game?»; сверка g09b-menu (М2 Д2, P13-1): сначала «Are you sure you want to quit?» в обеих паузах
         if (mainNew >= 0) toMenu = 1; else { blackBox(1); exitSafeNow(); } }   // 12а: в главное меню
       hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
     } else if (mvLevelEnd()) {                     // конец уровня (LevelEnd.scr): мир стоит, X — дальше (следующий уровень)
@@ -587,6 +600,17 @@ int main(int argc, char **argv) {
     } else if (mvMsgBox(0)) {                      // правка 122: окно сообщения (Message.scr) — мир стоит, ✕ / ○ закрыть
       mvMsgBoxInput(hit); if (hit & PSP_CTRL_CROSS) uiPopHookFire(UI_EV_ACCEPT);
       hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+#ifndef PAUSE_BAN_OLD
+#define PAUSE_BAN_OLD 0   // сверка g10b-loop: 1 — пауза открывается и на смене этапа, при ожидающей смене миссии и в затемнении HUD (прежнее)
+#endif
+#ifndef TUT_PAUSE_OLD
+#define TUT_PAUSE_OLD 0   // сверка g10b-loop, P13:17: 1 — START в подсказке Барта проглатывается (прежнее)
+#endif
+    } else if (tutActive() && !TUT_PAUSE_OLD && (hit & PSP_CTRL_START) && uiReady && !bpass && tutVoiceBusy()) {
+      // сверка g10b-loop, P13:17: пока в подсказке Барта звучит реплика, START открывает паузу поверх подсказки; после паузы подсказка на месте.
+      // Реплика кончилась: START ничего не делает (ветка ниже). TUT_PAUSE_OLD=1 — прежнее
+      if (uiPauseMissionGrey) uiPauseMissionGrey(1);   // сверка g09a-hud круг 3 (P13:Д3): пауза поверх подсказки обучения — Restart/Abort серые
+      uiPauseMission(!pauseOld && mvInMission()); pauseMsAccess(); uiPause(1); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
     } else if (tutActive()) {                      // подсказка Барта (Tutorial.scr): мир стоит, X — Continue, □ — Disable Tutorials
       int dis = 0; tutInput(hit, wallDt, &dis);
       if (dis) cfg.tutorial = 0;
@@ -613,8 +637,14 @@ int main(int argc, char **argv) {
       hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128;
     } else if (!(hit & PSP_CTRL_START) && mvTalkInput(hit)) {   // правка 40: разговор — X пропустить / начать миссию, △ отменить (LetterBox.scr)
       hit = 0; pad.Buttons &= PSP_CTRL_START; pad.Lx = pad.Ly = 128;
+    } else if ((hit & PSP_CTRL_START) && !PAUSE_BAN_OLD && (mvFadeAlpha() > 0.f || toLevel || toMenu || msNewsPend > 0 || msPendRow >= 0)) {
+      // сверка g10b-loop, M2:Д5, P13:12, P17-3: пауза запрещена, пока идёт смена этапа миссии (затемнение, ирис, чёрный экран), ждёт смена миссии
+      // вперёд или назад (выбор MISSION SELECT, новый уровень) и пока HUD в затемнении или проявлении; START в эти кадры теряется. Было: пауза
+      // открывалась в любой из них. PAUSE_BAN_OLD=1 — прежнее
+      hit &= ~PSP_CTRL_START; pad.Buttons &= ~PSP_CTRL_START;
     } else if (hit & PSP_CTRL_START) {
-      if (uiReady && !bpass) { uiPauseMission(!pauseOld && mvInMission()); pauseMsAccess(); uiPause(1); } else resetCar = 1;   // без ui.shr START возвращает машину на колёса
+      if (uiPauseMissionGrey) uiPauseMissionGrey(mvLevelEnd() || G.hnrBusted > 0.f || bustFadeT >= 0.f || (haveHomer && (homer.state == HS_GET_IN || homer.state == HS_GET_OUT || homer.state == HS_TO_DOOR)) || tutActive());   // круг 2 (g09a P13:Д3): Restart/Abort серые — миссия завершена, арест, посадка/высадка, пауза поверх обучения
+      if (uiReady && !bpass) { uiPauseMission(!pauseOld && mvInMission()); pauseMsAccess(); uiPause(1); svmPauseEnter(); } else resetCar = 1;   // svmPauseEnter — сверка g09b-menu (P13-Д4)   // без ui.shr START возвращает машину на колёса
       if (smkOn && uiReady && uiPaused()) { char s[64]; snprintf(s, sizeof s, "PAUSE on mission=%d t=%.1f\n", uiPauseIsMission(), smkT); smkWrite(s);
         int pm = uiPauseIsMission() ? UI_SCREEN_PAUSEMSN : UI_MENU_PAUSE; char r[256]; int n = snprintf(r, sizeof r, "PAUSEROWS");   // правка 137: видимые строки
         for (int i = 0; i < uiMenuCount(pm) && n < (int)sizeof r - 40; i++) if (!uiMenuHidden(pm, i)) n += snprintf(r + n, sizeof r - n, " %d:%s |", i, uiMenuLabel(pm, i));
@@ -625,6 +655,11 @@ int main(int argc, char **argv) {
     // Правка Роба 60: подсказка не стопорит облёт к дому — на старте уровня облёт запрашивается через кадр-другой (m0sd, 0.1 с), а
     // «ходьба» срабатывала раньше и замораживала его. Правило порта (запись PS2: облёт 0:58–1:03, подсказка 1:05): подсказки ждут
     // TUT_CALM секунд свободной игры подряд (без облёта, разговора, брифинга, паузы)
+    // сверка g10b-loop, P10-23: реплика «устал» (Turbo) — через 5 с от начала турбо (○ зажат, пешком, не в прыжке, не в помещении), если Гомер всё ещё в турбо; вышел раньше — таймер сброшен.
+    // TURBO_TIRED_OLD=1 — прежнее (реплика на первом шаге бега, main_state.h)
+    { static float turboT; static int turboSaid;
+      if (!TURBO_TIRED_OLD && haveHomer && onFoot() && !fly && (pad.Buttons & PSP_CTRL_CIRCLE) && homer.speed > HOMER_WALK + .5f && homer.grounded && !inRoom() && dt > 0.f) { turboT += dt; if (turboT >= 5.f && !turboSaid) { turboSaid = 1; sndSay(SND_SAY_TURBO, 0); } }
+      else if (dt > 0.f) { turboT = 0.f; turboSaid = 0; } }
     int tutFree;
     { const Shop *sh = mvShop();   // сверка 30.09 (запись PS2 14:17): игроку досталась машина (куплена, награда) — подсказка «UNLOCKED CAR»
       if (!sh) ownInit = 0;
@@ -634,7 +669,10 @@ int main(int argc, char **argv) {
       tutCalm = free && !tutCalmOff ? tutCalm + dt : (free ? TUT_CALM : 0.f); tutFree = free && tutCalm >= TUT_CALM;
       tutSetBusy(!tutFree); }   // разговор, брифинг, облёт, пауза: подсказка события ждёт в очереди
     if (tutFree && rs.room < 0) {
-      if (onFoot()) tutEvent(TUT_WALK);   // подсказка «ходьба» — как только Гомер свободен пешком (PS2 1:05, после облёта улицы)
+#ifndef TUTWALK_FLY_OLD
+#define TUTWALK_FLY_OLD 0   // сверка g10b-loop круг 2 (g07b P15:Д4): 1 — подсказка про ходьбу только когда Гомер пешком (прежнее)
+#endif
+      if (onFoot() || !TUTWALK_FLY_OLD) tutEvent(TUT_WALK);   // круг 2: стартовая подсказка про ходьбу ставится в очередь по концу первого облёта (tutFree ждёт конца облёта), без условия «пешком»   // подсказка «ходьба» — как только Гомер свободен пешком (PS2 1:05, после облёта улицы)
       { float px = onFoot() ? homer.x : car.x, pz = onFoot() ? homer.z : car.z; int g = mvGiverNear(px, pz, TUT_GIVER_M);
         if (g == UI_R_STREETRACE) tutEvent(TUT_RACE); else if (g == UI_R_BONUS) tutEvent(TUT_BONUS);   // PS2 16:55, 22:55
         else if (g == UI_R_WAGER) tutEvent(TUT_TIMETRIAL); }
@@ -647,8 +685,19 @@ int main(int argc, char **argv) {
     { int ld = mvLevelDone();   // уровень пройден: следующий уровень; SetGameOver — финальные титры, затем главное меню
       static int endSaveAsk;   // №860: после титров открыт диалог записи («Do you want to save your game?»); закрылся — в главное меню
       if (endSaveAsk && !svmActive()) { endSaveAsk = 0; uiPauseMenuHide(0); toMenu = 1; if (smkOn) smkWrite("ENDSAVE closed\n"); }
+#ifndef LV_SAVEASK_OLD
+#define LV_SAVEASK_OLD 0   // сверка g10b-loop, P13:4: 1 — следующий уровень сразу по пройденному, без вопроса «сохранить?» (прежнее)
+#endif
+      // сверка g10b-loop, P13:4: ✕ на экране конца уровня ведёт на следующий уровень, но сперва игра спрашивает «Do you want to save your game?» (да — запись,
+      // нет — дальше). Закрылось любым ответом — следующий уровень (в меню этот вопрос не выходит). Служебные запуски и туры (smkOn, svcMode) не спрашивают
+      if (lvSaveAsk && !svmActive()) { toLevel = lvSaveAsk; lvSaveAsk = 0; uiPauseMenuHide(0); uiPause(0); if (smkOn) smkWrite("LVSAVEASK closed\n"); }
       if (ld && smkOn) { char s[80]; snprintf(s, sizeof s, "LEVELDONE n=%d code=%d next=%d t=%.1f\n", gameLevel, ld, levelAvailable(gameLevel + 1), smkT); smkWrite(s); }
-      if (ld == 1 && levelAvailable(gameLevel + 1)) toLevel = gameLevel + 1;
+      if (ld == 1 && levelAvailable(gameLevel + 1)) {
+        if (!LV_SAVEASK_OLD && mainNew >= 0 && !smkOn && !svcMode && svmOn() && uiReady && !bpass) {
+          uiPause(1); uiPauseMenuHide(1);
+          if (savePauseOpen(1) == 0) { lvSaveAsk = gameLevel + 1; if (smkOn) smkWrite("LVSAVEASK open\n"); } else { uiPauseMenuHide(0); uiPause(0); toLevel = gameLevel + 1; }
+        } else toLevel = gameLevel + 1;
+      }
 #ifndef C3_ENDING_OLD
       else if (ld == 2) {
         char ef[256]; sibling(ef, "ending.shr");
@@ -658,7 +707,7 @@ int main(int argc, char **argv) {
         // главное меню, и титры — в menuRun, когда уровня в памяти уже нет. ENDING_SAVE860_OLD=1 — как было
         if (!ENDING_SAVE860_OLD && mainNew >= 0) {
           endingPending = 1; mvMarkStoryDone();   // №860: в записи L7 пройден целиком
-          if (svmOn() && uiReady) { uiPause(1); uiPauseMenuHide(1);
+          if (svmOn() && uiReady) { uiPause(1); svmPauseEnter(); uiPauseMenuHide(1);   // svmPauseEnter — сверка g09b-menu
             if (savePauseOpen(1) == 0) endSaveAsk = 1; else { uiPauseMenuHide(0); uiPause(0); toMenu = 1; } }
           else toMenu = 1;
           if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "ENDSAVE open=%d t=%.1f\n", endSaveAsk, smkT); smkWrite(s_); }
@@ -681,6 +730,7 @@ int main(int argc, char **argv) {
     if (toMenu) {   // 12а: главное меню -> NEW GAME -> загрузка со шкалой; игра заново со спавна
       if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }   // В5: жужжание осы не звучит в меню
       toMenu = 0; msPendRow = -1; msPendDev = 0; msNewsPend = 0;   // правка 348: выбор MISSION SELECT не переживает выход в меню
+      if (!MENU_SNAP_OLD) { if (endingPending) menuSnapOn = 0; else if (haveCol) { saveCapture(&menuSnap); menuSnapOn = 1; } }   // игра пройдена (M2:Д8 — сброс на первую миссию первого уровня не сделан): снимок не держим, RESUME — по записи   // сверка g10b-loop, P14:1: игра идёт — снимок для RESUME GAME после выхода в меню
       menuNoGame = 1; menuRun(&fbp0); menuNoGame = 0; hit = 0; pad.Buttons = 0; padE.init = 0; pad.Lx = pad.Ly = 128; dt = wallDt = 0.f;
       last = t0 = sceKernelGetSystemTimeLow(); smkSettle();
       if (haveCol) { x = car.x; y = car.y; z = car.z; h = car.h; } else { x = spawnP[0]; y = spawnP[1]; z = spawnP[2]; h = spawnP[3]; }
@@ -732,7 +782,9 @@ int main(int argc, char **argv) {
       if (smkOn && benchLog1034 && onFoot()) { char s_[100]; snprintf(s_, sizeof s_, "BENCH1034 t=%.2f x=%.2f y=%.2f z=%.2f g=%d\n", smkT, homer.x, homer.y, homer.z, homer.grounded); smkWrite(s_); }   // №1034: диагностика (flag benchlog 1): где Гомер каждый кадр
       if (smkOn && camLogOn && onFoot()) { char s_[260]; snprintf(s_, sizeof s_, "CTRLYAW t=%.2f held=%.0f view=%.0f camYaw=%.0f busy=%d bt=%.2f spd=%.1f on=%d frame=%.0f walk=%.0f pos=%.2f,%.2f\n", smkT, ctrlHeld * 57.2958f, cy_ * 57.2958f, homer.camYaw * 57.2958f, busy_, ctrlBusyT, homer.speed, homerCtrlOn, homer.frame * 57.2958f, atan2f(homer.vx, homer.vz) * 57.2958f, homer.x, homer.z); smkWrite(s_); } }
     float ax = (pad.Lx - 128) / 128.f, ay = (pad.Ly - 128) / 128.f;
-    if (fabsf(ax) < .2f) ax = 0; if (fabsf(ay) < .2f) ay = 0;
+    if (GAME_STICK_OLD) { if (fabsf(ax) < .2f) ax = 0; if (fabsf(ay) < .2f) ay = 0; }
+    else gameStick(ax, ay, &ax, &ay);   // сверка g10-flow P17-9: зона 0,25 по оси с пересчётом в 0..1 и ступень 0,05 (viewer/game.c)
+    if (mvTalkActive()) gameHnrFreeze(&G, .1f);   // сверка g10-flow P03-07: в разговоре нарушения Hit & Run не считаются (спад стоит — отдельно, HNR_LEVEL_DECAY_OLD g10b-loop)
     if (autodrive == 5 && haveHomer && onFoot() && haveTraffic) {   // TEST14 §5: Гомер по путям пешеходов (viewer/smkpilot.h), бегом; стик — от камеры, как у бота
       float tx_, tz_; adT += dt;
       if (smkWalkStep(&smkWalk, &traffic, homer.x, homer.z, dt, &tx_, &tz_)) { float fr_ = !homerCtrl916Old && (homer.heldX != 0.f || homer.heldY != 0.f) ? homer.frame : homer.camYaw;   // №916: стик зажат — кадр управления held, а не нынешний вид
@@ -747,7 +799,13 @@ int main(int argc, char **argv) {
     if (hit & PSP_CTRL_SELECT) {
       if (svcMode) { if (pad.Buttons & PSP_CTRL_RTRIGGER) hud = !hud; else if (pad.Buttons & PSP_CTRL_LTRIGGER) { jitterOn = !jitterOn; jitHave = 0; } else longView = !longView; }   // L+SELECT: сглаживание полпикселя (jitter.h) вкл/выкл   // служебное: SELECT 30 FPS/250 м <-> 60 FPS/115 м; R+SELECT счётчик
       else if (SHR_REL && SHR_KEEP_HUD && (pad.Buttons & PSP_CTRL_RTRIGGER)) hud = !hud;   // релиз с оставленным счётчиком (release.h): R+SELECT игроку
-      else if (!selectCamOld && haveCol && !onFoot() && !fly) { chaseView = selectCycleOld ? !chaseView : chaseView == 0 ? 2 : chaseView == 2 ? 1 : 0; if (smkOn) { char s[48]; snprintf(s, sizeof s, "SVC camview %d t=%.1f\n", chaseView, smkT); smkWrite(s); } }   // №617: SELECT в машине — вид камеры
+#ifndef SELECT_VIEW_OLD
+#define SELECT_VIEW_OLD 0   // сверка g10b-loop, СВЕРКА_КАМЕРА 1.2 / P08:15: 1 — SELECT меняет вид и под камерой зоны, и у багги бампер остаётся (прежнее)
+#endif
+      // сверка g10b-loop: 1.2 — у багги (dune_v) бампера нет, вместо него ближний вид; P08:15 — пока активна камера зоны, комнаты или вступления (статичная, рельсовая, анимационная),
+      // кнопка выбора вида игнорируется. SELECT_VIEW_OLD=1 — прежнее
+      else if (!selectCamOld && !SELECT_VIEW_OLD && (zoneCamOn || carZoneOn || roomCamOn || mcPlay) && haveCol && !onFoot() && !fly) { }
+      else if (!selectCamOld && haveCol && !onFoot() && !fly) { chaseView = selectCycleOld ? !chaseView : chaseView == 0 ? (!SELECT_VIEW_OLD && !strcmp(car.p.name, "dune_v") ? 1 : 2) : chaseView == 2 ? 1 : 0; if (smkOn) { char s[48]; snprintf(s, sizeof s, "SVC camview %d t=%.1f\n", chaseView, smkT); smkWrite(s); } }   // №617: SELECT в машине — вид камеры
       else if (selectCamOld && (!SHR_REL || SHR_KEEP_RESET) && haveCol && !onFoot() && !fly) { resetCar = 1; if (smkOn) { char s[48]; snprintf(s, sizeof s, "SVC reset select t=%.1f\n", smkT); smkWrite(s); } }   // ControllerPS2.pag: SELECT в машине — RESET CAR
     }
     if (!svcMode && !(SHR_REL && SHR_KEEP_HUD)) hud = 0;   // правка 44: счётчик и служебные строки — только в служебном режиме (релиз с KEEP_HUD: и у игрока)
@@ -758,8 +816,26 @@ int main(int argc, char **argv) {
     int flyChord = svcMode && (pad.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) == (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER);   // правка 44: у игрока L+R+△ — обычный △
     if ((hit & PSP_CTRL_TRIANGLE) && smkOn && inRoom() && wardrobeNear(homer.x, homer.y, homer.z)) {   // правка 107: кто забирает △ у места костюмов
       char s[128]; snprintf(s, sizeof s, "WARDV near msn=%d coll=%d ao=%d t=%.1f\n", mvWantsAction(), haveColl ? collectWantsAction(&coll) : -1, haveAo ? aoWantsAction(&ao) : -1, smkT); smkWrite(s); }
+#ifndef ACTION_RANK_OLD
+#define ACTION_RANK_OLD 0   // сверка g10b-loop, P05:2 / P05:19: 1 — цепочка △ как была (своя машина последней, без паузы между срабатываниями)
+#endif
+    // сверка g10b-loop, P05:19: между двумя срабатываниями кнопки действия проходит не меньше 4 кадров (счёт от последнего сработавшего); нажатие внутри паузы пропадает
+    static int triCool; unsigned tri0_ = hit & PSP_CTRL_TRIANGLE;
+    if (!ACTION_RANK_OLD) { if (triCool > 0) { triCool--; hit &= ~PSP_CTRL_TRIANGLE; tri0_ = 0; } }
     int msnTri = (hit & PSP_CTRL_TRIANGLE) && !fly && !flyChord && mvWantsAction();   // △ у собеседника/точки миссии — миссии, не в машину
     if (msnTri) hit &= ~PSP_CTRL_TRIANGLE;
+    // сверка g10b-loop, P05:2: ранг кнопки действия (меньше = важнее): разговор/разрушаемое миссии 0, своя (последняя) машина 1, будка 2, дверь интерьера 3, выключатель/гэг 4,
+    // покупки 5–6, чужая машина 7. Было: своя машина проигрывала выключателю, гардеробу, двери комнаты и будке. Теперь, если рядом своя машина и в неё можно сесть,
+    // △ идёт ей до гэг-объектов, звонка, выключателя, гардероба, двери и будки. ACTION_RANK_OLD=1 — прежняя цепочка
+    if (!ACTION_RANK_OLD && (hit & PSP_CTRL_TRIANGLE) && haveHomer && haveCol && !fly && !flyChord && onFoot() && !inRoom()) {
+      HomerCar hc_; memset(&hc_, 0, sizeof hc_); homerCarFrom(&hc_, &car, cv.lift);
+      if (homerCanEnter(&homer, &hc_)) { gameTriangle(&G); hit &= ~PSP_CTRL_TRIANGLE; } }
+    // круг 3 (проверка g10b-loop, P05:2): дальше по рангу — телефонная будка (2), дверь интерьера (3), потом гэг-объект и выключатель (4), покупки (5–6), чужая машина (7).
+    // Было: будка и дверь шли после гэга, выключателя и гардероба, дверь раньше будки. ACTION_RANK_OLD=1 — прежний порядок цепочки
+    if (!ACTION_RANK_OLD) {
+#include "main_actbooth.h"
+      if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && roomsDoorNear(&rooms, &rs, &G)) { rs.action = 1; hit &= ~PSP_CTRL_TRIANGLE; }
+    }
     if ((hit & PSP_CTRL_TRIANGLE) && haveColl && !fly && !flyChord && onFoot() && collectWantsAction(&coll) >= 0) {   // В5: △ у action-гэга — гэгу
       G.collAction = 1; hit &= ~PSP_CTRL_TRIANGLE; }
     G.collRoom = haveColl ? collectRoomId(roomName()) + 1 : 0;   // В5: гэги комнат — только в своей комнате
@@ -770,42 +846,15 @@ int main(int argc, char **argv) {
     }
 #endif
     if ((hit & PSP_CTRL_TRIANGLE) && haveAo && !fly && !flyChord && onFoot() && aoWantsAction(&ao) >= 0) {   // △ у выключателя объекта (Duff, АЭС)
-      aoAct = 1; hit &= ~PSP_CTRL_TRIANGLE; }
-    if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && inRoom() && wardrobeNear(homer.x, homer.y, homer.z)) {   // правка 107: △ у места костюмов
+      aoAct = 1; sndSwitchPress(); homerPressButton(&homer, NAN); hit &= ~PSP_CTRL_TRIANGLE; }   // сверка g04-homer круг 2 (P05:3): клип нажатия   // сверка g08-sound (P05:3): щелчок switch на 0,3 с после нажатия
+#ifndef SHOP_PHASE_OLD
+#define SHOP_PHASE_OLD 0   // сверка g10b-loop круг 2 (g07 P05:11): 1 — гардероб доступен всегда (прежнее)
+#endif
+    if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && inRoom() && (SHOP_PHASE_OLD || mvShopAllowed()) && wardrobeNear(homer.x, homer.y, homer.z)) {   // правка 107: △ у места костюмов; круг 2: только вступление миссии и вне миссий
       char sd[256]; levelFile(sd, ""); if (wardrobeOpen(mvShop(), sd, skinWorn) == 0) { hit &= ~PSP_CTRL_TRIANGLE; sndMusic(SND_MUS_STORE); } }   // правка 235: гардероб — Store
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && roomsDoorNear(&rooms, &rs, &G)) {   // правка 41: △ у двери / выхода комнаты — войти / выйти
       rs.action = 1; hit &= ~PSP_CTRL_TRIANGLE; }
-    if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && haveCol && !fly && !flyChord && onFoot()) {   // правка 62: △ у будки — своя машина
-      int pk = phoneNear(); if (pk >= 0) { char sd[256]; levelFile(sd, ""); phoneK = pk;
-        phoneViewSetProgress(svLvReached(&lvKeep));   // №682: пройденные уровни открывают свои машины в будке
-        phoneViewSetCar(mvForcedCar(), car.destroyed ? 1.f : car.damage);   // правка 104: «Damaged: N %» у машины, на которой игрок сейчас
-        if (boothMem1051 && !PHONE_ROOM842_OLD) boothRoom1051(0);   // №1051: место — до первой попытки, не после неудачи
-        int po_ = phoneFailTest > 0 ? (phoneFailTest--, -1) : phoneViewOpen(mvShop(), sd);   // phoneFailTest — №842 тест
-        if (po_ != 0 && boothMem1051 && !PHONE_ROOM842_OLD) {   // №1051: не вышло — ступенями больше места: дальше 20 м, потом все чужие клетки
-          uiPakSegMax1051(256u << 10);   // ступени: пакет кусками по 256 КБ (тесная раздробленная куча)
-          for (int st_ = 1; st_ <= 2 && po_ != 0; st_++) { boothRoom1051(st_); po_ = phoneViewOpen(mvShop(), sd); }
-          uiPakSegMax1051(0);
-          { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1051 result ok=%d t=%.1f\n", po_ == 0, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
-          if (po_ != 0 && mem1060) {   // №1060: четвёртая ступень — газета, всё в кучу, при дроблении пересборка уровня; «unavailable» из-за памяти не бывает
-            po_ = boothScene1060(sd, &fbp0); mem1060Back = 1;
-            if (po_ != 0 && mem1060Rebuild) po_ = boothRebuild1060(sd, &fbp0);
-            { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1060 result ok=%d t=%.1f\n", po_ == 0, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
-            if (po_ != 0) { boothRelease1051(); mem1060Return(&fbp0); } }
-          else
-          if (po_ != 0) boothRelease1051(); }
-        else
-        if (po_ != 0 && !PHONE_ROOM842_OLD) {   // №842: не влезла — клетки города дальше 50 м в кучу (будка закрывает экран) и ещё раз
-          unsigned b0_ = memMaxBlock ? memMaxBlock() : 0; int nd_ = cellsDropBeyond(50.f); po_ = phoneViewOpen(mvShop(), sd);
-          { char s_[160]; snprintf(s_, sizeof s_, "PHONE842 retry level=%d dropped=%d blk=%u->%u free=%u ok=%d t=%.1f\n", gameLevel, nd_, b0_, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), po_ == 0, smkT);
-            if (smkOn) smkWrite(s_); bbNote(s_); } }
-        if (po_ != 0) {
-          // №375: ошибка пакета не должна подменять выбор автоматическим вызовом машины
-          if (uiReady) uiMessage("TELEPHONE BOOTH UNAVAILABLE", -1, 3.f);
-          if (smkOn) { char s_[320]; snprintf(s_, sizeof s_, "PHONE open-fail level=%d dir=%s t=%.1f\n", gameLevel, sd, smkT); smkWrite(s_); }
-        }
-        else { if (boothMem1051) { char s_[120]; snprintf(s_, sizeof s_, "BOOTH1051 open ok free=%.2f blk=%.2f t=%.1f\n", heapFreeBytes() / 1048576.f, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
-          if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "PHONE view open t=%.1f\n", smkT); smkWrite(s_); } }
-        hit &= ~PSP_CTRL_TRIANGLE; } }
+#include "main_actbooth.h"   // сверка g10b-loop круг 3: блок будки вынесен в файл (текст тот же), ранг см. выше
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && haveCol && !fly && !flyChord && onFoot()) {   // правка 53: △ у машины мира (ракетная) — пересесть
       float wc[4]; int wi = mvWorldCarNear(homer.x, homer.z, JACK_R, wc);
       if (wi >= 0) { Car keep = car; CarVis keepVis = cv; int had = oldCarOn;
@@ -816,11 +865,12 @@ int main(int argc, char **argv) {
       if (smkOn && haveTraffic) { int pk = 0; float d = -1.f; int ni = trafficNearest(&traffic, homer.x, homer.z, 30.f, &pk, &d);   // правка 285: служебное
         char s[160]; snprintf(s, sizeof s, "TRIJACK ji=%d near=%d park=%d d=%.2f model=%s homer=%.1f,%.1f t=%.1f\n", ji, ni, pk, d,
                               ni >= 0 ? traffic.model[trafficCarModelAt(&traffic, ni, pk)].name : "-", homer.x, homer.z, smkT); smkWrite(s); }
-      if (ji >= 0 || ji == -2) carjack(ji, jp); }   // машина игрока встала на её место — ниже Гомер садится в неё
+      if (ji >= 0 || ji == -2) { if (ji >= 0) tutForeignCar(); carjack(ji, jp); } }   // сверка g07b круг 5 (P15-10): подсказка «в чужую машину»   // машина игрока встала на её место — ниже Гомер садится в неё
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && haveCol && !fly && !flyChord) {   // △ — выйти / сесть, в том числе с зажатым тормозом
       gameTriangle(&G);   // выходит на малой скорости / садится (viewer/game.c)
       hit &= ~PSP_CTRL_TRIANGLE;
     }
+    if (!ACTION_RANK_OLD && tri0_ && !(hit & PSP_CTRL_TRIANGLE)) triCool = 3;   // P05:19: кнопка сработала — следующие 3 кадра △ не принимается (минимум 4 кадра между срабатываниями)
     if (svcMode && (hit & PSP_CTRL_TRIANGLE) && (fly || flyChord || !haveHomer || !haveCol)) { fly = !fly; fx = camx; fy = camy; fz = camz; fyaw = atan2f(x - camx, -(z - camz)); fpitch = -.2f; }   // L+R+△ — служебный полёт, △ возвращает (только служебный режим)
     if (smkOn && fly * 2 + hud != svc0) { char s[64]; snprintf(s, sizeof s, "SVC state t=%.1f svc=%d fly=%d hud=%d\n", smkT, svcMode, fly, hud); smkWrite(s); }
     if (resetCar) {                                 // RESET CAR (пауза) / START без ui.shr
@@ -1750,6 +1800,7 @@ int main(int argc, char **argv) {
       float l = sqrtf(cfx * cfx + cfy * cfy + cfz * cfz); cfx /= l; cfy /= l; cfz /= l;
     } else if (!fly && haveCol) {                  // этап 2: машина через col.c/car.c
       GamePad gp = {pad.Buttons, hit, ax, ay}; CarInput in;
+      if (roomHoldActive(dt)) { gp.buttons = 0; gp.hit = 0; gp.ax = 0; gp.ay = 0; }   /* сверка g11b-collect P05 №16/Д6: 0,5 с после входа, 1,0 с после выхода из комнаты без управления */
       gameCarInput(&G, &gp, &in);   // R/X газ, L/○ тормоз, □ ручник, стик/← → руль (viewer/game.c)
       if (autodrive) { if (adClockOld || autodrive < 4) adT += dt; in.throttle = 1; in.brake = 0; in.steer = autodrive == 2 ? 0.f : sinf(adT * .7f) * .5f;   // служебный автопилот
         if (adStop > 0.f && adT > adStop) { in.throttle = 0; in.brake = car.v > .5f ? 1.f : 0.f; in.handbrake = 1.f; } }
@@ -1774,6 +1825,8 @@ int main(int argc, char **argv) {
       mvFreezeCar(&in);            // пункт 8: отсчёт 3-2-1 — машина на ручнике, газ и руль не проходят (и служебный автопилот)
       XS_FRAME(smkOn); smkMark(0); BBP(BBP_CAR);
       { static float vPrev1050; float v0_ = hypotf(car.vel[0], car.vel[2]);
+      camSvThr = in.throttle; camSvBrk = in.brake;   // сверка g06: газ и тормоз игрока для камеры заднего хода (main_camera.h)
+      mvCarOdds = svOddsHook;   // сверка g01-cars круг 2 (P01-20): шансы машины игрока для ставки
       gameCarStep(&G, &in, dt); smkMarkX(0);
       if (smkOn && carDbgOn1050) { float v1_ = hypotf(car.vel[0], car.vel[2]);
         if ((carDbg1050.bn || carDbg1050.wn || carDbg1050.revert) || vPrev1050 - v1_ > 2.f) {
@@ -1790,11 +1843,35 @@ int main(int argc, char **argv) {
       }   // CAR1: each car retains its own visual state
       skidCar(0, &car, &in, &world); smkMarkX(1);   // правка 249: следы шин по правилу оригинала (viewer/skid.c)
       if (haveHomer) homer.irisOn = transitReady();   // посадка при занятой двери — под ирисом (viewer/transit.c)
+      // круг 3 (g11, проверка P11-02): предметы улицы ломает любая машина, не только игрока — трафик и ИИ миссий (шкала и монеты за их удары игроку не идут). PROPOTHER_SV_OLD=1 — только машина игрока
+#ifndef PROPOTHER_SV_OLD
+#define PROPOTHER_SV_OLD 0
+#endif
+#ifndef PROPCOST1086_OLD
+#define PROPCOST1086_OLD 0   // №1086: машины трафика и ИИ задевают предметы по вызовам окон g02 (trafficCarsNear, выше) и g03 (McEnv.carTouch); этот полный обход нужен только при 1 (как в TEST82)
+#endif
+      if (!PROPOTHER_SV_OLD && PROPCOST1086_OLD && haveProps && haveCol) {
+        propsKickOther = 1;
+        if (haveTraffic) for (int k_ = 0; k_ < traffic.maxCars && k_ < TR_MAXCAR; k_++) if (traffic.car[k_].mode != TRM_OFF) propsHitCar(&props, &world, &traffic.car[k_].car, NULL);
+        { const MsnCars *mc_ = mvCars(); if (mc_) for (int k_ = 0; k_ < mc_->n && k_ < MC_MAX; k_++) if (mc_->c[k_].on) propsHitCar(&props, &world, (Car *)&mc_->c[k_].car, NULL); }
+        propsKickOther = 0;
+      }
       gameAfterCar(&G, &gp, dt); smkMarkX(2);   // Гомер и его удары, пропы, стейтпропы, монеты (viewer/game.c; звук и частицы — хуки выше)
+      if (haveHomer && onFoot() && !inRoom()) {   // сверка g04-homer круг 3 (ГОМЕР 5.7): пешего сбивают только машины ИИ миссий (погоня, цели, полиция) быстрее 1 м/с
+        const MsnCars *mk_ = mvCars();
+        if (mk_) for (int i_ = 0; i_ < mk_->n; i_++) if (mk_->c[i_].on && !mk_->c[i_].car.destroyed) {
+          HomerCar hk_; homerCarFrom(&hk_, &mk_->c[i_].car, mk_->c[i_].lift); hk_.hostile = 1;
+          if (homerKnockedByCar(&homer, &hk_)) break;
+        }
+      }
       if (haveHomer && onFoot() && homer.grounded && homer.speed > hmVmax) hmVmax = homer.speed;   // гейт tests/controls: бег по ○
       if (haveAo) {   // объекты уровня: действия, кадр клипа, живые объёмы COL1 (после spUpdate — поза этого кадра)
         smkMark(1); BBP(BBP_WORLD);
-        int ft = onFoot(); aoStep(&ao, &sprops, &world, ft ? homer.x : car.x, ft ? homer.y : car.y, ft ? homer.z : car.z, ft, aoAct, dt); aoAct = 0;
+        int ft = onFoot();
+        if (!ft) { CarBox cbA_; carBox(&car, &cbA_); float rxA_ = -cbA_.fz, rzA_ = cbA_.fx, cA_[4][3];   // сверка g11 круг 2 (P05:9 от g09b-menu): из машины триггер — шар 1,5 м вокруг центра плюс углы коробки
+          for (int q_ = 0; q_ < 4; q_++) { float sl_ = q_ & 1 ? 1.f : -1.f, sw_ = q_ & 2 ? 1.f : -1.f; cA_[q_][0] = cbA_.x + cbA_.fx * cbA_.hl * sl_ + rxA_ * cbA_.hw * sw_; cA_[q_][1] = cbA_.y; cA_[q_][2] = cbA_.z + cbA_.fz * cbA_.hl * sl_ + rzA_ * cbA_.hw * sw_; }
+          aoSetCar(&ao, cA_); }
+        aoStep(&ao, &sprops, &world, ft ? homer.x : car.x, ft ? homer.y : car.y, ft ? homer.z : car.z, ft, aoAct, dt); aoAct = 0;
         if (uiReady && ft && !uiPaused() && aoWantsAction(&ao) >= 0) { uiHudShow(UI_T_ACTION, 1); uiActionText("Use"); } }
       { const char *tw = haveHomer ? transitHomerWhy(&homer) : 0;   // выход через верх / посадка при занятой двери: ирис
         if (tw) { frames += transitClose(&fbp0, tw) / (longView ? 2 : 1); chase.init = 0; smkSettle(); camIrisCut = !strcmp(tw, "car_in"); } }
@@ -1803,15 +1880,26 @@ int main(int argc, char **argv) {
         rs.action = 0;                                      // правка 41: △ этого кадра двери отдан (или нет)
         { int jp; if (!ev && uiReady && !uiPaused() && !mvWantsAction() && jackNear(&jp) >= 0) { uiHudShow(UI_T_ACTION, 1); uiActionText("Get Into Car"); } }   // 306: подпись миссии у собеседника не перебивается   // правка 63: △ у чужой машины
         if (!ev && uiReady && !uiPaused() && phoneNear() >= 0) { uiHudShow(UI_T_ACTION, 1); tutEvent(TUT_PHONE); uiActionText("Use Telephone Booth"); }   // TUTORIAL_009   // правка 62: △ у будки; подсказка TUTORIAL_009
-        if (!ev && uiReady && onFoot() && !uiPaused() && inRoom() && wardrobeNear(homer.x, homer.y, homer.z)) { uiHudShow(UI_T_ACTION, 1); uiActionText("Change Clothes"); }   // правка 118: △ у места костюмов (PurchaseSkin)
+        if (!ev && uiReady && onFoot() && !uiPaused() && inRoom() && (SHOP_PHASE_OLD || mvShopAllowed()) && wardrobeNear(homer.x, homer.y, homer.z)) { uiHudShow(UI_T_ACTION, 1); uiActionText("Change Clothes"); }   // правка 118: △ у места костюмов (PurchaseSkin)
         if (!ev && uiReady && onFoot() && !uiPaused() && roomsDoorNear(&rooms, &rs, &G)) { uiHudShow(UI_T_ACTION, 1); uiActionText(inRoom() ? "Go Outside" : "Go Inside");   // TUTORIAL_013 «PRESS @ TO GO INSIDE»   // △ у двери / выхода
           if (rs.room < 0) tutEvent(TUT_INSIDE); }   // подсказка «△ — войти» (PS2 2:55, у двери Kwik-E-Mart)
-        if (ev == ROOM_EV_EXIT) { roomExitAtGate(); roomClose(); e1002N = 14; }
-        if (ev) { frames += transitClose(&fbp0, ev > 0 ? "room_in" : "room_out") / (longView ? 2 : 1); chase.init = 0; roomLog(ev); smkSettle(); } }   // ирис: правило порта по IrisWipe.scr   // переход — как goto: кадр чтения комнаты счётчики сцены не берут
+        if (ev == ROOM_EV_EXIT) { roomExitAtGate(); roomClose(); e1002N = 14; zoneReloadWorld("room-exit"); }   // сверка g09b-menu круг 5 (P12-03): выход из помещения — окружающие зоны заново
+#ifndef JM_ROOM_OLD
+#define JM_ROOM_OLD 0   // сверка g10b-loop круг 2 (g08 P09:15): 1 — режим «только музыка» на переходе в помещение не включается (прежнее)
+#endif
+#ifndef MSN_STATE_OLD
+#define MSN_STATE_OLD 0   // сверка g10b-loop круг 2 (g07 P06-11, P07:32): 1 — миссии не сообщают переход в помещение, арест и имя интерьера (прежнее)
+#endif
+        if (ev && !JM_ROOM_OLD) { sndJustMusic(1); jmRoomOn = 1; }   // круг 2 (g08 P09:15): на время перехода в помещение и из него — только музыка
+        if (ev && !MSN_STATE_OLD) mvSetState(1, 0, ev > 0 ? roomName() : "");   // круг 2: на время ириса входа/выхода таймер и провалы миссии стоят, имя интерьера — миссии
+        if (ev) { frames += transitClose(&fbp0, ev > 0 ? "room_in" : "room_out") / (longView ? 2 : 1); chase.init = 0; roomLog(ev); smkSettle(); roomHoldStart(ev); } }   // ирис: правило порта по IrisWipe.scr   // переход — как goto: кадр чтения комнаты счётчики сцены не берут
       mvSetInterior(roomName());   // пункт 8 + 11.2: миссия видит комнату, где Гомер (Апу, ведёрко; NULL — город)
+      if (jmRoomOn && !JM_ROOM_OLD) { sndJustMusic(0); jmRoomOn = 0; }   // круг 2: переход кончился (ирис блокирующий, к этому кадру он уже прошёл)
+      mvWorldCarsStep(onFoot() ? homer.x : car.x, onFoot() ? homer.z : car.z);   // круг 5 (P03-20): свободная машина уходит и возвращается вместе с зоной
+      if (!MSN_STATE_OLD) mvSetState(0, G.hnrBusted > 0.f || bustFadeT >= 0.f, "");   // круг 2: переход кончился; арест — по состоянию полиции
       { const char *g_ = sndGetOut(haveHomer && homer.state == HS_GET_OUT); if (g_ && smkOn) { char s_[80]; snprintf(s_, sizeof s_, "SAY goc %s t=%.1f\n", *g_ ? g_ : "-", smkT); smkWrite(s_); } }   // правка 345: выход из машины — реплика водителя W_GOC_ (sound.c)
       { static int hs_ = -1; int st_ = haveHomer ? (int)homer.state : -1;
-        const char *g_ = sndGetIn(st_ == HS_GET_IN || (st_ == HS_IN_CAR && hs_ == HS_TO_DOOR)); hs_ = st_;
+        const char *g_ = sndGetIn((!SV_GIC_OLD && st_ == HS_TO_DOOR) || st_ == HS_GET_IN || (st_ == HS_IN_CAR && hs_ == HS_TO_DOOR)); hs_ = st_;   // сверка g08-sound (P05 Д5): GIC — в начале посадки, как только △ принят (до подхода к двери)
         if (g_ && smkOn) { char s_[80]; snprintf(s_, sizeof s_, "SAY gic %s t=%.1f\n", *g_ ? g_ : "-", smkT); smkWrite(s_); } }
       { // правка Роба 235 (03.10: «в магазине у Апу — музыка магазина»): l1_music.rms OF_KiwkEMart -> KwikEmart_region (Kwik_E_Mart_Muzak,
         // петля); вышел из комнаты — музыка миссии снова (её событие), иначе тишина до следующего события (сел в машину — свободная езда)
@@ -1819,6 +1907,10 @@ int main(int argc, char **argv) {
         if (rn != prevRoom) {
           { const char *a_ = sndRoom(rn); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "ROOMAMB room=%s amb=%s t=%.1f\n", rn ? rn : "-", a_, smkT); smkWrite(s_); } }   // правка 345: атмосфера комнаты (sound.c sndRoom)
           int kwik = rn && !strncasecmp(rn, "Kwik", 4), wasKwik = prevRoom && !strncasecmp(prevRoom, "Kwik", 4);
+#ifndef ROOM_TUBA_OLD
+#define ROOM_TUBA_OLD 0   // сверка g10b-loop круг 5 (4.4, P09:17): 1 — в комнатах без своей музыки тишина, на выходе туба по таймеру (прежнее)
+#endif
+          if (!ROOM_TUBA_OLD && !kwik && (rn || prevRoom)) sndTubaNow();   // круг 5: свою музыку имеет только Kwik-E-Mart; остальные комнаты играют тубу прогулки (Tuba_005/012), на выходе на улицу — сразу тубу
           if (kwik) sndMusic(SND_MUS_KWIKEMART);
           else if (wasKwik) { if (sndMusicOwned()) mvMusicResume(); else sndMusic(SND_MUS_OFF); }
           prevRoom = rn;
@@ -1839,8 +1931,8 @@ int main(int argc, char **argv) {
       { char sd[256]; levelFile(sd, "");   // пункт 6: экран покупки у продавца — ирис на входе (над городом) и выходе (над погасшей сценой)
         int sev = shopViewTick(mvShop(), sd, wallDt);
         if (sev) { frames += transitClose(&fbp0, "shop") / (longView ? 2 : 1); chase.init = 0; smkSettle();
-                   if (sev == SHOPV_EV_OPEN) sndMusic(SND_MUS_STORE);   // правка 235: покупка у продавца (Барни, Plow King) — событие Store, Muzak
-                   if (sev == SHOPV_EV_CLOSE) { shopViewEnd(mvShop()); if (sndMusicOwned()) mvMusicResume(); else sndMusic(SND_MUS_OFF); } } }
+                   if (sev == SHOPV_EV_OPEN) { sndMusic(SND_MUS_STORE); sndStore(1); }   /* сверка g08 круг 3: лавка машин — «магазин» */   // правка 235: покупка у продавца (Барни, Plow King) — событие Store, Muzak
+                   if (sev == SHOPV_EV_CLOSE) { sndStore(0); shopViewEnd(mvShop()); if (sndMusicOwned()) mvMusicResume(); else sndMusic(SND_MUS_OFF); } } }
 #ifndef STORE_MUS_RESUME_OLD
 #define STORE_MUS_RESUME_OLD 0   // правило №235 для всех экранов Store (Роб 17.10: «в магазинах музыка как в будке»): вышел из будки/гардероба — музыка миссии снова (если
                                  // её ведёт миссия), иначе тишина до следующего события, как после лавки; было — всегда тишина. 1 — прежнее
@@ -1853,7 +1945,7 @@ int main(int argc, char **argv) {
       unsigned p4d_ = sceKernelGetSystemTimeLow();
       collFrame(dt, &fbp0);        // В5: события карточек, ос и гэгов -> звук, частицы, HUD, ролик гэга
       unsigned p4e_ = sceKernelGetSystemTimeLow();
-      { const char *fm = mvFmvPending(); if (fm) { msnMovie(fm, &fbp0); mvFmvDone(); chase.init = 0; smkSettle();   // цель «fmv» (SetFMVInfo)
+      { const char *fm = mvFmvPending(); if (fm) { msnMovieWorld = 1; msnMovie(fm, &fbp0); msnMovieWorld = 0; mvFmvDone();   /* сверка g11b-collect: ролик цели в игре — затемнение мира до и после (P15-04) */ chase.init = 0; smkSettle();   // цель «fmv» (SetFMVInfo)
           padE.init = 0; prev = smokePad(); } }   // START пропуска ролика ещё зажат — не пауза: пульт с чистого листа
 #ifndef BRIEF_IRIS_SKIP_OLD
 #define BRIEF_IRIS_SKIP_OLD 0   // 1 — после Continue ирис старта миссии доигрывает паузу и раскрытие под уезжающей карточкой (TEST18)
@@ -1899,16 +1991,20 @@ int main(int argc, char **argv) {
         if (!CAR_HUSK_OLD && oldCarOn && traffic.nextra > 0 && traffic.extra[traffic.nextra - 1] == &oldCar) traffic.nextra--;
         if (trLog && smkOn) for (int i = 0; i < TR_MAXCAR; i++) if (trWas[i] == TRM_OFF && traffic.car[i].mode != TRM_OFF) trSpawnPend |= 1u << i;   // правка 328
         TRFSUB_T(1);
+        if (haveProps) { Car *pc_[12]; int np_ = trafficCarsNear(&traffic, pp[0], pp[2], 45.f, pc_, 12);   // сверка g02-traffic круг 2 (g11 P11-02): предметы ломает и двигает любая машина, не только игрока
+          for (int i_ = 0; i_ < np_; i_++) propsHitCar(&props, &world, pc_[i_], NULL); }
         TrEvent te; while (trafficPopEvent(&traffic, &te)) {   // Hit & Run: нарушения трафика (game.c gameHnrOffense)
           // правки 180/184 (близнец Б2): голоса улицы — сбитый / чуть не сбитый / ударенный прохожий (голос по модели) и водитель
           // трафика после удара; реплика прохожего раньше реплики Гомера (поток реплик один — Гомер не говорит поверх)
+          if (te.type == TR_EV_CAR_WAY) {   // сверка g02-traffic круг 2 (g08 P09:3): «пробка» — игрок загородил машину трафика: говорит герой (если за рулём) или водитель трафика, пополам
+            if (!onFoot() && (te.index & 1)) sndSay(SND_SAY_CARWAY, 0); else sndDriverSayAt(SND_DRV_WAY, te.index, te.x, te.y, te.z);
+            continue; }
+          if (te.type == TR_EV_CAR_LAND) { sndPlay("suspension_ronks", te.x, te.y, te.z, 1.f); continue; }   // сверка g02-traffic круг 2 (g08 P09:30): подвеска машины трафика после полёта
           if (te.type == TR_EV_CAR_HONK) {   // №479: гудок машины трафика: клип её модели («<модель>_horn» в пакете звуков: minivanA_horn, schoolbus_horn…), иначе общий «horn»
             if (!HORN_OLD && !hornOld) { char hn[40] = "horn"; int mi = te.index >= 0 && te.index < traffic.maxCars ? traffic.car[te.index].model : -1;
 #if !HORN_STOP_OLD
               if (!hornStopOld && te.index >= 0 && te.index < TR_MAXCAR) {
-                if (trHorns[te.index].handle) audioStop(trHorns[te.index].handle);
-                trHorns[te.index].handle = sndPlay(hn, te.x, te.y, te.z, 1.f);
-                trHorns[te.index].timer = 1.4f;   // №561: гудок звучит ~1,4 с и привязан к машине
+                trafficHornStart(te.index, hn, te.x, te.y, te.z);   // сверка g11b-collect P10-4: шанс 0,5, серия 1–3 гудков, дальность 30–60 м (HORN_SERIES_OLD=1 — один гудок 1,4 с, №561)
               } else
 #endif
               sndPlay(hn, te.x, te.y, te.z, 1.f); }
@@ -1927,7 +2023,18 @@ int main(int argc, char **argv) {
           if (smkOn && said >= 0) { char s_[96]; snprintf(s_, sizeof s_, "STREETV ev=%s idx=%d voice=%d said=%d t=%.1f\n", te.type == TR_EV_PED_HIT ? "hit" : te.type == TR_EV_PED_KICK ? "kick" : "car",
                                                      te.index, te.type == TR_EV_CAR_HIT ? te.index & 3 : pv, said, smkT); smkWrite(s_); }
           else if (te.type == TR_EV_CAR_WRECK) {   // правка 135.6: взрыв разбитой машины трафика; правка 176: и видимый — как у машины игрока
-            carExplosionAt(te.x, te.y, te.z); sndTrafficWreck(te.x, te.y, te.z); }
+            carExplosionAt(te.x, te.y, te.z); sndTrafficWreck(te.x, te.y, te.z);
+#ifndef DCAR_FOOT_OLD
+#define DCAR_FOOT_OLD 0   // сверка g10b-loop, P09:Д11: 1 — реплика Dcar только на взрыв своей машины (прежнее)
+#endif
+            if (!DCAR_FOOT_OLD && onFoot()) sndSay(SND_SAY_DCAR, 0);   // P09:Д11: пешком Dcar звучит на взрыв любой машины (за рулём — только своей)
+#ifndef SV_BOOM_TRAFFIC_OLD
+#define SV_BOOM_TRAFFIC_OLD 0   // сверка g10b-loop, P03-01: 1 — взрыв машины трафика не пишется в общее событие svBoom (монеты, толчок предметам и соседям не получат сигнал)
+#endif
+            // сверка g10b-loop, P03-01 / P01-14: взрыв разбитой машины трафика — общее событие (viewer/sverka_shared.h) для монет (g11b: 10 монет из точки
+            // машины), толчка предметам и соседним машинам (радиус 20 м, сила 20000) и звука. Читатель реагирует, когда seq вырос. Шкала +25 здесь
+            // уже начисляется (gameHnrOffense ниже): читателю шкалы kind 1 не считать второй раз. SV_BOOM_TRAFFIC_OLD=1 — прежнее
+            if (!SV_BOOM_TRAFFIC_OLD) { svBoom.x = te.x; svBoom.y = te.y; svBoom.z = te.z; svBoom.radius = 20.f; svBoom.force = 20000.f; svBoom.byPlayer = 1; svBoom.kind = 1; svBoom.seq++; } }
           gameHnrOffense(&G, te.type == TR_EV_CAR_WRECK ? HNR_CAR_WRECK : te.type == TR_EV_PED_HIT ? HNR_PED_HIT : te.type == TR_EV_PED_KICK ? HNR_PED_KICK : HNR_CAR_HIT); }
         TRFSUB_T(2);
         if (!onFoot()) gameHnrVehicle(&G, mvForcedCar());   // правка 121: сел в другую машину (будка, угон, машина миссии) — шкала в ноль
@@ -1940,10 +2047,32 @@ int main(int argc, char **argv) {
       }
       TRFSUB_T(6); TRFSUB_REPORT(dt);
       SMK5(0);   // ph5: трафик и события
+#ifndef COIN_FLASH_DRAW_OLD
+#define COIN_FLASH_DRAW_OLD 0   // сверка g10b-loop круг 2 (g11b P03-03): 1 — вспышки исчезновения монет не рисуются (прежнее)
+#endif
+      // круг 2 (g11b P03-03): вспышка в точке исчезнувшей монеты (Coins.flash, живёт 0,5 с): пока собственного спрайта вспышки нет, на каждую новую вспышку — короткий всплеск искр
+      // (размер частиц эффекта искр; 0,25 м оригинала отдельным спрайтом не рисуется). COIN_FLASH_DRAW_OLD=1 — без вспышек
+      { static unsigned nfPrev_; if (!COIN_FLASH_DRAW_OLD && haveCoins) { for (unsigned k_ = nfPrev_; k_ < coins.nflash; k_++) for (int j_ = 0; j_ < 4; j_++)
+            fxSpawn(FX_SPARK, coins.flash[k_].x, coins.flash[k_].y, coins.flash[k_].z, (rand() * (1.f / RAND_MAX) - .5f) * 2.f, rand() * (2.f / RAND_MAX) + .5f, (rand() * (1.f / RAND_MAX) - .5f) * 2.f);
+          nfPrev_ = coins.nflash; } }
       { // эффекты урона: искры при ударе, дым по степени урона, огонь, взрыв
         float sh = sinf(car.h), chh = cosf(car.h), hx = car.x + sh * 1.7f, hz = car.z + chh * 1.7f, hy = car.ry + 1.0f;
         { float sl[3]; if (haveCarVis && carVisJointWorld(&cv, &car, cv.slJ, sl)) { hx = sl[0]; hy = sl[1]; hz = sl[2]; } }   // CAR1: дым из локатора sl с наклоном кузова
         #define FR() (rand() * (1.f / RAND_MAX))
+        // сверка g11 P01-12 (viewer/fx.c fxCrashStars и др.): частицы удара от импульса и вида контакта (звёзды об забор, искры и крошка при ударе машины о машину), об неподвижный мир
+        // (здания, стены) частиц нет; не чаще раза в 0,15 с на вид удара. CRASHFX_SV_OLD=1 — прежние искры от прироста урона (ниже)
+        if (fxCrashFxSv) {
+          static float crT_[2]; crT_[0] -= dt; crT_[1] -= dt;
+          float mass_ = car.p.mass;
+          if (car.wallV > 0.f && car.wallType == COL_SEG && crT_[0] <= 0.f && fxCrashStars(car.wallP[0], car.wallP[1] + .5f, car.wallP[2], mass_ * car.wallV)) crT_[0] = .15f;
+          if (car.carHitV > 0.f && crT_[1] <= 0.f) {
+            float vl_ = hypotf(car.velPre[0], car.velPre[2]), dx_ = vl_ > .1f ? car.velPre[0] / vl_ : 0.f, dz_ = vl_ > .1f ? car.velPre[2] / vl_ : 0.f, imp_ = mass_ * car.carHitV;
+            if (fxCrashSparks(car.carHitP[0], car.carHitP[1], car.carHitP[2], dx_, dz_, imp_, 0)) { fxCrashPaint(car.carHitP[0], car.carHitP[1], car.carHitP[2], imp_); crT_[1] = .15f; }
+          }
+          // сверка g11 круг 2 (P11-14 от g01-cars): удар о листву и статику — частица ATC в точке касания, каждый удар (не чаще раза в 0,3 с)
+          static float folT_; folT_ -= dt;
+          if (car.foliV > 0.f && folT_ <= 0.f) { float fp_[3] = {hx, car.ry + .8f, hz}; if (fxFoliageHit(fp_, car.foliV)) folT_ = .3f; }
+        } else
         if (car.damage > prevDmg + 1e-4f) {
           int n = 6 + (int)((car.damage - prevDmg) * 300.f); if (n > 30) n = 30;
           float sx = hx, sz = hz;
@@ -1952,6 +2081,35 @@ int main(int argc, char **argv) {
             fxSpawn(FX_SPARK, sx, car.ry + 0.6f, sz, (FR() - .5f) * 8.f + car.vel[0] * .3f, FR() * 5.f + 1.f, (FR() - .5f) * 8.f + car.vel[2] * .3f);
         }
         prevDmg = car.damage;
+        // сверка g11 круг 2 (P01-23 от g01-cars, P18-04 от g12-data): пробуксовка (Car.spinDrive) — от задних колёс дым по поверхности под колесом (Car.wheelSurf); ручник дыма не даёт. 20 выпусков в секунду на колесо
+        // №1082 (Роб на PSP: слишком много дыма «горящей машины» при резком газе): две постоянные системы у задних колёс по поверхности под колесом (fxFindInst: дорога, дерево, металл 9 — лёгкая пыль dashShape;
+        // трава 11; грунт, песок, гравий 10; вода 12, в данных нет — ничего); рывок со старта 2,5 с и больше (Car.burnBig) — обе на 19 (FireSpray). Сила выпуска — Car.burnLevel, 0 — клубы доживают сами.
+        // WHEELSMOKE1082_OLD=1 — прежние выпуски fxWheelSpin 20 в секунду
+#ifndef WHEELSMOKE1082_OLD
+#define WHEELSMOKE1082_OLD 0
+#endif
+        if (!WHEELSMOKE1082_OLD) {
+          static int hWs_[2], tWs_[2];
+          int drv_ = !onFoot() && car.wheels >= 2 && !car.lastHb && car.burnLevel > 0.f;
+          for (int sd_ = 0; sd_ < 2; sd_++) {
+            float sg_ = sd_ ? 1.f : -1.f, wx_ = car.x - sh * fabsf(car.p.wheelR) + chh * fabsf(car.p.wheelX) * sg_, wz_ = car.z - chh * fabsf(car.p.wheelR) - sh * fabsf(car.p.wheelX) * sg_;
+            int sf_ = car.wheelSurf[sd_ ? 3 : 2], ty_ = car.burnBig ? 19 : sf_ == SURF_GRASS ? 11 : (sf_ == SURF_DIRT || sf_ == SURF_SAND || sf_ == SURF_GRAVEL) ? 10 : sf_ == SURF_WATER ? 12 : 9;
+            float p_[3] = {wx_, car.ry + .05f, wz_}, d_[3] = {sh, 0.f, chh};
+            if (hWs_[sd_] && (!fxAlive(hWs_[sd_]) || tWs_[sd_] != ty_)) { if (fxAlive(hWs_[sd_])) fxStop(hWs_[sd_]); hWs_[sd_] = 0; }
+            if (!hWs_[sd_] && drv_) { int id_ = fxFindInst(ty_); if (id_ >= 0) { hWs_[sd_] = fxStartSystem(id_, p_, d_); tWs_[sd_] = ty_; } }
+            if (hWs_[sd_]) { fxMove(hWs_[sd_], p_, d_); fxSetRate(hWs_[sd_], drv_ ? fminf(1.f, car.burnLevel) : 0.f); }
+          }
+        } else
+        if (!onFoot() && car.spinDrive && !car.lastHb && car.wheels >= 2) {
+          static float wsT_; wsT_ -= dt;
+          if (wsT_ <= 0.f) {
+            wsT_ = .05f;
+            for (int sd_ = -1; sd_ <= 1; sd_ += 2) {
+              float wx_ = car.x - sh * fabsf(car.p.wheelR) + chh * fabsf(car.p.wheelX) * sd_, wz_ = car.z - chh * fabsf(car.p.wheelR) - sh * fabsf(car.p.wheelX) * sd_;
+              fxWheelSpin(wx_, car.ry, wz_, car.wheelSurf[sd_ < 0 ? 2 : 3], car.vel[0], car.vel[2], 1.f);
+            }
+          }
+        }
         { // дым/огонь: родная система car_damage3 (inst 14), одна на машину; стадии — множители эмиттеров
           static int hDmg, hHusk; static float burnT;
           float sp[3] = {hx, hy, hz};
@@ -1959,11 +2117,17 @@ int main(int argc, char **argv) {
           // HUSK_BURN_OLD=1 — прежнее (горит постоянно, красный контроль)
           burnT = carBoomed(&car) ? burnT + dt : 0.f;
           int burnOut = !huskBurnOld && burnT > HUSK_BURN_SEC;
-          int stage = burnOut ? 0 : carBoomed(&car) ? 4 : car.destroyed ? 3 : car.damage >= .6f ? 2 : car.damage >= .33f ? 1 : 0;   // №383: до смертельного удара дым, затем огонь до взрыва (PS2 a355_boom)
+#ifndef SMOKE_D_OLD
+#define SMOKE_D_OLD 0   // сверка g10b-loop, P01-11: 1 — дым с 33 % урона (0,4), полный с 60 % (прежнее)
+#endif
+          // сверка g10b-loop, P01-11: дым двигателя с 60 % урона, интенсивность растёт плавно (доля прочности: (0,4 − прочность) × 2,5, то есть 0 при 60 %
+          // урона и 1,0 при полном), с 98 % — полный средний дым; тяжёлый и огонь (разбита) — как было, по записи PS2 a355_boom (№383). SMOKE_D_OLD=1 — прежнее
+          int stage = burnOut ? 0 : carBoomed(&car) ? 4 : car.destroyed ? 3 : car.damage >= (SMOKE_D_OLD ? .6f : .98f) ? 2 : car.damage >= (SMOKE_D_OLD ? .33f : .6f) ? 1 : 0;
+          float smkRate_ = SMOKE_D_OLD ? (stage == 1 ? .4f : 1.f) : (stage == 1 ? fminf(1.f, (car.damage - .6f) * 2.5f) : 1.f);   // №383: до смертельного удара дым, затем огонь до взрыва (PS2 a355_boom)
           if (stage) {
             if (!fxAlive(hDmg)) hDmg = fxStartSystem(fxFindInst(14), sp, NULL);
             fxMove(hDmg, sp, NULL);
-            fxSetEmitRate(hDmg, 0, stage == 1 ? .4f : 1.f);   // darksmoke
+            fxSetEmitRate(hDmg, 0, smkRate_);   // darksmoke
             fxSetEmitRate(hDmg, 1, stage >= 3 ? 1.f : 0.f);   // fireSeqEm1
             fxSetEmitRate(hDmg, 2, stage >= 3 ? 1.f : 0.f);   // fireSeqEm2
           } else if (hDmg) { fxStop(hDmg); hDmg = 0; }
@@ -2000,15 +2164,34 @@ int main(int argc, char **argv) {
                      "box=%.3f,%.3f,%.3f,%.3f,%.3f v=%.2f back=%.3f eyeh=%.3f need=%.3f wall=%.3f\n", smkT, chaseInfo.name ? chaseInfo.name : "-", chaseInfo.ps2,
                      ccp[0], ccp[1], ccp[2], clk[0], clk[1], clk[2], curFovY, ASPECT, car.x, car.y, car.z, car.h, cv.lift, car.p.halfW, car.p.halfL, car.p.bodyOfs,
                      car.p.bodyLo, car.p.bodyHi, car.v, chaseInfo.back, chaseInfo.eye, chaseInfo.need, chaseInfo.wall); smkWrite(s_); } }
-        roomCamOn = 0; zoneCamOn = 0; carZoneOn = 0;
+#ifndef REARVIEW_OLD
+#define REARVIEW_OLD 0   // сверка g10b-loop, СВЕРКА_КАМЕРА 1.12: 1 — вида назад по кнопке нет (прежнее)
+#endif
+        // сверка g10b-loop, СВЕРКА_КАМЕРА 1.12 (кнопка по слову Роба №1078: стрелка вниз, L и R остаются газом и тормозом): пока она зажата, камера
+        // машины срезом на заднем виде: штанга (от машины до глаза) отражается, взгляд на машину; у бампера глаз у заднего края кузова и смотрит назад.
+        // Отпустил — срез обратно (камера за машиной всё это время считалась как раньше). REARVIEW_OLD=1 — прежнее
+        rearViewOn = 0;
+        if (!REARVIEW_OLD && carCam && !fly && !mcPlay && !onFoot() && (!haveHomer || homer.state == HS_IN_CAR) && (pad.Buttons & PSP_CTRL_DOWN)) {
+          float sh_ = sinf(car.h), ch_ = cosf(car.h);
+          if (chaseView == 2) { float hl_ = car.p.halfL > .5f ? car.p.halfL : 2.f, ey_ = ccp[1];
+            cp[0] = car.x - sh_ * hl_; cp[1] = ey_; cp[2] = car.z - ch_ * hl_; lk[0] = cp[0] - sh_ * 10.f; lk[1] = cp[1]; lk[2] = cp[2] - ch_ * 10.f; }
+          else { cp[0] = 2.f * car.x - ccp[0]; cp[2] = 2.f * car.z - ccp[2]; lk[0] = clk[0]; lk[1] = clk[1]; lk[2] = clk[2]; }
+          rearViewOn = 1; }
+        roomCamOn = 0; zoneCamOn = 0; carZoneOn = 0; walkFovK = 1.f;
 #ifndef CAR_ZONE_CAM_OLD
         // №408: машина (Гомер за рулём) в объёме камеры зоны машины — снимает она (срезом), камера за машиной считает дальше, чтобы
         // на выходе вернуться срезом в своё место (запись PS2). Кузов — коробка carBox: центр и 8 углов (днище/крыша bodyLo/bodyHi)
-        if (carCam && !onFoot() && (!haveHomer || homer.state == HS_IN_CAR) && nczcam && !carZoneOff && !inRoom() && !mcPlay && !fly) {
+        if (carCam && !onFoot() && (!haveHomer || homer.state == HS_IN_CAR) && nczcam && !carZoneOff && (CAMNAV_OPT_OLD || cfg.jumpCam) /* сверка g10-flow круг 5, P08:22: Jump Cameras Off — камеры зон у машины не работают */ && !inRoom() && !mcPlay && !fly) {
           CarBox cb; memset(&cb, 0, sizeof cb); carBox(&car, &cb);
           float lo = car.p.bodyLo + car.modelRaise, hi = car.p.bodyHi + car.modelRaise, bd[9][3], e3[3], l3[3], fy;
           bd[0][0] = cb.x; bd[0][1] = cb.y + .5f * (lo + hi); bd[0][2] = cb.z; int nb = 1;
+#ifndef CARZONE_PTS_OLD
+#define CARZONE_PTS_OLD 0   // сверка g10b-loop, P18-08: 1 — центр и все 8 углов кузова (прежнее)
+#endif
+          // сверка g10b-loop, P18-08: локатор для игрока в машине срабатывает, если внутри хоть одна из пяти точек: центр и четыре угла рамки — низ и верх по двум диагоналям
+          // (нижние задние углы слева и справа, верхние передние слева и справа). Было: центр и все 8 углов (лишние: верх сзади, низ спереди). CARZONE_PTS_OLD=1 — прежнее
           for (int a = -1; a <= 1; a += 2) for (int b = -1; b <= 1; b += 2) for (int u = 0; u < 2; u++) {
+            if (!CARZONE_PTS_OLD && (u == 0) != (a < 0)) continue;
             float ox = cb.fx * cb.hl * a + cb.fz * cb.hw * b, oz = cb.fz * cb.hl * a - cb.fx * cb.hw * b;
             bd[nb][0] = cb.x + ox; bd[nb][1] = cb.y + cb.gx * ox + cb.gz * oz + (u ? hi : lo); bd[nb][2] = cb.z + oz; nb++; }
           float ref[3] = {car.x, car.y + carModelLift(&car, cv.lift > 0.f ? cv.lift : 0.f), car.z}, sp = carZoneSpeed(car.vel);
@@ -2051,10 +2234,13 @@ int main(int argc, char **argv) {
           homer.camYaw = wrapPi(homer.camYaw + d * fminf(1.f, dt * 3.f));
         }
 #endif
-        if (onFoot()) { homerCamera(&homer, G.pHomerWorld ? G.pHomerWorld : &world, dt, cp, lk); chase.init = 0;   // этап 4: камера пешком (в комнате — её стены)
+        if (onFoot()) { homerCamera(&homer, G.pHomerWorld ? G.pHomerWorld : &world, dt, cp, lk); chase.init = 0;
+          { float hp_[3] = {homer.x, homer.y, homer.z}; walkFovK = walkCamSv(hp_, cp, lk, homer.speed, dt); }   // сверка g06 (g06-camera:8,17,33,34): склон, автозум, крен уровня 7 (main_camera.h)   // этап 4: камера пешком (в комнате — её стены)
           if (inRoom() && nrcam) {   // 11.2: камера комнаты из данных — та, в чьём триггере Гомер (нет такой — камера пешком)
             float hp[3] = {homer.x, homer.y, homer.z}, e3[3], l3[3], fy;
-            if (roomCamStep(rcam, nrcam, &rcs, hp, dt, e3, l3, &fy) >= 0) {
+            int rcr_ = roomCamStepFrom(rcam, nrcam, &rcs, hp, dt, e3, l3, &fy, cp, lk);   // сверка g06 (g06-camera:16,19,25,36): cp/lk — поза камеры ходьбы для перехода; -2 — плавный возврат к ней
+            if (rcr_ == -2) { memcpy(cp, e3, 12); memcpy(lk, l3, 12); }
+            if (rcr_ >= 0) {
               // №647 (Роб: «слишком видно потолок»): широкий кадр PS2 держит ГОРИЗОНТАЛЬНЫЙ угол данных камеры (запись ps2-camera-fov), вертикаль = 2atan(tan(h/2)·9/16), а не 4:3
               // (гостиная: 40° вместо 51°, по картине над диваном 4-20 % кадра у PS2 и 17-27 % у порта). CAM_ROOM_FOV_OLD=1 / flag roomfovold 1 — вертикаль 4:3 как было
               if (!roomFovOld) fy = lensData(fy);
@@ -2063,7 +2249,9 @@ int main(int argc, char **argv) {
           zoneCamOn = 0;
           if (!inRoom() && nzcam && !zoneOff) {   // правка 40: камера зоны города — та, в чьём триггере ноги Гомера
             float hp[3] = {homer.x, homer.y, homer.z}, e3[3], l3[3], fy; int prevZ = zcs.cur;
-            if (roomCamStep(zcam, nzcam, &zcs, hp, dt, e3, l3, &fy) >= 0) {
+            int zcr_ = roomCamStepFrom(zcam, nzcam, &zcs, hp, dt, e3, l3, &fy, cp, lk);   // сверка g06 (g06-camera:16,19,25,36): переходы и выход как у оригинала
+            if (zcr_ == -2) { memcpy(cp, e3, 12); memcpy(lk, l3, 12); }
+            if (zcr_ >= 0) {
               memcpy(cp, e3, 12); memcpy(lk, l3, 12); zoneFovY = lensData(fy); zoneCamOn = 1;
               zoneNear = fmaxf(.3f, fminf(NEAR_Z, hypotf(e3[0] - homer.x, e3[2] - homer.z) - .5f));   // рельс бывает в 0.5 м от Гомера
               homer.camYaw = atan2f(l3[0] - e3[0], l3[2] - e3[2]); }   // управление — от вида этой камеры, как в комнатах
@@ -2090,6 +2278,19 @@ int main(int argc, char **argv) {
         if (onFoot() && !inRoom() && !mcPlay && !zoneCamOn) {   // правка 40: разговор — план реплики из данных этапа (под камерой зоны — она)
           float e3[3], l3[3], fy;
           if (mvTalkCam(cp, talkRay, e3, l3, &fy, &talkNear)) { memcpy(cp, e3, 12); memcpy(lk, l3, 12); talkFovY = fy; talkCamOn = 1; } }
+#ifndef TALKARC_OLD
+#define TALKARC_OLD 0   // сверка g10b-loop круг 3 (P08:11): 1 — переход камеры разговора по прямой между позами, как в круге 1
+#endif
+#ifndef TALKCAM_BLEND_OLD
+#define TALKCAM_BLEND_OLD 0   // сверка g10b-loop, P08:11: 1 — камера разговора включается и выключается срезом (прежнее)
+#endif
+        // сверка g10b-loop, P08:11: вход в камеру разговора и выход из неё идут переходом ~0,45 с (до 95 %), не срезом; между репликами смена плана — срез. Дуга вокруг цели
+        // заменена плавной линией между позами (общий переход камеры, как у зон); срез — если прошлая поза дальше 30 м (собеседников унесло). TALKCAM_BLEND_OLD=1 — прежнее
+        { static int talkPrevOn_;
+          if (!TALKCAM_BLEND_OLD && talkCamOn != talkPrevOn_ && csLastOk && !mcPlay && !inRoom() && camBT < 0.f) {
+            float dx_ = csLastCp[0] - cp[0], dz_ = csLastCp[2] - cp[2];
+            if (dx_ * dx_ + dz_ * dz_ < 30.f * 30.f) { camBlendFrom(csLastCp, csLastLk, .45f); camBArc = !TALKARC_OLD; } }
+          talkPrevOn_ = talkCamOn; }
         if (mcPlay && !inRoom()) {   // правка 40: «наезд» — поза камеры из анимации диска
           float up3[3], dur = (mcPlay->nfr - 1) / mcPlay->fps;
           int going = msncamPose(mcPlay, mcPlant == 1 ? dur - mcT : mcT, cp, lk, up3, &mcFovY);
@@ -2116,13 +2317,23 @@ int main(int argc, char **argv) {
           camBFovOn = 0;
           if (camBT >= 0.f) {
             float u, fe[3], fl[3];
-            if (camBRel) { u = 1.f - expf(-camBT / camBDur); camCarAxes(camBE, fe, 0); camCarAxes(camBL, fl, 0); }
+            if (camBRel) { u = CAMBLEND_OLD ? 1.f - expf(-camBT / camBDur) : fminf(1.f, camBT / camBDur); if (!CAMBLEND_OLD) u = u * u * (3.f - 2.f * u); camCarAxes(camBE, fe, 0);   // сверка g09b-menu круг 3 (СВЕРКА_КАМЕРА 3.1): посадка — S-кривая от нулевой скорости (95 % за 0,45 с), не экспонента
+ camCarAxes(camBL, fl, 0); }
             else { u = fminf(1.f, camBT / camBDur); u = u * u * (3.f - 2.f * u); memcpy(fe, camBE, 12); memcpy(fl, camBL, 12); }
+            if (camBArc && !camBRel) {   // круг 3 (проверка g10b-loop, P08:11): вход в камеру разговора и выход идут по дуге вокруг точки взгляда — угол вокруг неё и расстояние от неё меняются отдельно
+              float d0x = fe[0] - fl[0], d0z = fe[2] - fl[2], d1x = cp[0] - lk[0], d1z = cp[2] - lk[2];
+              float y0 = atan2f(d0x, d0z), y1 = atan2f(d1x, d1z), dy = y1 - y0;
+              while (dy > GU_PI) dy -= 2.f * GU_PI; while (dy < -GU_PI) dy += 2.f * GU_PI;
+              float r0 = hypotf(d0x, d0z), r1 = hypotf(d1x, d1z), yw = y0 + dy * u, rr = r0 + (r1 - r0) * u;
+              float hh = (fe[1] - fl[1]) + ((cp[1] - lk[1]) - (fe[1] - fl[1])) * u;
+              for (int k = 0; k < 3; k++) lk[k] = fl[k] + (lk[k] - fl[k]) * u;
+              cp[0] = lk[0] + rr * sinf(yw); cp[1] = lk[1] + hh; cp[2] = lk[2] + rr * cosf(yw);
+            } else
             for (int k = 0; k < 3; k++) { cp[k] = fe[k] + (cp[k] - fe[k]) * u; lk[k] = fl[k] + (lk[k] - fl[k]) * u; }
             camBU = u; camBFovOn = camBFov > 0.f;
             if (smkOn && camLogOn) { char s_[160]; snprintf(s_, sizeof s_, "CAMBLEND t=%.3f u=%.3f rel=%d eye=%.3f,%.3f,%.3f look=%.3f,%.3f,%.3f\n", smkT, u, camBRel,
                                                           cp[0], cp[1], cp[2], lk[0], lk[1], lk[2]); smkWrite(s_); }
-            camBT += dt; if ((camBRel ? u > .98f : camBT >= camBDur) || inRoom() || mcPlay) camBT = -1.f;
+            camBT += dt; if (((camBRel && CAMBLEND_OLD) ? u > .98f : camBT >= camBDur) || inRoom() || mcPlay) camBT = -1.f;
           }
           lastCarCam = carCam; memcpy(lastE, cp, 12); memcpy(lastL, lk, 12); camIrisCut = 0;
         }
@@ -2221,16 +2432,18 @@ int main(int argc, char **argv) {
       float l = sqrtf(cfx * cfx + cfy * cfy + cfz * cfz); cfx /= l; cfy /= l; cfz /= l;
       SMK5(2); camSubReport();   // ph5: камера
       { static float vy0; static int air0;   // этап 6: мотор, удары, приземления, слушатель
-        int drv = !haveHomer || homerDriving(&homer);
+        int drv = !haveHomer || (HOMER_CABENG_OLD ? homerDriving(&homer) : homerCabEngine(&homer));   // сверка g10-flow круг 2 (g04 P10 Д7): мотор кабины работает до конца анимации выхода
         // правка 175 (близнец В13, knowledge/facts/ps2-wrecked-car-sound.yaml): у оригинала мотор машины, из которой вышли (и
         // разбитой тоже), глохнет за ~3 с — гул −34 → −44 dB, дальше только фон; у порта мотор и «тарахтение» разбитой играли везде,
         // даже в доме. Пешком мотор работает ENG_OFF_S с выхода, потом выключен; сел обратно — снова
         static float engOffT; engOffT = drv ? 0.f : engOffT + dt; int dead_ = car.destroyed && !carHuskDrives(&car);   // правка 355: остов игрока едет — с мотором
-        int engOn = !dead_ && engOffT < ENG_OFF_S;
+        int engOn = !dead_ && (!SV_PARK_OLD || engOffT < ENG_OFF_S);   // сверка g08-sound (P10-16): оставленная машина держит холостой клип (15/50 м), не глохнет через 3 с
         streetSourceFrame(); trafficMotorFrame(dt,camx,camy,camz); trafficHornFrame(dt,camx,camy,camz); trafficVoteFrame(dt,camx,camy,camz);
         sndPoliceCars(inRoom() ? NULL : mvCars());
         sndCarPosition(car.x,car.ry,car.z,!drv); // №390: outside, source stays at the parked car; inside preserves native mix
         sndPlayerCarState(car.p.name, car.destroyed); // authored live model or the drivable huskA wreck
+        sndCarState(car.p.topSpeed, skidSoundLevel(&car, &in), !car.grounded && car.airT > .3f, haveHomer && !SV_CAB_OLD ? !homerCabEngine(&homer) : !drv, 1.f - car.damage,
+                    in.throttle > .99f && car.p.burnoutRange > 0.f && fabsf(car.v) < car.p.burnoutRange * car.p.topSpeed, in.brake > .05f || car.v < -.5f);   // круг 3: бернаут и подавление Burn   // круг 2 (g04): мотор кабины работает до конца анимации выхода   // сверка g08-sound (P10-5,8,10,11,15,16): шкала передач = TopSpeed ведомой машины, занос, воздух, остаток жизни
         sndEngine(car.v, dead_ || !drv ? 0.f : in.throttle,
                   (engOn ? SND_ENG_ON : 0) | (car.v < -0.5f ? SND_ENG_REVERSE : 0) | (engOn && car.damage >= .6f ? SND_ENG_DAMAGED : 0));
         sndSkid(skidSoundLevel(&car, &in), 0); // №446: same authored skid/brake rule as tyre marks
@@ -2238,10 +2451,20 @@ int main(int argc, char **argv) {
         // параметров; пусто — «horn»), петлёй ресурса, пока держат. ПРАВИЛО ПОРТА — кнопка: ↑ крестовины (в машине свободна: ← → руль,
         // X/R газ, ○/L тормоз, □ ручник, △ выход, SELECT сброс; у PSP нет L3 оригинала). HORN_OLD=1 / «flag hornold 1» — гудка нет (прежнее)
         sndHorn(!HORN_OLD && !hornOld && drv && !dead_ && engOn && (pad.Buttons & PSP_CTRL_UP) ? 1 : 0);
+        if (haveTraffic) trafficPlayerHorn(&traffic, !HORN_OLD && !hornOld && drv && !dead_ && engOn && (pad.Buttons & PSP_CTRL_UP) ? 1 : 0, x, z);   // сверка g02-traffic (P03-15, 7.4): гудок игрока — трафик в 25 м отвечает, пешеходы в 12 м пугаются
         carSndFrame(&car, &world);   // правка 135: твёрдое — crash, листва — шорох, объект — только его примитивом, машина — sndCarHitCar
         sndCarDamage(car.damage);
         int air = !car.grounded && car.airT > .3f; sndCarAir(air);
-        if (air0 && car.grounded) sndCarLand(-vy0); air0 = air; vy0 = car.vel[1];
+#ifndef LAND_SPARK_OLD
+#define LAND_SPARK_OLD 0   // сверка g10b-loop, P01-29: 1 — искр от днища при посадке после полёта нет (прежнее)
+#endif
+        if (air0 && car.grounded) { sndCarLand(-vy0);
+          // сверка g10b-loop, P01-29: сильная посадка после полёта (подвеска в упоре) на асфальте, металле, гравии — искры от днища по тому же событию, что звук посадки;
+          // поверхность — svSurfaceAt (sverka_shared.h; пока данных нет — дорога). Порог -vy0 > 4 м/с — правило порта (подвеска в упоре в данных машины не читается)
+          if (!LAND_SPARK_OLD && -vy0 > 4.f) { int sf_ = svSurfaceAt(car.x, car.ry, car.z, NULL);
+            if (sf_ == SURF_ROAD || sf_ == SURF_METAL || sf_ == SURF_GRAVEL)
+              for (int k_ = 0; k_ < 10; k_++) fxSpawn(FX_SPARK, car.x, car.ry + .15f, car.z, (FR() - .5f) * 6.f + car.vel[0] * .2f, FR() * 3.f + .5f, (FR() - .5f) * 6.f + car.vel[2] * .2f); } }
+        air0 = air; vy0 = car.vel[1];
         sndFrame(dt, camx, camy, camz, -cfz, cfx, x, y, z); SMK5(3); }   // зоны звука — по активному игроку (Гомер пешком или машина)
     } else if (!fly) {
       float st = ax;
@@ -2320,6 +2543,14 @@ int main(int argc, char **argv) {
     eyeX = ex; eyeY = ey; eyeZ = ez; cfX = cfx; cfY = cfy; cfZ = cfz;
     if (haveSP) { sprops.nearP[0][0] = ex; sprops.nearP[0][1] = ez; sprops.nearOn = 1; }   // №1000: глаз — центр зоны, где стейтпропы-деревья не спят (stateprops.c spUpdate)
     curFovY = inR && roomCamOn && !fly && !bpass ? roomFovY : (mcPlay && !fly && !bpass ? mcFovY : (phoneCamOn && !fly && !bpass ? phoneFovY : (talkCamOn && !fly && !bpass ? talkFovY : (zoneCamOn && onFoot() && !fly && !bpass ? zoneFovY : (carZoneOn && !fly && !bpass ? carZoneFovY : (onFoot() && !fly && !bpass && !footFovOld ? lensFoot() : lensCar()))))));   // 11.2: FOV камеры комнаты; правка 40: FOV «наезда» и разговора
+#ifndef BUMPER_FOV_OLD
+#define BUMPER_FOV_OLD 0   // сверка g10b-loop, СВЕРКА_КАМЕРА 1.19: 1 — у бампера угол кадра как за машиной (78° по горизонтали)
+#endif
+    // сверка g10b-loop, СВЕРКА_КАМЕРА 1.19: бамперная камера оригинала 90° по горизонтали (за машиной 78°); на нашем 16:9 это 58,7° по вертикали
+    // (tan(45°) / (16/9)). Угол кадра за машиной и пешком (правка 650) не трогаем. BUMPER_FOV_OLD=1 — прежнее
+    if (!BUMPER_FOV_OLD && chaseView == 2 && !selectCycleOld && !onFoot() && !fly && !bpass && !inR && !mcPlay && !talkCamOn && !phoneCamOn && !zoneCamOn && !carZoneOn) curFovY = 2.f * atanf(1.f / ASPECT) * (180.f / GU_PI);
+    if (walkFovK != 1.f && onFoot() && !roomCamOn && !zoneCamOn && !talkCamOn && !mcPlay && !phoneCamOn && !fly && !bpass) curFovY = 2.f * atanf(tanf(curFovY * (GU_PI / 360.f)) * walkFovK) * (180.f / GU_PI);   // сверка g06 (g06-camera:34): автозум на персонажа миссии
+    if (camBurstK > 1.001f && !onFoot() && chaseView != 2 && !carZoneOn && !fly && !bpass && !inR && !mcPlay && !talkCamOn && !phoneCamOn) curFovY = 2.f * atanf(tanf(curFovY * (GU_PI / 360.f)) * camBurstK) * (180.f / GU_PI);   // сверка g06 круг 2 (g01-cars 2.2): рывок со старта слегка расширяет кадр
     if (camBFovOn && !fly && !bpass) curFovY = camBFov + (curFovY - camBFov) * camBU;   // правки 166/167: угол кадра меняется вместе с переходом
     if (smkCamOn && smkCam[6] > 0.f) curFovY = smkCam[6];   // близнецы Б3: FOV из сценария
     if (trSpawnPend && smkOn) trSpawnLog();   // правка 328: рождённые в этот кадр — по камере этого кадра
@@ -2412,6 +2643,10 @@ rf_repeat_draw:
     if (trLeft == TR_FRAMES) { char t_[48]; int l_ = snprintf(t_, sizeof t_, "TRC clear list=%d\n", (int)sceGuCheckList()); trLine(t_, l_); }
     sceGumMatrixMode(GU_PROJECTION); sceGumLoadIdentity();
     float gFov = curFovY; ScePspFVector3 up = {0, 1, 0};
+    // №1084 (Роб, TEST82: «внутри комнат начался крен камеры»): вертикаль кадра, выставленная камерой пешком (крен уровня 7), не накладывается на камеры, которые ведут кадр сами
+    // (камера комнаты и зоны, разговор, ролик миссии, телефон, полёт, проход). Вертикаль бампера (в машине) как была. ROLL1084_OLD=1 — как в TEST82
+    if (camUpOn && (ROLL1084_OLD || !onFoot() || !(roomCamOn || zoneCamOn || talkCamOn || mcPlay || phoneCamOn || fly || bpass))) { up.x = camUpV[0]; up.y = camUpV[1]; up.z = camUpV[2]; }
+    camUpOn = 0;   // сверка g06 (g06-camera:18): вид от бампера — вертикаль кадра = вертикаль кузова (main_camera.h)
     if (!camGuardOff) camGuard(&gFov, &ex, &ey, &ez, &cfx, &cfy, &cfz, &up);   // правки 259/252: в GE — только конечные матрицы
 #ifndef CAM_YAWSLACK872_OLD
 #define CAM_YAWSLACK872_OLD 0
@@ -2567,7 +2802,7 @@ rf_repeat_draw:
       resetState();
     }
     if (inR && trLeft == TR_FRAMES) { char t_[64]; int l_ = snprintf(t_, sizeof t_, "TRC room n=%u list=%d\n", rg.npc, (int)sceGuCheckList()); trLine(t_, l_); }
-    if (inR && gagSnap < 0) roomDraw();   // 11.2: комната вместо города (машина, пропы, монеты остались на улице — не рисуются)
+    if (inR && gagSnap < 0) roomDrawMirrored();   // сверка g11b-collect круг 5 (P16-10): Moe's и BartRoom — отражённый проход под обычным; 11.2: комната вместо города (машина, пропы, монеты остались на улице — не рисуются)
     // небо последним из фона (шаг 1): после непрозрачного города, с тестом глубины — заливает только пустое;
     // машина/пропы рисуются поверх, полупрозрачное (очередь tq), частицы и HUD — после неба, как раньше
     if (trLeft == TR_FRAMES) { char t_[64]; int l_ = snprintf(t_, sizeof t_, "TRC sky list=%d\n", (int)sceGuCheckList()); trLine(t_, l_); }
@@ -2605,7 +2840,7 @@ rf_repeat_draw:
       resetState(); trafficDrawCars(&traffic, e3, trVis, trDrawPiece, 0); trfCarsEarly1009 = 1; bbPhase = bp1009_;   // очередь контура и стекла НЕ выпускается здесь: уйдёт после тела своей машины (первый resetState дальше), контур ближнего ляжет поверх любого тела
       if (smkOn) { smkTrfCarMs += (sceKernelGetSystemTimeLow() - tc0_) / 1000.0; smkTrfN[0] += traffic.drawnCars; smkTrfN[1] += traffic.drawnPark; }
     }
-    if (!inR && !forcedDrawn) { float ca = cosf(h + GU_PI), sa = sinf(h + GU_PI);
+    if (!inR && !forcedDrawn && !gameMsnCarHide) { float ca = cosf(h + GU_PI), sa = sinf(h + GU_PI);   // сверка g07 круг 5 (P06-15): на диалоге бонус-миссии машина рядом с героями спрятана
       if (lumaKey) sceGuFog(0.f, 1e-3f, LUMA_KEY_CAR & 0xffffff);   // гейт tests/light: машина сплошным ключом (вся в «тумане» ключа)
       for (int i = 0; i < ncarP; i++) {
         Piece *d = &pc[carP[i]]; if (cl[d->r.cell].state != 2) continue;
@@ -2946,7 +3181,11 @@ rf_repeat_draw:
     // забирает итог (без ME — считает сам). Порядок команд GE прежний: полупрозрачное, затем частицы
     { unsigned p0_ = meProf ? sceKernelGetSystemTimeLow() : 0;
     dashDust847();   // №847: пыль бега за ногами (dashShape)
-    SMKF_START(); fxUpdate(dt); fxDrawBegin(ex, ey, ez, cfx, cfy, cfz); SMKF(0);
+    
+#ifndef PAUSE_FX_OLD
+#define PAUSE_FX_OLD 0   // сверка g10b-loop круг 5 (P17-7): 1 — частицы в паузе стоят вместе с миром (прежнее)
+#endif
+    SMKF_START(); fxUpdate(uiPaused() && !PAUSE_FX_OLD ? wallDt : dt);   // круг 5 (P17-7): в паузе мир стоит, а частицы (искры, дым) продолжают анимироваться fxDrawBegin(ex, ey, ez, cfx, cfy, cfz); SMKF(0);
     unsigned p1_ = meProf ? sceKernelGetSystemTimeLow() : 0;
     if (!TOONLINES_ORDER_OLD && haveCol && !bpass) { unsigned eg_ = edgeDraw(ex, ey, ez); if (eg_) resetState(); unsigned tln_ = toonLinesDraw(ex, ey, ez); if (tln_) resetState(); }   // №983: слой кромки тротуара до линий   // №754 (план этап 1): линии мультика после непрозрачного, ДО стекла, листвы, дыма и частиц — сквозь них не видны
     tqFlush(); resetState(); SMKF(1);   // отложенное полупрозрачное: от дальнего к ближнему, глубину не пишет
@@ -3080,8 +3319,18 @@ bf_world_done:
       uiRadarIndoor(inR);   // №1035
       if (inR) { const RoomDoor *d = &rooms.door[rs.lastDoor >= 0 ? rs.lastDoor : 0]; uiSetRadar(d->p[0], d->p[2], h); }   // 11.2: в комнате радар — у её двери в городе
       else uiSetRadar(x, z, h);
-      if (!G.hnrOff) gameHnrRate(&G, dt, inR ? 10.f : G.hnrLatched ? 6.f : 3.f);   // спад после паузы: обычный 3/с (SetHitAndRunDecay L1), в погоне 6/с, в комнате 10/с
-      { static float hnrT; hnrT += dt; uiSetHitAndRun(hnrHeat, hnrActive || (HNR_HUD_ALARM_LATCH && G.hnrLatched), hnrT); }   // правка 241: красно-синее кольцо и мигалка — когда полиция в игре (близнец tw_hnr_text: до её появления 0,74 с кольцо красно-чёрное)
+      // круг 2 (g09a-hud M1:Д2, Д9): карта идёт за взглядом камеры, в машине значки будок и своей машины скрыты. Функции приходят со слиянием g09a-hud; пока их нет, вызовов нет (weak)
+      if (uiRadarSetCamera) uiRadarSetCamera(atan2f(cfx, cfz));
+      if (uiRadarInCar) uiRadarInCar(!onFoot());
+#ifndef HNR_LEVEL_DECAY_OLD
+#define HNR_LEVEL_DECAY_OLD 0   // сверка g10b-loop + дирижёр, СВЕРКА_С_ИСХОДНИКОМ 2.1 / 2.5: 1 — спад шкалы 3/с на всех уровнях (прежнее)
+#endif
+      // 2.1: обычный спад шкалы Hit & Run задаёт скрипт уровня (SetHitAndRunDecay: L1 3,0, L2 1,5, L3–L7 1,0 ед./с; было 3,0 везде).
+      // 2.5: в погоне 6 ед./с без паузы и в помещении 10 ед./с — постоянные, от уровня не зависят (дирижёр при сведении: в ветке g10b они
+      // умножались на уровень, в исходнике так нет). P03-07 / 2.8: в разговоре спад не идёт (HNRTALK_OLD, сверка g09b-menu)
+      float hnrBase_ = HNR_LEVEL_DECAY_OLD ? 3.f : gameLevel <= 1 ? 3.f : gameLevel == 2 ? 1.5f : 1.f;
+      if (!G.hnrOff && (HNRTALK_OLD || !mvTalkActive())) gameHnrRate(&G, dt, inR ? 10.f : G.hnrLatched ? 6.f : hnrBase_);   // спад после паузы
+      { static float hnrT; hnrT += dt; uiSetHitAndRun(HNRSHOW_OLD ? hnrHeat : fmaxf(hnrHeat, hnrShow), hnrActive || (HNR_HUD_ALARM_LATCH && G.hnrLatched), hnrT); }   // правка 241: красно-синее кольцо и мигалка — когда полиция в игре (близнец tw_hnr_text: до её появления 0,74 с кольцо красно-чёрное)
       UIPH(UIPH_HUDSET);
       uiRadarClear();   // правка 236: значки радара — заново каждый кадр и без миссий (mvHud без них не чистит, машина копилась)
       mvHud(dt); UIPH(UIPH_MVHUD);   // пункт 8: задание, таймер, «этап пройден», MISSION COMPLETE, провал, значки радара
@@ -3096,7 +3345,29 @@ bf_world_done:
 #endif
       UIPH(UIPH_RADARADD);
       { int want = (mcPlay && !inR) || mvTalkActive() || (!TICKET_CONTENT_C3_OLD&&TICKET_BUSY());   // правка 40: полосы экрана разговора / облёта
-        lbOpen = fminf(1.f, fmaxf(0.f, lbOpen + (want ? dt : -dt) / LB_SLIDE));
+#ifndef LB_EXIT_OLD
+#define LB_EXIT_OLD 0   // сверка g10b-loop, M2:23: 1 — полосы разговора уезжают за 0,25 с, как выезжают (прежнее)
+#endif
+        // сверка g10b-loop, M2:23: полосы разговора и облёта уезжают 0,5 с (линейно), выезжают быстро (правило порта по записи PS2); сходящиеся к центру
+        // полосы с паузой и ирисом на последнем этапе свободной езды — не сделаны (см. журнал). LB_EXIT_OLD=1 — выход тоже 0,25 с
+        // круг 3 (проверка g10b-loop, M2:23): выход полос 0,5 с — как въезд (LB_SLIDE, g09b), отдельная скорость выхода убрана; LB_EXIT_OLD=1 — выход 0,25 с, как было до сверки.
+        // Сходящиеся полосы: разговор последнего этапа вступления и пара Пэтти и Сельма (mvTalkConverge) — на выходе полосы сходятся к центру 0,5 с линейно (экран закрыт),
+        // пауза 0,5 с, ирис раскрывается, потом полосы убраны (LB_CONV_OLD=1 — полосы просто уезжают)
+#ifndef LB_CONV_OLD
+#define LB_CONV_OLD 0
+#endif
+        { static int convLatch_, wantPrev_; if (want && mvTalkActive()) convLatch_ = mvTalkConverge();
+          if (!LB_CONV_OLD && wantPrev_ && !want && convLatch_ && lbConvT < 0.f && !mcPlay) lbConvT = 0.f;
+          if (!want && !mvTalkActive() && lbConvT < 0.f) convLatch_ = 0;
+          wantPrev_ = want; }
+        if (lbConvT >= 0.f) {
+          lbOpen = 1.f; lbConvT += dt;
+          if (lbConvT >= 1.f) {
+            if (transitReady()) { frames += transitClose(&fbp0, "talk_out") / (longView ? 2 : 1); chase.init = 0; smkSettle(); }
+            lbConvT = -1.f; lbOpen = 0.f;
+          }
+        } else
+        lbOpen = fminf(1.f, fmaxf(0.f, lbOpen + (want ? dt / LB_SLIDE : -dt / (LB_EXIT_OLD ? .25f : LB_SLIDE))));
         mvBubblePump();   // №1047: цель этапа, отложенная до конца наезда и ухода полос
         sndPause(uiPaused() || svmActive());   // правка 87: в паузе тишина (набор «Pause» тюнера диска)
         { static float jx, jz; static int jInit;   // правка 236: машину игрока перенесли, пока он не за рулём, — строка в журнал и чёрный ящик
@@ -3173,6 +3444,7 @@ bf_world_done:
       else if (tutActive() && !uiPaused() && tutDraw()) {}   // подсказка Барта вместо HUD (радар скрыт, как в записи PS2)
       else if (mvBriefing() && !uiPaused()) uiDrawBriefing();
       else if (!uiPaused() && mvFailedScreen(&fsel)) uiDrawMissionOver(fsel);
+      else if (lbConvT >= 0.f && !uiPaused()) uiDrawLetterboxCover(lbConvT / .5f);   // круг 3: полосы сходятся к центру 0,5 с, дальше чёрный кадр (пауза 0,5 с) и ирис
       else if (lbOpen > 0.f && !uiPaused()) uiDrawLetterbox(lbOpen, lbPrompt);   // правка 40: разговор / облёт — полосы и подписи вместо HUD
       else if (uiPaused() && pxBlank) {}   // №639: пустой кадр между меню и подэкраном
       else if (uiPaused() && mvMissionSelectOn() && uiScrReady()) mvDrawMissionSelect();   // MissionSelect.scr (pextra.shr) вместо паузы

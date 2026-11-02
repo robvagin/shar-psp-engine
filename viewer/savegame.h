@@ -63,6 +63,26 @@ extern "C" {
 //          записи — маска головы, выше — нет. Прежние сборки ext не читают — их запись совместима в обе стороны
 // ext[44]: ticket.c, original persistent is_cbg_first/is_ticket + L3 FMV unlock.
 // Bit7 valid; bits0/1/2 intro/ticket/admission. Old saves0; VIEW MOVIES seen is separate.
+// ext[71..74] SV_EXT_MOVIES (круг 2, g11b P07:24 и P14:12/22): ext[71] бит 7 «поле записано», бит 0 — ролик 8 (бит 8 cfg.movies); ext[72] — младшие 8 бит ролика;
+// ext[73..74] — маска показанных подсказок обучения cfg.tutSeen (u16 LE). Загрузка объединяет с настройками устройства (ничего не стирает). Свободно: ext[75..82]
+#define SV_EXT_MOVIES 71
+#define SV_EXT_MOVIES_SET 0x80
+// ext[70] SV_EXT_CHASE (сверка g10-flow, СВЕРКА_КАМЕРА 1.3): бит 7 «поле записано», биты 0..1 — выбранный вид за машиной (0 дальний, 1 ближний, 2 бампер).
+// Запись до этого поля — нули (бит 7 не стоит): вид не трогаем. ext[83] занят окном g09b (секунды записи). Свободно: ext[75..82]
+#define SV_EXT_CHASE 70
+#define SV_EXT_CHASE_SET 0x80
+// ext[75] SV_EXT_OPTS (круг 5, сверка g10-flow P08:22 и P16:08): бит 7 «поле записано», бит 0 — Jump Cameras включены, бит 1 — Navigation System включена (строки CAMERA / GAME паузы).
+// Запись до этого поля — нули (бит 7 не стоит): настройки игрока не трогаем. Свободно: ext[76..82]
+#define SV_EXT_OPTS 75
+#define SV_EXT_OPTS_SET 0x80
+#define SV_EXT_OPTS_JUMP 0x01
+#define SV_EXT_OPTS_NAV 0x02
+// ext[45..69] (сверка g10-flow 02.11.2026, P01 Д1): прочность личных машин. ext[45] SV_EXT_CARHP: бит 7 «поле записано», биты 0..3 — сколько машин (0..8);
+// дальше по 3 байта на машину с ext[46]: хеш имени (u16 LE, FNV-1a/16, viewer/game.c) и доля прочности 0..255 (255 — цела, 0 — остов). Запись до этого
+// поля — нули (бит 7 не стоит): таблица пуста, машины целы, как было. ext[83] — секунды записи (savemenu.c, g09b-menu: бит 7 «записано»). Свободно: ext[70..82]
+#define SV_EXT_CARHP 45
+#define SV_EXT_CARHP_SET 0x80
+#define SV_EXT_CARHP_MAX 8
 #define SV_EXT_TICKET 44
 #define SV_EXT_TICKET_SET 0x80
 #define SV_EXT_CAM 0
@@ -134,6 +154,9 @@ void svLvPut(SaveGame *s, int L, uint32_t mask, unsigned rows);
 int  svLvGet(const SaveGame *s, int L, uint32_t *mask, unsigned *rows);
 int  svLvReached(const SaveGame *s);
 void svLvKeep(SaveGame *dst, const SaveGame *src);
+// P01 Д1: прочность личных машин (раскладка выше). Put: n машин (до 8), доли 0..1; Get -> сколько (0 — таблица пуста), -1 — поля в записи нет
+void svCarHealthPut(SaveGame *s, int n, const uint16_t *hash, const float *frac);
+int  svCarHealthGet(const SaveGame *s, uint16_t *hash, float *frac);
 
 #ifdef __cplusplus
 }

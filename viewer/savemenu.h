@@ -19,7 +19,9 @@
 #include "savegame.h"
 
 enum { SVM_LOAD = 0, SVM_SAVE = 1 };
-enum { SVM_R_NONE = 0, SVM_R_BACK, SVM_R_LOADED, SVM_R_SAVED, SVM_R_QUIT };
+enum { SVM_R_NONE = 0, SVM_R_BACK, SVM_R_LOADED, SVM_R_SAVED, SVM_R_QUIT,
+       SVM_R_YES, SVM_R_NO,   // g09b-menu: ответы svmAskOpen
+       SVM_R_UNPAUSE };       // g09b-menu (P13-Д5): START на экране записи — закрыть паузу целиком
 
 void svmInit(const char *ebootPath, int enabled);
 int  svmOn(void);
@@ -29,6 +31,14 @@ int  svmLatest(SaveGame *out);                   // самое свежее це
 // экраны: mode SVM_LOAD (fsave.shr) / SVM_SAVE (psave.shr, game = что записать); confirmLoad — «Loading this data will cause
 // current game progress to be lost» (игра уже шла); askQuit — сначала «Do you want to save your game?» (выход в меню). 0 = ок
 int  svmOpen(int mode, const SaveGame *game, int confirmLoad, int askQuit);
+// g09b-menu (сверка с исходником, 02.11.2026): askQuit — бит 0 «сохранить перед выходом?», бит 1 сначала «выйти?» (пауза; 3 — свободная езда, 2 — миссия).
+// svmQuitAsks/svmQuitAsk — что передать в savePauseOpen для QUIT GAME; svmPauseEnter — вход в паузу (флаг «записано в этой паузе» сбрасывается);
+// svmAskOpen(SVM_ASK_NEWGAME) — вопрос «Restart anyway?» главного меню: svmInput -> SVM_R_YES / SVM_R_NO
+enum { SVM_ASK_QUIT = 1, SVM_ASK_NEWGAME = 2, SVM_ASK_RESTART = 3, SVM_ASK_ABORT = 4 };   // 3, 4 — g09a-hud круг 5: svmOpen(SVM_SAVE, .., askQuit 4 / 8) — вопрос Restart / Abort Mission
+int  svmAskOpen(int kind);
+int  svmQuitAsks(void);
+int  svmQuitAsk(int freeRoam);
+void svmPauseEnter(void);
 int  svmActive(void);
 int  svmInput(unsigned hit);                     // раз в кадр (и без нажатий): SVM_R_* (не NONE — экраны закрыты)
 void svmDraw(float t);                           // в открытый список GE, 2D (состояние GE — как uiScrDrawMenu)

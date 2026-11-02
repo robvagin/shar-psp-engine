@@ -66,9 +66,9 @@ int main(int argc, char **argv) {
       for (unsigned k = 1; k < n; k++) { int i = W.G.wrenchInst[k]; if (i >= 0) W.sp.run[i].alive = 1; }
       { int i = W.G.wrenchInst[0]; if (i >= 0) W.sp.run[i].alive = 0; }
       float gy = groundAt(C, Kf->p[0] + 8.f, Kf->p[2], Kf->p[1]); bwPlace(&W, Kf->p[0] + 8.f, gy, Kf->p[2], 0.f);
-      int i0 = modelAt(C->wrench[0].p), f = 0; for (; f < 60 * 30 && i0 >= 0 && !W.sp.run[i0].alive; f++) steps(1);
+      int i0 = modelAt(C->wrench[0].p), f = 0; for (; f < 60 * 40 && i0 >= 0 && !W.sp.run[i0].alive; f++) steps(1);
       float T = f / 60.f; int back = i0 >= 0 && W.sp.run[i0].alive && !(W.G.wrenchTaken & 1u);
-      check("respawn", back && T > 1.f, "%s: игрок за %.0f м — модель ключа 0 вернулась %d через %.2f с", lv, best, back, T); }
+      check("respawn", back && T > 29.5f && T < 30.8f,   /* сверка g10-flow: 30 с по таймеру */ "%s: игрок за %.0f м — модель ключа 0 вернулась %d через %.2f с", lv, best, back, T); }
     keep(&K); have = 1;
   }
   printf("RESULT %s %d\n", fails ? "FAIL" : "OK", fails);

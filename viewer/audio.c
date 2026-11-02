@@ -221,7 +221,8 @@ static char err[96];
 static unsigned rng = 0x2545F491u;
 static float lx, ly, lz, lrx = 1.f, lrz;
 // A bounded set shares resident voice slots and the existing DSP job.
-typedef struct { int eng, idle, fire, horn, skid, skidRes, gear; float pitch, env, off, dip, dipMul; unsigned last; MixPoint point; int ovl; } Engine;   // ovl — наложение (413)
+typedef struct { int eng, idle, fire, horn, skid, skidRes, gear; float pitch, env, off, dip, dipMul; unsigned last; MixPoint point; int ovl;   // ovl — наложение (413)
+                int sh, shOn, coast; float shT, shP0, shD, coastV, coastP, prevSpd, fastT; } Engine;   // сверка g08-sound: голос повышения передачи, накат
 static Engine E, worldEngine[AUDIO_WORLD_ENGINES];
 static int worldSource[AUDIO_WORLD_ENGINES], worldProfile[AUDIO_WORLD_ENGINES];
 static float clampf(float v,float a,float b);
@@ -308,12 +309,25 @@ static void dspReset(MixVoice *d) {
 #endif
 }
 
+#ifndef SV_STOPFADE_OLD
+#define SV_STOPFADE_OLD 0   // круг 5 (g08, P10-25): 1 — остановка голоса обрывом за один буфер, как было
+#endif
+static int gFadeL[NVOICE], gFadeR[NVOICE];   // уровень голоса в прошлом буфере (затухание остановки)
 static void gains(const Voice *v, const MixVoice *d, float extra, int *tgl, int *tgr, unsigned *tstep) {
   float g = unity ? 1.f : clampf(v->vol, 0, 1) * v->trim * busVol[v->bus] * userVol[v->bus] * extra, pan = unity ? 0 : clampf(v->pan, -1, 1);
   if (v->stopReq) g = 0;
   g = clampf(g, 0, 1);
   float l = pan > 0 ? 1 - pan : 1, r = pan < 0 ? 1 + pan : 1;
   *tgl = (int)(g * l * 32768.f); *tgr = (int)(g * r * 32768.f);
+#if !SV_STOPFADE_OLD
+  { // круг 5 (g08, P10-25): остановка голоса (гудок, сирена, шины, мотор) — затухание на несколько кадров (≈ 93 мс), а не обрыв за один буфер; новый голос начинает с целевого уровня
+    long k = (long)(v - voices);
+    if (k >= 0 && k < NVOICE) {
+      if (v->stopReq) { int st = (int)(0.12f * 32768.f); *tgl = gFadeL[k] > st ? gFadeL[k] - st : 0; *tgr = gFadeR[k] > st ? gFadeR[k] - st : 0; }
+      gFadeL[k] = *tgl; gFadeR[k] = *tgr;
+    }
+  }
+#endif
   float p = unity ? 65536.f : d->rate * clampf(v->pitch, 0.05f, 4.f) * (65536.f / RATE);
   *tstep = (unsigned)(p + 0.5f);
 }
@@ -1302,6 +1316,22 @@ int audioMusicState(char *out, int n) {
   return l;
 }
 
+
+typedef struct { float skid, life; int air, spin, parked, valid; } EngEx;   // сверка g08-sound: состояние машины игрока для модели мотора
+static EngEx engEx;
+#ifndef ENGINE_SV_OLD
+#define ENGINE_SV_OLD 0
+#endif
+// skid01 — уровень заноса/буксования (skidSoundLevel), spinInPlace — буксование с места, air — все колёса вне земли, parked — игрок вышел
+// (после конца анимации выхода: только холостой клип), life01 — остаток жизни машины 0..1. Раз в кадр до sndEngine (sound.c: sndCarState)
+void audioEngineEx(float skid01, int spinInPlace, int air, int parked, float life01) {
+  engEx.skid = skid01; engEx.spin = spinInPlace; engEx.air = air; engEx.parked = parked; engEx.life = life01; engEx.valid = 1;
+}
+#ifdef AUDIO_HOST
+unsigned audioClockUs(void) { return (unsigned)(framesOut * (1000000.0 / RATE)); }   // в тестах на Маке время идёт по выданным кадрам
+#else
+unsigned audioClockUs(void) { return nowUs(); }
+#endif
 // ---------------------------------------------------------------- player car (car_tune.spt model)
 // Interpretation of the disc parameters (names only; the original code is not used):
 //  ShiftPoint(g, s): gear g engages at speed fraction s of top speed (below ShiftPoint 1 = idle pitch);
@@ -1318,9 +1348,117 @@ static void enginePosition(Engine *e,MixPoint point) {
   for(unsigned i=0;i<sizeof handles/sizeof *handles;i++) { Voice *v=byHandle(handles[i]);if(v)setPoint(v,point); }
 }
 void audioEnginePosition(float x,float y,float z,int outside) {
-  MixPoint point=spatialPoint(x,y,z,4.f,60.f);point.on=outside!=0;enginePosition(&E,point);
+  // сверка g08-sound (P10-16): оставленная машина — холостой клип, полная громкость до 15 м, тишина на 50 м (avatar_idle)
+  MixPoint point=spatialPoint(x,y,z,(!ENGINE_SV_OLD && engEx.parked)?15.f:4.f,(!ENGINE_SV_OLD && engEx.parked)?50.f:60.f);point.on=outside!=0;enginePosition(&E,point);
 }
 static int enginePlay(Engine *e,int id,float vol,float pitch) { return playPoint(id,vol,0.f,pitch,-1,&e->point); }
+// ============================================================ сверка с исходником, окно g08-sound (02.11.2026): мотор по данным
+// Документ СВЕРКА_ПОЛНАЯ/P10: P10-3 (щелчка передачи нет), 5 (шкала = TopSpeed ведомой машины), 6/Д1 (повышение отдельным голосом, спад новой
+// передачи вычитанием), 7 (громкость не зависит от газа), 8 (высота не быстрее 2 ед./с, в заносе 0,5), 9 (накат), 10 (в воздухе 0,5·предел .. 2,0),
+// 11 (занос и буксование), 15 (громкость «fire» по остатку жизни), 16/Д8 (оставленная машина: только холостой, 15/50 м), 28 (выше TopSpeed),
+// 29 (задний ход: порог 5 %, без сглаживания), 30 (холостой отдельным голосом до 1 %), Д9 (порядок режимов). ENGINE_SV_OLD=1 — прежняя модель.
+#ifndef ENGINE_SV_OLD
+#define ENGINE_SV_OLD 0
+#endif
+enum { EM_NORM, EM_IDLE, EM_REV, EM_AIR, EM_SKID, EM_PARK };
+static float svSlew(float cur, float tgt, float rate, float dt) { float d = tgt - cur, m = rate * dt; return d > m ? cur + m : d < -m ? cur - m : tgt; }
+static float svLimit(const SabCar *c) {   // предел оборотов: наибольшая высота передач, меньшая 5 (у famil_v 1,82)
+  float m = 0; for (int g = 0; g < 5; g++) if (c->hi[g] < 5.f && c->hi[g] > m) m = c->hi[g];
+  return m > 0.1f ? m : 1.82f;
+}
+static float svCurve(const SabCar *c, int g, float s, int ng) {   // высота по кривой передачи g (1..5) на доле скорости s, сверху не зажата
+  float a = c->shift[g - 1], b = g < ng ? c->shift[g] : 1.f, den = b - a > 1e-3f ? b - a : 1e-3f, u = (s - a) / den;
+  if (u < 0.f) u = 0.f;
+  return c->lo[g - 1] + (c->hi[g - 1] - c->lo[g - 1]) * u;
+}
+static void engineStepSv(Engine *e, const SabCar *c, float kmh, float topKmh, float thr, unsigned flags, float dt, const EngEx *x) {
+  if (!(flags & AUDIO_ENGINE_ON) || !c) {
+    audioStop(e->eng); audioStop(e->idle); audioStop(e->fire); audioStop(e->sh);
+    e->eng = e->idle = e->fire = e->sh = 0; e->gear = 0; e->pitch = 0; e->shOn = 0; e->coast = 0; e->prevSpd = 0;
+    return;
+  }
+  const float top = topKmh > 1 ? topKmh : 1, spd = fabsf(kmh), s = spd / top, L = svLimit(c);
+  const float eg = mix250 ? ENG_250_GAIN : 1.f;
+  int ng = 1; while (ng < 5 && c->shift[ng] < 0.999f) ng++;
+  const int skidding = x && x->skid > 0.02f;
+  int mode;
+  if (x && x->parked) mode = EM_PARK;
+  else if ((flags & AUDIO_ENGINE_REVERSE) && s > 0.05f) mode = EM_REV;          // P10-29: больше 5 % TopSpeed
+  else if (s > 0.01f) mode = (x && x->air) ? EM_AIR : skidding ? EM_SKID : EM_NORM;   // Д9: назад, воздух, занос, передачи
+  else mode = skidding ? EM_SKID : EM_IDLE;
+  const int split = c->idle >= 0 && c->idle != c->engine;
+  float target = c->idlePitch, rate = 2.f;   // 1 единица за 500 мс
+  if (e->shOn && mode != EM_NORM) { e->shOn = 0; audioStop(e->sh); e->sh = 0; }
+  switch (mode) {
+    case EM_REV: {
+      float u = clampf(spd / (c->revCap > 1 ? c->revCap : 1), 0, 1);
+      target = c->revLo + (c->revHi - c->revLo) * u; e->pitch = target; e->gear = -1; e->coast = 0; break; }   // P10-29: сразу
+    case EM_AIR: { float lo = 0.5f * L; target = lo + clampf(thr, 0, 1) * (L - lo); rate = (L - lo) / 0.5f; e->gear = 0; e->coast = 0; break; }   // P10-10 (круг 3, проверка): 0,5·предел .. предел оборотов, отклик 500 мс на весь размах
+    case EM_SKID:
+      target = x->spin ? 0.5f + clampf(x->skid, 0, 1) * 0.8f : 0.5f * L + clampf(thr, 0, 1) * 0.4f * L;   // P10-11
+      rate = 0.5f; e->gear = 0; e->coast = 0; break;
+    case EM_PARK: case EM_IDLE: target = c->idlePitch; e->gear = 0; e->coast = 0; break;
+    default: {
+      int prev = e->gear < 1 ? 1 : e->gear, g = prev; const int moving = e->gear >= 1;
+      while (g < ng && s >= c->shift[g]) g++;
+      if (g == prev) while (g > 1 && s < c->shift[g - 1] - c->damper) g--;
+      if (g > prev && moving) {   // повышение: основной голос замолкает, отдельный голос с той же записью спадает (P10-6)
+        e->shOn = 1; e->shT = 0.f; e->coast = 0;
+        float p0 = svCurve(c, prev, s, ng); if (p0 > 5.f) p0 = 5.f;
+        e->shP0 = p0; e->shD = c->drop[g - 1];   // Д1: спад НОВОЙ передачи, вычитанием
+        if (e->sh) audioStop(e->sh);
+        e->sh = enginePlay(e, c->engine, eg, p0);
+      } else if (g < prev && moving) { e->coast = 1; e->coastV = spd; e->coastP = e->pitch; }   // P10-9: накат
+      e->gear = g;
+      if (e->coast) {
+        if (spd > e->prevSpd) { e->coast = 0; e->fastT = 0.1f; }   // круг 3 (проверка P10-9): любой рост скорости — возврат в обычный режим за 0,1 с
+        else {
+          float f = e->coastV > 1e-3f ? clampf(spd / e->coastV, 0, 1) : 0.f;
+          target = c->idlePitch + (e->coastP - c->idlePitch) * f; e->pitch = target; break;
+        }
+      }
+      target = svCurve(c, g, s, ng); if (target > L) target = L;   // P10-28: выше TopSpeed высота упирается в предел оборотов
+      if (g > 1 && s < c->shift[g - 1]) target *= s / c->shift[g - 1];   // круг 3 (P10-9): зона демпфера — остаётся верхняя передача, высота умножается на долю скорости
+    }
+  }
+  e->prevSpd = spd;
+  if (mode != EM_REV && !e->coast) {
+    if (e->pitch <= 0.f) e->pitch = x ? 0.001f : target;          // P10-8: у машины игрока высота стартует с нуля
+    float r = rate; if (e->fastT > 0.f) { r *= 5.f; e->fastT -= dt; }
+    if (!e->shOn) e->pitch = svSlew(e->pitch, target, r, dt);     // круг 3 (P10-6): внутренняя высота во время повышения не меняется
+  }
+  float vMain = eg, pMain = e->pitch;
+  if (e->shOn) {
+    float dec = (c->decayMs > 1 ? c->decayMs : 1) * 0.001f, del = c->delayMs * 0.001f, att = (c->attackMs > 1 ? c->attackMs : 1) * 0.001f;
+    e->shT += dt;
+    if (e->shT < dec) {
+      float f = e->shT / dec, p = e->shP0 - e->shD * f; if (p < 0.05f) p = 0.05f;
+      if (e->sh) audioSet(e->sh, (1.f - (1.f - c->decayFinish) * f) * eg, 0, p);
+      vMain = 0.f; pMain = 1.f;
+    } else {
+      if (e->sh) { audioStop(e->sh); e->sh = 0; }
+      float t2 = e->shT - dec;
+      if (t2 < del) { vMain = 0.f; pMain = 1.f; }
+      else if (t2 < del + att) vMain = (c->decayFinish + (1.f - c->decayFinish) * ((t2 - del) / att)) * eg;
+      else e->shOn = 0;
+    }
+  }
+  const int idleVoice = (mode == EM_IDLE || mode == EM_PARK) && split;   // P10-30: жёсткое переключение
+  if (idleVoice) {
+    if (e->eng) { audioStop(e->eng); e->eng = 0; }
+    if (!audioPlaying(e->idle)) e->idle = enginePlay(e, c->idle, eg, pMain); else audioSet(e->idle, eg, 0, pMain);
+  } else {
+    if (e->idle) { audioStop(e->idle); e->idle = 0; }
+    if (!audioPlaying(e->eng)) { if (e == &E && audioNote && !e->eng) audioNote(c->engine, "engine");
+      e->eng = enginePlay(e, c->engine, vMain, pMain); }
+    else audioSet(e->eng, vMain, 0, pMain);                        // P10-7: громкость не зависит от газа
+  }
+  if ((flags & AUDIO_ENGINE_DAMAGED) && c->damaged >= 0 && mode != EM_PARK) {   // P10-15: 0 при остатке 40 %, 1 при 0 %
+    float fv = (x && x->valid) ? clampf((0.4f - x->life) / 0.4f, 0, 1) : 1.f;
+    if (!audioPlaying(e->fire)) e->fire = enginePlay(e, c->damaged, fv, 1); else audioSet(e->fire, fv, 0, 1);
+  } else if (e->fire) { audioStop(e->fire); e->fire = 0; }
+}
+
 static void engineStep(Engine *e,const SabCar *c,float kmh,float topKmh,float thr,unsigned flags,float dt,int gearClick) {
   if (!(flags & AUDIO_ENGINE_ON)) {
     audioStop(e->eng); audioStop(e->idle); audioStop(e->fire);
@@ -1379,7 +1517,10 @@ void audioEngine(float kmh, float topKmh, float thr, unsigned flags) {
 #endif
   float dt = E.last ? (t - E.last) * 1e-6f : 0.016f; E.last = t;
   dt = clampf(dt, 0, 0.1f);
-  engineStep(&E,car,kmh,topKmh,thr,flags,dt,1);
+  const int parkSv = !ENGINE_SV_OLD && engEx.parked;   // сверка g08-sound (P10-16, Д8): оставленная машина — только холостой клип
+  if (!ENGINE_SV_OLD) engineStepSv(&E,car,kmh,topKmh,thr,flags,dt,&engEx);
+  else engineStep(&E,car,kmh,topKmh,thr,flags,dt,1);
+  if (parkSv) { flags &= ~AUDIO_ENGINE_ON; if (E.skid) { audioStop(E.skid); E.skid = 0; } if (E.horn) { audioStop(E.horn); E.horn = 0; } }
   // правка 413: наложение машины (OverlayClipName — ракета gramR_v, телефоны cCell*, фургон cVan, пицца): SLES_518.97 запускает его
   // при активации звука машины игрока (вход, 0x230e48 -> 0x231254) петлёй ресурса; у порта — пока мотор машины игрока включён
   if ((flags & AUDIO_ENGINE_ON) && carOvl >= 0) {
@@ -1448,11 +1589,79 @@ void audioWorldEngine(int slot,int source,int profile,float x,float y,float z,fl
   const SabCar *c=(const SabCar *)(bank+H->carOff)+profile;
   engineStep(e,c,kmh,topKmh,clampf(thr,0,1),AUDIO_ENGINE_ON,clampf(dt,0,.1f),0);
 }
+// ============================================================ сверка g08-sound: мотор трафика и ИИ миссий (P10-1, P10-2, P10-21, Д2)
+// Трафик: до 5 машин, каждая — клип «ferrari» (cellcar.rsd, петля) по generic_traffic (полная громкость до 20 м, тишина на 100 м), высота =
+// (0,5 + 0,5·скорость/желаемая) × множитель машины (0,8…1,2, выбран при появлении), не выше 1,5; играет и стоящая. Машины ИИ миссий: до 5, клип
+// «mission_ai_vehicle» (sportscarB.rsd), loud_ai_vehicle 15…100 м, высота 0,3 + 0,7·скорость/TopSpeed, не выше 1,2. Оверлей трафика (cCell*, cVan,
+// icecream, IStruck, nuctruck, pizza, votetruc) — позиционно на машине по тем же настройкам. Шин у них нет. Профили моделей не используются.
+// Голосов в микшере 24 (ABI с Media Engine): SV_WORLD_VOICES ограничивает сумму петель мира. WORLD_ENGINE_SV_OLD=1 — прежние 3 источника с профилем модели
+#ifndef WORLD_ENGINE_SV_OLD
+#define WORLD_ENGINE_SV_OLD 0
+#endif
+#ifndef SV_WORLD_VOICES
+#define SV_WORLD_VOICES 8
+#endif
+typedef struct { int h, ovl; float pitch, mult; } SvEng;
+static SvEng svT[AUDIO_SV_SLOTS], svA[AUDIO_SV_SLOTS];
+static int svResT = -2, svResA = -2;
+int audioSvReady(void) {
+  if (WORLD_ENGINE_SV_OLD || !H) return 0;
+  if (svResT == -2) { svResT = audioFind("ferrari"); svResA = audioFind("mission_ai_vehicle"); }
+  return svResT >= 0 && svResA >= 0;
+}
+static int svVoices(void) { int n = 0; for (int i = 0; i < AUDIO_SV_SLOTS; i++) n += (svT[i].h != 0) + (svT[i].ovl != 0) + (svA[i].h != 0); return n; }
+// kind 0 трафик, 1 ИИ. on=0 — остановить слот. profile — профиль модели для оверлея (трафик), -1 нет. mult — множитель машины (трафик). Возврат 1 — слот звучит
+int audioSvEngine(int kind, int slot, int on, int profile, float x, float y, float z, float speed, float ref, float mult, float dt) {
+  if ((unsigned)slot >= AUDIO_SV_SLOTS || !audioSvReady()) return 0;
+  SvEng *e = kind ? &svA[slot] : &svT[slot];
+  const float mn = kind ? 15.f : 20.f, mx = 100.f;
+  float ddx = x - lx, ddy = y - ly, ddz = z - lz;
+  if (on && ddx * ddx + ddy * ddy + ddz * ddz > (mx + 25.f) * (mx + 25.f)) on = 0;   // P10-34: дальше максимума + 25 м голос не нужен
+  if (!on) { if (e->h) { audioStop(e->h); e->h = 0; } if (e->ovl) { audioStop(e->ovl); e->ovl = 0; } return 0; }
+  float r = ref > 0.1f ? speed / ref : 0.f; if (r < 0.f) r = -r;
+  float target = kind ? 0.3f + 0.7f * r : (0.5f + 0.5f * r) * (mult > 0.f ? mult : 1.f);
+  target = clampf(target, 0.05f, kind ? 1.2f : 1.5f);
+  int res = kind ? svResA : svResT; float mn2 = mn;
+  if (!kind) {   // круг 2 (g11b P10-31): гроб Хэллоуина — клип traffic_coffin, 10-100 м
+    static int coffinProf = -2, coffinRes = -2;
+    if (coffinProf == -2) { coffinProf = audioCarProfile("coffin"); coffinRes = audioFind("traffic_coffin"); }
+    if (profile >= 0 && profile == coffinProf && coffinRes >= 0) { res = coffinRes; mn2 = 10.f; }
+  }
+  MixPoint p = spatialPoint(x, y, z, mn2, mx);
+  if (!audioPlaying(e->h)) {
+    if (svVoices() >= SV_WORLD_VOICES) return 0;
+    e->pitch = kind ? target : 0.5f;                                    // в момент появления высота 0,5
+    e->h = playPoint(res, 1.f, 0.f, e->pitch, -1, &p);
+  } else {
+    e->pitch = target;   // круг 3 (проверка P10-1, P10-2): у трафика и ИИ высота ставится сразу, без предела скорости
+    Voice *v = byHandle(e->h); if (v) setPoint(v, p);
+    audioSet(e->h, 1.f, 0.f, e->pitch);
+  }
+  if (!kind && covl && profile >= 0 && (unsigned)profile < ncovl && covl[profile] >= 0) {   // P10-21: оверлей трафика
+    if (!audioPlaying(e->ovl)) { if (svVoices() < SV_WORLD_VOICES) e->ovl = playPoint(covl[profile], 1.f, 0.f, 1.f, -1, &p); }
+    else { Voice *v = byHandle(e->ovl); if (v) setPoint(v, p); }
+  }
+  return e->h != 0;
+}
+void audioSvStopAll(void) { for (int i = 0; i < AUDIO_SV_SLOTS; i++) { audioSvEngine(0, i, 0, -1, 0, 0, 0, 0, 1, 1, 0); audioSvEngine(1, i, 0, -1, 0, 0, 0, 0, 1, 1, 0); } }
+
 void audioHorn(int on) {
   if (!car || car->horn < 0) return;
+  // сверка g08-sound (P10-14): гудок без петли (carhom_v, krust_v, bbman_v … 12 машин) играет один раз целиком за нажатие, не обрывается при
+  // отпускании и не повторяется, пока кнопка держится. ENGINE_SV_OLD=1 — прежнее
+  static int held; const int oneShot = !ENGINE_SV_OLD && !(R[car->horn].flags & 1);
+  if (oneShot) {
+    if (on && !held && !audioPlaying(E.horn)) { if (audioNote) audioNote(car->horn, "horn"); E.horn = enginePlay(&E, car->horn, 1, 1); }
+    held = on; return;
+  }
+  held = on;
   if (on && !audioPlaying(E.horn)) { if (audioNote) audioNote(car->horn, "horn"); E.horn = enginePlay(&E, car->horn, 1, 1); }   // 413: журнал
   if (!on && E.horn) { audioStop(E.horn); E.horn = 0; }
 }
+#ifndef SV_SKIDPITCH_OLD
+#define SV_SKIDPITCH_OLD 0   // сверка g08-sound круг 2 (от g01-cars P10-12): высота клипа шин в оригинале постоянна; 1 — прежнее 0,9 + 0,2·уровень
+#endif
+#define SKID_PITCH(a) (SV_SKIDPITCH_OLD ? 0.9f + 0.2f * (a) : 1.f)
 static void engineSkid(Engine *e, const SabCar *profile, float amount, int dirt) {
   int res = profile ? (dirt ? profile->dirtSkid : profile->skid) : -1;
   // правка 413а: у hbike_v, witchcar, huskA (и грунт mono_v) занос в данных — blank.rsd: тишина, голос не занимать (клип короче
@@ -1470,16 +1679,20 @@ static void engineSkid(Engine *e, const SabCar *profile, float amount, int dirt)
     if (!audioPlaying(e->skid) || e->skidRes != res) {
       if (e->skid) audioStop(e->skid);
       if (audioNote) audioNote(res, "skid");   // правка 413а: какой клип заноса пошёл (журнал sfxlog, гейт tests/hover/carsnd.sh)
-      e->skid = enginePlay(e, res, amount, 0.9f + 0.2f * amount); e->skidRes = res;
-    } else audioSet(e->skid, clampf(amount, 0, 1), 0, 0.9f + 0.2f * amount);
+      e->skid = enginePlay(e, res, amount, SKID_PITCH(amount)); e->skidRes = res;
+    } else audioSet(e->skid, clampf(amount, 0, 1), 0, SKID_PITCH(amount));
   } else if (e->skid) { audioStop(e->skid); e->skid = 0; }
 }
 void audioSkid(float amount, int dirt) { engineSkid(&E, car, amount, dirt); }
 #ifndef NPC_CAR_SKID_OLD
 #define NPC_CAR_SKID_OLD 0
 #endif
+#ifndef NPC_SKID_SV_OLD
+#define NPC_SKID_SV_OLD 0   // сверка g08-sound (P10 Д2): у трафика и ИИ миссий звука шин нет вообще; 1 — прежнее (занос у трёх ближайших)
+#endif
 void audioWorldSkid(int slot, float amount, int dirt) {
   if ((unsigned)slot >= AUDIO_WORLD_ENGINES) return;
+  if (!NPC_SKID_SV_OLD) { engineSkid(&worldEngine[slot], NULL, 0.f, dirt); return; }
   const SabCar *profile = NULL;
   if (!NPC_CAR_SKID_OLD && H && worldSource[slot] >= 0 &&
       worldProfile[slot] >= 0 && worldProfile[slot] < (int)H->ncar)

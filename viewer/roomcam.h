@@ -33,7 +33,9 @@ typedef struct {
   const float (*pts)[3];         // npts точек рельса — прямо в блобе, из которого разобрана камера (он живёт, пока живёт камера)
   float axisPlay[3];
 } RoomCam;
-typedef struct { int cur; float eye[3], look[3], t; unsigned in; int newWins; int want; float wantT; int switchOld; float inT[ROOM_CAMS]; } RoomCamState;   // switchOld: 1 — правило задержки 172 до школы (файл roomcamswitchold)   // want/wantT — камера, на которую переходим, и сколько ждём (правка 172)   // cur: камера прошлого кадра (-1 — ходьба); t — место на рельсе
+// сверка g06 (02.11.2026): в конце состояния — стек вошедших камер, поза прошлого кадра для переходов (g06-camera:16,19,25,36), выход
+typedef struct { int cur; float eye[3], look[3], t; unsigned in; int newWins; int want; float wantT; int switchOld; float inT[ROOM_CAMS];
+  int stk[8], nstk, firstDone, trOn, exiting; float trT, trFromE[3], trFromL[3], outE[3], outL[3], exitT, exitE[3], exitL[3]; float lastP[3]; int hasP; } RoomCamState;   // switchOld: 1 — правило задержки 172 до школы (файл roomcamswitchold)   // want/wantT — камера, на которую переходим, и сколько ждём (правка 172)   // cur: камера прошлого кадра (-1 — ходьба); t — место на рельсе
 // newWins (правка 186, комнаты): камера, в чей триггер Гомер только что вошёл, берёт кадр, даже если он ещё в триггере текущей
 // (близнец v17_house_cam: оригинал переключил на int_sh_path2, когда Гомер был в обоих); in — маска «внутри» прошлого кадра
 
@@ -51,6 +53,27 @@ void roomRailAt(const RoomCam *c, float t, float o[3]);
 float roomRailClosest(const RoomCam *c, const float p[3]);
 float roomRailParam(const RoomCam *c, float t, const float p[3]);
 void roomRailPose(const RoomCam *c, float t, const float p[3], float eye[3], float look[3]);   // глаз в t и точка взгляда на p
+// сверка g06 (g06-camera:1,2,9,12,37): допуск камеры по битам данных. Статичная: Data 0 — всем, бит 1 — только машине (от 20 м/с), бит 2 — только пешком, 3 — никому;
+// рельс: AxisPlay.z — бит 1 только машине (от 20 м/с), 2 срез на входе и выходе, 4 сбросить рельс при включении, 8 только пешком. inCar — игрок за рулём, speed — скорость машины, м/с.
+// ROOMCAM_FLAGS_SV_OLD=1 — допуск не проверяется (как было)
+#define ROOMCAM_CAR_V 20.f
+#ifndef ROOMCAM_TRANS_SV_OLD
+#define ROOMCAM_TRANS_SV_OLD 0   // 1 — переходы и выход прежние: срез; в main_loop.h работает прежний плавный переход зон (zoneCutOld = 0)
+#endif
+int roomCamAllows(const RoomCam *c, int inCar, float speed);
+#ifndef CUT1085_OLD
+#define CUT1085_OLD 0   // №1085: 1 — первая камера после загрузки/переноса героя включается переходом 1 с, как в TEST82
+#endif
+void roomCamRestart(RoomCamState *s);   // №1085: герой поставлен заново (загрузка, перенос, вход/выход из помещения) — первая камера включается срезом
+int roomCamCut(const RoomCam *c);   // срез на входе и выходе: CutInOut статичной / бит 2 рельса / скорость перехода ≥ 1 (g06-camera:25)
+float roomCamFovFromH(float hdeg);  // градусы по горизонтали кадра 4:3 -> вертикаль 4:3 (как roomCamFovY)
+// угол статичной камеры для машины (g06-camera:12): ближе 10 м максимальный (данные; нет — 90°), дальше 25 м минимальный 20°, между линейно, запаздывание 0,022 за 16 мс.
+// *cur — текущий горизонтальный угол (0 — начать с цели); возврат — вертикаль 4:3. Рельс — всегда максимальный
+float roomCamFovCar(const RoomCam *c, float dist, float *cur, float dt);
+float roomRailParamDt(const RoomCam *c, float t, const float p[3], float dt);   // как roomRailParam, ход по рельсу не быстрее 0,25 отрезка сплайна за 1/60 с (g06-camera:22)
+// кадр с переходами оригинала (g06-camera:16,19,25,36): baseE/baseL — поза камеры ходьбы этого кадра (NULL — срез, как roomCamStep). Возврат: номер камеры; -1 — камера ходьбы;
+// -2 — камера ходьбы, но идёт плавный возврат от камеры зоны (eye/look — поза кадра)
+int roomCamStepFrom(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY, const float baseE[3], const float baseL[3]);
 // кадр: выбор камеры и поза с запаздыванием (смена камеры — срез). Возврат: номер камеры или -1 (камера ходьбы)
 int roomCamStep(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY);
 #endif

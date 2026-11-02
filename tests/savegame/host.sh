@@ -30,6 +30,8 @@ $CC -DSV_BROKEN_OWNED tests/savegame/host.c $LIB -lm -o "$OUT/host_noowned" 2>> 
 # правка 334: красный 4 — прежнее поведение разовых предметов (фоновый возврат, в запись не идут); красный 5 — хвост без разовых
 $CC -DSP_ONCE_OLD=1 tests/savegame/host.c $LIB -lm -o "$OUT/host_onceold" 2>> "$OUT/build.txt" || { echo "FAIL: сборка красного 4"; exit 1; }
 $CC -DSV_BROKEN_ONCE tests/savegame/host.c $LIB -lm -o "$OUT/host_nooncetail" 2>> "$OUT/build.txt" || { echo "FAIL: сборка красного 5"; exit 1; }
+$CC -DSV_BROKEN_CARHP tests/savegame/host.c $LIB -lm -o "$OUT/host_nocarhp" 2>> "$OUT/build.txt" || { echo "FAIL: сборка красного 6"; exit 1; }   # сверка g10-flow: прочность машин не пишется
+$CC -DGAME_RESUME33_OLD=1 tests/savegame/host.c $LIB -lm -o "$OUT/host_resumeold" 2>> "$OUT/build.txt" || { echo "FAIL: сборка красного 7"; exit 1; }   # сверка g07 P14:16: прежнее — загрузка с этапа из записи
 ARGS="build/level.shr build/homer.shr build/missions/level01.msn"
 red=0
 "$OUT/host_nocrc" $ARGS > "$OUT/host_red_nocrc.txt" 2>&1
@@ -52,7 +54,15 @@ else echo "КРАСНЫЙ 4 НЕ ПОЙМАН: ящик не вернулся п
 if [ $? -ne 0 ] && grep -q "game.once_after_load.*FAIL" "$OUT/host_red_nooncetail.txt"; then red=$((red + 1))
   echo "красный 5 (разовые не пишутся в хвост): упал, как должен — $(grep -m1 'game.once_after_load' "$OUT/host_red_nooncetail.txt" | cut -c1-150)"
 else echo "КРАСНЫЙ 5 НЕ ПОЙМАН: разбитый ящик «сохранился» без записи"; fi
+"$OUT/host_nocarhp" $ARGS > "$OUT/host_red_nocarhp.txt" 2>&1   # сверка g10-flow P01 Д1: прочность машин не переживает запись
+if [ $? -ne 0 ] && grep -q "carhp.roundtrip.*FAIL" "$OUT/host_red_nocarhp.txt"; then red=$((red + 1))
+  echo "красный 6 (прочность машин не пишется): упал, как должен — $(grep -m1 'carhp.roundtrip' "$OUT/host_red_nocarhp.txt" | cut -c1-120)"
+else echo "КРАСНЫЙ 6 НЕ ПОЙМАН: прочность машин «сохранилась» без записи"; fi
+"$OUT/host_resumeold" $ARGS > "$OUT/host_red_resumeold.txt" 2>&1   # сверка g07 P14:16: загрузка с чекпоинта записи — не как в оригинале
+if [ $? -ne 0 ] && grep -q "resume.checkpoint.*FAIL" "$OUT/host_red_resumeold.txt"; then red=$((red + 1))
+  echo "красный 7 (загрузка с этапа записи): упал, как должен — $(grep -m1 'resume.checkpoint' "$OUT/host_red_resumeold.txt" | cut -c1-120)"
+else echo "КРАСНЫЙ 7 НЕ ПОЙМАН: загрузка с этапа записи прошла проверку «с начала миссии»"; fi
 "$OUT/host" $ARGS > "$OUT/host_green.txt" 2>&1; rc=$?
 grep "^CHECK\|^  до\|^  после\|^RESULT" "$OUT/host_green.txt"; cat "$OUT/strings_check.txt"
-if [ $red -eq 5 ] && [ $rc -eq 0 ] && [ $SRC -eq 0 ]; then echo "PASS: красный 5/5 пойман, зелёный $(grep -m1 RESULT "$OUT/host_green.txt")"; exit 0; fi
-echo "FAIL: красный $red/5, зелёный rc=$rc, строки rc=$SRC"; exit 1
+if [ $red -eq 7 ] && [ $rc -eq 0 ] && [ $SRC -eq 0 ]; then echo "PASS: красный 7/7 пойман, зелёный $(grep -m1 RESULT "$OUT/host_green.txt")"; exit 0; fi
+echo "FAIL: красный $red/7, зелёный rc=$rc, строки rc=$SRC"; exit 1

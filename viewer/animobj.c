@@ -36,15 +36,50 @@ int aoInit(AnimObjs *a, const void *prp2, unsigned size, const StateProps *sp, c
   return 0;
 }
 
-static int inside(const AoObj *o, const float p[3]) {
+static int insideR(const AoObj *o, const float p[3], float pad) {   // pad > 0 — шар радиусом pad вокруг точки (приближённо: запас к размерам объёма)
   if (!o->trig) return 0;
   float d[3] = {p[0] - o->c[0], p[1] - o->c[1], p[2] - o->c[2]};
-  if (o->trig == 1) return d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= o->h[0] * o->h[0];
+  if (o->trig == 1) { float r = o->h[0] + pad; return d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= r * r; }
   for (int k = 0; k < 3; k++) {
     float s = d[0] * o->ax[3 * k] + d[1] * o->ax[3 * k + 1] + d[2] * o->ax[3 * k + 2];
-    if (fabsf(s) > o->h[k]) return 0;
+    if (fabsf(s) > o->h[k] + pad) return 0;
   }
   return 1;
+}
+static int inside(const AoObj *o, const float p[3]) { return insideR(o, p, 0.f); }
+void aoSetCar(AnimObjs *a, const float c[4][3]) { memcpy(a->car, c, sizeof a->car); a->carOn = 1; }
+// след за суставом (сверка g11 круг 2, P05:7): центр и оси триггера — из позы кадра 0 в текущую позу сустава
+static void inv3(const float *M, float *I) {   // M, I — 3x3 по столбцам (элемент строки i, столбца j = M[3 * j + i])
+  float a = M[0], b = M[3], c = M[6], d = M[1], e = M[4], f = M[7], g = M[2], h = M[5], i = M[8];
+  float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g), k = fabsf(det) > 1e-12f ? 1.f / det : 0.f;
+  float r[9] = {(e * i - f * h) * k, (c * h - b * i) * k, (b * f - c * e) * k,
+                (f * g - d * i) * k, (a * i - c * g) * k, (c * d - a * f) * k,
+                (d * h - e * g) * k, (b * g - a * h) * k, (a * e - b * d) * k};   // по строкам
+  for (int row = 0; row < 3; row++) for (int col = 0; col < 3; col++) I[3 * col + row] = r[3 * row + col];
+}
+static void rvT(const float *R, const float *v, float *o) {   // o = R^T * v
+  o[0] = R[0] * v[0] + R[1] * v[1] + R[2] * v[2]; o[1] = R[3] * v[0] + R[4] * v[1] + R[5] * v[2]; o[2] = R[6] * v[0] + R[7] * v[1] + R[8] * v[2];
+}
+static void rvF(const float *R, const float *v, float *o);   // ниже: o = R * v
+static void followObj(AnimObjs *a, StateProps *sp, unsigned k, AoObj *oT) {
+  const AoObj *o = &a->obj[k]; *oT = *o;
+  if (AO_FOLLOW_SV_OLD || o->pad != 1 || !o->pad2 || !o->trig || !o->nInst || !sp || !sp->run) return;
+  unsigned i = o->firstInst, j = o->pad2 - 1u; SpRun *r = &sp->run[i];
+  if (j >= sp->type[sp->inst[i].type].nJoint) return;
+  if (!a->j0ok[k]) { float keep = r->poseF; r->poseF = 0.f; r->poseValid = 0; spPose(sp, i); memcpy(a->j0[k], r->jm + j * 12, 48); r->poseF = keep; r->poseValid = 0; a->j0ok[k] = 1; }
+  spPose(sp, i);
+  const float *J = r->jm + j * 12, *J0 = a->j0[k]; float I0[9], p[3], q[3];
+  inv3(J0, I0);
+  float rel[3] = {o->c[0] - r->x, o->c[1] - r->y, o->c[2] - r->z};
+  rvT(r->R, rel, p); p[0] -= J0[9]; p[1] -= J0[10]; p[2] -= J0[11];
+  rvF(I0, p, q); rvF(J, q, p); p[0] += J[9]; p[1] += J[10]; p[2] += J[11]; rvF(r->R, p, q);
+  oT->c[0] = r->x + q[0]; oT->c[1] = r->y + q[1]; oT->c[2] = r->z + q[2];
+  for (int m = 0; m < 3; m++) {
+    float v[3] = {o->ax[3 * m], o->ax[3 * m + 1], o->ax[3 * m + 2]};
+    rvT(r->R, v, p); rvF(I0, p, q); rvF(J, q, p); rvF(r->R, p, q);
+    float l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]); if (l > 1e-6f) { q[0] /= l; q[1] /= l; q[2] /= l; }
+    oT->ax[3 * m] = q[0]; oT->ax[3 * m + 1] = q[1]; oT->ax[3 * m + 2] = q[2];
+  }
 }
 
 // R по столбцам (как stateprops.c): o = R * v
@@ -53,6 +88,7 @@ static void rv(const float *R, const float *v, float *o) {
   o[1] = R[1] * v[0] + R[4] * v[1] + R[7] * v[2];
   o[2] = R[2] * v[0] + R[5] * v[1] + R[8] * v[2];
 }
+static void rvF(const float *R, const float *v, float *o) { rv(R, v, o); }
 static float nrm(float *v) { float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); if (l > 1e-12f) { v[0] /= l; v[1] /= l; v[2] /= l; } return l; }
 
 static void placeVols(AnimObjs *a, StateProps *sp, ColWorld *w, unsigned k) {
@@ -131,36 +167,105 @@ static int standsOnLift(const AnimObjs *a, const ColWorld *w, unsigned k, const 
   }
   return 0;
 }
+#ifndef AO_PLAYONCE_OLD
+#define AO_PLAYONCE_OLD 0
+#endif
+#include <strings.h>
+int aoNamesAdopt(AnimObjs *a, StateProps *sp, const void *buf, unsigned size) {
+  a->nm = NULL; a->evt = NULL; a->nevt = 0; a->bA = a->bB = -1; a->bFired = 0;
+  if (ANIMNAMES_SV_OLD || !a->obj || !buf || size < 32 || memcmp(buf, "OBJN", 4)) return -1;
+  const unsigned char *b = (const unsigned char *)buf; const unsigned *u = (const unsigned *)(b + 4);
+  unsigned ver = u[0], no = u[1], nt = u[2], ny = u[3], oo = u[4], ot = u[5], oy = u[6];
+  if (ver != 1 || no != a->nobj || (unsigned long long)oo + 32ull * no > size || (unsigned long long)ot + 80ull * nt > size || (unsigned long long)oy + 16ull * ny > size) return -1;
+  const AoName *nm = (const AoName *)(b + oo);
+  for (unsigned k = 0; k < no; k++) if (nm[k].action != a->obj[k].action || nm[k].nfr != a->obj[k].nfr) return -1;   // другой экспорт: имена не сопоставить
+  a->nm = nm; a->evt = (const AoEvTrig *)(b + ot); a->nevt = nt;
+  if (sp && sp->run && ny) spFollowAdopt(sp, b + oy, ny);
+  for (unsigned k = 0; k < no; k++) {
+    if (!strcasecmp(nm[k].name, "pidgeon_A_group")) a->bA = (int)k;
+    else if (!strcasecmp(nm[k].name, "pidgeon_B_group")) a->bB = (int)k;
+  }
+  if (a->bA >= 0 && a->bB >= 0 && nt && sp && sp->run) {   // стая взлёта ждёт события: спрятана и стоит
+    const AoObj *ob = &a->obj[a->bB]; a->bLen = (ob->fps > 0.f ? (float)ob->nfr / ob->fps : 1.f) + .2f;
+    for (unsigned i = ob->firstInst; i < (unsigned)ob->firstInst + ob->nInst; i++) sp->run[i].alive = 0;
+  } else a->bA = a->bB = -1;
+  return 0;
+}
+// голуби (P11-16): игрок вошёл в объём локатора flyingpidgeon (событие 47) — сидящая стая прячется и стоит, стая взлёта сбрасывается, играется и становится видимой, звук взлёта; отошёл дальше
+// BIRDS_REARM м — стая вернулась на место. BIRDS_SV_OLD=1 — стаи не трогаем
+#ifndef BIRDS_SV_OLD
+#define BIRDS_SV_OLD 0
+#endif
+#define BIRDS_REARM 150.f
+static void birdsStep(AnimObjs *a, StateProps *sp, const float feet[3], int onFoot, float dt) {
+  if (BIRDS_SV_OLD || a->bA < 0 || a->bB < 0 || !a->nevt) return;
+  const AoEvTrig *e = &a->evt[0]; AoObj t; memset(&t, 0, sizeof t);
+  t.trig = e->rect ? 2 : 1; memcpy(t.c, e->c, 12); memcpy(t.h, e->h, 12); memcpy(t.ax, e->ax, 36);
+  const AoObj *oa = &a->obj[a->bA], *ob = &a->obj[a->bB];
+  if (!a->bFired) {
+    int in = onFoot ? inside(&t, feet) : insideR(&t, feet, 1.5f);
+    for (int q = 0; q < 4 && !in && !onFoot && a->carOn; q++) in = inside(&t, a->car[q]);
+    if (!in) return;
+    a->bFired = 1; a->bT = 0.f;
+    for (unsigned i = oa->firstInst; i < (unsigned)oa->firstInst + oa->nInst; i++) sp->run[i].alive = 0;
+    for (unsigned i = ob->firstInst; i < (unsigned)ob->firstInst + ob->nInst; i++) spEnter(sp, i, 0);
+    if (a->sound) a->sound(a->soundUser, "pigeon_takeoff", e->c[0], e->c[1], e->c[2]);
+  } else {
+    a->bT += dt;
+    if (a->bT > a->bLen) for (unsigned i = ob->firstInst; i < (unsigned)ob->firstInst + ob->nInst; i++) sp->run[i].alive = 0;   // улетели
+    float dx = feet[0] - e->c[0], dz = feet[2] - e->c[2];
+    if (dx * dx + dz * dz > BIRDS_REARM * BIRDS_REARM) {
+      a->bFired = 0;
+      for (unsigned i = oa->firstInst; i < (unsigned)oa->firstInst + oa->nInst; i++) spEnter(sp, i, 0);
+      for (unsigned i = ob->firstInst; i < (unsigned)ob->firstInst + ob->nInst; i++) sp->run[i].alive = 0;
+    }
+  }
+}
 void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float pz, int onFoot, int action, float dt) {
   if (!a->obj || !sp || !sp->run) return;
   float feet[3] = {px, py, pz}, body[3] = {px, py + 0.9f, pz};   // в объёме триггера — ступни или середина тела игрока
+  birdsStep(a, sp, feet, onFoot, dt);   // круг 5 (g11): голуби
   int press = action ? a->want : -1;
   if (press >= 0) a->presses++;
   a->want = -1;
   for (unsigned k = 0; k < a->nobj; k++) {
     const AoObj *o = &a->obj[k]; AoRun *r = &a->run[k];
     float last = o->nfr > 1 ? (float)(o->nfr - 1) : 0.f, fps = o->fps > 0.f ? o->fps : 30.f;
-    int in = inside(o, feet) || inside(o, body);
+    int wasPlay = r->playing, wasIn = r->inTrig;
+    AoObj oT; followObj(a, sp, k, &oT);   // сверка g11 круг 2 (P05:7): триггер едет за суставом
+    int in;
+    if (AOTRIG_SV_OLD) in = inside(o, feet) || inside(o, body);
+    else if (onFoot) in = inside(&oT, feet);   // сверка g11 круг 2 (P05:9): пешком — одна точка (ступни), без запаса
+    else {   // из машины — шар 1,5 м вокруг центра плюс углы коробки
+      in = insideR(&oT, feet, 1.5f);
+      for (int q = 0; q < 4 && !in && a->carOn; q++) in = inside(&oT, a->car[q]);
+    }
     switch (o->action) {
       case AO_PLAYANIM:   // △ у выключателя: клип один раз с начала (подъёмник Duff: вверх, пауза, вниз — кадр 0 в конце)
         if ((int)k == press && !r->playing && r->delay <= 0.f) {
-          if (AO_SWITCH_OLD) { r->playing = 1; r->f = 0.f; a->plays++; } else r->delay = AO_PRESS_DELAY;   // правка 462: старт клипа с задержкой
+          if (AO_SWITCH_OLD || !ANIMPRESS_SV_OLD) { r->playing = 1; r->f = 0.f; a->plays++; } else r->delay = AO_PRESS_DELAY;   // правка 462: старт клипа с задержкой; сверка g11 P05-4: задержки у нажатия нет
         }
-        if (!DUFF_LIFT_OLD && onFoot && o->nVol && w) {   // №519: встал на платформу подъёмника — едет сам
+        if (!DUFF_LIFT_OLD && ANIMAUTO_SV_OLD && onFoot && o->nVol && w) {   // №519: встал на платформу подъёмника — едет сам (сверка g11 P05-5: ANIMAUTO_SV_OLD=0 — только по △)
           if (!r->pad[1] && nearObj(sp, o, px, pz)) r->pad[1] = (uint8_t)liftProbe(a, sp, w, k);
           if (r->pad[1] == 1 && !r->playing && standsOnLift(a, w, k, feet)) { r->playing = 1; r->f = DUFF_LIFT_SKIP_OLD ? 0.f : a->liftF0[k]; r->delay = 0.f; a->plays++; }
         }
         if (r->delay > 0.f) { r->delay -= dt; if (r->delay <= 0.f) { r->delay = 0.f; r->playing = 1; r->f = 0.f; a->plays++; } }
         if (onFoot && in && !r->playing && r->delay <= 0.f && a->want < 0) a->want = (int)k;
-        if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = 0.f; r->playing = 0; } }
+        if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = ANIMHOLD_SV_OLD ? 0.f : last; r->playing = 0; } }   // сверка g11 P05-6: по окончании клип держит последний кадр
+        break;
+      case AO_PLAYONCE:   // круг 5 (g07b, P05-18): первое △ играет клип один раз вперёд и навсегда снимает триггер (inTrig = уже сработал). AO_PLAYONCE_OLD=1 — не обрабатывается (как до круга)
+        if (AO_PLAYONCE_OLD) break;
+        if ((int)k == press && !r->inTrig && !r->playing) { r->playing = 1; r->f = 0.f; r->inTrig = 1; a->plays++; }
+        if (onFoot && in && !r->inTrig && !r->playing && a->want < 0) a->want = (int)k;
+        if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = last; r->playing = 0; } }
         break;
       case AO_AUTOPLAY:   // вход в объём: клип один раз (ветка качается, платформа-лифт АЭС)
         if (in && !r->inTrig && !r->playing) { r->playing = 1; r->f = 0.f; a->plays++; }
-        if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = 0.f; r->playing = 0; } }
+        if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = ANIMHOLD_SV_OLD ? 0.f : last; r->playing = 0; } }   // сверка g11 P05-6: по окончании клип держит последний кадр
         break;
       case AO_TOGGLE:     // △ у выключателя: клип по кругу / пауза на текущем кадре
         if ((int)k == press) { r->playing = !r->playing; a->plays++; }
-        if (!TOGGLE_AUTO_OLD && onFoot && o->nVol && w) {   // №519: платформа АЭС (сдвиг ≥ 3 м) или подъёмник Toggle едет сама, пока на ней стоят; давно пустая — в начале цикла останавливается
+        if (!TOGGLE_AUTO_OLD && ANIMAUTO_SV_OLD && onFoot && o->nVol && w) {   // №519: платформа АЭС (сдвиг ≥ 3 м) или подъёмник Toggle едет сама, пока на ней стоят; давно пустая — в начале цикла останавливается
           if (!r->pad[1] && nearObj(sp, o, px, pz)) r->pad[1] = (uint8_t)liftProbe(a, sp, w, k);
           if (r->pad[1] == 1 || r->pad[1] == 3) {
             if (standsOnLift(a, w, k, feet)) { a->idleT[k] = 0.f; if (!r->playing) { r->playing = 1; r->f = DUFF_LIFT_SKIP_OLD ? 0.f : a->liftF0[k]; a->plays++; } }
@@ -176,6 +281,14 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
       default: break;     // AO_NONE / AO_DOORBELL: кадр ведёт состояние SPR1 (цикл из данных)
     }
     r->inTrig = (uint8_t)in;
+    // круг 5 (g11, P11-15): звук подвижного объекта по его имени на запуске клипа; у объектов, что крутятся сами (платформы АЭС без кнопки), — раз за круг клипа, пока игрок ближе 60 м.
+    // Имена и таблица звуков (sound.c sndAnimObj): нет звука у объекта — больше не спрашиваем
+    if (a->nm && a->sound && !a->nosnd[k] && o->nInst) {
+      int go = (!wasPlay && r->playing) || (o->action == AO_AUTODOOR && in && !wasIn);
+      const SpRun *s0 = &sp->run[o->firstInst]; float dxs = s0->x - px, dzs = s0->z - pz;
+      if (o->action == AO_NONE && o->nfr > 1 && s0->alive && dxs * dxs + dzs * dzs < 60.f * 60.f) { if ((a->sndT[k] -= dt) <= 0.f) { go = 1; a->sndT[k] = (float)o->nfr / (o->fps > 0.f ? o->fps : 30.f); } }
+      if (go && !a->sound(a->soundUser, a->nm[k].name, s0->x, s0->y, s0->z)) a->nosnd[k] = 1;
+    }
     if (o->action != AO_NONE && o->action != AO_DOORBELL)
       for (unsigned i = o->firstInst; i < (unsigned)o->firstInst + o->nInst; i++) {
         SpRun *s = &sp->run[i]; if (s->poseF != r->f) { s->poseF = r->f; s->poseValid = 0; }
@@ -193,7 +306,7 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
 int aoSwitchRing(const AnimObjs *a, unsigned k, float c[3], float *r) {
   if (AO_SWITCH_OLD || !a->obj || k >= a->nobj) return 0;
   const AoObj *o = &a->obj[k];
-  if ((o->action != AO_PLAYANIM && o->action != AO_TOGGLE) || !o->trig) return 0;
+  if ((o->action != AO_PLAYANIM && o->action != AO_TOGGLE && !(o->action == AO_PLAYONCE && !AO_PLAYONCE_OLD && !a->run[k].inTrig)) || !o->trig) return 0;
   c[0] = o->c[0]; c[2] = o->c[2];
   if (o->trig == 1) { c[1] = o->c[1]; *r = o->h[0] > 0.6f ? o->h[0] : 0.6f; }   // сфера: центр и радиус
   else { c[1] = o->c[1] - o->h[1]; *r = fmaxf(o->h[0], o->h[2]) > 0.6f ? fmaxf(o->h[0], o->h[2]) : 0.6f; }   // ящик: основание

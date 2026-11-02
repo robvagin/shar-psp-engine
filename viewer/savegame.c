@@ -275,3 +275,28 @@ void svDevCollect(struct Collect *c) {
 #endif
   collectSetProgress(c, c->level, cm, wm, gm);
 }
+
+// ---- P01 Д1 (сверка g10-flow): прочность личных машин в ext[45..69] (раскладка в savegame.h)
+void svCarHealthPut(SaveGame *s, int n, const uint16_t *hash, const float *frac) {
+#ifdef SV_BROKEN_CARHP   // только для отрицательного контроля tests/savegame/host.sh
+  (void)s; (void)n; (void)hash; (void)frac; return;
+#endif
+  if (n < 0) n = 0; if (n > SV_EXT_CARHP_MAX) n = SV_EXT_CARHP_MAX;
+  memset(s->ext + SV_EXT_CARHP, 0, 1 + 3 * SV_EXT_CARHP_MAX);
+  s->ext[SV_EXT_CARHP] = (uint8_t)(SV_EXT_CARHP_SET | n);
+  for (int i = 0; i < n; i++) {
+    float f = frac[i] < 0.f ? 0.f : frac[i] > 1.f ? 1.f : frac[i];
+    uint8_t *e = s->ext + SV_EXT_CARHP + 1 + 3 * i;
+    e[0] = (uint8_t)(hash[i] & 0xff); e[1] = (uint8_t)(hash[i] >> 8); e[2] = (uint8_t)(f * 255.f + .5f);
+  }
+}
+int svCarHealthGet(const SaveGame *s, uint16_t *hash, float *frac) {
+  uint8_t b = s->ext[SV_EXT_CARHP];
+  if (!(b & SV_EXT_CARHP_SET)) return -1;
+  int n = b & 15; if (n > SV_EXT_CARHP_MAX) n = SV_EXT_CARHP_MAX;
+  for (int i = 0; i < n; i++) {
+    const uint8_t *e = s->ext + SV_EXT_CARHP + 1 + 3 * i;
+    hash[i] = (uint16_t)(e[0] | e[1] << 8); frac[i] = e[2] / 255.f;
+  }
+  return n;
+}

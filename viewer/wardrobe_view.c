@@ -22,17 +22,25 @@
 
 enum { WV_T_LOCKED = UI_T_GAMBLE, WV_T_ARROWS = UI_T_SKIP };
 enum { WV_IN = 0, WV_IDLE, WV_OUT, WV_DONE };
+// Сверка g09a-hud (круг 1, M2:34 / Д11): свет открывается и закрывается линейно по 0,5 с, затемнение до 85 %. WARD_LIGHT_SV_OLD=1 — прежнее (0,3 / 0,3 с, 80 %)
+#ifndef WARD_LIGHT_SV_OLD
+#define WARD_LIGHT_SV_OLD 0
+#endif
+// Сверка g09a-hud (круг 1, P13:13): список гардероба — стартовый костюм, если он не надет, плюс платные, кроме надетого; купленный надевается бесплатно (уже так). WARD_HIDEWORN_OLD=1 — надетый тоже в списке
+#ifndef WARD_HIDEWORN_OLD
+#define WARD_HIDEWORN_OLD 0
+#endif
 #define WV_DARK_HOLD .4f
-#define WV_LIGHT_IN  .3f
-#define WV_DARK_A    .8f
-#define WV_LIGHT_OUT .3f
+#define WV_LIGHT_IN  (WARD_LIGHT_SV_OLD ? .3f : .5f)
+#define WV_DARK_A    (WARD_LIGHT_SV_OLD ? .8f : .85f)
+#define WV_LIGHT_OUT (WARD_LIGHT_SV_OLD ? .3f : .5f)
 #define WV_MAX 8
 #define WV_SPOTS 8
 
 static char wName[WV_MAX][16], wFile[WV_MAX][32]; static int wPrice[WV_MAX], n;
 static float spot[WV_SPOTS][4]; static int nspot;
 static int on, phase, cur, chosen = -1, sndRes, sScroll = -1, sAccept = -1, sBack = -1, sLocked = -1;
-static float t;
+static float t; static int wHide = -1;   // wHide — надетый костюм, в списке его нет
 static float raysT;   // №763: часы вращения лучей №761 — t обнуляется на входе в выбор и на выходе
 #ifndef RAYS_FADE_OLD
 #define RAYS_FADE_OLD 0   // №763: 1 — лучи на часах экрана (угол прыгал при смене фазы) и без затухания, как TEST32
@@ -84,6 +92,7 @@ int wardrobeNear(float x, float y, float z) {
   return 0;
 }
 const char *wardrobeFile(int k) { return k >= 0 && k < n ? wFile[k] : 0; }
+const char *wardrobeName(int k) { return k >= 0 && k < n ? wName[k] : 0; }   // сверка g07 круг 3: имя костюма k как в замке этапа locked skin
 int wardrobeSpot(int i, float out[4]) { if (i < 0 || i >= nspot) return 0; for (int k = 0; k < 4; k++) out[k] = spot[i][k]; return 1; }
 static void previewLoad(int k) {   // правка 119: модель костюма k для вращения на странице
   if (pm && k == pmK) return;
@@ -105,7 +114,8 @@ int wardrobeOpen(Shop *s, const char *dir, int worn) {
   if (uiScrOpen(fn) != 0) { logf_("nopack %s", fn); return -1; }
   if (!sndRes && sndReady()) { sScroll = sndId("scroll"); sAccept = sndId("accept"); sBack = sndId("back"); sLocked = sndId("locked_out"); sndRes = 1; }
   { int m = audioTrack("muzak"); if (m >= 0) audioMusic(m, .3f); }   // событие Store композиции — как будка и лавка
-  cur = worn >= 0 && worn < n ? worn : 0; on = 1; phase = WV_IN; t = 0.f; raysT = 0.f; chosen = -1;
+  wHide = !WARD_HIDEWORN_OLD && n > 1 && worn >= 0 && worn < n ? worn : -1;
+  cur = worn >= 0 && worn < n ? worn : 0; if (cur == wHide) cur = (cur + 1) % n; on = 1; phase = WV_IN; t = 0.f; raysT = 0.f; chosen = -1;
   snprintf(wDir, sizeof wDir, "%s", dir ? dir : ""); pmAng = 0.f; previewLoad(cur);
 #ifndef WARDROBE_HOST
   raysDetect(dir);
@@ -125,7 +135,7 @@ void wardrobeInput(Shop *s, unsigned hit) {
   if (!on || phase != WV_IDLE) return;
   if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) { snd(sBack); phase = WV_OUT; t = 0.f; return; }
   int d = (hit & PSP_CTRL_RIGHT) ? 1 : (hit & PSP_CTRL_LEFT) ? -1 : 0;
-  if (d && n > 1) { cur = (cur + d + n) % n; snd(sScroll); logf_("sel %d name=%s price=%d owned=%d", cur, wName[cur], wPrice[cur], owned(s, cur)); previewLoad(cur); }
+  if (d && n > (wHide >= 0 ? 2 : 1)) { cur = (cur + d + n) % n; if (cur == wHide) cur = (cur + d + n) % n; snd(sScroll); logf_("sel %d name=%s price=%d owned=%d", cur, wName[cur], wPrice[cur], owned(s, cur)); previewLoad(cur); }
   if (hit & PSP_CTRL_CROSS) {
     if (!owned(s, cur)) {   // покупка: хватает монет — списать и получить (shopBuy: принадлежность сохраняется в Coins.owned)
       int it = shopFind(s, wName[cur]);

@@ -29,6 +29,7 @@ typedef struct {   // всё, что не влияет на игру: звук, 
   void (*reset)(void *u, int wasOnFoot);                // RESET CAR: музыка
   void *u;
   void (*wrench)(void *u, const float pos[3], int repaired);   // гаечный ключ взят (пункт 4): звук wrench_collect, частицы; repaired — машина была разбита
+  void (*coinLose)(void *u, const float pos[3]);   // сверка g10-flow круг 2 (P09 Д5): потеряны монеты (лазер осы, арест, ремонт в будке) — звук sndCoinLose; NULL — без звука
 } GameHooks;
 
 typedef struct {
@@ -52,6 +53,11 @@ typedef struct {
   int hnrLatched, hnrOff, hnrRoom; float hnrBusted; char hnrCar[16]; int hnrCarSet;
   int exitReq;   // правка 168: △ на ходу — выход заказан: машина тормозит сама, на малой скорости Гомер выходит (△ ещё раз — отмена)
   int coinBoomArmed; // №441: wallet penalty only on a new boom, not loading a husk
+  // сверка g10-flow (02.11.2026), в конце структуры: нулевая инициализация = поведение «ничего не было»
+  unsigned boomSeen;     // 2.3: последний прочитанный svBoom.seq (взрыв машины игрока с +25)
+  float hnrFreeze;       // P03-07: секунд заморозки шкалы (разговор, вход/выход из помещения); пока >0 события не считаются, спад стоит
+  unsigned touchKey[16]; int touchN, touchHead;   // P03-11: последние 16 тронутых предметов (ключ = номер экземпляра PRP1 +1)
+  uint16_t chHash[8]; float chFrac[8]; int chN;   // P01 Д1: прочность личных машин по хешу имени (доля 0..1; 1 — цела), общая на игру
 } Game;
 // нарушения Hit & Run: удар машины, разбитая машина, предмет, пешеход, пинок пешехода (шкала 100: 5 / 25 / 7.5 / 10 / 13)
 enum { HNR_CAR_HIT, HNR_CAR_WRECK, HNR_PROP, HNR_PED_HIT, HNR_PED_KICK };
@@ -101,4 +107,45 @@ int gameHnrBustTick(Game *g, float dt);   // ход таймера ареста:
 // чинится целиком, в том числе остов (библия: «VEHICLE DESTROYED! FIND A WRENCH, OR GO TO A PHONEBOOTH, TO REPAIR YOUR
 // VEHICLE»); возвращается, как предметы, через 5 с вне вида и дальше 60 м (gameRespawn). В gameAfterCar; -> ключей взято за кадр
 int gameWrenchStep(Game *g);
+
+// ---- сверка g10-flow (02.11.2026) ----
+// 2.1 (спад по уровню) внедрён окном g10b-loop в точке вызова main_loop.h (HNR_LEVEL_DECAY_OLD) — здесь второй раз не применяется
+// P03-07 / 2.8: во время разговора (вход/выход из помещения идёт блокирующим ирисом — кадры игры стоят) Hit & Run выключен: нарушения не принимаются, спад стоит.
+// Вызывающий каждый кадр на время разговора зовёт gameHnrFreeze(g, 0.1) (main_loop.h, mvTalkActive); gameHnrOffense и gameHnrRate проверяют hnrFreeze.
+// HNR_FREEZE_OLD=1 — как было (заморозки нет)
+#ifndef HNR_FREEZE_OLD
+#define HNR_FREEZE_OLD 0
+#endif
+void gameHnrFreeze(Game *g, float sec);
+int gameHnrFrozen(const Game *g);
+// 2.3: взрыв машины игрока по svBoom (viewer/sverka_shared.h): +25 один раз на взрыв, если его разбил игрок и машина не полицейская
+// (kind 3). Зовёт кадр игры после main_loop; возвращает 1, если шкала подросла
+int gameHnrBoom(Game *g);
+// Д4 (P03): задержка полиции 0,72 с только у первой погони уровня; следующие — в ближайшем кадре. Новый уровень/новая игра обнуляет
+void gameHnrNewLevel(Game *g);
+// CAR_HEALTH_OLD=1 — таблица не ведётся, урон обнуляется при каждой постановке машины, как было
+#ifndef CAR_HEALTH_OLD
+#define CAR_HEALTH_OLD 0
+#endif
+// P03-11 (СВЕРКА_ПОЛНАЯ P03 второй читатель): за каждый НОВЫЙ тронутый предмет оригинал даёт +7,5 шкалы и 1 монету, не повторно для последних 16
+// тронутых. gameTouchNew: 1 — предмет key не из последних 16 (и записан в них), 0 — повтор. HNR_TOUCH16_OLD=1 — как было (шкала за каждое касание, монет нет)
+#ifndef HNR_TOUCH16_OLD
+#define HNR_TOUCH16_OLD 0
+#endif
+int gameTouchNew(Game *g, unsigned key);
+// P01 Д1: прочность личных машин. Имя — как в gameHnrVehicle (NULL/"" — машина уровня). frac: 1 цела … 0 остов
+void gameCarHealthNote(Game *g, const char *name, float frac);   // запомнить (не больше 8 машин; новая вытесняет самую старую)
+float gameCarHealthGet(const Game *g, const char *name);           // доля или -1, если машины в таблице нет
+void gameCarHealthApply(Game *g, const char *name, Car *c);        // поставить урон машине по доле (frac<=0 — остов)
+void gameCarSummon(Game *g, const char *name, Car *c);             // будка: остов чинится (плату берёт phone_view.c), побитая целая приезжает побитой
+void gameCarHealthClear(Game *g);                                  // новая игра: таблица пуста
+int  gameCarHealthDump(const Game *g, uint16_t *hash, float *frac);   // для записи игры: -> сколько машин (до 8)
+void gameCarHealthLoad(Game *g, int n, const uint16_t *hash, const float *frac);   // из записи игры
+void gameCarHealthTrack(Game *g);                                  // кадр: доля машины игрока (имя последней посадки) в таблицу
+// стик (P17-9, СВЕРКА_МАШИНЫ 1.4): мёртвая зона 0,25 по каждой оси отдельно, остаток пересчитан в 0..1; значение оси меняется,
+// только если новое отличается от прежнего больше чем на 0,05 (возврат в ноль — сразу). GAME_STICK_OLD=1 — зона 0,2 без пересчёта
+#ifndef GAME_STICK_OLD
+#define GAME_STICK_OLD 0
+#endif
+void gameStick(float rawx, float rawy, float *ax, float *ay);   // rawx/rawy: −1..1 с аналога PSP; выход: после зоны и ступени
 #endif

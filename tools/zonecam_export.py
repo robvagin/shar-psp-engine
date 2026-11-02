@@ -27,7 +27,7 @@ r1_cam1 (триггер — воздух над домом за jumpzone17), н�
 у остальных рельсов триггеры — дворы, мостки и подвалы (радиусы 1–6,5 м) или места без записи PS2 (вопрос близнецу В103).
 Пакет пешком (без --car) не меняется.
     python tools/zonecam_export.py --level 1 --car [--out build/carzone-l1.shr]"""
-import argparse, struct, sys
+import argparse, os, struct, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,35 @@ import interior_export as IE   # noqa: E402  записи камер — тот 
 
 GAME = (ROOT / 'hit-and-run-web/source/game').resolve()
 REC = IE.CAM_REC
+
+# сверка g12-data, P18-01 (02.11.2026): поле Data статичной камеры — МАСКА «кому»: бит 1 — только машина (и только не медленнее
+# 20 м/с, z3_ufocam без порога), бит 2 — только пешком, 0 — и пешему, и машине. Было (правило порта выше): 0 — машина, 1 — всегда,
+# 2 — пешком, из-за чего 15 камер Data 0 пешком не включались, а 6 камер Data 1 (r6_cam1, r3_cam1, z3_ufocam) включались пешком.
+# Стало: пакет пешком = Data 0 и 2, пакет машины = Data 0 и 1 (+ рельсы у зон прыжка). Порог скорости для Data 1 — в движке
+# (viewer/carzone.c, окно g06-camera); в записи Data остаётся как есть. ZONECAM_DATA_OLD=1 — прежнее толкование.
+DATA_OLD = os.environ.get('ZONECAM_DATA_OLD') == '1'
+
+
+# сверка g12-data P18-02 (02.11.2026, +просьба g06-camera): рельс (вид 4) несёт тройку «осевая игра» @492 записи; z = биты: 1 только машина
+# (не медленнее 20 м/с), 2 срез, 4 сброс при входе, 8 только пешком. Было: пешком шли ВСЕ рельсы (в том числе 29 «только машина»), в машину —
+# только рельсы, чей объём касается зоны прыжка. Стало: пешком — рельсы без бита 1, в машину — рельсы с битом 1 (L1: r1_cam1, r3_cam2, r6_cam3,
+# z2_cam3, z2_cam4), зоны прыжка не нужны. Запись камеры не меняется (биты читает движок, viewer/roomcam.c). ZONECAM_RAIL_OLD=1 — прежнее
+RAIL_OLD = os.environ.get('ZONECAM_RAIL_OLD') == '1'
+
+
+def rail_bits(r):
+    return int(round(struct.unpack_from('<3f', r, 492)[2]))
+
+
+def for_foot(kind, data, r=None):
+    """статичная камера (kind 0) попадает в пакет пешком? рельсы (kind != 0): без бита 1 «только машина» (было: все)"""
+    if kind != 0: return RAIL_OLD or r is None or not (rail_bits(r) & 1)
+    return data != 0 if DATA_OLD else data in (0, 2)
+
+
+def for_car(kind, data):
+    """статичная камера попадает в пакет машины (рельсы отбираются отдельно, по касанию зоны прыжка)"""
+    return data == 0 if DATA_OLD else data in (0, 1)
 
 
 def rec_data(r):   # поле Data статичной камеры (запись 512 Б: @32 вид, @124 Data)
@@ -84,11 +113,13 @@ def car_cams(level):
         for r, i in zip(recs, info):
             kind, data = rec_data(r); name = r[:32].split(b'\0')[0].decode()
             if kind == 0:
-                if data == 0: out.append((f.name, r, i, 'Data 0'))
+                if for_car(kind, data): out.append((f.name, r, i, f'Data {data}'))
                 continue
             B = [_box(t) for t in T.get(name, [])[:IE.CAM_TRIGS]]
             near = min(((_gap(b, zb), zn) for b in B for zn, zb in zones), default=(1e9, ''))
-            if near[0] <= JUMP_TOUCH: out.append((f.name, r, i, f'рельс у {near[1]}'))
+            if RAIL_OLD:
+                if near[0] <= JUMP_TOUCH: out.append((f.name, r, i, f'рельс у {near[1]}'))
+            elif rail_bits(r) & 1: out.append((f.name, r, i, f'рельс, биты {rail_bits(r)}'))
     return out
 
 
@@ -111,9 +142,10 @@ def main():
     foot, car = [], []
     for fn, r, info in world_cams(a.level):
         kind, data = rec_data(r)
-        (car if kind == 0 and data == 0 else foot).append((fn, r, info))
+        (foot if for_foot(kind, data, r) else car).append((fn, r, info))
+        if not DATA_OLD and kind == 0 and data == 0: car.append((fn, r, info))   # Data 0 — обоим: в пакете пешком И в счёте машины
     for fn, r, info in foot: print(f'пешком  {fn}: {info[:120]}')
-    for fn, r, info in car: print(f'машина  {fn}: {info[:120]} — не в пакете')
+    for fn, r, info in car: print(f'машина  {fn}: {info[:120]} — в пакете машины (carzone), здесь только счёт')
     head = bytearray(128); head[:4] = b'ZCM1'; struct.pack_into('<3I', head, 4, 1, a.level, len(car))
     struct.pack_into('<2I', head, 120, 128, len(foot))
     body = IE.cam_table([r for _, r, _ in foot], 128)

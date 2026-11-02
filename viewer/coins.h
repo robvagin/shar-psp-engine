@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define COIN_POOL 200
+#define COIN_FLASHES 8   // одновременно живых вспышек исчезновения
 
 typedef struct {
   float x, y, z, ox, oy, oz, vx, vy, vz, floor, age, magnet, spin;
@@ -27,6 +28,8 @@ typedef struct {
   int (*ground)(void *u, float x, float z, float yTop, float *gy); void *groundU;
   // разбор L3/L5 (TEST55): монеты мира по сетке клеток COIN_GRID_CELL м и счётчики пула / притягиваемых — шаг и рисунок обходят только близкие (coins.c, COINGRID_OLD)
   unsigned poolActive, nCollect, recount; int gw, gh; float gx0, gz0; unsigned short *gstart, *gidx;
+  // сверка g11b, P03-03: вспышки исчезновения монет (точка и возраст, с; живёт COIN_FLASH_T = 0,5 с). Рисунок — main_loop.h (размер 0,25), здесь данные
+  unsigned nflash; struct { float x, y, z, t; } flash[COIN_FLASHES];
 } Coins;
 
 // pos: nworld троек x,y,z. 0 = ок
@@ -40,7 +43,7 @@ void coinsDrop(Coins *cs, int n, float x, float y, float z, float floor);
 void coinsDropDir(Coins *cs, int n, float x, float y, float z, float floor, float dx, float dz, float cone);
 // индексы активных монет в пределах r м от (x, z) по горизонтали (клетки сетки целиком, лишние отсеивает вызывающий) + все активные из пула выпавших; возвращает число (до cap) или 0xFFFFFFFF, если сетки нет (COINGRID_OLD, пустой мир)
 unsigned coinsNear(const Coins *cs, float x, float z, float r, unsigned *out, unsigned cap);
-// прозрачность монеты 0..1 (выпавшие гаснут с 11 до 16 с)
+// размер/прозрачность монеты 0..1 (до сверки g11b выпавшие гасли с 11 до 16 с; теперь 1 — COIN_EXPIRE_OLD=1 возвращает затухание)
 float coinAlpha(const Coin *c);
 
 #ifdef __cplusplus

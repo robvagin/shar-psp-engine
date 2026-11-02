@@ -150,6 +150,8 @@ int colFoliageNear(const ColWorld *w, float x, float y, float z, float margin);
 void colSetFoliagePass(int on);
 // правка 339: 1 — прежнее (опора fsup не поднимает внутренний забор; красный гейта tests/pockets). По умолчанию 0 (-DCOL_FENCE_SUP=0 — 1)
 extern int colFenceSupOff;
+// сверка g11 P18-05: 1 — внутренние заборы бесконечны по высоте для тела (закон исходника); FENCELAW_SV_OLD=1 — конечный верх из данных, как было (col.c)
+extern int colFenceLawSv;
 int colFoliageHits(void);
 // правка 304: доля кузова (0..1) внутри листвы — объёмов FOLIAGE и полосы ±COL_FOL_FENCE_HALF у заборов-изгородей; car.c вязнет
 // пропорционально ей (сетка 5 × 3 точек на двух высотах: у колёс и середина кузова). Не зависит от colSetFoliagePass
@@ -182,6 +184,7 @@ int colHumpRiding(uint32_t *idx, int max);
 // земли и стен (с обеих сторон), ящики, цилиндры/капсулы/сферы, заборы (вертикальная стена по отрезку). 1 = свободно.
 // Объём, внутри которого начинается луч, не мешает; кусты (материал FOLIAGE) — только при foliage != 0.
 float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foliage);
+extern int colRayFenceBox;   // сверка g11b-collect круг 5 (P11-Д5): 1 — заборы в луче colRayFrac перекрывают рамкой по двум концам; по умолчанию 0
 // CAMPERF: n лучей за один обход клеток (out[i] == colRayFrac(w, a[i], b[i], 0) для каждого; куски вне коробки лучей отсеиваются ящиком). n <= COL_RAYS_MAX
 #define COL_RAYS_MAX 24
 void colRaysFrac(const ColWorld *w, int n, const float (*a)[3], const float (*b)[3], float *out);

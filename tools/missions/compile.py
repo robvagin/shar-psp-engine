@@ -39,7 +39,7 @@ UI_TEXT_KEYS = ['MISSION_COMPLETE', 'BONUS_MISSION_COMPLETE', 'STAGE_COMPLETE', 
                 'RACE_SUMMARY', 'BUSTED']
 FAIL_TEXT_KEYS = ['TIME_OUT', 'PLAYER_OUT_OF_VEHICLE', 'VEHICLE_DAMAGE', 'POSITION', 'RACE', 'FOLLOW_DISTANCE',
                   'HIT_N_RUN', 'OUT_OF_BOUNDS']
-NAV_MODES = {'': 0, 'neither': 1, 'niether': 1, 'both': 2, 'nearest road': 3, 'intersection': 4}
+NAV_MODES = {'': 0, 'neither': 1, 'both': 2, 'nearest road': 3, 'intersection': 4}
 CTX_BODY, CTX_OBJ, CTX_COND = 0, 1, 2
 ARG_INT, ARG_FLOAT, ARG_STR, ARG_BARE = 0, 1, 2, 3
 MF_BONUS, MF_STREETRACE, MF_GAMBLE, MF_BONUSMISSION, MF_NOSCRIPT, MF_LEVELOVER, MF_GAMEOVER, MF_FORCEDCAR, MF_TRANSITION = 1, 2, 4, 8, 16, 32, 64, 128, 256
@@ -580,6 +580,8 @@ class Compiler:
             ml = m.lower()
             if ml in NAV_MODES:
                 nav = NAV_MODES[ml]
+            elif ml == 'niether':
+                pass   # круг 3 (проверка g07b, P16-07): опечатка в level06/m4i.mfk оригиналом не распознаётся — режим стрелки по умолчанию (both), не neither
             elif ml == 'gamble':
                 stage['flags'] |= 0  # gamble race: runtime reads obj_arg
                 objarg = P.s('gamble')

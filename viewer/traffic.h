@@ -45,7 +45,12 @@ extern "C" {
 #endif
 
 #define TR_MAXCAR 5
-#define TR_MAXPED 6
+// сверка g02-traffic, СВЕРКА_ГОМЕР 7.1 (строка 3): одновременно не больше 7 пешеходов (было 6). Память PSP: +1 TrPed (SkinPlayer), порядка
+// сотен байт; TR_PED7_OLD=1 — прежние 6
+#ifndef TR_PED7_OLD
+#define TR_PED7_OLD 0
+#endif
+#define TR_MAXPED (TR_PED7_OLD ? 6 : 7)
 #define TR_MAXMODEL 8
 #define TR_MAXPEDMODEL 32
 #define TR_MAXEXTRA 6             // машин миссий, которых видят водители трафика (viewer/msncar.h MC_MAX)
@@ -54,8 +59,9 @@ extern "C" {
 // Правка 139 (Роб 01.10: «слишком много припаркованных машин»): правило по данным — стоящая машина существует, только пока
 // загружен файл её зоны (уличные загрузчики l<N>_terra, tools/traffic_export.py dyna_loaders); меняется только вне кадра.
 // ЗА ФЛАГОМ, по умолчанию ВЫКЛЮЧЕНО — включать после замера на железе (строка чёрного ящика trf/park/ped) и слова Роба.
+// круг 5 (P03-19): включено — это логика без цены для кадра (19 ворот и десяток мест раз в кадр); TRAFFIC_ZONE_PARK=0 — прежнее: места выбраны один раз на уровень
 #ifndef TRAFFIC_ZONE_PARK
-#define TRAFFIC_ZONE_PARK 0
+#define TRAFFIC_ZONE_PARK 1
 #endif
 #define TR_PED_R .35f             // круг пешехода (правило порта)
 
@@ -130,10 +136,23 @@ typedef struct {
   float waitT, v, vt, wheelAng, stillT, hitCool;
   float hitV, stunT; int ramStrong, honkDone;   // №479: сила удара (сближение, м/с), сильный ли он, сигнал уже дан
   float rearX, rearZ; int rearOk;   // №400: задняя ось тянется за началом машины (wheelR), 0 — не задана
+  // ---- сверка g02-traffic (02.11.2026): состояния правил оригинала; все за выключателями TRF_SV_*_OLD (traffic.c, шапка «сверка»)
+  float offT;                       // P03-21: сколько подряд вне кадра, с (снимается дольше 5 с)
+  int relJ;                         // P16-01: перекрёсток+1, на котором этой машине уже дали зелёный (повторно у него не встаёт); 0 нет
+  int chgLane; float chgK, chgDur, chgCool;   // P04 T5: смена полосы — целевая полоса, ход 0..1, длительность, пауза до следующего броска, с
+  float dodgeT; int dodgeSide;      // 8.1/T4: уворот от машины игрока — сколько ещё идёт (с), сторона поворота руля ±1
+  float flashT;                     // 8.1: дальний свет мигает (период 0,2 с), сколько ещё, с (рисует main: привязка фар — передано)
+  float retryT;                     // P16-04 / Д2: нет места на полосах выезда — повтор выбора раз в 5 с
+  float honkT;                      // 8.3: сигнал игроку/пешеходу — сколько до следующего, с
+  float outLaneT; int noRejoin;     // P03-25: сколько с вне полосы; возврат запрещён навсегда (наклон, дальность, курс)
+  float dmgSeen, dmgWin;            // P01-09: урон на прошлом кадре и окно без урона после «почти смерти», с
+  int dodged, dodgeHb, honkedP, honkKind;   // круг 3: уворот был / ручник на один кадр после 0,8 с / сигналили игроку с ближней дистанции (на того же игрока не увёртывается) / кому сигналили (1 машина игрока, 2 Гомер)
+  float vy0; int wasAir;            // круг 2, P09:30: вертикальная скорость на прошлом кадре и был ли в воздухе (событие приземления)
   Car car;                                                    // твёрдое тело (carHitCar; после удара — carUpdate)
 } TrCar;
-typedef struct { int state, wreck; float stillT; Car car; int gone, off; } TrParked;   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
-enum { TRP_OFF, TRP_WALK, TRP_STAND, TRP_FLY, TRP_DOWN, TRP_GETUP, TRP_DODGE };   // TRP_DODGE — уклонился от машины (правка 180)
+typedef struct { int state, wreck; float stillT; Car car; int gone, off; float dmgSeen, dmgWin; int sel; } TrParked;   // sel — круг 5 (P03-19): место выбрано при загрузке зоны   // dmgSeen/dmgWin — P01-09 (сверка g02-traffic)   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
+enum { TRP_OFF, TRP_WALK, TRP_STAND, TRP_FLY, TRP_DOWN, TRP_GETUP, TRP_DODGE,
+       TRP_PANIC, TRP_CRINGE, TRP_SIDE, TRP_FACE, TRP_TALK };   // сверка g02-traffic: паника (7.4), съёживание и прыжок вбок (7.5), стоп лицом к игроку (P02-37), разговор (7.8)   // TRP_DODGE — уклонился от машины (правка 180)
 typedef struct {
   int mode, model, path, seg, dir; float s;
   float x, y, z, h, vx, vy, vz, t, speed, blockT, nearCool;   // nearCool — с прошлого уклонения (правка 180)
@@ -143,9 +162,15 @@ typedef struct {
   int avoidSide; float avoidT;                                 // №510: сторона обхода игрока/пешехода (±1) и сколько она ещё держится
   float waitT;                                                 // №692: сколько подряд путь перекрыт (стоит в ожидании), с
   float orbBest, orbStall, orbTx, orbTz;                       // №813: обход без продвижения к точке пути (лучшее расстояние, сколько с без продвижения, точка)
+  // ---- сверка g02-traffic: общий таймер состояния, вне кадра, паника, разговор
+  float stT, offT, pTurnT, pDirX, pDirZ, talkCool; int run, partner, speaker, sideDir, knocked, homeRun, retPath; float homeSpeed; unsigned char talkChk;   // knocked: уже был сбит/пнут — повторный пинок события не даёт (3.4)   // stT — сколько в TRP_PANIC/FACE/TALK/CRINGE/SIDE; offT — вне кадра, с;
+                                                              // круг 3 (7.3): homeSpeed/homeRun — рождённая скорость, retPath — идёт назад к тропе со скоростью 1,0
+                                                              // pTurnT/pDir — паника: когда менять курс и куда; run — бежит (3 м/с); partner/speaker — разговор
+  SkinMouth mouth; float mouthT;                               // круг 5 (P15-06): ход рта (skin.h SkinMouth) и сколько ещё звучит возглас, с
   SkinPlayer sp;
 } TrPed;
-enum { TR_EV_CAR_HIT = 1, TR_EV_CAR_WRECK, TR_EV_PED_HIT, TR_EV_PARK_HIT, TR_EV_PED_KICK, TR_EV_PED_NEAR, TR_EV_CAR_HONK };   // CAR_HONK (№479) — не нарушение, только гудок   // PED_NEAR — не нарушение (шкалу не двигает)
+enum { TR_EV_CAR_HIT = 1, TR_EV_CAR_WRECK, TR_EV_PED_HIT, TR_EV_PARK_HIT, TR_EV_PED_KICK, TR_EV_PED_NEAR, TR_EV_CAR_HONK,
+       TR_EV_CAR_WAY, TR_EV_CAR_LAND };   // сверка g02-traffic круг 2: CAR_WAY — «пробка» (игрок загородил, голос водителя, P09:3, не нарушение); CAR_LAND — машина трафика приземлилась после полёта (подвеска, P09:30; amount — скорость вниз)   // CAR_HONK (№479) — не нарушение, только гудок   // PED_NEAR — не нарушение (шкалу не двигает)
 // amount — доля шкалы Hit & Run (0..1); who — правка 240: имя модели человека для голоса (прохожий: «boy3», персонаж миссии:
 // «grandpa», viewer/sound.c sndPedVoice), "" — у события нет человека. index < 0 — персонаж миссии (game_msn.c: -1 - номер)
 typedef struct { int type, index; float x, y, z, amount; char who[16]; } TrEvent;
@@ -172,6 +197,16 @@ typedef struct {
   int forceLod;                         // служебное (flag trflod): все машины в дальней версии (снимок LOD вблизи)
   float solidPX, solidPZ; int solidHave; // trafficSolid: где Гомер был в прошлом вызове (шаг — для остановки о пешехода)
   TrEvent ev[16]; int nev;
+  // ---- сверка g02-traffic
+  float loadT;                          // с после загрузки/сброса (P03-12: первые 3 с круг 90 м и без снятия)
+  int streetRace;                       // P03-13: уличная гонка идёт — пешеходов нет и новые не появляются (trafficStreetRace)
+  struct { signed char q[8]; unsigned char n; float tm; } jq[256];   // P16-01: очередь дорог стоп-знака на перекрёстке (по номеру перекрёстка)
+  struct { int car; float t; } honkQ[3]; int nhonk;                 // P03-15: машины, что ответят на гудок игрока (номер машины, через сколько с)
+  unsigned zonePrev;                    // круг 5 (P03-19): набор загруженных файлов зон на прошлом проходе (изменился → «загрузка зоны»: выбор стоящих машин)
+  float pedTryT; float runV[TR_MAXPEDMODEL];   // Д8: счётчик попыток рождения пешехода (кадры); скорость корня клипа бега
+  unsigned pedFrame;
+  float hornT, hornX, hornZ; int hornOn;  // гудок игрока: держится (P03-15/7.4)
+  struct { short road[48]; int n; int goalRoad; float tx, tz; } nav;   // P16-06: путь навигации (дороги по порядку от дороги игрока до дороги цели)
   // статистика кадра (для HUD/отчёта)
   int activeCars, movingCars, drawnCars, lodCars, drawnPark, awakePark, activePeds, drawnPeds, drawnTris;
 } Traffic;
@@ -182,6 +217,10 @@ int trafficInitMem(Traffic *t, void *data, unsigned size, int own);   // то ж
 void trafficFree(Traffic *t);
 // текстуры TRF1 в формате level.shr: w, h, число уровней, CLUT (256 x 8888), уровни (swizzle, высота кратна 8)
 int trafficTexCount(const Traffic *t);
+// круг 5 (P17-27 / P18-10): «сложность» дороги-среза — байт, который tools/traffic_export.py кладёт в TrRoad.pad8 (диск: второй байт слова дороги). ИИ миссий берёт срез,
+// если сложность не больше уровня. 0 — не задана или нет дороги. Читается из файла как есть
+static inline int trafficRoadDifficulty(const Traffic *t, int road) { return (t && t->hd && road >= 0 && road < (int)t->hd->nRoad) ? (int)t->road[road].pad8 : 0; }
+static inline int trafficRoadIsShortcut(const Traffic *t, int road) { return (t && t->hd && road >= 0 && road < (int)t->hd->nRoad) ? (t->road[road].flags & 1) : 0; }
 int trafficStopCount(void);   // №875: концов полос со стоп-линией у зебры (stop875.bin)
 void trafficTexInfo(const Traffic *t, int i, int *w, int *h, int *levels, int *pre, void **pal, void *lv[8]);
 // всё убрать и поставить стоящие машины на места (старт, NEW GAME, телепорт); движущиеся и пешеходы появятся вокруг игрока
@@ -242,7 +281,11 @@ int trafficPopEvent(Traffic *t, TrEvent *e);
 //     4 с (улетел за край мира), 0 — летит; *t — время
 //   trafficGetUpLen: длина клипа get_up рига прохожих (npd), с; нет клипа — 1
 //   trafficPushEvent: событие в очередь трафика (main.c / боты: Hit & Run, голос who, удар по телу)
-#define TR_PED_HIT_V 3.f          // машина быстрее — сбивает, медленнее — отталкивает
+// сверка g02-traffic, СВЕРКА_ГОМЕР 7.6 (строка 8): оригинал сбивает пешехода при скорости больше 1 м/с (3,6 км/ч), было 3 м/с. TR_PED_HIT_V_OLD=1 — 3 м/с
+#ifndef TR_PED_HIT_V_OLD
+#define TR_PED_HIT_V_OLD 0
+#endif
+#define TR_PED_HIT_V (TR_PED_HIT_V_OLD ? 3.f : 1.f)          // машина быстрее — сбивает, медленнее — отталкивает
 #ifndef TR_PED_LIE_OLD
 #define TR_PED_LIE_OLD 0   // 1 — прежнее: лежит 1 с
 #endif
@@ -254,6 +297,24 @@ float trafficGetUpLen(const Traffic *t);
 void trafficPushEvent(Traffic *t, int type, int idx, float x, float y, float z, float amount, const char *who);
 // правка 122: стрелка навигации к цели (px, pz, курс ph) -> (tx, tz) по дорогам трафика: 1 — стрелка в p с курсом *h (перекрёсток ближе maxd)
 int trafficRouteArrow(const Traffic *t, float px, float pz, float ph, float tx, float tz, float maxd, float p[3], float *h);
+
+// ---- сверка g02-traffic (02.11.2026): точки вызова для других окон (подробно в docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g02-traffic_журнал.md)
+// гудок игрока (P03-15 / СВЕРКА_ГОМЕР 7.4): звать каждый кадр, пока гудок зажат (on = 1), x, z — машина игрока. Трафик в 25 м отвечает (шанс 10 % на машину),
+// пешеходы в 12 м пугаются. Точка вызова: main_loop.h рядом с sndHorn
+void trafficPlayerHorn(Traffic *t, int on, float x, float z);
+// пинок/наезд тоже пугают пешеходов в 12 м от игрока (7.4): звать из места, где игрок ударил
+void trafficScare(Traffic *t, float x, float z);
+// уличная гонка идёт (P03-13): все пешеходы снимаются, новые не появляются, пока on = 1. Вызывает game_msn.c при загрузке/выгрузке реквизита гонки (передано g-миссии)
+void trafficStreetRace(Traffic *t, int on);
+// P16-06: путь навигации целиком. trafficNavBuild — один раз при старте цели (позиция игрока px, pz, курс ph; цель tx, tz); trafficNavArrows — каждый кадр:
+// заполняет стрелки (позиция, курс, red = «не туда»), возвращает число (до max). Рисует msn_view.c (передано g-вид: набор darrow на каждую)
+typedef struct { float p[3], h; int red; } TrNavArrow;
+int trafficNavBuild(Traffic *t, float px, float pz, float ph, float tx, float tz);
+int trafficNavArrows(const Traffic *t, float px, float pz, TrNavArrow *out, int max);
+// сверка g02-traffic круг 2 (g11 P11-02): машины трафика, что не стоят и не OFF (едущие, сбитые, проснувшиеся стоящие), ближе r к (x, z); до max указателей. Зовёт main_loop.h
+// и передаёт каждую в propsHitCar: предметы ломает любая машина, не только игрока
+int trafficCarsNear(Traffic *t, float x, float z, float r, Car **out, int max);
+extern int trfOneTapDeath;   // P16-17 «One Tap Traffic Death»: 1 — машина трафика, ударенная машиной игрока, гибнет с одного удара (выставит меню читов, когда оно будет)
 
 #ifdef __cplusplus
 }

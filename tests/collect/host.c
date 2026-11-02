@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
     for (int t = 0; t < 3; t++) step(ex[k].x + 1.f, ex[k].y - 1.5f, ex[k].z, 1, -1, 0, 1 / 60.f, 0, NULL);
     unsigned a = 0; for (unsigned i = 0; i < C.nwasp; i++) a += C.st.waspSt[i] == 1; if ((int)a > maxAlive) maxAlive = (int)a;
     { const SpRun *sr = &C.sp.run[C.wasp[w].inst]; float d = hypotf(sr->x - ex[k].x, sr->z - ex[k].z) + fabsf(sr->y - ex[k].y);
-      if (C.st.waspSt[w] == 1 && d < .5f) spawnOk++; else printf("  оса %s: не появилась в точке данных (живая %d, отклонение %.2f м)\n", ex[k].name, C.st.waspSt[w] == 1, d); }
+      if (C.st.waspSt[w] == 1 && d < (WASP_BOB_OLD ? .5f : 1.1f)) spawnOk++;   /* сверка g11b W11: оса качается ±0,5 м по вертикали и ±0,5 м вбок вокруг точки данных */ else printf("  оса %s: не появилась в точке данных (живая %d, отклонение %.2f м)\n", ex[k].name, C.st.waspSt[w] == 1, d); }
     // пинок Гомера точно в осу: DESTROYED -> засчитана
     SpRun *r = &C.sp.run[C.wasp[w].inst]; float c3[3], rr; spBounds(&C.sp, C.wasp[w].inst, c3, &rr);
     HomerEvent he = {HOMER_EV_HIT, c3[0], c3[1], c3[2], 1.f, 0, 1};

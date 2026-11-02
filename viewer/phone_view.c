@@ -40,10 +40,25 @@ enum { PV_T_PIC_OK = UI_T_CARDS, PV_T_PIC_DMG = UI_T_PROXIMITY, PV_T_SPOT = UI_T
 enum { PV_T_REPAIR_OK = UI_T_COUNTDOWN, PV_T_REPAIR_NO = UI_T_ITEMS_COMPLETE };   // tools/shop_export.py booth_layout (RepairOk / RepairNo)
 enum { PV_ROW_CAR = 0, PV_ROW_DMG = 1, PV_ROW_STARS = 4 };   // ROW1 — tools/shop_export.py PHONE_ROW_DMG
 enum { PV_IN = 0, PV_IDLE, PV_OUT, PV_DONE };
+// Сверка g09a-hud (M2:34, Д11): свет будки открывается и закрывается линейно по 0,5 с, затемнение до 85 %; закрытие, запрошенное в разгар открытия, продолжается
+// с текущей точки (время зеркалится), а не с нуля. PHONE_LIGHT_SV_OLD=1 — прежнее (0,4 / 0,3 с, 80 %, закрытие всегда с нуля, замер PS2)
+#ifndef PHONE_LIGHT_SV_OLD
+#define PHONE_LIGHT_SV_OLD 0
+#endif
 #define PV_DARK_HOLD .6f
-#define PV_LIGHT_IN  .4f
-#define PV_DARK_A    .8f
-#define PV_LIGHT_OUT .3f
+#define PV_LIGHT_IN  (PHONE_LIGHT_SV_OLD ? .4f : .5f)
+#define PV_DARK_A    (PHONE_LIGHT_SV_OLD ? .8f : .85f)
+#define PV_LIGHT_OUT (PHONE_LIGHT_SV_OLD ? .3f : .5f)
+// M2:32: при каждой смене машины стрелкой свет гаснет линейно за 0,5 с (до 85 %), машина меняется в самой тёмной точке, свет открывается обратно за 0,5 с;
+// пока смена не прошла (серия нажатий копится), выбор пункта не принимается. PHONE_SWAP_DIP_OLD=1 — смена без затемнения
+#ifndef PHONE_SWAP_DIP_OLD
+#define PHONE_SWAP_DIP_OLD 0
+#endif
+static float swA; static int swPend, swUp;   // swA — затемнение смены 0…0,85; swPend — накопленный сдвиг на машин; swUp — идёт затемнение (иначе открытие)
+// M2:33: ремонт разбитой машины всегда разрешён, цена списывается из банка, но не ниже нуля. PHONE_REPAIR_ALLOW_OLD=1 — нехватка монет = отказ
+#ifndef PHONE_REPAIR_ALLOW_OLD
+#define PHONE_REPAIR_ALLOW_OLD 0
+#endif
 #define PV_DT_MAX .05f
 
 // галерея (правка 100): build/phonecars.txt — «имя уровень_открытия 4 звезды» по строке (tools/shop_export.py --phone-list):
@@ -180,7 +195,8 @@ int phoneViewOpen(Shop *s, const char *dir) {
   if (!PHONE_START_NOW_OLD) for (int p = 0; p < nOrd; p++) if (owned(s, ord[p]) && isNow(s, ord[p])) { cur = p; break; }
   if (!sndRes && sndReady()) { sScroll = sndId("scroll"); sAccept = sndId("accept"); sBack = sndId("back"); sLocked = sndId("locked_out"); sndRes = 1; }
   { int m = audioTrack("muzak"); if (m >= 0) audioMusic(m, .3f); }   // событие Store: Store_region -> Muzak
-  on = 1; phase = PV_IN; t = 0.f; raysT = 0.f; chosen = -1;
+  sndStore(1);   // сверка g08 круг 3 (M2:Д1): будка — состояние звука «магазин»
+  on = 1; phase = PV_IN; t = 0.f; raysT = 0.f; chosen = -1; swA = 0.f; swPend = 0; swUp = 0;
   { char ls[160]; int k = 0; ls[0] = 0; for (int p = 0; p < nOrd && k < (int)sizeof ls - 20; p++) k += snprintf(ls + k, sizeof ls - k, "%s%s", p ? "," : "", pvName[ord[p]]);
     logf_("open n=%d cur=%d name=%s owned=%d now=%d dmg=%d list=%s", nOrd, cur, pvName[rowOf(cur)], owned(s, rowOf(cur)), isNow(s, rowOf(cur)), dmgPct, ls); }
   return 0;
@@ -190,6 +206,11 @@ int phoneViewTick(Shop *s, float dt) {
   t += dt < PV_DT_MAX ? dt : PV_DT_MAX; raysT += dt < PV_DT_MAX ? dt : PV_DT_MAX;
   if (phase == PV_IN && t >= PV_DARK_HOLD + PV_LIGHT_IN) { phase = PV_IDLE; t = 0.f; }
   if (phase == PV_OUT && t >= PV_LIGHT_OUT) { phase = PV_DONE; return PHONEV_EV_CLOSE; }
+  if (!PHONE_SWAP_DIP_OLD && phase == PV_IDLE) {
+    float st = (dt < PV_DT_MAX ? dt : PV_DT_MAX) * PV_DARK_A / .5f;
+    if (swUp) { swA += st; if (swA >= PV_DARK_A) { swA = PV_DARK_A; if (swPend && nOrd > 1) { cur = ((cur + swPend) % nOrd + nOrd) % nOrd; int r = rowOf(cur); logf_("swap %d name=%s", cur, pvName[r]); } swPend = 0; swUp = 0; } }
+    else if (swA > 0.f) { swA -= st; if (swA < 0.f) swA = 0.f; }
+  }
   return PHONEV_EV_NONE;
 }
 #ifndef BOOTHLR1038_OLD
@@ -200,11 +221,21 @@ int boothLR1038Old = BOOTHLR1038_OLD;
 #define BOOTHLR1057_OLD 0
 #endif
 int boothLR1057Old = BOOTHLR1057_OLD;
+static float coverAlpha(void);
 void phoneViewInput(Shop *s, unsigned hit) {
+  if (!PHONE_LIGHT_SV_OLD && on && phase == PV_IN && (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))) {   // Д11: закрытие в разгар открытия идёт с текущей точки света
+    float a = coverAlpha(); snd(sBack); phase = PV_OUT; t = PV_LIGHT_OUT * (a > PV_DARK_A ? 1.f : a / PV_DARK_A); return;
+  }
   if (!on || phase != PV_IDLE) return;
-  if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) { snd(sBack); phase = PV_OUT; t = 0.f; return; }
+  if (!PHONE_SWAP_DIP_OLD && swPend && !(hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))) return;   // машина ещё меняется — выбор и «назад» ждут
+  if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) {
+    snd(sBack); phase = PV_OUT;
+    t = PHONE_LIGHT_SV_OLD ? 0.f : (swA > 0.f ? PV_LIGHT_OUT * swA / PV_DARK_A : 0.f);   // закрытие из середины затемнения продолжается с текущей точки (Д11)
+    return;
+  }
   // №1038 (Роб 26.10: «в меню паузы Mission Select уровни переключаются L/R, то же в выборе машины в будке, дополнительно к прежнему»): L — предыдущая машина, R — следующая, как ◄ и ►: тот же звук, смена и порядок. BOOTHLR1038_OLD=1 / файл boothlr1038old / «flag boothlr1038 0» — только ◄ ►
   int d = (hit & (PSP_CTRL_RIGHT | (boothLR1038Old ? 0u : PSP_CTRL_RTRIGGER))) ? 1 : (hit & (PSP_CTRL_LEFT | (boothLR1038Old ? 0u : PSP_CTRL_LTRIGGER))) ? -1 : 0;
+  if (d && nOrd > 1 && !PHONE_SWAP_DIP_OLD) { swPend += d; swUp = 1; snd(sScroll); logf_("sel-dip pend=%d", swPend); d = 0; }   // M2:32: меняется в самой тёмной точке (phoneViewTick)
   if (d && nOrd > 1) { cur = (cur + d + nOrd) % nOrd; int r = rowOf(cur); snd(sScroll);
                        logf_("sel %d name=%s owned=%d lvl=%d now=%d stats=%d accept=%d", cur, pvName[r], owned(s, r), pvLvl[r], isNow(s, r),
                              boothShowStats(owned(s, r)), boothShowAccept(owned(s, r))); }
@@ -212,8 +243,9 @@ void phoneViewInput(Shop *s, unsigned hit) {
     int r = rowOf(cur);
     if (!owned(s, r)) { snd(sLocked >= 0 ? sLocked : sBack); logf_("deny %d name=%s", cur, pvName[r]); return; }
     if (needsRepair(s, r)) {   // правка 470: починка разбитой — за монеты
-      if (shopCoins(s) < PHONE_REPAIR_COST) { snd(sLocked >= 0 ? sLocked : sBack); logf_("deny-repair %d name=%s coins=%d", cur, pvName[r], shopCoins(s)); return; }
-      shopCoinsAdd(s, -PHONE_REPAIR_COST, 0); logf_("repair %d name=%s cost=%d", cur, pvName[r], PHONE_REPAIR_COST);
+      if (PHONE_REPAIR_ALLOW_OLD && shopCoins(s) < PHONE_REPAIR_COST) { snd(sLocked >= 0 ? sLocked : sBack); logf_("deny-repair %d name=%s coins=%d", cur, pvName[r], shopCoins(s)); return; }
+      { int cost = PHONE_REPAIR_ALLOW_OLD ? PHONE_REPAIR_COST : (shopCoins(s) < PHONE_REPAIR_COST ? shopCoins(s) : PHONE_REPAIR_COST);   // сверка g09a-hud, M2:33: не хватает — банк обнуляется, ремонт идёт
+        shopCoinsAdd(s, -cost, 0); logf_("repair %d name=%s cost=%d", cur, pvName[r], cost); }
     }
     chosen = r; snd(sAccept); phase = PV_OUT; t = 0.f; logf_("accept %d name=%s", cur, pvName[r]);
   }
@@ -229,7 +261,7 @@ static float coverAlpha(void) {
     case PV_IN: return t < PV_DARK_HOLD ? PV_DARK_A : PV_DARK_A * (1.f - (t - PV_DARK_HOLD) / PV_LIGHT_IN);
     case PV_OUT: return PV_DARK_A * (t / PV_LIGHT_OUT > 1.f ? 1.f : t / PV_LIGHT_OUT);
     case PV_DONE: return PV_DARK_A;
-    default: return 0.f;
+    default: return PHONE_SWAP_DIP_OLD ? 0.f : swA;
   }
 }
 // №569 (Роб 12.10): в будке при 100 % урона — родная 2D-картинка разбитой машины с диска (pcar2d_*d.png, PV_T_PIC_DMG)
@@ -319,6 +351,6 @@ void phoneViewDraw2D(Shop *s) {
 }
 const char *phoneViewEnd(Shop *s) {
   if (!on) return 0;
-  uiScrClose(); on = 0; phase = PV_DONE;
+  uiScrClose(); on = 0; phase = PV_DONE; sndStore(0);   // сверка g08 круг 3: «магазин» снят
   return s && chosen >= 0 && chosen < n ? pvName[chosen] : 0;
 }

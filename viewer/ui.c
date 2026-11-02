@@ -165,6 +165,26 @@ static inline int itemVarOff(const UiItem *it) {
 }
 static unsigned tagMask[UI_SCREEN_MAX];                    // экраны пакета (второй пакет — до UI_SCREEN_MAX)
 static float rpx, rpz, rhead, rrange = 150.f;
+// Сверка g09a-hud, радар (M1 Д2, 8, 9, 10, 11). Выключатели: RADAR_CAM_OLD (карта по курсу машины), RADAR_RANGE_OLD (масштаб всегда 150 м),
+// RADAR_PULSE_OLD (значок миссии и Hit & Run без пульса), RADAR_CONE_OLD (клин длиной до цели, без затухания)
+#ifndef RADAR_CAM_OLD
+#define RADAR_CAM_OLD 0
+#endif
+#ifndef RADAR_RANGE_OLD
+#define RADAR_RANGE_OLD 0
+#endif
+#ifndef RADAR_PULSE_OLD
+#define RADAR_PULSE_OLD 0
+#endif
+#ifndef RADAR_CONE_OLD
+#define RADAR_CONE_OLD 0
+#endif
+// Сверка g09a-hud, M13:8 / Д13 / P07:36: таблица уровня (см. uiLevelStatsPct10 ниже); LSTATS_SV_OLD=1 — прежние целые проценты и суммарная формула
+#ifndef LSTATS_SV_OLD
+#define LSTATS_SV_OLD 0
+#endif
+static float rcarh;                 // курс машины игрока (для поворота стрелки машины относительно карты)
+static int rcamOn;                  // 1 — карта повёрнута по взгляду камеры (uiRadarSetCamera вызван в этом кадре)
 static struct { unsigned char type, hasH; float x, z, h; } ricon[UI_RADAR_MAX];   // h — курс (стрелка машины повёрнута, правка 122)
 static int nricon;
 static int radarDrawn[UI_R_COUNT];
@@ -337,19 +357,33 @@ static float bubAge;        // №942: возраст пузыря задани�
 static float objFlyT;       // №942: время полёта значка в угол, тот же шаг
 static float popAgeOf(int t, int on) { return (t == UI_T_OBJECTIVE && on && !BUBBLE_LAG942_OLD) ? bubAge : uiClk - (on ? tagOnT[t] : tagOffT[t]); }
 void uiClkTest(int mode, float v) { if (mode == 0) { uiClkHold = 0; uiClkPend = 0.f; } else if (mode == 1) uiClkHold = 1; else uiClkPend += v; }
+// Сверка g09a-hud, M1:17: шаг времени интерфейса — если кадр дольше 100 мс, берётся 20 мс (анимации не прыгают после подвисания); было — потолок 100 мс.
+// UI_DT_SV_OLD=1 — прежнее
+#ifndef UI_DT_SV_OLD
+#define UI_DT_SV_OLD 0
+#endif
+static inline float uiDtCap(float d) { return d > .1f ? (UI_DT_SV_OLD ? .1f : .02f) : d; }
 static void uiClockTick(void) {
   unsigned now = sceKernelGetSystemTimeLow();
-  if (uiClkHold) { uiClkDt = uiClkInit ? (uiClkPend > .1f ? .1f : uiClkPend) : 0.f; uiClk += uiClkDt; uiClkPend = 0.f; uiClkInit = 1; uiClkLast = now; if (bubAge < 1000.f) bubAge += uiClkDt < UI_BUB_DT_CAP ? uiClkDt : UI_BUB_DT_CAP; return; }
+  if (uiClkHold) { uiClkDt = uiClkInit ? uiDtCap(uiClkPend) : 0.f; uiClk += uiClkDt; uiClkPend = 0.f; uiClkInit = 1; uiClkLast = now; if (bubAge < 1000.f) bubAge += uiClkDt < UI_BUB_DT_CAP ? uiClkDt : UI_BUB_DT_CAP; return; }
   uiClkDt = 0.f;
-  if (uiClkInit) { float d = (now - uiClkLast) * 1e-6f; uiClkDt = d > .1f ? .1f : d; uiClk += uiClkDt; }
+  if (uiClkInit) { float d = (now - uiClkLast) * 1e-6f; uiClkDt = uiDtCap(d); uiClk += uiClkDt; }
   if (bubAge < 1000.f) bubAge += uiClkDt < UI_BUB_DT_CAP ? uiClkDt : UI_BUB_DT_CAP;
   uiClkInit = 1; uiClkLast = now;
 }
+float uiCountdownDur = 1.0f;   // сверка g09a-hud, M2:3: секунды одной позиции отсчёта
 static int popKind(int tag) {   // какие теги HUD всплывают (ui_anim.h, п. 2); -1 — без анимации
   switch (tag) {
     case UI_T_OBJECTIVE: return BUBBLE_ANIM_OLD ? UI_POP_BOX : UI_POP_PILL;   // №516: строка задания растёт по высоте (ui_anim.h 2в)
-    case UI_T_STAGE_COMPLETE: case UI_T_MISSION_COMPLETE: case UI_T_MISSION_FAILED: case UI_T_CARD_TEXT: case UI_T_CARDS:
-    case UI_T_ITEMS_COMPLETE: case UI_T_WASPS: case UI_T_HNR_TICKET: case UI_T_COUNTDOWN: case UI_T_ITEM_DROPPED:
+    case UI_T_STAGE_COMPLETE: if (!STAGE_POP_OLD) return UI_POP_STAGE; return UI_POP_BANNER;   // сверка g09a-hud, M2:1: своя кривая «этапа пройден»
+    case UI_T_MISSION_COMPLETE: if (!MCOMP_POP_OLD) return UI_POP_MCOMP; return UI_POP_BANNER;  // сверка g09a-hud, M2:2
+    case UI_T_COUNTDOWN: if (!CDOWN_POP_OLD) return UI_POP_CDOWN; return UI_POP_BANNER;         // сверка g09a-hud, M2:3
+    case UI_T_RADAR: if (!RADAR_FADE_OLD) return UI_POP_RADAR; return -1;   // круг 2, С_ИСХ 7.12: радар проявляется и гаснет 0,25 / 0,25 с
+    case UI_T_CARDS: if (!CARDPOP_OLD) return UI_POP_CARD; return UI_POP_BANNER;   // 7.5
+    case UI_T_HNR_TICKET: if (!HNRTXT_POP_OLD) return UI_POP_HNR; return UI_POP_BANNER;   // 7.7, g09b M2:4
+    case UI_T_ITEM_DROPPED: if (!DROP_BLINK_OLD) return UI_POP_DROP; return UI_POP_BANNER;   // g07b M2:6
+    case UI_T_MISSION_FAILED: case UI_T_CARD_TEXT:
+    case UI_T_ITEMS_COMPLETE: case UI_T_WASPS:
       return UI_POP_BANNER;
     case UI_T_COINS: return UI_POP_SLIDE;   // правка Роба 51: въезд сверху / уезд вверх (ui_anim.h, п. 2б)
   }
@@ -487,13 +521,14 @@ static int pakRead(const char *path) {
 }
 #undef PKP
 
+static void svReset(void);   // сверка g09a-hud
 int uiInit(const char *path) {
   int r = pakRead(path);
   if (r) return r;
   tagMask[UI_SCREEN_HUD] |= 1u << UI_T_HNR_FULL; // clipped continuously, empty at zero
   memset(fieldv, 0, sizeof fieldv);
   fieldv[UI_F_LAPS] = 3; fieldv[UI_F_CARDS_TOTAL] = 7; fieldv[UI_F_COLLECT_TOTAL] = 10; fieldv[UI_F_POSITION] = 1;
-  rpx = rpz = rhead = 0; nricon = 0;
+  rpx = rpz = rhead = 0; nricon = 0; svReset();   // сверка g09a-hud: состояния тиков/переходов заново
   msgText[0] = 0; msgUntil = 0; paused = 0; pauseSel = 0; pauseClosing = 0;
   memset(menuOff, 0, sizeof menuOff); memset(menuHid, 0, sizeof menuHid);
   // pause items that have no function in the port yet: dimmed and skipped (uiMenuEnable turns them on)
@@ -668,12 +703,52 @@ int uiScrBackInput(unsigned hit) {   // экран без строк (VIEW CREDI
   if (!(hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))) return 0;
   pauseEv(UI_EV_BACK, 1); return 1;
 }
+// ---- Сверка g09a-hud, меню (M1:3, 4, 5, 6, Д1, Д3, Д8; M3:6). Числа — поведение оригинала, код свой. Каждый выключатель: =1 — прежнее.
+//  MENU_PICK_OLD — выбор пункта: звук в тот же момент, потом весь ввод экрана глохнет 0,25 с, только затем возвращается действие (M1:3);
+//  MENU_XIT_OLD  — экран входит и выходит затемнением 0,25 с (прозрачность по квадрату доли), ввод на это время глохнет и не копится (M1:6, Д3);
+//  SLIDER_SV_OLD — ползунок идёт по времени, полный ход за 2,0 с, пока стрелка зажата, без звука на ходу; после остановки образец
+//                  группы (M1:5, Д1, M3:6); события UI_EV_STING* — звук подключает окно g08 (ui_sfx.c) по именам дисковых звуков;
+//  MENU_REP_SV_OLD — автоповтор стрелок: первая пауза 0,332 с, шаг 0,166 с (M1:4); будка (L/R) не тронута.
+#ifndef MENU_PICK_OLD
+#define MENU_PICK_OLD 0
+#endif
+#ifndef MENU_XIT_OLD
+#define MENU_XIT_OLD 0
+#endif
+#ifndef SLIDER_SV_OLD
+#define SLIDER_SV_OLD 0
+#endif
+#define XIT_US 250000u
+static unsigned sliderMovedMask;   // строки Sound, которые двигали (для образца после остановки)
+static int xitScr = -1, xitMode, xitOut, xitPend; static unsigned xitT0, xitLast;   // mode: 1 — вход, 2 — выбор/выход (действие ждёт 0,25 с)
+static float xitA = 1.f;                                                            // прозрачность экрана на время входа/выхода (умножается на subFadeA)
+// 0 — ввод принимается; 1 — ввод глохнет; 2 — вернуть отложенное действие *res
+static int xitGate(int screen, int none, int *res) {
+  if (MENU_XIT_OLD && MENU_PICK_OLD) return 0;
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (!MENU_XIT_OLD && xitMode != 2 && (screen != xitScr || (unsigned)(now - xitLast) > 1000000u)) { xitScr = screen; xitMode = 1; xitT0 = now; xitOut = 0; sliderMovedMask = 0; }
+  xitLast = now;
+  if (!xitMode) return 0;
+  if ((unsigned)(now - xitT0) > XIT_US) { int m = xitMode; xitMode = 0; xitA = 1.f; if (m == 2) { *res = xitPend; return 2; } return 0; }
+  float u = (float)(now - xitT0) / (float)XIT_US;
+  xitA = xitMode == 1 ? u * u : (xitOut ? (1.f - u) * (1.f - u) : 1.f);
+  (void)none; return 1;
+}
+static void xitArm(int result, int toBlack) { xitMode = 2; xitT0 = sceKernelGetSystemTimeLow(); xitPend = result; xitOut = toBlack; }
+// ползунки Sound: значения 0…1000, полный ход за 2,0 с (500 в секунду); движение копится дробным остатком, чтобы не терять кадры
+static unsigned padHeldDirs, padHeldAt;          // ◄ ► зажаты (uiPadRepeat видит кнопки каждый кадр)
+static float sliderAcc; static int sliderRow = -1; static unsigned sliderLastMove; static unsigned sliderLastUs;
 // звуки экранов меню (OPTIONS, Sound, Settings, слоты сохранений), как в паузе (frontend.spt): смена строки и значения —
 // scroll, пункт — accept, △/○ — back. Значение строки (ползунок, вариант) — scroll: правило порта, отдельного звука в данных нет
 int uiScrMenuInput(int screen, int *sel, unsigned hit) {
   int n = uiScrRows(screen);
   if (n <= 0 || !sel) return UI_SCR_NONE;
-  if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) { pauseEv(UI_EV_BACK, 1); return UI_SCR_BACK; }   // △ — Back (Back.pag), ○ — тоже назад
+  { int pend = 0, g = xitGate(screen, UI_SCR_NONE, &pend); if (g == 1) return UI_SCR_NONE; if (g == 2) return pend; }   // M1:3, 6, Д3: вход, выход и 0,25 с после выбора
+  if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) {
+    pauseEv(UI_EV_BACK, 1);
+    if (!MENU_XIT_OLD || !MENU_PICK_OLD) { xitArm(UI_SCR_BACK, !MENU_XIT_OLD); return UI_SCR_NONE; }   // экран гаснет 0,25 с, затем возвращается «назад»
+    return UI_SCR_BACK;
+  }   // △ — Back (Back.pag), ○ — тоже назад
   int dir = (hit & PSP_CTRL_UP) ? -1 : (hit & PSP_CTRL_DOWN) ? 1 : 0, was = *sel;
   if (!uiScrEnabled(screen, *sel) && !dir) dir = 1;
   if (dir) for (int k = 1; k <= n; k++) { int j = *sel + dir * k, i = (j % n + n) % n; if (uiPadRepeated && (j < 0 || j >= n)) break;   // правка 202
@@ -684,12 +759,35 @@ int uiScrMenuInput(int screen, int *sel, unsigned hit) {
   if (kind == UI_ROW_OPTIONS && nopt > 0 && (hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_CROSS))) {
     v = ((hit & PSP_CTRL_LEFT) ? v + nopt - 1 : v + 1) % nopt; fieldv[UI_F_ROW0 + *sel] = v; pauseEv(UI_EV_SCROLL, 1); return UI_SCR_CHANGED;
   }
+  if (kind == UI_ROW_SLIDER && !SLIDER_SV_OLD) {   // M1:5, Д1, M3:6
+    unsigned now = sceKernelGetSystemTimeLow(); float dt = sliderLastUs ? (now - sliderLastUs) * 1e-6f : 0.f; sliderLastUs = now; if (dt > .1f) dt = .1f;
+    unsigned held = (unsigned)(now - padHeldAt) < 100000u ? padHeldDirs : 0u;   // кнопки видел uiPadRepeat в этом кадре
+    if (!held && (hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))) held = hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT);   // нет данных о кнопках (сценарий смоука) — нажатие как шаг ниже
+    int dir = (held & PSP_CTRL_RIGHT) ? 1 : (held & PSP_CTRL_LEFT) ? -1 : 0;
+    if (sliderRow != *sel) { sliderRow = *sel; sliderAcc = 0.f; }
+    int v0 = v, step = 0;
+    if (dir) {
+      if ((unsigned)(now - padHeldAt) < 100000u && padHeldDirs) { sliderAcc += dir * 500.f * dt; step = (int)sliderAcc; sliderAcc -= (float)step; }   // 1000 за 2,0 с
+      else step = dir * 100;                                                                                                                           // одиночный шаг без удержания
+      v += step; v = v < 0 ? 0 : v > 1000 ? 1000 : v; fieldv[UI_F_ROW0 + *sel] = v;
+    }
+    if (v != v0) { sliderMovedMask |= 1u << (*sel & 31); sliderLastMove = now; return UI_SCR_CHANGED; }   // двигается — звука нет
+    if (sliderMovedMask && !(padHeldDirs && (unsigned)(now - padHeldAt) < 100000u && dir && v > 0 && v < 1000)) {   // круг 3: образец — в первом кадре без движения (как в оригинале), без задержки
+      for (int r = 0; r < 32; r++) if (sliderMovedMask >> r & 1u) pauseEv(UI_EV_STING, r + 1);   // остановился: образец группы каждой сдвинутой строки, по порядку
+      sliderMovedMask = 0;
+    }
+    return UI_SCR_NONE;
+  }
   if (kind == UI_ROW_SLIDER && (hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT))) {
     int v0 = v; v += (hit & PSP_CTRL_LEFT) ? -100 : 100; v = v < 0 ? 0 : v > 1000 ? 1000 : v; fieldv[UI_F_ROW0 + *sel] = v;
     if (v != v0) pauseEv(UI_EV_SCROLL, 1);
     return UI_SCR_CHANGED;
   }
-  if (kind == UI_ROW_ITEM && (hit & PSP_CTRL_CROSS)) { pauseEv(UI_EV_ACCEPT, 1); return *sel; }
+  if (kind == UI_ROW_ITEM && (hit & PSP_CTRL_CROSS)) {
+    pauseEv(UI_EV_ACCEPT, 1);
+    if (!MENU_PICK_OLD) { xitArm(*sel, 0); return UI_SCR_NONE; }   // M1:3: действие через 0,25 с, ввод глохнет
+    return *sel;
+  }
   return UI_SCR_NONE;
 }
 
@@ -752,7 +850,10 @@ void uiShow(int s, int tag, int on) {
   }
   tagMask[s] |= 1u;                                         // ALWAYS
 }
-void uiRadarSetPlayer(float x, float z, float h) { rpx = x; rpz = z; rhead = h; }
+void uiRadarSetPlayer(float x, float z, float h) { rpx = x; rpz = z; rhead = h; rcarh = h; rcamOn = 0; }
+// M1 Д2: карта радара совпадает с направлением взгляда главной камеры в горизонтали, а не с курсом машины; вызывать после uiRadarSetPlayer
+// в том же кадре, yaw — в тех же единицах и с тем же знаком, что heading у uiRadarSetPlayer. Стрелка машины поворачивается на разность.
+void uiRadarSetCamera(float yaw) { if (!RADAR_CAM_OLD) { rhead = yaw; rcamOn = 1; } }
 void uiRadarSetRange(float m) { if (m > 1.f) rrange = m; }
 void uiRadarClear(void) { nricon = 0; }
 void uiRadarAdd(int type, float x, float z) {
@@ -970,6 +1071,7 @@ static void drawSlot(const UiSlot *s, int x, int y, int w, unsigned col) {
 // газета в полёте (uiScrNews): четырёхугольник поворота/масштаба от центра места, float-вершины, линейный фильтр
 static float newsAng, newsScale = 1.f, newsAlpha = 1.f;
 void uiScrNews(float ang, float scale, float alpha) { newsAng = ang; newsScale = scale; newsAlpha = alpha; }
+void uiScrNewsT(float t) { float a, k, al; uiNewsPose(t, &a, &k, &al); uiScrNews(a, k, al); }   // сверка g09a-hud, M1:1: газета по закону оригинала от секунд t с начала запроса загрузки
 static void drawSlotRot(const UiSlot *s, int x, int y, unsigned col) {
   bflush();
   bindTex(s->tex, 1);
@@ -1295,6 +1397,7 @@ static void drawRect(const UiItem *it) {
 }
 
 static int radarTarget(float *ang, float *dist);
+static float rdTgtRatio; static int rdTgtType;   // сверка g09a-hud: расстояние до цели в долях границы радара, тип значка (радарный клин)
 static int coneOff;   // отрицательный контроль гейта правки 50 (uiRadarConeOff): клин как в данных — вверх и всегда
 static int rdDrawn, rdRim, rdRimOther, rdCone; static float rdConeAng, rdTgtX, rdTgtZ;   // служебно: что нарисовал радар (uiRadarDebug)
 void uiRadarDebug(int *drawn, int *rim, int *rimOther, int *cone, float *coneAng, float *tx, float *tz) {
@@ -1311,14 +1414,30 @@ void uiRadarHarassOld(int on) { radarHarassOld = on; }
 static void drawPoly(const UiItem *it) {
   // Правка Роба 50 (эталон PS2 2:10–2:30, кадры радара 4:25…28:20): клин RadarCone0 — от центра к цели миссии; цель за краем —
   // до обода; цели нет — клина нет. В данных Hud.pag клин смотрит вверх (остриё — точка 0), поворачивает его код оригинала
-  float ca = 1.f, sa = 0.f, sc = 1.f, ax = 0.f, ay = 0.f; int cone = ITEM_CONE(it) && !coneOff;
+  float ca = 1.f, sa = 0.f, sc = 1.f, ax = 0.f, ay = 0.f, coneFade = 1.f; int cone = ITEM_CONE(it) && !coneOff;
   if (cone) {
     float a, d; if (!radarTarget(&a, &d)) { rdCone = 0; return; }
     const UiPt *p0 = &pts[it->first]; ax = p0->x; ay = p0->y; float L = 0.f;
     for (unsigned i = 1; i < it->count; i++) { const UiPt *p = &pts[it->first + i]; float l = sqrtf((p->x - ax) * (p->x - ax) + (p->y - ay) * (p->y - ay)); if (l > L) L = l; }
     ca = cosf(a); sa = sinf(a); sc = L > 1.f ? d / L : 1.f;
+    // сверка g09a-hud, M1:11 (поправка второго читателя): клин всегда одного размера (RadarCone0), только поворачивается к цели; прозрачность —
+    // слой, умноженный на степень выхода значка к краю: у машин ИИ пропорционально доле расстояния до границы радара, у остальных целей нуль
+    // до 0,75 границы и линейно до единицы на границе. Цель дальше 120 м идёт по дорожному маршруту — маршрута в движке нет (журнал, «нельзя»)
+    if (!RADAR_CONE_OLD) {
+      // круг 3 (проверка по исходнику): внутри границы клин виден полностью; за границей множитель = граница / расстояние; у машин ИИ прозрачность равна множителю,
+      // у остальных целей (множитель − 0,75) / 0,25, не меньше нуля (гаснет на 1,33 границы)
+      sc = 1.f; float m = rdTgtRatio <= 1.f ? 1.f : 1.f / rdTgtRatio;
+      coneFade = rdTgtType == UI_R_AICAR ? m : (m <= .75f ? 0.f : (m - .75f) / .25f);
+    }
   }
   if (ITEM_CONE(it)) { rdCone = 1; rdConeAng = cone ? atan2f(sa, ca) : 0.f; }   // угол по часовой от «вверх», радианы
+  // M1 Д2: стрелка машины игрока (не клин) — угол = взгляд камеры минус курс машины, вокруг своего центра (как у стрелок машин ИИ: rhead - h)
+  int arrowRot = 0; float arC = 1.f, arS = 0.f, arCx = 0.f, arCy = 0.f;
+  if (!RADAR_CAM_OLD && rcamOn && !ITEM_CONE(it) && it->tag == UI_T_RADAR && it->count >= 3 && it->count <= 12) {
+    float aa = rhead - rcarh; arC = cosf(aa); arS = sinf(aa); arrowRot = fabsf(aa) > 1e-4f;
+    for (unsigned i = 0; i < it->count; i++) { arCx += pts[it->first + i].x; arCy += pts[it->first + i].y; } arCx /= it->count; arCy /= it->count;
+  }
+  if (coneFade <= 0.f) return;   // клин не виден (цель далеко внутри радара) — не рисуем вовсе
   bflush();
   texEnable(0);
   unsigned n = it->count;
@@ -1326,7 +1445,8 @@ static void drawPoly(const UiItem *it) {
   for (unsigned i = 0; i < n; i++) {
     const UiPt *p = &pts[it->first + i]; float x = p->x, y = p->y;
     if (cone) { float dx = (x - ax) * sc, dy = (y - ay) * sc; x = ax + dx * ca - dy * sa; y = ay + dx * sa + dy * ca; }   // поворот по часовой (y вниз)
-    v[i] = (VFCol){mulAlpha(p->color, xf.on ? xf.a : 1.f), xfX(x), xfY(y), 0};
+    if (arrowRot) { float dx = x - arCx, dy = y - arCy; x = arCx + dx * arC - dy * arS; y = arCy + dx * arS + dy * arC; }   // сверка g09a-hud, M1 Д2: стрелка машины на разность курса и взгляда
+    v[i] = (VFCol){mulAlpha(p->color, (xf.on ? xf.a : 1.f) * coneFade), xfX(x), xfY(y), 0};
   }
   vend(b, n * sizeof(VFCol));
   sceGuDrawArray(GU_TRIANGLE_FAN, VT_FCOL, (int)n, 0, v);
@@ -1504,6 +1624,9 @@ static int menuVecWanted(const UiItem *it, int sidx, int selected, const char *s
   if (it->flags & F_MENU) return it->menu == selected && !(it->menu < 32 && (menuOff[sidx] >> it->menu & 1));
   return sidx == UI_SCREEN_MAIN && !scrMode && it->field == UI_F_MENU_ITEM;
 }
+#ifndef CARDTEXT_PULSE_OLD
+#define CARDTEXT_PULSE_OLD 0
+#endif
 static void drawTextItem(const UiItem *it, const char *s, unsigned col);
 static void menuVecPlate(const UiItem *it, const char *s) {
   const UiFont *f = itemFont(it, curScreen); if (!f || it->font >= H->nfont) return;
@@ -1710,6 +1833,49 @@ static float hudBlkUpdate(int present, float k, int home) {
 #define COIN_RIGHT_OLD 0   // №672 (Роб: «всё задом наперёд»): у PS2 значок монеты СПРАВА от цифр счёта («26 🪙» — запись PS2 5:00 HUD, 14:06 лавка),
                            // у порта был слева. Теперь справа: цифры отодвигаются на ширину значка, правый край счёта на месте. 1 — прежнее (слева)
 #endif
+// Сверка g09a-hud, M2:9 — состояние счёта монет (тик 40 мс; сам счёт — ниже, uiSetCoins)
+#ifndef COINS_TICK_OLD
+#define COINS_TICK_OLD 0
+#endif
+#define COIN_TICK_US 40000u
+#define COIN_TICK_MAX 50
+#define COIN_LOSS_SNAP 20
+static int coinShown = -1, coinTarget; static unsigned coinT;
+// Сверка g09a-hud, M2:15 — таймер миссии мигает белым–красным (217,2,5): окно мигания и его доля из данных миссии ведёт msn_view (uiTimerBlink раз в кадр);
+// период 0,5 с, ×0,67 при доле больше 0,5, ×0,5 при доле больше 0,8; на каждом периоде событие UI_EV_TICK (звук тика — g08). При остатке 1 с и меньше оверлей прячется.
+// TIMER_SV_OLD=1 — прежнее (без мигания и без прятания)
+#ifndef TIMER_SV_OLD
+#define TIMER_SV_OLD 0
+#endif
+static int tbOn, tbUp; static float tbPhase; static unsigned tbUs;
+void uiTimerUp(int up) { tbUp = up; }   // круг 3: таймер считает вверх — не прячется при остатке ≤ 1 с (в оригинале показывается только остаток)
+void uiTimerBlink(int on, float frac) {
+  unsigned now = sceKernelGetSystemTimeLow(); float dt = tbUs ? (now - tbUs) * 1e-6f : 0.f; tbUs = now; if (dt > .1f) dt = .1f;
+  if (TIMER_SV_OLD || !on) { tbOn = 0; tbPhase = 0.f; return; }
+  float per = .5f * (frac > .8f ? .5f : frac > .5f ? .67f : 1.f), p0 = tbPhase;
+  tbPhase += dt / per; tbOn = 1;
+  if ((int)tbPhase > (int)p0) { tbPhase -= (float)(int)tbPhase; pauseEv(UI_EV_TICK, 1); }
+}
+static unsigned lerpCol(unsigned a, unsigned b, float k) {   // ABGR, k 0…1
+  unsigned out = a & 0xff000000u;
+  for (int sh = 0; sh < 24; sh += 8) { float x = (float)((a >> sh) & 255u), y = (float)((b >> sh) & 255u); out |= (unsigned)(x + (y - x) * k + .5f) << sh; }
+  return out;
+}
+static unsigned numColor(const UiItem *it) {
+  unsigned c = it->color;
+  if (it->field == UI_F_TIMER && tbOn) c = lerpCol(0xffffffffu, 0xff0502d9u, .5f - .5f * cosf(2.f * 3.14159265f * tbPhase));   // 217,2,5
+  else if (it->field == UI_F_COINS && !COINS_TICK_OLD && coinShown > coinTarget) {   // монеты убывают: цвет ходит к красному, период 80 мс
+    static unsigned t0; unsigned now = sceKernelGetSystemTimeLow(); if (!t0) t0 = now;
+    c = lerpCol(c, 0xff0000ffu, .5f - .5f * cosf(2.f * 3.14159265f * (float)((now - t0) % 80000u) / 80000.f));   // круг 3: красный (255,0,0)
+  }
+  return c;
+}
+#ifndef HUD_ENTER_OLD
+#define HUD_ENTER_OLD 0
+#endif
+#ifndef DAMAGE_BLINK_OLD
+#define DAMAGE_BLINK_OLD 0
+#endif
 static void drawNum(const UiItem *it, const char *s) {
   if (typoShot || it->font >= H->nsfont || !s) return;
   const UiSGlyph *G = &sfonts[it->font * 256];
@@ -1729,6 +1895,7 @@ static void drawNum(const UiItem *it, const char *s) {
     coinIcSeen = 1;
     if (!coin3d) badd(p->tex, p->u, p->v, p->w, p->h, px_, py_, 0xffffffffu);
   }
+  unsigned ncol = numColor(it);
   for (int i = 0; i < n; i++) {
     unsigned c = (unsigned char)s[i];
     if (c >= 'a' && c <= 'z') c -= 32;
@@ -1736,7 +1903,7 @@ static void drawNum(const UiItem *it, const char *s) {
     if (!g->flags) continue;
     if (g->tex != 0xffff) {
       int gy = it->valign == 1 ? it->y + floordiv(it->h - g->h, 2) : (it->valign == 0 ? it->y : it->y + it->h - g->h);
-      badd(g->tex, g->u, g->v, g->w, g->h, x0 + g->xoff, gy, it->color);
+      badd(g->tex, g->u, g->v, g->w, g->h, x0 + g->xoff, gy, ncol);
     }
     x0 += g->adv;
   }
@@ -1806,8 +1973,10 @@ static void drawHnrFill(const UiItem *it) {
 // круг радара: карта видна только внутри кольца шкалы (clip из ui.shr), масштаб по радиусу Map0 (ang); старый файл: clip 0
 static inline float radarClip(const UiItem *it) { return it->clip > 0.f && it->clip < it->ang ? it->clip : it->ang; }
 
+static void radarAutoRange(void);   // сверка g09a-hud, M1:8
 static void drawRadarMap(const UiItem *it) {
   if (H->mapTex < 0) return;
+  radarAutoRange();
   bflush();
   float cx = it->px, cy = it->py, r = it->ang, k = r / rrange, rc = radarClip(it);
   float c = cosf(rhead), s = sinf(rhead), inv = 1.f / H->mapMpp;
@@ -1863,6 +2032,13 @@ int uiMarkerSmall(int type, const float *center, const float *half) {
   markerDrawn++;
   return 1;
 }
+// Сверка g09a-hud, M1 Д9: значки телефонной будки и машины игрока скрыты, пока игрок в машине. Вызывающий (main_loop.h) ставит 1 в машине, 0 пешком.
+// RADAR_VIS_OLD=1 — значки видны всегда
+#ifndef RADAR_VIS_OLD
+#define RADAR_VIS_OLD 0
+#endif
+static int radarInCar;
+void uiRadarInCar(int on) { radarInCar = on; }
 static int radarSticks(int type) { return (type == UI_R_HARASS && !radarHarassOld) || type == UI_R_MISSION || type == UI_R_WAYPOINT || type == UI_R_CHECKER || type == UI_R_AICAR; }
 static const UiItem *radarIconsItem(void) {
   const UiScreen *sc = &screens[UI_SCREEN_HUD];
@@ -1879,11 +2055,45 @@ static int radarTarget(float *ang, float *dist) {
       if (ricon[i].type != order[o]) continue;
       float dx = ricon[i].x - rpx, dz = ricon[i].z - rpz, sx = (-c * dx + s * dz) * k, sy = -(s * dx + c * dz) * k;
       float d = sqrtf(sx * sx + sy * sy); if (d < 2.f) return 0;   // цель под игроком — клина нет
-      *ang = atan2f(sx, -sy); *dist = d < lim ? d : lim; rdTgtX = ricon[i].x; rdTgtZ = ricon[i].z; return 1;
+      *ang = atan2f(sx, -sy); *dist = d < lim ? d : lim; rdTgtX = ricon[i].x; rdTgtZ = ricon[i].z; rdTgtRatio = lim > 0.f ? d / (.8f * lim) : 1.f; rdTgtType = order[o]; return 1;   // граница клина — 0,8 радиуса карты (120 м при 150 м); тип цели — для затухания клина
     }
   return 0;
 }
+// M1:8 — масштаб радара: есть значок цели — высота камеры 1,5 расстояния до неё в пределах 50…150 м, нет цели — 150 м; меняется не быстрее 10 м за
+// кадр оригинала (30 к/с, поправка второго читателя: по времени, около 0,33 с на весь ход, а не за кадр движка). rrange — видимый радиус карты, м.
+static void radarAutoRange(void) {
+  if (RADAR_RANGE_OLD) return;
+  static const int order[] = {UI_R_MISSION, UI_R_AICAR, UI_R_WAYPOINT, UI_R_CHECKER};
+  float want = 150.f;
+  for (unsigned o = 0; o < sizeof order / sizeof *order; o++) {
+    int found = 0;
+    for (int i = 0; i < nricon; i++) if (ricon[i].type == order[o]) {
+      float dx = ricon[i].x - rpx, dz = ricon[i].z - rpz, d = sqrtf(dx * dx + dz * dz);
+      want = 1.5f * d; if (want < 50.f) want = 50.f; if (want > 150.f) want = 150.f; found = 1; break;
+    }
+    if (found) break;
+  }
+  float step = 10.f * (uiClkDt > 0.f ? uiClkDt * 30.f : 1.f); if (step < 1.f) step = 1.f;
+  if (rrange < want) { rrange += step; if (rrange > want) rrange = want; }
+  else if (rrange > want) { rrange -= step; if (rrange < want) rrange = want; }
+}
+// M1:10 — значок Hit & Run: пока активен, цвет плавно ходит красный — синий — красный (синус 0,5 + 0,5·sin, период 0,5 с). RADAR_PULSE_OLD=1 — красный постоянный.
+// ВНИМАНИЕ Робу: у записи PS2 (правка 241) стрелка выглядела красной ≈(200,0,0); по исходнику она мигает в синий — решает глаз на PSP
+static unsigned radarHarassCol(float t) {
+  if (RADAR_PULSE_OLD) return 0xff0000ffu;
+  float k = .5f + .5f * sinf(2.f * 3.14159265f * t / .5f);       // 0 — красный, 1 — синий
+  int r = (int)(255.f * (1.f - k) + .5f), g = 0, b = (int)(255.f * k + .5f);   // круг 3: чистые красный (255,0,0) и синий (0,0,255)
+  return 0xff000000u | (unsigned)b << 16 | (unsigned)g << 8 | (unsigned)r;
+}
+static float radarPulseT(float *t0, int had) {   // секунды пульса с момента появления значка; 1,25 на старте и растёт (синус периода 0,5 с)
+  if (!had) { *t0 = -1.f; return 0.f; }
+  if (*t0 < 0.f) *t0 = uiClk;
+  return uiClk - *t0;
+}
 static void drawRadarIcons(const UiItem *it) {
+  static float msnT0 = -1.f, hnrT0 = -1.f; int hadMsn = 0, hadHnr = 0;
+  for (int i = 0; i < nricon; i++) { if (ricon[i].type == UI_R_MISSION) hadMsn = 1; if (ricon[i].type == UI_R_HARASS) hadHnr = 1; }
+  float msnT = radarPulseT(&msnT0, hadMsn), hnrT = radarPulseT(&hnrT0, hadHnr);
   rdDrawn = rdRim = rdRimOther = 0;
   memset(radarDrawn, 0, sizeof radarDrawn);
   float cx = it->px, cy = it->py, r = it->ang, k = r / rrange;
@@ -1891,6 +2101,7 @@ static void drawRadarIcons(const UiItem *it) {
   for (int i = 0; i < nricon; i++) {
     const UiIcon *ic = &icons[ricon[i].type];
     if (ic->tex == 0xffff) continue;
+    if (!RADAR_VIS_OLD && radarInCar && (ricon[i].type == UI_R_PHONE || ricon[i].type == UI_R_PLAYERCAR)) continue;   // Д9: в машине будки и своей машины на радаре нет
     float dx = ricon[i].x - rpx, dz = ricon[i].z - rpz;
     float sx = (-c * dx + s * dz) * k, sy = -(s * dx + c * dz) * k;
     float d = sqrtf(sx * sx + sy * sy), lim = radarClip(it) - (ic->w > ic->h ? ic->w : ic->h) * 0.35f;
@@ -1898,7 +2109,7 @@ static void drawRadarIcons(const UiItem *it) {
     if (d > lim && d > 0) { sx *= lim / d; sy *= lim / d; rdRim++; if (!radarSticks(ricon[i].type)) rdRimOther++; }
     rdDrawn++;
     radarDrawn[ricon[i].type]++;
-    unsigned icol0 = ricon[i].type == UI_R_HARASS && !radarHarassOld ? 0xff0000ffu : ic->color;
+    unsigned icol0 = ricon[i].type == UI_R_HARASS && !radarHarassOld ? radarHarassCol(hnrT) : ic->color;
     if (ricon[i].hasH) {   // правка 122 (запись PS2 5:05, 15:30): стрелка машины миссии — по её курсу относительно радара
       bflush(); bindTex(ic->tex, 0);
       float ang = rhead - ricon[i].h, co = cosf(ang), sn = sinf(ang), hw = ic->w * .5f, hh = ic->h * .5f, ox = cx + sx, oy = cy + sy;
@@ -1912,7 +2123,13 @@ static void drawRadarIcons(const UiItem *it) {
       vend(vb, 4 * sizeof(VFTex)); sceGuDrawArray(GU_TRIANGLE_STRIP, VT_FTEX, 4, 0, v); st.draws++;
       continue;
     }
-    unsigned icol = ricon[i].type == UI_R_HARASS && !radarHarassOld ? 0xff0000ffu : ic->color;   // №241: в данных стрелка белая, красной её делает игра (запись PS2: ≈(200,0,0))
+    unsigned icol = ricon[i].type == UI_R_HARASS && !radarHarassOld ? radarHarassCol(hnrT) : ic->color;   // №241: в данных стрелка белая, красной её делает игра (запись PS2: ≈(200,0,0))
+    if (!RADAR_PULSE_OLD && ricon[i].type == UI_R_MISSION) {   // M1:9 — значок миссии в фокусе пульсирует от центра 1,0…1,5, период 0,5 с, на старте 1,25 и растёт
+      float ks = 1.25f + .25f * sinf(2.f * 3.14159265f * msnT / .5f);
+      int dw = (int)(ic->w * ks + .5f), dh = (int)(ic->h * ks + .5f);
+      baddS(ic->tex, ic->u, ic->v, ic->w, ic->h, (int)floorf(cx + sx - dw * .5f + .5f), (int)floorf(cy + sy - dh * .5f + .5f), dw, dh, icol);
+      continue;
+    }
     int x = (int)floorf(cx + sx - ic->w * 0.5f + 0.5f), y = (int)floorf(cy + sy - ic->h * 0.5f + 0.5f);
     badd(ic->tex, ic->u, ic->v, ic->w, ic->h, x, y, icol);
   }
@@ -1922,7 +2139,16 @@ static void drawRadarIcons(const UiItem *it) {
 // стоят в ОДНОЙ точке (135,385 45x50) — оригинал показывает их не поверх друг друга. Правило: видимые оверлеи идут
 // стопкой вниз от этой точки в порядке OV_ORDER, шаг — высота строки числа (T_NUM) оверлея. uiOverlayStack(0) выключает
 // правило (отрицательный контроль гейта tests/missions/emu_hud.sh). uiOverlayBoxes — итоговые рамки (служебно).
+// Сверка g09a-hud, M2:20: порядок приоритета оверлеев миссии у оригинала — урон, близость, коллекционные, таймер, место в гонке, круги, парное время (урон и близость
+// стоят отдельно, в стопку не входят). Было: таймер, парное время, круги, место, коллекционные. OV_ORDER_SV_OLD=1 — прежнее. Масштаб 0,75 и сдвиг на 9 % / 19 % высоты — вид, оставлен нашим
+#ifndef OV_ORDER_SV_OLD
+#define OV_ORDER_SV_OLD 0
+#endif
+#if OV_ORDER_SV_OLD
 static const unsigned char OV_ORDER[] = {UI_T_TIMER, UI_T_PARTIME, UI_T_LAP, UI_T_POSITION, UI_T_COLLECTIBLES};
+#else
+static const unsigned char OV_ORDER[] = {UI_T_COLLECTIBLES, UI_T_TIMER, UI_T_POSITION, UI_T_LAP, UI_T_PARTIME};
+#endif
 #define NOV ((int)sizeof OV_ORDER)
 static int ovStack = 1, ovBox[NOV][4], ovOn[NOV];
 void uiOverlayStack(int on) { ovStack = on; }
@@ -2134,6 +2360,7 @@ static int radarRimIdx(const UiScreen *sc) {   // рамка-кольцо — п
 }
 static void drawScreen(int sidx, int selected) {
   if (!H || (unsigned)sidx >= H->nscreen || typoShot >= 2) return;
+  if (xitA < 1.f && (unsigned)(sceKernelGetSystemTimeLow() - xitLast) > 300000u) { xitA = 1.f; xitMode = 0; }   // сверка g09a-hud: вход/выход прерван (экран закрыли) — прозрачность не залипает
   const int pfOn = !UI_PROF2_OLD && uiProfOn && sidx == UI_SCREEN_HUD && !scrMode; unsigned pf0 = pfOn ? sceKernelGetSystemTimeLow() : 0, pfLoop0 = 0;
   const UiScreen *sc = &screens[sidx];
   unsigned mask = tagMask[sidx];
@@ -2175,6 +2402,16 @@ static void drawScreen(int sidx, int selected) {
     uiClockTick();
     for (int t = 0; t < 32; t++) if ((hudForce >> t & 1) && uiClk >= forceUntil[t]) hudForce &= ~(1u << t);
     mask |= hudForce;
+    // Сверка g09a-hud круг 5 (M2:Д14): при каждом входе в игровой HUD передний слой (радар, счётчики) 0,1 с прозрачен и затем проявляется (радар — своим входом 0,25 с);
+    // вход = HUD не рисовали дольше 0,3 с (пауза, меню, брифинг). Подсказка △ и задание не затронуты. HUD_ENTER_OLD=1 — прежнее
+    { static unsigned lastHud, enterAt; unsigned nowh = sceKernelGetSystemTimeLow();
+      if (!HUD_ENTER_OLD) {
+        if (!lastHud || (unsigned)(nowh - lastHud) > 300000u) enterAt = nowh;
+        lastHud = nowh;
+        if ((unsigned)(nowh - enterAt) < 100000u)
+          mask &= ~(1u << UI_T_RADAR | 1u << UI_T_SPEED | 1u << UI_T_HNR_METER | 1u << UI_T_HNR_FULL | 1u << UI_T_COINS | 1u << UI_T_TIMER | 1u << UI_T_PARTIME | 1u << UI_T_LAP | 1u << UI_T_POSITION | 1u << UI_T_COLLECTIBLES | 1u << UI_T_DAMAGE);
+      } }
+    if (!TIMER_SV_OLD && !tbUp && (mask >> UI_T_TIMER & 1u) && fieldv[UI_F_TIMER] <= 1000) mask &= ~(1u << UI_T_TIMER);   // сверка g09a-hud, M2:15: остаток 1 с и меньше — оверлей прячется
     unsigned rise = mask & ~hudPrev, fall = hudPrev & ~mask;
     if (msgNew && (mask >> UI_T_OBJECTIVE & 1)) rise |= 1u << UI_T_OBJECTIVE;   // новый текст задания в той же рамке
     if (cdNew && (mask >> UI_T_COUNTDOWN & 1)) rise |= 1u << UI_T_COUNTDOWN;    // 3 -> 2 -> 1
@@ -2328,7 +2565,7 @@ static void drawScreen(int sidx, int selected) {
         if (popKind(it->tag) == UI_POP_PILL && BUBBLE_UNIFORM_OLD) { xf.s = 1.f; xf.sy = s_; if (pillCy > -1e8f) xf.cy = pillCy; }   // №516: только по высоте, вокруг центра самой пилюли
       }
     }
-    if (subFadeA < 1.f) { if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.cx = xf.cy = 0.f; } xf.a *= subFadeA; }   // №639: кроссфейд подэкранов паузы
+    if (subFadeA * xitA < 1.f) { if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.cx = xf.cy = 0.f; } xf.a *= subFadeA * xitA; }   // №639: кроссфейд подэкранов паузы
     lastSpr[0] = lastSpr[1] = 1e9f; lastSpr[2] = lastSpr[3] = -1e9f;
     int ok_ = sidx == UI_SCREEN_HUD ? ovIndex(it->tag) : -1;
     gDy = ok_ >= 0 ? ovDy[ok_] : 0;
@@ -2456,6 +2693,8 @@ static void drawScreen(int sidx, int selected) {
         const UiSlot *s = &slots[it->first];
         int v = fieldv[it->field]; if (v < 0) v = 0; if (v > 1000) v = 1000;
         int w = (s->w * v + 500) / 1000;
+        // Сверка g09a-hud, M2:17 / Д7: при заполнении выше 75 % полоса урона мигает с периодом 0,25 с (только полоса, не вся группа). DAMAGE_BLINK_OLD=1 — без мигания
+        if (!DAMAGE_BLINK_OLD && it->field == UI_F_DAMAGE && v > 750 && ((int)(uiClk / .25f) & 1)) break;
         if (w > 0) drawSlot(s, s->x, s->y, w, it->color);
         break;
       }
@@ -2471,7 +2710,7 @@ static void drawScreen(int sidx, int selected) {
         else if (it->fmt == FMT_INT) { snprintf(buf, sizeof buf, "%d", fieldv[it->field]); s = buf; }
         else if (it->fmt == FMT_FRAC) { fmtField(it, buf, sizeof buf); s = buf; }                     // LevelStats: «3/7»
         else if (it->fmt == FMT_TIME && it->field >= UI_F_WAGER_FEE) { fmtField(it, buf, sizeof buf); s = buf; }   // карточка ставки: «3:15»
-        else if (it->fmt == FMT_PCT) { snprintf(buf, sizeof buf, "%d%%", fieldv[it->field]); s = buf; }   // LevelStats: «42%»
+        else if (it->fmt == FMT_PCT) { if (LSTATS_SV_OLD || it->field != UI_F_STAT_PCT) snprintf(buf, sizeof buf, "%d%%", fieldv[it->field]); else snprintf(buf, sizeof buf, "%d.%d %%", fieldv[it->field] / 10, fieldv[it->field] % 10); s = buf; }   // LevelStats: «42%»; сверка g09a-hud: «42.3 %»
         else if (it->fmt == FMT_ORDINAL) { int p = fieldv[it->field]; s = p < 0 ? "" : str(it->first + (unsigned)(p >= 1 && p <= 3 ? p - 1 : 3)); }
         else if (it->field == UI_F_MSGBOX) s = mboxText;                 // правка 122: окно сообщения
         else if (it->field == UI_F_ACTION_TEXT) s = actText;             // правка 206: подпись у △
@@ -2496,7 +2735,7 @@ static void drawScreen(int sidx, int selected) {
         }
         if (it->field == UI_F_OBJECTIVE) { UiItem t2; objTextItem(it, &t2); drawTextItem(&t2, s, col);
         } else if (scrMode && it->tag == UI_T_PRESS_START) {   // №405: пульс масштабом от центра надписи (запись PS2)
-          if (!TITLE_PULSE_OLD) { xf.on = 1; xf.a = subFadeA; xf.s = psPulse(scrT); xf.cx = it->x + it->w * .5f; xf.cy = it->y + it->h * .5f; }
+          if (!TITLE_PULSE_OLD) { xf.on = 1; xf.a = subFadeA * xitA; xf.s = psPulse(scrT); xf.cx = it->x + it->w * .5f; xf.cy = it->y + it->h * .5f; }
           drawTextItem(it, s, col);
           uiPressStartBox[0] = scrT; memcpy(uiPressStartBox + 1, lastSpr, sizeof lastSpr);
         } else if (!pAnim && (pulseFlagsOf(sidx) & 2) &&
@@ -2511,7 +2750,7 @@ static void drawScreen(int sidx, int selected) {
           int still_ = MENU_PULSE_OLD || (!MENU_MAIN_PULSE_OLD && MENU_PULSE924_OLD && sidx == UI_SCREEN_MAIN && !scrMode);
           float sc_ = still_ ? 1.f : menuPulse(menuPulseMs) / (MENU_PULSE_MID + MENU_PULSE_AMP);   // правило порта: наибольший — строка порта
           if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s);   // №1012: плашка стоит, пульсирует только текст
-          if (!still_) { xf.on = 1; xf.a = subFadeA; xf.s = sc_; xf.cx = it->x + it->w * .5f; xf.cy = (float)(it->y + gDy) + it->h * .5f; }
+          if (!still_) { xf.on = 1; xf.a = subFadeA * xitA; xf.s = sc_; xf.cx = it->x + it->w * .5f; xf.cy = (float)(it->y + gDy) + it->h * .5f; }
           lastSpr[0] = lastSpr[1] = 1e9f; lastSpr[2] = lastSpr[3] = -1e9f;
           drawTextItem(it, s, col); xf.on = 0;
           uiMenuItemBox[0] = menuPulseMs; uiMenuItemBox[1] = sc_; memcpy(uiMenuItemBox + 2, lastSpr, sizeof lastSpr);
@@ -2529,6 +2768,10 @@ static void drawScreen(int sidx, int selected) {
           }
           if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s);   // №1012: страницы OPTIONS (PICTURE, SOUND, CAMERA, GAME) идут этой веткой
           drawTextItem(it, s, col);
+        } else if (!CARDTEXT_PULSE_OLD && (it->field == UI_F_MSN_TITLE || it->field == UI_F_MSN_INFO) && sidx == UI_SCREEN_MISSIONLOAD) {   // сверка g09a-hud, M2:28: заголовок и описание карточки пульсируют ±5 % с частотой 2 Гц
+          typeof(xf) keep_ = xf; if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; }
+          xf.s *= 1.f + .05f * sinf(2.f * 3.14159265f * 2.f * (float)(sceKernelGetSystemTimeLow() % 1000000u) * 1e-6f); xf.cx = it->x + it->w * .5f; xf.cy = (float)(it->y + gDy) + it->h * .5f;
+          drawTextItem(it, s, col); xf = keep_;
         } else { if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s); drawTextItem(it, s, col); }   // №1012
         break;
       }
@@ -2600,6 +2843,15 @@ static void drawScreen(int sidx, int selected) {
 
 void uiDrawHud(void) { drawScreen(UI_SCREEN_HUD, -1); }
 void uiDrawBriefing(void) { drawScreen(UI_SCREEN_MISSIONLOAD, -1); }
+void uiDrawLetterboxCover(float k) {   // круг 3: полосы от краёв к центру: высота полосы UI_LB_BAR -> 136 (половина кадра), линейно
+  if (!H || typoShot >= 2) return;
+  if (k < 0.f) k = 0.f; if (k > 1.f) k = 1.f;
+  int bh = (int)(UI_LB_BAR + (136.f - UI_LB_BAR) * k + .5f);
+  beginUi(); bn = 0; btex = -1; xf.on = 0;
+  UiItem r; memset(&r, 0, sizeof r); r.type = T_RECT; r.x = 0; r.w = 480; r.h = (short)bh; r.color = 0xff000000u;
+  r.y = 0; drawRect(&r); r.y = (short)(272 - bh); drawRect(&r);
+  bflush();
+}
 void uiDrawLetterbox(float open, int prompt) {   // правка 40: см. ui.h
   if (!H || typoShot >= 2) return;
   if (!(open > 0.f)) return;
@@ -2618,7 +2870,18 @@ void uiDrawLetterbox(float open, int prompt) {   // правка 40: см. ui.h
     tagMask[UI_SCREEN_LETTERBOX] = keep;
   }
 }
-void uiDrawMissionOver(int sel) { drawScreen(UI_SCREEN_MISSIONOVER, sel); }
+// Сверка g09a-hud круг 2 (g07b P13-3): третий пункт SKIP экрана провала включается, когда mvFailSkipOk() (7 учтённых сбросов, не L7 5–7). Функция слабая: в сборках без msn_view
+// (боты, тесты) пункта нет. SKIP_ITEM_OLD=1 — как раньше (пункт скрыт)
+#ifndef SKIP_ITEM_OLD
+#define SKIP_ITEM_OLD 0
+#endif
+extern int mvFailSkipOk(void) __attribute__((weak));
+void uiDrawMissionOver(int sel) {
+  if (!SKIP_ITEM_OLD && mvFailSkipOk && H && (unsigned)UI_SCREEN_MISSIONOVER < H->nscreen && uiMenuCount(UI_SCREEN_MISSIONOVER) > 2) {
+    int on = mvFailSkipOk(); uiMenuHide(UI_SCREEN_MISSIONOVER, 2, !on); uiShow(UI_SCREEN_MISSIONOVER, UI_T_SKIP, on);
+  }
+  drawScreen(UI_SCREEN_MISSIONOVER, sel);
+}
 // подсказка обучения: экран Tutorial.scr + строки текста спрайтовым шрифтом TutorialMessage. Строка k — по центру места
 // TutorialMessage по x; первая строка — на его центре, шаг — половина высоты места (не меньше самого высокого знака + 1): 4 строки
 // ложатся как в записи PS2 (1:05, строки 207..307 из 480), короче — тем же центром блока
@@ -2739,15 +3002,26 @@ int uiDrawTutorial(int msg, int cont) {
   }
   return n;
 }
+// Сверка g09a-hud, M13:8 / M2:Д13 / P07:36 — таблица уровня (Level Progress и конец уровня): знаменатели 7 сюжетных, 1 бонусная, 3 уличные гонки, 7 карточек, 3 костюма, 5 машин;
+// осы и гэги — из данных уровня; «Level Complete» = среднее восьми долей (у каждой вес одинаковый), одна цифра после запятой: «42.3 %».
+// LSTATS_SV_OLD=1 — прежнее (общая сумма сделанного / сумма итогов из данных, целые проценты)
+static const int LS_FIX[UI_LS_COUNT] = {0, 0, 5, 3, 7, 3, 1, 7};   // порядок UI_LS_*: гэги, осы (из данных), машины, костюмы, карточки, гонки, бонус, сюжет
+static int lsTotal(const UiLevelStats *s, int k) { return !LSTATS_SV_OLD && LS_FIX[k] ? LS_FIX[k] : s->total[k]; }
+int uiLevelStatsPct10(const UiLevelStats *s) {   // десятые доли процента
+  float sum = 0.f;
+  for (int k = 0; k < UI_LS_COUNT; k++) { int t = lsTotal(s, k); sum += t > 0 ? (s->done[k] < t ? (float)s->done[k] / (float)t : 1.f) : 1.f; }   // нечего собирать на уровне = доля полная
+  return (int)(sum / (float)UI_LS_COUNT * 1000.f + .5f);
+}
 int uiLevelStatsPct(const UiLevelStats *s) {
+  if (!LSTATS_SV_OLD) return (uiLevelStatsPct10(s) + 5) / 10;
   int d = 0, t = 0;
   for (int k = 0; k < UI_LS_COUNT; k++) { if (s->total[k] <= 0) continue; t += s->total[k]; d += s->done[k] < s->total[k] ? s->done[k] : s->total[k]; }
   return t ? (d * 100 + t / 2) / t : 0;
 }
 void uiDrawLevelStats(const UiLevelStats *s, int levelEnd) {
   if (!H || (unsigned)UI_SCREEN_LEVELSTATS >= H->nscreen) return;
-  fieldv[UI_F_STAT_MODE] = levelEnd ? 1 : 0; fieldv[UI_F_STAT_PCT] = uiLevelStatsPct(s);
-  for (int k = 0; k < UI_LS_COUNT; k++) { fieldv[UI_F_STAT0 + 2 * k] = s->done[k]; fieldv[UI_F_STAT0 + 2 * k + 1] = s->total[k]; }
+  fieldv[UI_F_STAT_MODE] = levelEnd ? 1 : 0; fieldv[UI_F_STAT_PCT] = LSTATS_SV_OLD ? uiLevelStatsPct(s) : uiLevelStatsPct10(s);   // новое: десятые доли процента
+  for (int k = 0; k < UI_LS_COUNT; k++) { fieldv[UI_F_STAT0 + 2 * k] = s->done[k]; fieldv[UI_F_STAT0 + 2 * k + 1] = lsTotal(s, k); }
   unsigned keep = tagMask[UI_SCREEN_LEVELSTATS];
   tagMask[UI_SCREEN_LEVELSTATS] = 1u << UI_T_ALWAYS | 1u << (levelEnd ? UI_T_LS_END : UI_T_LS_PAUSE);
   drawScreen(UI_SCREEN_LEVELSTATS, -1);
@@ -2772,7 +3046,27 @@ const char *uiMenuLabel(int menu, int item) {
 
 // ---------------------------------------------------------------------------------------
 // game-facing API (stage 7): thin layer over the fields/tags above
-void uiSetCoins(int n) { fieldv[UI_F_COINS] = n < 0 ? 0 : n; }
+// Сверка g09a-hud, M2:9: цифра счёта монет идёт к значению в банке по одной монете каждые 40 мс (вверх и вниз); пока убывает, цифра плавно ходит между цветом шрифта
+// и красным (217,2,5) с периодом 80 мс. Большой скачок (покупка, загрузка уровня) догоняется не дольше чем с запасом COIN_TICK_MAX монет, иначе счёт тикал бы десятки секунд.
+// COINS_TICK_OLD=1 — прежнее (число меняется сразу). Падающие монеты с экрана (опция отчёта) не делал
+void uiSetCoins(int n) {
+  n = n < 0 ? 0 : n; coinTarget = n;
+  if (COINS_TICK_OLD) { fieldv[UI_F_COINS] = n; return; }
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (coinShown < 0) { coinShown = n; coinT = now; }
+  else if (coinShown == n) coinT = now;
+  else {
+    unsigned st = (now - coinT) / COIN_TICK_US;
+    if (st) {
+      coinT += st * COIN_TICK_US; if (st > 8u) st = 8u;
+      int dir = n > coinShown ? 1 : -1; coinShown += dir * (int)st;
+      if ((dir > 0 && coinShown > n) || (dir < 0 && coinShown < n)) coinShown = n;
+    }
+    if (coinShown - n > COIN_LOSS_SNAP) coinShown = n;   // покупка в лавке: счёт HUD ставится сразу на новое значение, красного тика после покупки нет (M2:Д9); ремонт в будке (10 монет) тикает вниз (M2:Д10)
+    else if (n - coinShown > COIN_TICK_MAX) coinShown = n - COIN_TICK_MAX;
+  }
+  fieldv[UI_F_COINS] = coinShown;
+}
 void uiSetHitAndRun(float heat, int pursuit, float elapsed) {
   if (!isfinite(heat) || heat < 0.f) heat = 0.f; if (heat > 1.f) heat = 1.f;
   if (!isfinite(elapsed) || elapsed < 0.f) elapsed = 0.f;
@@ -2878,11 +3172,15 @@ static int hideDy(const UiScreen *sc, int sidx, const UiItem *it) {   // сдв�
 #ifndef REPEAT706_OLD
 #define REPEAT706_OLD 0
 #endif
+// сверка g09a-hud, M1:4: в оригинале первая пауза ≈0,332 с (счёт от −166 мс), дальше шаг 0,166 с. MENU_REP_SV_OLD=1 — прежние 0,4 / 0,12 с
+#ifndef MENU_REP_SV_OLD
+#define MENU_REP_SV_OLD 0
+#endif
 #ifndef UI_REP_DELAY
-#define UI_REP_DELAY 400000u   // мкс
+#define UI_REP_DELAY (MENU_REP_SV_OLD ? 400000u : 332000u)   // мкс
 #endif
 #ifndef UI_REP_EVERY
-#define UI_REP_EVERY 120000u
+#define UI_REP_EVERY (MENU_REP_SV_OLD ? 120000u : 166000u)
 #endif
 #define UI_REP_GAP 1000000u
 // TEST34 на PSP: строка Cartoon «не переключалась» — включение мультика держит кадр ~0,5 с (палитры, таблица 90-х), зажатая ещё ► на следующем
@@ -2912,6 +3210,7 @@ unsigned uiPadRepeat(unsigned buttons, unsigned hit) {
   unsigned dirs = padRepOld ? (PSP_CTRL_UP | PSP_CTRL_DOWN) : (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LEFT | PSP_CTRL_RIGHT | (lr ? PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER : 0u)),
            delay = padRepOld ? 350000u : lr ? UI_REP_DELAY_LR : UI_REP_DELAY, every = padRepOld ? 90000u : lr ? UI_REP_EVERY_LR : UI_REP_EVERY, now = sceKernelGetSystemTimeLow();
   uiPadRepeated = 0;
+  padHeldDirs = buttons & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT); padHeldAt = now;   // сверка g09a-hud: ползунки идут по зажатию
   if (!padRepOld && (unsigned)(now - tLast) > UI_REP_GAP) key = 0;
   if (!padRepOld && !REP_HITCH_OLD && key && (unsigned)(now - tLast) > UI_REP_HITCH) tNext = now + delay;   // долгий кадр — пауза повтора заново
   tLast = now;
@@ -2937,8 +3236,21 @@ static int menuStepHid(int menu, int from, int dir) {   // карусель гл
   return from;
 }
 int uiMenuEnabled(int menu, int item) { return (unsigned)menu < UI_SCREEN_COUNT && (unsigned)item < 32 && !(menuOff[menu] >> item & 1); }
+#ifndef MENU_LOCK_SND_OLD
+#define MENU_LOCK_SND_OLD 0
+#endif
+static int pickOn, pickPend; static unsigned pickT0;
+static void svReset(void) { coinShown = -1; xitA = 1.f; xitMode = 0; pickOn = 0; sliderMovedMask = 0; }   // сверка g09a-hud, M1:3: выбранный пункт карусели/паузы отдаёт действие через 0,25 с, ввод глохнет
+static int pickWait(int *res) {   // 0 — ввод принимается, 1 — глохнет, 2 — отдать *res
+  if (!pickOn) return 0;
+  unsigned el = sceKernelGetSystemTimeLow() - pickT0;
+  if (el > 1500000u) { pickOn = 0; return 0; }   // выбор давно устарел (меню закрыли другим путём) — забыть
+  if (el <= XIT_US) return 1;
+  pickOn = 0; *res = pickPend; return 2;
+}
 int uiMenuInput(int menu, int *sel, unsigned hit) {   // 12а: главное меню — карусель оригинала (MainMenu.pag): ◄ ► (и ↑ ↓) по кругу
-  if ((unsigned)menu >= UI_SCREEN_COUNT || !sel) return -1;   // по всем пунктам: в гостиной светится предмет каждого (Роб 28.09);
+  if ((unsigned)menu >= UI_SCREEN_COUNT || !sel) return -1;
+  { int pr = 0, g = MENU_PICK_OLD ? 0 : pickWait(&pr); if (g == 1) return -1; if (g == 2) return pr; }   // по всем пунктам: в гостиной светится предмет каждого (Роб 28.09);
   int n = uiMenuCount(menu), was = *sel;                      // неготовые пункты приглушены, × на них не срабатывает
 #ifndef MENU_RESUME_DEFAULT_OLD
 #define MENU_RESUME_DEFAULT_OLD 0   // 1 — прежнее: главное меню на NEW GAME, RESUME GAME на чистой карте серый и не пропускается
@@ -2947,8 +3259,10 @@ int uiMenuInput(int menu, int *sel, unsigned hit) {   // 12а: главное м
   if (n > 0 && (hit & (PSP_CTRL_RIGHT | PSP_CTRL_DOWN))) *sel = MENU_RESUME_DEFAULT_OLD ? (*sel + 1) % n : menuStepHid(menu, *sel, 1);
   if (*sel != was) pauseEv(UI_EV_SCROLL, 1);                  // звуки меню, как в паузе (frontend.spt: scroll / accept / locked_out)
   if (!(hit & PSP_CTRL_CROSS) || n <= 0) return -1;
-  if (!uiMenuEnabled(menu, *sel)) { pauseEv(UI_EV_LOCKED, 1); return -1; }
-  pauseEv(UI_EV_ACCEPT, 1); return *sel;
+  if (!uiMenuEnabled(menu, *sel)) { if (MENU_LOCK_SND_OLD || menu != UI_MENU_MAIN) pauseEv(UI_EV_LOCKED, 1); return -1; }   // сверка g09a-hud, P14:19: ✕ на сером пункте главного меню — тишина (locked_out нужен только будке)
+  pauseEv(UI_EV_ACCEPT, 1);
+  if (!MENU_PICK_OLD) { pickOn = 1; pickT0 = sceKernelGetSystemTimeLow(); pickPend = *sel; return -1; }   // M1:3
+  return *sel;
 }
 int uiMenuOrder(int menu, int *out, int max) {   // 12а: сверка порядка с данными оригинала (tools/menu_check.py)
   if (!H || (unsigned)menu >= H->nscreen || !out) return 0;
@@ -2969,6 +3283,17 @@ void uiPauseMission(int on) {   // пауза миссии (PauseMission.scr) �
   pauseScr = on && H && H->nscreen > UI_SCREEN_PAUSEMSN && screens[UI_SCREEN_PAUSEMSN].nmenu ? UI_SCREEN_PAUSEMSN : UI_SCREEN_PAUSE;
 }
 int  uiPauseIsMission(void) { return pauseScr == UI_SCREEN_PAUSEMSN; }
+// Сверка g09a-hud, M2 P13:Д3: пауза миссии — Restart Mission и Abort Mission серые (курсор их не берёт), если миссия уже завершена, идёт арест, Гомер садится в машину или
+// выходит из неё, либо пауза открыта поверх подсказки обучения. Условия считает вызывающий в момент открытия паузы (main_loop.h, g10b), передаёт off=1 (серые) / 0.
+// PAUSE_MSN_GREY_OLD=1 — пункты всегда активны
+#ifndef PAUSE_MSN_GREY_OLD
+#define PAUSE_MSN_GREY_OLD 0
+#endif
+void uiPauseMissionGrey(int off) {
+  if (PAUSE_MSN_GREY_OLD || !H || (unsigned)UI_SCREEN_PAUSEMSN >= UI_SCREEN_MAX) return;
+  for (int k = 0; k < (int)sizeof PM_MAP; k++)
+    if (PM_MAP[k] == UI_P_RESTART_MISSION || PM_MAP[k] == UI_P_ABORT_MISSION) { if (off) menuOff[UI_SCREEN_PAUSEMSN] |= 1u << k; else menuOff[UI_SCREEN_PAUSEMSN] &= ~(1u << k); }
+}
 static int pauseCode(int sel) {   // номер строки открытой паузы -> UI_P_*
   if (pauseScr != UI_SCREEN_PAUSEMSN) return sel;
   return sel >= 0 && sel < (int)sizeof PM_MAP ? PM_MAP[sel] : UI_P_NONE;
@@ -3005,8 +3330,21 @@ void uiPause(int on) {
 }
 int  uiPaused(void) { return paused; }
 int  uiPauseSelected(void) { return pauseCode(pauseSel); }
+// Сверка g09a-hud круг 5 (M2:Д6): Restart и Abort паузы миссии не закрывают паузу сами — сначала вопрос Yes/No (savemenu, main_loop.h); «No» возвращает на ту же строку паузы,
+// «Yes» закрывает паузу (uiPauseCloseNow) и запускает действие. PAUSE_CONFIRM_OLD=1 — прежнее: пункт сразу закрывает паузу и выполняется
+#ifndef PAUSE_CONFIRM_OLD
+#define PAUSE_CONFIRM_OLD 0
+#endif
+void uiPauseCloseNow(void) { if (paused) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); } }
 int  uiPauseInput(unsigned hit) {
   if (!paused) return UI_P_NONE;
+  if (!MENU_PICK_OLD && pickOn) {   // M1:3: пункт паузы выбран — ввод глохнет 0,25 с, затем действие (закрытие паузы и код пункта)
+    unsigned el_ = sceKernelGetSystemTimeLow() - pickT0;
+    if (el_ <= XIT_US) return UI_P_NONE;
+    pickOn = 0; if (el_ > 1500000u) return UI_P_NONE; int c = pickPend;
+    if (c == UI_P_CONTINUE || c == UI_P_RESET_CAR || (PAUSE_CONFIRM_OLD && (c == UI_P_RESTART_MISSION || c == UI_P_ABORT_MISSION))) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); }
+    return c;
+  }
   // №806 (Роб 18.10: «выход из меню и ○, и △ — стрелка назад это треугольник»): △ тоже закрывает паузу. PAUSE_TRI_BACK_OLD=1 — только START / ○
 #ifndef PAUSE_TRI_BACK_OLD
 #define PAUSE_TRI_BACK_OLD 0
@@ -3021,7 +3359,10 @@ int  uiPauseInput(unsigned hit) {
   if (hit & PSP_CTRL_CROSS) {
     if (menuOff[pauseScr] >> pauseSel & 1) { pauseEv(UI_EV_LOCKED, 1); return UI_P_NONE; }
     int c = pauseCode(pauseSel);
-    if (c == UI_P_CONTINUE || c == UI_P_RESET_CAR || c == UI_P_RESTART_MISSION || c == UI_P_ABORT_MISSION) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); }
+    if (!MENU_PICK_OLD) {   // M1:3: звук выбора сразу, действие через 0,25 с (закрывающие паузу пункты — звук закрытия тогда же)
+      pauseEv(UI_EV_ACCEPT, 1); pickOn = 1; pickT0 = sceKernelGetSystemTimeLow(); pickPend = c; return UI_P_NONE;
+    }
+    if (c == UI_P_CONTINUE || c == UI_P_RESET_CAR || (PAUSE_CONFIRM_OLD && (c == UI_P_RESTART_MISSION || c == UI_P_ABORT_MISSION))) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); }
     else pauseEv(UI_EV_ACCEPT, 1);
     return c;
   }
@@ -3042,7 +3383,29 @@ static void uiDrawInner(void) {
   if (pauseHudHidden()) { float ps_, pa_; if (pauseAnimPose(&ps_, &pa_)) drawScreen(pauseScr, pauseSel); return; }   // №631: закрытие — 3 кадра рамка сжимается, HUD вернётся через 0,4 с
   drawScreen(UI_SCREEN_HUD, -1);
 }
+// Сверка g09a-hud круг 2 (g01 P01-18 / 4.3): белая вспышка при автосбросе машины игрока (поставили на колёса). Вспышка 0,4 с, прозрачность линейно от 0,8 к нулю.
+// UI_FLASH_OLD=1 — вспышки нет (сброс молча, как было). car.c зовёт её через carResetFlash в момент сброса
+#ifndef UI_FLASH_OLD
+#define UI_FLASH_OLD 0
+#endif
+static unsigned flashT0;
+static void uiDrawMain(void);
+void uiResetFlash(void) { if (!UI_FLASH_OLD) flashT0 = sceKernelGetSystemTimeLow() | 1u; }
+typedef struct { unsigned color; short x, y, z, pad; } FlashV;
+static void flashDraw(void) {
+  if (!flashT0) return;
+  float k = (float)(sceKernelGetSystemTimeLow() - flashT0) * 1e-6f / .4f;
+  if (k >= 1.f) { flashT0 = 0; return; }
+  FlashV *v = (FlashV *)sceGuGetMemory(2 * sizeof(FlashV)); unsigned c = ((unsigned)(.8f * (1.f - k) * 255.f + .5f) << 24) | 0x00ffffffu;
+  v[0].color = v[1].color = c; v[0].x = 0; v[0].y = 0; v[1].x = 480; v[1].y = 272; v[0].z = v[1].z = 0;
+  sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_DEPTH_TEST); sceGuDepthMask(GU_TRUE);
+  sceGuEnable(GU_BLEND); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+  sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, 0, v);
+}
 void uiDraw(void) {
+  uiDrawMain(); flashDraw();
+}
+static void uiDrawMain(void) {
   if (traceBits & UI_TRACE_POP) { static unsigned p_[2]; unsigned d0 = uiWrapN1040[0] - p_[0], d1 = uiWrapN1040[1] - p_[1]; p_[0] = uiWrapN1040[0]; p_[1] = uiWrapN1040[1]; if (d0 || d1 || bubAge < 0.6f) uiLogf("WRAP1040 age=%.3f calls=%u calls0=%u\n", bubAge, d0, d1); }   // №1040 служебно: сколько раз за кадр считался перенос
   if (UI_PROF_OLD) { uiDrawInner(); return; }
   unsigned t0 = sceKernelGetSystemTimeLow(); uiDrawInner(); unsigned us = sceKernelGetSystemTimeLow() - t0;

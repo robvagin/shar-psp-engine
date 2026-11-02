@@ -83,6 +83,8 @@ typedef struct {
   float dirC, dirS;
   uint8_t fall; float fallTh, fallW, fallD[2], fallR0[9];   // №975: 1 — столб валится на шарнире у основания (угол, скорость, направление, исходный поворот), 2 — лежит
   float hv[2];                     // №923: горизонтальная скорость машины (до стен кадра) при её ударе по этому предмету; обломок по вызову с задержкой берёт её отсюда
+  uint8_t hitPend;                 // сверка g11 круг 2 (P18 Д5): вызов монет при выключенном Hit & Run подал предмету ещё одно событие HIT — отправить после вызова
+  uint8_t loopOn; float loopA, loopB;   // сверка g11 круг 2 (P15-19): цикл кадров [loopA, loopB) вместо хода клипа (вступление и окончание гэга), spLoop
   uint16_t slN; uint8_t slMix; float slD0, slSum;   // №1000: далёкий экземпляр спит — сколько кадров не шагал, первый dt, все ли dt равны, сумма dt; при пробуждении время догоняется (stateprops.c spNearStep)
 } SpRun;
 
@@ -118,6 +120,18 @@ typedef struct {
   uint16_t sndQ[32]; unsigned sndN;
   int breaks;                      // обломков, запущенных вызовом SP_OP_BREAK (барьеры 0x3F0000F; отчёт, гейт tests/levelmech)
   uint8_t nearOn; float nearP[2][2]; unsigned nearSleep;   // №1000: nearOn — игра задала глаз и Гомера (main_loop.h, game.c), иначе никто не спит; nearP — глаз и Гомер (x, z); nearSleep — спящих в последнем кадре (отчёт)
+  // сверка g11 (СВЕРКА_ПОЛНАЯ/P11_объекты_мира P11-06, P16-21): hnrOff — Hit & Run выключен (стадия DisableHitAndRun, разговор, переход в интерьер: game.c ставит G.hnrOff || G.hnrRoom
+  // перед spUpdate): вызовы «N монет» (1, 5, 10, 15, 20) монет не дают, «5 монет против Z» (автоматы) дают всегда. radiate — вызов 8 RADIATE_FORCE (статуи Иедедайи L2, L5): толчок вверх
+  // всем подвижным предметам, кроме игрока, в шаре r вокруг точки (game.c ставит propsRadiate); не задан — вызов ничего не делает
+  int hnrOff;
+  // сверка g11 круг 2 (P03-11, P06-23): hitInst — номера экземпляров, чей удар игрока сменил состояние в этом кадре (по числу hnrHits; game.c даёт шкалу и монету только за новый предмет); touchInst — экземпляр,
+  // которого машина коснулась в последнем кадре (-1 нет), touchSpeed — его скорость (стейтпроп стоит: 0); для груза pickupitem миссии (скорость меньше 10 м/с)
+  uint16_t hitInst[16]; unsigned hitInstN; int touchInst; float touchSpeed;
+  // круг 5 (g11, P11 Д2 / P12-12): объём столкновения едет за суставом (ящик — сустав 3, автомат, гэг обезьян L2, паук L7 — сустав 1): follow[тип] = номер сустава + 1 (0 нет), из objnames.shr
+  // (tools/objnames_export.py, spFollowAdopt); followT0 — сдвиг сустава в кадре 0 (по первому касанию), followOk — посчитан
+  uint8_t *follow, *followOk; float *followT0; unsigned nfollow;
+  void (*radiate)(void *u, float x, float y, float z, float r, float force); void *radUser;
+  int (*crateLike)(void *u, unsigned i);   // круг 3 (g11): экземпляр i — ящик (его звук удара — деревянный ящик диска); game.c ставит по таблице звука
 } StateProps;
 
 // section — начало SPR1 (выровнено на 16). 0 = ок, <0 = ошибка формата/памяти
@@ -129,6 +143,16 @@ void spFree(StateProps *sp);
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt);
 // Contact pass without advancing the shared animation/state clocks.
 void spHitCar(StateProps *sp, const ColWorld *world, Car *car, Coins *coins);
+// сверка g11 P11-Д1/P11-05: толчок предмету-стейтпропу от пинка героя (400, 45° вверх от курса), стомпа (800) и взрыва машины (20000): скорость сила / масса (масса из ATC, 100 если нуль).
+// У типа 10 (фонари, светофоры, столбы) толчок запускает падение на шарнире у основания в сторону (dx, dz); у ломаемых (4) и статики (2) скорость не добавляется. Возврат 1 — упал
+int spImpulse(StateProps *sp, unsigned i, float dx, float dz, float force);
+// сверка g11 круг 2 (P15-19): гэг крутит кадры [a, b) циклом (вступление до включения, окончание до конца звука); b <= a — цикл снят, клип идёт как в данных. Вызывает collect.c (g11b)
+void spLoop(StateProps *sp, unsigned i, float a, float b);
+// круг 5 (g11): таблица типов objnames.shr (16 Б на тип: сустав, суставов, объёмов, кадров, имя) — берётся, если число суставов, объёмов и кадров совпало у каждого типа общего начала; -> число типов со следованием, -1 — не подошла
+int spFollowAdopt(StateProps *sp, const unsigned char *rec, unsigned n);
+
+// сверка g09b-menu круг 5 (P12-03): перезагрузка зон — разбитые и упавшие объекты улицы возвращаются сразу (миссионные, эффекты и разовые не трогаются)
+void spZoneReload(StateProps *sp);
 void spRespawnStep(StateProps *sp, float ex, float ez, float dt,
                    int (*seen)(void *, float, float, float, float), void *user);
 // Правка Роба 334 (05.10, голосом: «ящики и монеты не возобновляются: собрал, сохранился — на том же месте больше не появляются,

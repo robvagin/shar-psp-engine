@@ -200,11 +200,14 @@ typedef struct MsnShopApi {
     int  (*owns)(void *u, int kind, const char *name);   /* MSN_OWN_CAR / MSN_OWN_SKIN             */
     void (*unlock)(void *u, const MsnReward *r);         /* bonus-mission / street-race car earned  */
     int  (*skin_spot)(void *u, MsnVec3 *out);            /* buyskin stage: nearest wardrobe (or its room door) from the player; 0 = none */
+    const char *(*cur_skin)(void *u);                    /* сверка g07 (P06-8): имя надетого костюма (как в замке "locked" "skin"); NULL — функции нет, костюм неизвестен */
 } MsnShopApi;
 
 typedef struct MsnTrafficApi {
     /* SetMaxTraffic(n) / NoTrafficForStage (0) at stage start; -1 = this stage says nothing (level default) */
     void (*max_cars)(void *u, int n);
+    /* сверка g07 (P06-25): ClearTrafficForStage / NoTrafficForStage — вычистить трафик в радиусе (м) вокруг игрока; NULL — не чистить */
+    void (*clear)(void *u, float radius);
 } MsnTrafficApi;
 
 typedef struct MsnGameApi {
@@ -252,11 +255,16 @@ typedef struct MsnGame {
     int marker_on; MsnVec3 marker_pos; const MsnLoc *marker_loc;
     int wait_dialogue, wait_fmv; float wait_t;
     int stage_traffic;
+    int traffic_zero;                /* P06-25: NoTrafficForStage поставил лимит 0 — он держится, пока этап не задаст SetMaxTraffic */
     /* statistics */
     uint32_t op_calls[MSN_OP_COUNT];  /* engine commands seen, by opcode                         */
     uint32_t n_typed, n_pass, n_none, n_events;
 } MsnGame;
 
+/* СВЕРКА_КАМЕРА 7.5 (передано от g06-camera): «точка в кадре» для миссий — дальше range (по умолчанию MSN_VIEW_RANGE = 250 м) не видна; направление dir — единичное,
+   fov_cos — косинус половины угла обзора (диагональ кадра). 1 — видна. Камера (глаз, направление) — у вида; здесь только геометрия */
+#define MSN_VIEW_RANGE 250.0f
+int msn_point_in_view(const float eye[3], const float dir[3], float fov_cos, const float p[3], float range);
 extern int msnSwitchOld;   /* №943: 1 — прежнее поведение смены миссии (см. msn_game.c) */
 /* installs itself as the runtime's host (calls msn_init(rt, f, host)) */
 void msn_game_init(MsnGame *g, MsnRuntime *rt, const MsnFile *f, const MsnGameApi *api);

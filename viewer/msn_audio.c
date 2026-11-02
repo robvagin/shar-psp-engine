@@ -9,6 +9,9 @@
 
 static void say(MsnAudio *a, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 #include <stdarg.h>
+#ifndef MSN_AUDIO_SV_OLD
+#define MSN_AUDIO_SV_OLD 0   // сверка g08-sound: 1 — прежнее поведение музыки миссий (круг 3: выключатель в стиле остальных, значение 0 = новое)
+#endif
 // строки журнала — в очередь, наружу по одной за кадр (msnAudioTick): запись в smoke.txt открывает файл, несколько строк в
 // одном кадре — лишние миллисекунды кадра, которых в игре нет. Время события — внутри строки (t=)
 static void say(MsnAudio *a, const char *fmt, ...) {
@@ -121,7 +124,7 @@ void msnAudioSuffix(MsnAudio *a, const char *suf) {
   char ev[40]; snprintf(ev, sizeof ev, "%s%s", a->code, suf); event(a, ev);
 }
 void msnAudioMissionStart(MsnAudio *a, const char *id, int bonus) {
-  a->started = a->alwaysOn = a->tensec = a->out = 0; a->code[0] = 0;
+  a->started = a->alwaysOn = a->tensec = a->out = a->startPend = 0; a->code[0] = 0;
   a->stateCode[0] = a->stateValue[0] = a->currentEvent[0] = 0;
   if (!id) return;
 #ifndef MUSIC_RACE_OLD
@@ -133,11 +136,16 @@ void msnAudioMissionStart(MsnAudio *a, const char *id, int bonus) {
   if (bonus) snprintf(a->code, sizeof a->code, "Bonus");
   else if ((id[0] == 'm' || id[0] == 'M') && id[1] >= '0' && id[1] <= '9' && !id[2]) snprintf(a->code, sizeof a->code, "M%c", id[1]);
   else { say(a, "MUSIC mission %s: своей музыки в композиции нет (уличные гонки — не покрыто) t=%.1f\n", id, a->clock); return; }
+#if !MSN_AUDIO_SV_OLD
+  // сверка g08-sound (СВЕРКА_С_ИСХОДНИКОМ 4.1): старт или перезапуск миссии пешком — музыка миссии не начинается (звучит прогулка и фон места);
+  // начнётся, когда игрок сядет в машину. MSN_AUDIO_SV_OLD=1 — прежнее: «_start» сразу, на следующем кадре «_get_out_of_car»
+  if (a->onFoot) { a->startPend = 1; say(a, "MUSIC mission %s: старт пешком, музыка миссии ждёт машину t=%.1f\n", id, a->clock); return; }
+#endif
   msnAudioSuffix(a, "_start");
 }
-void msnAudioStage(MsnAudio *a) { a->alwaysOn = 0; a->tensec = 0; }
+void msnAudioStage(MsnAudio *a) { a->alwaysOn = 0; a->tensec = 0; a->prevLeft = -1.f; if (a->b && a->b->always_on) a->b->always_on(a->b->u, 0); }
 void msnAudioEvent(MsnAudio *a, const char *ev) { if (ev && *ev) event(a, ev); }
-void msnAudioAlwaysOn(MsnAudio *a) { a->alwaysOn = 1; }
+void msnAudioAlwaysOn(MsnAudio *a) { a->alwaysOn = 1; if (a->b && a->b->always_on) a->b->always_on(a->b->u, 1); }
 void msnAudioState(MsnAudio *a, const char *state, const char *value) {
 #ifndef C3_CONTENT_MUSIC_OLD
   if (!state || strncmp(state, "Mission", 7) || state[7] < '0' || state[7] > '9' || state[8] || !value || strlen(value) >= sizeof a->stateValue) return;
@@ -146,6 +154,9 @@ void msnAudioState(MsnAudio *a, const char *state, const char *value) {
   snprintf(a->stateCode, sizeof a->stateCode, "%s", code); snprintf(a->stateValue, sizeof a->stateValue, "%s", value);
   /* Port transition policy: reselect the current event immediately. The RMS
      matrices prove which region, not the PS2 crossfade timing. */
+#if !MSN_AUDIO_SV_OLD
+  if (a->onFoot) change = 0;   // сверка g08-sound (P09 Д16): пешком состояние только запоминается; в машине событие переигрывается с новым значением
+#endif
   if (change && !strcmp(code, a->code) && a->currentEvent[0]) { char ev[40]; snprintf(ev, sizeof ev, "%s", a->currentEvent); event(a, ev); }
 #else
   (void)a; (void)state; (void)value;
@@ -154,17 +165,29 @@ void msnAudioState(MsnAudio *a, const char *state, const char *value) {
 void msnAudioMissionEnd(MsnAudio *a) {
   if (a->code[0] && a->b && a->b->music_release) a->b->music_release(a->b->u);
   if (a->code[0]) say(a, "MUSIC release %s t=%.1f\n", a->code, a->clock);
-  a->code[0] = 0; a->started = 0; a->out = 0;
+  a->code[0] = 0; a->started = 0; a->out = 0; a->startPend = 0;
   a->stateCode[0] = a->stateValue[0] = a->currentEvent[0] = 0;
 }
 
 int msnAudioTick(MsnAudio *a, float dt, int onFoot, float timerLeft) {
   a->clock += dt;
   flushOne(a);
+#if !MSN_AUDIO_SV_OLD
+  if (a->startPend && !onFoot) { a->startPend = 0; if (a->code[0]) msnAudioSuffix(a, "_start"); }   // сел в машину после старта пешком
+#endif
   if (a->code[0] && a->started && onFoot && !a->onFoot && !a->alwaysOn) { msnAudioSuffix(a, "_get_out_of_car"); a->out = 1; }
   else if (a->code[0] && !onFoot && a->onFoot && a->out) { a->out = 0; msnAudioSuffix(a, "_start"); }   // сел обратно: музыка миссии снова
   a->onFoot = onFoot;
-  if (a->code[0] && !a->tensec && timerLeft >= 0.f && timerLeft < 10.f) { a->tensec = 1; msnAudioSuffix(a, "_10sec_to_go"); }
+  if (a->code[0] && !a->tensec && timerLeft >= 0.f && timerLeft < 10.f) {
+#if !MSN_AUDIO_SV_OLD
+    // сверка g08-sound (P09:20, P06 Д4; круг 3): реплика Time — только в момент пересечения 10 с вниз (был не меньше 10, стал меньше); этап, начавшийся с остатком
+    // меньше 10 с, пересечения не даёт. Условия «последний этап» и «считает вниз» проверяет вызывающий (game_msn.c передаёт остаток только тогда)
+    if (a->prevLeft >= 10.f) { a->tensec = 1; if (a->b && a->b->time_warn) a->b->time_warn(a->b->u); }
+#else
+    a->tensec = 1; msnAudioSuffix(a, "_10sec_to_go");
+#endif
+  }
+  a->prevLeft = timerLeft;
   if (a->active) {
     a->lineT += dt;
     int playing = a->track >= 0 && a->b && a->b->voice_playing ? a->b->voice_playing(a->b->u, a->track) : a->lineT < a->lineLen;

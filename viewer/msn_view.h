@@ -66,6 +66,7 @@ void mvMusicResume(void);   // правка 235: музыка миссии сн�
 void mvServiceWin(void);
 void mvMarkStoryDone(void);   // №860: финал — все сюжетные миссии уровня пройдены (без событий)
 void mvServiceFail(void);                       // служебное (flag msnfail): экран провала миссии (№572)
+const char *mvDynaFiles(unsigned *seq);      // сверка g11b-collect круг 5 (P12-10): «l1z7.p3d;l1r6.p3d;» последнего SetDynaLoadData; *seq растёт на каждое выполнение
 const char *mvDynaRoom(void);                // интерьер последнего SetDynaLoadData («…@», "SimpsonsHouse"); "" — город                     // служебное (flag lvwin): все сюжетные миссии пройдены -> конец уровня
 int  mvActive(void);
 int  mvKick(float x, float y, float z, float r, float dx, float dz);   // №843: пинок Гомера по персонажам миссии (game_msn.c gameMsnKick)
@@ -86,6 +87,9 @@ const char *mvForcedCar(void);               // SetForcedCar: игрок на м
 void mvCarjack(const char *model, const CarParams *P, float lift, float x, float y, float z, float h);   // правка 63: угон машины трафика
 float mvHnrDecay(void);
 int mvIsPolice(const char *name);
+void mvPoliceAdd(void);                       // сверка g09b-menu круг 5 (P03-08): одна машина погони
+int  mvPoliceLimit(void);                     // сколько положено уровню
+void mvPoliceFar(float px, float pz, float R);   // снять по одной машины погони дальше R м
 void mvPoliceHold(void);                      // №627: полиция после ареста стоит на месте (исчезает через mvPolice(0) по концу таймера)
 void mvPolice(int on);                        // правка 64: погоня Hit & Run — полицейская машина уровня едет за игроком / уходит
 void mvWorldCar(const char *car, const float p[3], float h);   // правка 53: машина мира (ракетная у локатора rocke)
@@ -93,6 +97,10 @@ int  mvWorldCarNear(float x, float z, float r, float out[4]);    // -> номе�
 int  mvTakeWorldCar(int i);                                       // 1 — игрок пересел в неё
 int  mvHnrOff(void);                         // перепроверка 96: миссия выключила Hit & Run (DisableHitAndRun)
 int mvPhoneCar(const char *car);             // правка 94: машина из галереи будки (1 — сменилась, 0 — машина уровня / нет модели)
+int mvBoothBlocked(void);   // сверка g07 круг 5 (P05-25): будка закрыта — миссия провалена или арест
+void mvWorldCarsStep(float px, float pz);   // сверка g10b-loop круг 5 (P03-20)
+void mvSetState(int transition, int arrested, const char *entering);   // сверка g10b-loop круг 2 (g07 P06-11, P07:32): main сообщает миссии переход в помещение, арест, имя интерьера
+int mvShopAllowed(void);                    // сверка g10b-loop круг 2 (P05:11): 1 — лавка и гардероб разрешены (вступление миссии и вне миссий)
 int mvSummon(void);                           // правка 62: будка — своя машина (0 — на машине миссии нельзя)
 void mvSetInterior(const char *name);        // КРЮЧОК КОМНАТ: имя интерьера как в скриптах ("KwikEMart"), NULL — город
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)); // №376: комната по настоящему полу SHI1, а не высоте города
@@ -105,6 +113,7 @@ void mvSetGround(int (*f)(float x, float z, float yHi, float yLo, float *out)); 
 void mvSetGov(int on);   // L3 причал: кадр в перегрузке (frameGov) — дальние персонажи миссии не рисуются дальше NPC_GOV_DIST
 void mvSetVis(int (*f)(const float bb[6]));   // правка 500: отсечение персонажей по кадру (trVis из main); без вызова — рисуются все
 void mvDraw3D(float ex, float ey, float ez, float dt);   // персонажи миссий (скиннинг GE); после — resetState() в main.c
+int  mvNpcNearList(float (*out)[4], int max, float x, float z, float r);   // сверка g07b (запрос g06-camera): персонажи миссии в радиусе r от (x, z), по возрастанию расстояния: {x, y, z, радиус тела 0,35}; -> сколько
 int mvNpcFeet(float (*out)[4], int max, float ex, float ey, float ez, float r);   // №748: персонажи миссий, которые рисуются (ближе r м к глазу, своя комната): x, y (ноги), z, рост модели — векторные тени (spritelight.h)
 extern float mvViewDir[3];                     // №967: взгляд камеры (единичный), ставит main перед mvDrawMarkers
 void mvDrawMarkers(float ex, float ey, float ez, float t);
@@ -114,7 +123,7 @@ void mvHud(float dt);                        // поля и метки HUD, зн
 void mvOverlay(void);                        // меню повтора после провала (после uiDraw)
 int  mvInput(unsigned *hit);                 // 1 — кнопки забрало меню провала (*hit обнулён)
 int  mvFailedScreen(int *sel);               // 1 — провал: экран MissionOver (uiDrawMissionOver(sel) вместо uiDraw), мир стоит
-int  mvMissionSelect(int on, unsigned hit);  // пауза -> MISSION SELECT: список миссий уровня; 1 открыт, 2 миссия запущена, 0 закрыт
+int  mvMissionSelect(int on, unsigned hit);  // пауза -> MISSION SELECT: список миссий уровня; 1 открыт, 2 миссия запущена, 3 миссия другого уровня, 4 START - выход из паузы в игру (сверка g07b), 0 закрыт
 void mvDrawMissionSelect(void);
 int  mvMissionSelectOn(void);                 // 1 — список MISSION SELECT открыт
 int  mvMissionSelectAvail(int rows);          // пункт ДОБИВКИ 26: 0 — на MISSION SELECT нечего выбрать (пункт паузы серый; PAUSE_MS_DIM_OLD=1 — всегда 1);
@@ -133,6 +142,15 @@ int  mvMissionSelectStartRow(int row);
 int  mvMissionSelectOld(void);
 void mvMsLR1058Set(int old);   // №1058: 1 — уровень в Mission Select только ◄ ► (как в TEST73); 0 — ещё L R
 int  mvBriefLoading(void);                  // №626: 1 — брифинг ещё под газетой LOADING (карточки нет): время для прогрева мира
+// сверка g07b-msnview (P06-3): выплата ставки = вход + целая часть (коэффициент машины игрока × вход). mvCarOdds — хук коэффициента SetGamblingOdds (NULL/ <0 — стартовая машина уровня).
+// Рантайм (mission/msn_run.c) обязан считать выплату этой же функцией (передано g07-missions)
+extern float (*mvCarOdds)(void);
+int  mvWagerPay(int fee);
+// сверка g07b-msnview (P13-3): Skip на экране провала. mvFailSkipOk — 1, если пункт SKIP доступен (7 учтённых сбросов, не L7 5–7); mvFailSkip — действие.
+// Пункт SKIP в MissionOver.pag включает/показывает ui.c по mvFailSkipOk (передано владельцу ui.c); mvInput обработает act==2
+extern int (*mvIntersectNavOn)(void);   // сверка g07b (P13-15): переключатель Intersect Nav System в Settings паузы; NULL — включено
+int  mvFailSkipOk(void);
+void mvFailSkip(void);
 int  mvBriefing(void);                       // 1 — брифинг миссии на экране (мир стоит, как пауза): uiDrawBriefing вместо uiDraw
 void mvBriefingInput(unsigned hit);          // X — продолжить (после LOADING, правка 52); △ на карточке ничего не делает
 void mvBriefOld(int on);                     // отрицательный контроль правки 52: прежняя карточка (сразу Continue и Cancel)
@@ -156,6 +174,7 @@ int mvTalkCamInfo(MvTalkCamInfo *out);
 // экран разговора (Scrooby LetterBox.scr, viewer/ui.h uiDrawLetterbox): идёт ли разговор, какие подписи (UI_LB_SKIP — «✕ SKIP»,
 // UI_LB_START — «✕ Start Mission / △ Cancel»: разговор — последний этап вступления, дальше брифинг) и кнопки разговора:
 // X — пропустить (перед миссией — начать её), △ — отменить миссию (только перед миссией). 1 — кнопки забраны разговором
+int mvTalkConverge(void);   // сверка g10b-loop круг 3 (M2:23): 1 — идущий разговор закрывается сходящимися полосами с паузой и ирисом (последний этап вступления, пара Пэтти и Сельма)
 int mvTalkActive(void);
 int mvTalkPrompt(void);
 int mvTalkInput(unsigned hit);   // служебное (гейт tests/camera/convcam_emu): 1 — камера разговора включена

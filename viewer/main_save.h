@@ -167,6 +167,7 @@ static void flatPoll(void) {
   if (smkOn) { char s_[160]; flatTintBuild(); unsigned ks_ = 0, ke_ = 0, kt_ = 0; for (unsigned q_ = 0; q_ < ntex && q_ < 1024; q_++) { ks_ += tex[q_].flatK != 0; ke_ += tex[q_].flatE == FLAT_EL_OK; kt_ += tex[q_].tstatOk; }
     snprintf(s_, sizeof s_, "FLAT on=%d flat=%u ground=%u noise_mean=%.3f ntex=%u stat_ok=%u scan_k=%u elig=%u toon=%d scan_us=%u scan_n=%u marks=%d cells=%u verts=%u res=%u small=%u drops=%u t=%.1f\n", flatOn, flatKinds[1], flatKinds[2], noiseMean, ntex, kt_, ks_, ke_, toneToon(), flatScanUs, flatScanN, marksOk, marksCellsLoaded, marksVertsLoaded, marksVertsResident, marksSmallLoads, marksSmallDrops, smkT); smkWrite(s_); }
 }
+static int cfgNavOn(void) { return cfg.navSys != 0; }   // круг 5 (g10-flow): ответ хука стрелок пути
 static void cfgApply(void) {
   if (cfg.colour != toneSatPct()) { toneSetSat(cfg.colour); cfg.colour = toneSatPct(); toneApplyAll(); }
   { static int ctSet = -1, txSet = -1, lwSet = -1, eySet = -1; int pal = 0;   // №777: только при смене (первый вызов — значения файла)
@@ -193,6 +194,7 @@ static void cfgApply(void) {
   sndUserVolumes(cfg.music / 1000.f, cfg.effects / 1000.f, cfg.vehicle / 1000.f, cfg.voice / 1000.f);
   if (uiReady) uiHudShow(UI_T_RADAR, cfg.radar != 0);
   tutSetUser(cfg.tutorial != 0);
+  if (!CAMNAV_OPT_OLD) mvIntersectNavOn = cfgNavOn;   // круг 5 (g10-flow, P16:08): строка Navigation System паузы гасит стрелки пути (хук g07b P13-15)
   { static int tsSet = -1; if (!TREESH_OLD && cfg.treeShadow != tsSet) { tsSet = cfg.treeShadow; treeShOn = cfg.treeShadow != 0; } }   // проверка 18.10: только при смене — откаты (treeshold, flag treesh) не перетираются. Роб 17.10: тени деревьев вкл/выкл в настройках (main_render.h TREESH_SKIP), сразу, без перезагрузки уровня
   { static int toonSet = -1; if (cfg.toon != toonSet) { if (toonSet != -1 || cfg.toon) levelToonWanted = cfg.toon != 0; if (!cfg.toon && toonSet > 0) skinToonFlush(); toonSet = cfg.toon; skinSetToon(cfg.toon != 0); } }   /* проверка 18.10: выключили — кэш оболочек (до 2 МБ) в кучу */   // №679: мир-мультик (level_toon.shr, линии) берётся со следующей загрузки уровня; служебный toonworld на первой установке не затирается   // №428: только при смене значения — служебный файл toon / команда smoke не затираются
   if (toonModeChanged) { toonModeChanged = 0; if (haveCol) toonLinesLoad(); }   // №754: линии города — сразу с режимом (toonLinesLoad сам убирает при выключенном)
@@ -211,7 +213,7 @@ static void cfgLoad(void) {
       if (t.ver == 1 || n < (int)sizeof t) { Settings d = cfg; memcpy((char *)&d, &t, t.ver == 1 ? (size_t)n1 : (size_t)n); t = d; }
       if (!DRAWDEF1042_OLD && t.ver < 13) t.drawDist = 2;   // №1042б: миграция один раз — Draw Distance 250 (выбор игрока потом сохраняется как есть)
       if (t.ver < 14) t.curbTint = 0;   // №1064: старые сохранения получают «Original» (родной бордюр)
-      t.ver = DRAWDEF1042_OLD ? 12 : 14; if (t.curbTint < 0 || t.curbTint > 1) t.curbTint = 0; if (t.carShadow < 0 || t.carShadow > 1) t.carShadow = 0; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; cfg = t; }   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
+      t.ver = DRAWDEF1042_OLD ? 12 : 14; if (t.curbTint < 0 || t.curbTint > 1) t.curbTint = 0; if (t.carShadow < 0 || t.carShadow > 1) t.carShadow = 0; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; if (t.jumpCam < 0 || t.jumpCam > 1) t.jumpCam = 1; if (t.navSys < 0 || t.navSys > 1) t.navSys = 1; cfg = t; }   // круг 5 (g10-flow): Jump Cameras / Navigation System — только 0 или 1, старый файл — On   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
     sceIoClose(f); }
   cfgApply();
 }
@@ -222,6 +224,12 @@ static void cfgSave(void) {
   if (f >= 0) { sceIoWrite(f, &cfg, sizeof cfg); sceIoClose(f); }
 }
 // ---- сохранения (viewer/savemenu.h): текущая игра -> запись и обратно (миссии — msnStart по svPending)
+#ifndef MOVIES_SAVE_OLD
+#define MOVIES_SAVE_OLD 0      // круг 2: 1 — ролики и подсказки в запись не пишутся (как было)
+#endif
+#ifndef CHASEVIEW_SAVE_OLD
+#define CHASEVIEW_SAVE_OLD 0   // 1 — вид камеры за машиной в запись не пишется (как было)
+#endif
 static SaveGame lvKeep;   // облако 05.10 (карьера): прогресс миссий всех уровней этой игры (ext записи; новая игра — пусто)
 static void saveCapture(SaveGame *s) {
   svClear(s); MsnProgress p;
@@ -233,6 +241,11 @@ static void saveCapture(SaveGame *s) {
   s->music = cfg.music; s->effects = cfg.effects; s->vehicle = cfg.vehicle; s->voice = cfg.voice; s->radar = cfg.radar;
   s->ext[SV_EXT_CAM] = (uint8_t)(SV_EXT_CAM_SET | (cfg.invertCam ? SV_EXT_CAM_INV : 0));   // правка 362: инверсия L/R камеры (savegame.h)
   s->skin = (uint8_t)(skinWorn > 0 ? skinWorn : 0);   // правка 107: надетый костюм
+  if (!MOVIES_SAVE_OLD) { s->ext[SV_EXT_MOVIES] = (uint8_t)(SV_EXT_MOVIES_SET | (cfg.movies >> 8 & 1u)); s->ext[SV_EXT_MOVIES + 1] = (uint8_t)(cfg.movies & 255u);
+                          s->ext[SV_EXT_MOVIES + 2] = (uint8_t)(cfg.tutSeen & 255u); s->ext[SV_EXT_MOVIES + 3] = (uint8_t)(cfg.tutSeen >> 8 & 255u); }   // круг 2 (g11b P07:24, P14:12/22): ролики и показанные подсказки — в слот
+  if (!CAMNAV_OPT_OLD) s->ext[SV_EXT_OPTS] = (uint8_t)(SV_EXT_OPTS_SET | (cfg.jumpCam ? SV_EXT_OPTS_JUMP : 0) | (cfg.navSys ? SV_EXT_OPTS_NAV : 0));   // круг 5 (g10-flow, P08:22/P16:08): Jump Cameras и Navigation System — в слот
+  if (!CHASEVIEW_SAVE_OLD) s->ext[SV_EXT_CHASE] = (uint8_t)(SV_EXT_CHASE_SET | (chaseView & 3));   // СВЕРКА_КАМЕРА 1.3 (передано g06): выбранный вид за машиной (дальний/ближний/бампер)
+  if (!CAR_HEALTH_OLD) { uint16_t ch[8]; float cf[8]; int cn = gameCarHealthDump(&G, ch, cf); svCarHealthPut(s, cn, ch, cf); }   // сверка g10-flow P01 Д1: прочность личных машин
   if (!gameLvProgOld) {   // облако 05.10 (карьера): прогресс миссий всех уровней (savegame.h SV_EXT_LV) — прежние из lvKeep, текущий из миссий
     svLvKeep(s, &lvKeep);
     if (s->msnLevel == gameLevel) svLvPut(s, gameLevel, s->msnCompleted, mvMissionRows());
@@ -284,6 +297,15 @@ static void saveApply(const SaveGame *s) {   // после newGame (карточ
       if (s->ext[SV_EXT_CAM] & SV_EXT_CAM_SET) cfg.invertCam = (s->ext[SV_EXT_CAM] & SV_EXT_CAM_INV) != 0;   // правка 362 (запись до 05.10 — как было)
       cfgApply(); cfgSave(); }
   if (s->skin && s->skin != skinWorn && wardrobeFile(s->skin)) homerWear(s->skin);   // правка 107: костюм, в котором сохранился
+  if (!MOVIES_SAVE_OLD && (s->ext[SV_EXT_MOVIES] & SV_EXT_MOVIES_SET) && !svmIsDev(s)) {   // объединение: показанное не забывается (settings.bin общий на устройство)
+    cfg.movies |= (unsigned)(s->ext[SV_EXT_MOVIES] & 1u) << 8 | s->ext[SV_EXT_MOVIES + 1];
+    cfg.tutSeen |= (unsigned)s->ext[SV_EXT_MOVIES + 2] | (unsigned)s->ext[SV_EXT_MOVIES + 3] << 8; }
+  if (!CAMNAV_OPT_OLD && (s->ext[SV_EXT_OPTS] & SV_EXT_OPTS_SET) && !svmIsDev(s)) { cfg.jumpCam = (s->ext[SV_EXT_OPTS] & SV_EXT_OPTS_JUMP) != 0; cfg.navSys = (s->ext[SV_EXT_OPTS] & SV_EXT_OPTS_NAV) != 0; cfgApply(); }   // круг 5 (g10-flow): настройки камер прыжка и навигации из слота; запись без поля — как у игрока
+  if (!CHASEVIEW_SAVE_OLD && (s->ext[SV_EXT_CHASE] & SV_EXT_CHASE_SET) && !svmIsDev(s)) { int v = s->ext[SV_EXT_CHASE] & 3; chaseView = v > 2 ? 0 : v; }   // запись до этого поля — вид как был
+  if (!CAR_HEALTH_OLD) {   // сверка g10-flow P01 Д1: прочность личных машин из записи; машина, что стоит сейчас в мире, получает свою долю
+    uint16_t ch[8]; float cf[8]; int cn = svCarHealthGet(s, ch, cf);
+    if (cn >= 0) { gameCarHealthLoad(&G, cn, ch, cf); if (haveCol) gameCarHealthApply(&G, G.hnrCarSet ? G.hnrCar : "", &car); }
+  }
   lvKeep = *s;   // облако 05.10 (карьера): прогресс всех уровней загруженной записи (до 05.10 — svLvGet выводит его из уровня записи)
   if (!spOnceOld) {   // правка 334: разбитые разовые предметы уровня — разбитыми, монеты из них не выпадают
     memcpy(onceKeep, s->once, sizeof onceKeep);
@@ -349,6 +371,8 @@ static int *cfgSlot(int scr, int row, int sound) {   // значение нас�
   int *v[4] = {&cfg.music, &cfg.effects, &cfg.vehicle, &cfg.voice};
   if (sound) { for (int i = 0; i < 4; i++) if (row == rowOf(scr, snd[i])) return v[i]; return 0; }
   if (row == rowOf(scr, "TUTORIAL")) return &cfg.tutorial;   // строка Tutorial (Settings паузы): подсказки Барта вкл/выкл (29.09)
+  if (!CAMNAV_OPT_OLD && row == rowOf(scr, "JUMP")) return &cfg.jumpCam;   // круг 5 (g10-flow, P08:22): строка Jump Cameras (CAMERA): Off — камеры зон у машины не включаются
+  if (!CAMNAV_OPT_OLD && row == rowOf(scr, "NAVIGATION")) return &cfg.navSys;   // круг 5 (g10-flow, P16:08): строка Navigation System (GAME): Off — стрелок пути нет
   if (row == rowOf(scr, "INVERT")) return &cfg.invertCam;   // правка 362: строка Invert Camera Control (данные PauseSettings.pag): Off / On
   if (row == rowOf(scr, "COLOUR") || row == rowOf(scr, "SATURATION")) { cfgColourRow = toneSatIndex(cfg.colour); return &cfgColourRow; }   // правка 144; №753: подпись Saturation
   if (scr == optLinkScr && row == optLinkRow) return 0;   // №783: строка-переход «Cartoon» на PICTURE — не значение (✕ открывает страницу CARTOON)
@@ -491,6 +515,12 @@ static int vcStart(void) {
   vcOpen = 1; vcSel = 0; vcZoom = 0; vcShow(); vcQrLoad(); vcLog("open");
   return 1;
 }
+#ifndef PAUSE_START_ALL_OLD
+#define PAUSE_START_ALL_OLD 0   // круг 2 (g07b P13:7): 1 — START в LEVEL PROGRESS / VIEW CARDS закрывает только подэкран, как было
+#endif
+#ifndef HOMER_CABENG_OLD
+#define HOMER_CABENG_OLD 0      // круг 2 (g04 P10 Д7): 1 — мотор кабины по homerDriving, как было
+#endif
 static void vcInput(unsigned hit) {
   int was = vcSel;
   if (vcZoom) {
@@ -574,12 +604,23 @@ static void pauseSubInput(unsigned hit) {   // пауза стоит; △/○ �
 // порта (в данных и записи PS2 скорости нет); музыка — событие композиции «Credits» (l1_music.rms: Land_of_Choc_Main), тюнер
 // «Credits»; кончились или △ — назад в OPTIONS. VIEW MOVIES (ViewMovies.scr): 9 строк — ролики MOVIES[]; открыт — показан в игре
 // (cfg.movies) и лежит рядом с EBOOT, остальные серые; X — ролик во весь экран (как ролики целей), START — пропустить
-#define CREDITS_SPEED (35.f * 272.f / 480.f)   // px PSP в секунду: 35 px Scrooby/с (≈ 3,4 с на строку-блок в 15 px)
+// круг 2 (g09a M3:5): скорость титров по исходнику 20 px Scrooby/с = 20·272/480 = 11,3 px PSP/с (было 35 → 19,8); ↑ и ↓ (на титрах свободны) — ×5 назад / вперёд.
+// CREDITS_SPEED_OLD=1 — как было. Реплики Канга и Кодоса по строкам после L7M7 и выход по X — раскладка PSP, решает Роб
+#ifndef CREDITS_SPEED_OLD
+#define CREDITS_SPEED_OLD 0
+#endif
+#define CREDITS_SPEED ((CREDITS_SPEED_OLD ? 35.f : 20.f) * 272.f / 480.f)
+static float creditsRate(unsigned held) { return CREDITS_SPEED_OLD ? 1.f : (held & PSP_CTRL_DOWN) ? 5.f : (held & PSP_CTRL_UP) ? -5.f : 1.f; }
 enum { OPT_MAIN = 0, OPT_SOUND = 1, OPT_CREDITS = 2, OPT_MOVIES = 3 };
+// M3 Д9 (сверка g10-flow): в списке роликов ВСЕГДА открыты два — intro и ролик новой игры (fmv1a); остальные семь открываются, когда открыт ролик
+// своего уровня. Было: всегда только intro, fmv1a после первого показа. MOVIES_NEWGAME_OLD=1 — как было
+#ifndef MOVIES_NEWGAME_OLD
+#define MOVIES_NEWGAME_OLD 0
+#endif
 static unsigned moviesAvail(void) {   // бит k — строку MOVIES[k] можно выбрать
   unsigned m = 0; char fn[256], rel[48]; SceIoStat st;
   for (int k = 0; k < 9; k++) { snprintf(rel, sizeof rel, "movies/%s.smv", MOVIES[k]); sibling(fn, rel);
-    if (((cfg.movies | 1u | ((!TICKET_CONTENT_C3_OLD&&TICKET_MOVIE_AVAILABLE)?1u<<8:0)) >> k & 1u) && sceIoGetstat(fn, &st) >= 0) m |= 1u << k; }
+    if (((cfg.movies | (MOVIES_NEWGAME_OLD ? 1u : 3u) | ((!TICKET_CONTENT_C3_OLD&&TICKET_MOVIE_AVAILABLE)?1u<<8:0)) >> k & 1u) && sceIoGetstat(fn, &st) >= 0) m |= 1u << k; }
   return m;
 }
 static void creditsLog(const char *what, float scroll, const UiCredits *ci) {
@@ -613,8 +654,16 @@ static int scrapPage(int L, const unsigned char *c) {
   if (smkOn) { char s[80]; snprintf(s, sizeof s, "SCRAPBOOK page=%d got=%02x t=%.1f\n", L, got, smkT); smkWrite(s); }
   return 1;
 }
+// P14 Д5 (сверка g10-flow): альбом помнит последний открытый уровень, пока меню живо (до начала игры): повторный вход — на той странице, где вышли;
+// первый вход — уровень 1. SCRAP_LAST_OLD=1 — каждый вход с первого доступного уровня
+#ifndef SCRAP_LAST_OLD
+#define SCRAP_LAST_OLD 0
+#endif
+static int scrapLast; static unsigned scrapGen;   // 0 — ещё не открывали; scrapGen — поколение уровня при выходе (началась игра — страница забыта)
 static void scrapRun(int mainSel, void **fbp, const unsigned char *c) {
   int keep = gameLevel, L = 0;
+  if (scrapGen != lvGen) scrapLast = 0;
+  if (!SCRAP_LAST_OLD && scrapLast >= 1 && scrapLast <= 7 && scrapPage(scrapLast, c)) L = scrapLast;
   for (int n = 1; n <= 7 && !L; n++) if (scrapPage(n, c)) L = n;
   if (!L) { gameLevel = keep; return; }
   int font = uiFontFind("boulder_16");
@@ -647,6 +696,7 @@ static void scrapRun(int mainSel, void **fbp, const unsigned char *c) {
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
   if (vcOpen) { SCR_CLOSE(); vcOpen = 0; }
+  scrapLast = L; scrapGen = lvGen;   // P14 Д5: страница, на которой вышли
   gameLevel = keep;
 }
 static void optionsRun(int mainSel, void **fbp) {
@@ -661,6 +711,7 @@ static void optionsRun(int mainSel, void **fbp) {
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(), t0 = last; char logged[24] = "";
   float credT = 0.f; int credShot = 0, prevMode = SND_MODE_NORMAL; UiCredits ci; memset(&ci, 0, sizeof ci);
   optLog("menu", scr, 0, -1);
+  int scrPrev = scr;   // сверка g09b-menu (M3 №1): смена подэкрана сопровождается перелётом камеры (optFlyScr, main_frontend.h)
   for (;;) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
@@ -669,7 +720,7 @@ static void optionsRun(int mainSel, void **fbp) {
     SmokeCmd sc; while (smokeNext(dt, &sc)) if (sc.op == 2 && !strcmp(sc.name, "moviesseen")) cfg.movies = (unsigned)sc.a | 1u;   // служебно (гейт)
     if (scr == OPT_CREDITS) {
       int done = !credShot && ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
-      if (!smkShot[0]) credT += dt;   // снимок окна: титры стоят, пока ppsspp_run.sh не снимет
+      if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }   // снимок окна: титры стоят, пока ppsspp_run.sh не снимет
       if (uiScrBackInput(hit) || done) {
         creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci);
         sndMode(prevMode); sndMusic(SND_MUS_FRONTEND); scr = OPT_MAIN; hit = 0;
@@ -691,11 +742,14 @@ static void optionsRun(int mainSel, void **fbp) {
       }
       else if (scr == OPT_MOVIES && r >= 0 && r < 9) {   // ролик во весь экран; потом снова список
         if (smkOn) { char s[80]; snprintf(s, sizeof s, "MOVIES play row=%d name=%s t=%.1f\n", r, MOVIES[r], smkT); smkWrite(s); }
+        optFlyMovie(0, mainSel, fbp);   // сверка g09b-menu (M3 №1): камера летит к ТВ (975–1005), потом ролик
         char rmv[24]; snprintf(rmv, sizeof rmv, "%s.rmv", MOVIES[r]); msnMovie(rmv, fbp);
+        optFlyMovie(1, mainSel, fbp);   // и обратно (1005–1035)
         sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = sceKernelGetSystemTimeLow();
       }
       if (hit) optLog("menu", scr, sel[scr], r);
     }
+    if (scr != scrPrev) { optFlyScr(scrPrev, scr, mainSel, fbp); scrPrev = scr; sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = sceKernelGetSystemTimeLow(); }   // сверка g09b-menu (M3 №1)
     if (smkShot[0] && strcmp(logged, smkShot)) { optLog("menu", scr, sel[scr], -1); if (scr == OPT_CREDITS) creditsLog(smkShot, credT * CREDITS_SPEED, &ci);
                                                  strcpy(logged, smkShot); }
     credShot = smkShot[0] != 0;
@@ -730,7 +784,7 @@ static void creditsRun(void **fbp) {
     unsigned hit = pad.Buttons & ~prev; prev = pad.Buttons;
     SmokeCmd sc; while (smokeNext(dt, &sc)) {}
     int done = ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
-    if (!smkShot[0]) credT += dt;
+    if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }
     if (uiScrBackInput(hit) || done) { creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); break; }
     sceGuStart(GU_DIRECT, list); resetState();
     sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);

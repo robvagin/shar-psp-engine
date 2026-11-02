@@ -225,7 +225,12 @@ static int start(int id, const float pos[3], const float dir[3], int once) {
     if (!in_[i].used) { if (slot < 0) slot = i; continue; }
     if (in_[i].sys == id && in_[i].once) { cnt++; if (in_[i].age > oa) { oa = in_[i].age; oldest = i; } }
   }
-  if (once && cnt >= S[id].maxInst && oldest >= 0) in_[oldest].spawning = 0;   // потолок maxInstances: гасим старейшую
+  // сверка g11, P11_объекты_мира Д3 (Н): одноразовые частицы удара — если все системы этого типа заняты, новая не запускается, старая не обрывается (число систем на тип задано
+  // данными). Было: гасим старейшую и запускаем новую. FXPOOL_SV_OLD=1 — как было. Звёзды крошки (fxCrashStars) идут мимо пула, как eStars у оригинала
+#ifndef FXPOOL_SV_OLD
+#define FXPOOL_SV_OLD 0
+#endif
+  if (once && cnt >= S[id].maxInst && oldest >= 0) { if (!FXPOOL_SV_OLD) return 0; in_[oldest].spawning = 0; }   // потолок maxInstances
   if (slot < 0) return 0;
   Inst *s = &in_[slot]; memset(s, 0, sizeof *s);
   s->sys = id; s->used = 1; s->spawning = 1; s->once = once || S[id].oneShot; s->rate = 1.f;
@@ -300,8 +305,52 @@ void fxSpawn(int kind, float x, float y, float z, float vx, float vy, float vz) 
   }
 }
 
+// сверка g11, P02_гомер Д2 (С): пыль шага и приземления — россыпь клубов code_dust (cloud.tga). Шаг: желаемая скорость больше 1 м/с, от 3 до 11 клубов случайно у ступни,
+// прозрачность 32/255 x (S^2 + S) / 2, где S = скорость / 8 (максимум 12,5 %: пыль еле заметная). Приземление: 16 + 16 x сила клубов (24 / 27 / 32 для 0,5 / 0,7 / 1,0), подняты на
+// 0,25 x сила, летят радиально со скоростью (1 + сила), та же прозрачность 32/255; на сильном падении ещё кольцо (fxLandRing). Сила — от скорости падения: 0,5 при пороге FXD_LAND_MIN,
+// 1,0 с 14 м/с (у оригинала сила идёт от клипа, числа скорости нет: правило порта). Размер клуба (0,2 м, рост на 20 %; 0,5 x сила) задаёт кривая системы code_dust, поштучно его не
+// меняем. Шаг: power = скорость бега, м/с (main_state.h передаёт e.r). FXDUST_SV_OLD=1 — прежние клуб на шаг и 3-4 клуба на приземлении
+#ifndef FXDUST_SV_OLD
+#define FXDUST_SV_OLD 0
+#endif
+static void dustSv(float x, float y, float z, float vx, float vy, float vz, float ak) {
+  if (!ready || sysDust < 0) return;
+  float pos[3] = {x, y, z}, vel[3] = {vx, vy, vz};
+  spawn(S[sysDust].firstEmit, -1, 0, 30.f, pos, I9, vel, NULL, ak);
+}
+// кольцо пыли при сильном приземлении (P03_мир P03-32): радиус 3 м x сила, расширение 1,75 в секунду (за ~0,57 с до полного радиуса), клубы по окружности
+void fxLandRing(float x, float y, float z, float force) {
+  if (!ready || sysDust < 0 || force <= 0.f) return;
+  if (force > 1.f) force = 1.f;
+  float sp = 3.f * force * 1.75f;   // м/с: радиус за 1/1,75 с
+  for (int k = 0; k < 16; k++) {
+    float a = k * (6.2831853f / 16.f);
+    dustSv(x + cosf(a) * .3f, y + .1f, z + sinf(a) * .3f, cosf(a) * sp, .15f, sinf(a) * sp, 32.f / 255.f);
+  }
+}
 int fxHomerDust(int kind, float x, float y, float z, float power) {
   if (!ready || sysDust < 0) return 0;
+  if (!FXDUST_SV_OLD) {
+    if (kind == FXD_STEP) {
+      if (power <= 1.f) return 0;
+      float S_ = fminf(power / 8.f, 1.f), ak = 32.f / 255.f * (S_ * S_ + S_) * .5f;
+      int n = 3 + (int)(fr() * 8.99f);
+      for (int k = 0; k < n; k++) dustSv(x + (fr() - .5f) * .4f, y + .08f, z + (fr() - .5f) * .4f, (fr() - .5f) * .4f, .2f + fr() * .15f, (fr() - .5f) * .4f, ak);
+      return n;
+    }
+    if (kind == FXD_LAND) {
+      if (power <= FXD_LAND_MIN) return 0;
+      float force = .5f + (power - FXD_LAND_MIN) * (.5f / 8.f); if (force > 1.f) force = 1.f;
+      int n = 16 + (int)(16.f * force + .5f);
+      float sp = 1.f + force;
+      for (int k = 0; k < n; k++) {
+        float a = (k + fr() * .6f) * (6.2831853f / (float)n);
+        dustSv(x + cosf(a) * .25f, y + .25f * force, z + sinf(a) * .25f, cosf(a) * sp, .2f + fr() * .1f, sinf(a) * sp, 32.f / 255.f);
+      }
+      if (force >= 1.f) fxLandRing(x, y, z, force);
+      return n;
+    }
+  }
   if (kind == FXD_STEP) { fxSpawn(FX_DUST, x, y + .08f, z, (fr() - .5f) * .4f, .2f + fr() * .15f, (fr() - .5f) * .4f); return 1; }   // клуб на шаг: почти на месте
   int n = kind == FXD_BOUNCE ? 5 : (power > FXD_LAND_MIN ? (power > 14.f ? 4 : 3) : 0);
   float sp = kind == FXD_BOUNCE ? 1.2f : .5f + .04f * fminf(power, 20.f);   // разлёт вбок, м/с
@@ -310,6 +359,101 @@ int fxHomerDust(int kind, float x, float y, float z, float power) {
     fxSpawn(FX_DUST, x + cosf(a) * .25f, y + .08f, z + sinf(a) * .25f, cosf(a) * sp, .25f + fr() * .2f, sinf(a) * sp);
   }
   return n;
+}
+
+// сверка g11 круг 2 (от g04-homer, P02-14): приземление героя — пыль на каждое приземление, сила 0,5 / 0,7 после второго прыжка / 1,0 после стомпа (в событии LAND: dx — сила, dz = 1 у стомпа — кольцо).
+// Число клубов 16 + 16 x сила, размер 0,5 x сила (кривая code_dust), скорость 1 + сила; кольцо — fxLandRing. Без порога скорости падения 6 м/с. FXLAND_SV_OLD=1 — прежнее (fxHomerDust по скорости падения)
+#ifndef FXLAND_SV_OLD
+#define FXLAND_SV_OLD 0
+#endif
+int fxHomerLand(float x, float y, float z, float force, int ring) {
+  if (FXLAND_SV_OLD || !ready || sysDust < 0 || force <= 0.f) return 0;
+  int n = 16 + (int)(16.f * force + .5f); float sp = 1.f + force;
+  for (int k = 0; k < n; k++) {
+    float a = (k + fr() * .6f) * (6.2831853f / (float)n);
+    dustSv(x + cosf(a) * .25f, y + .25f * force, z + sinf(a) * .25f, cosf(a) * sp, .2f + fr() * .1f, sinf(a) * sp, 32.f / 255.f);
+  }
+  if (ring) fxLandRing(x, y, z, force);
+  return n;
+}
+// сверка g11 круг 2 (от g01-cars, P01-23 и g12-data P18-04): пробуксовка — от задних колёс дым по поверхности (асфальт дым, трава, грунт, песок, гравий пыль, вода брызги). surf — SURF_*, k — 0..1 доля
+// пробуксовки; ручник дыма не даёт (вызывающий). Один вызов — один выпуск, частоту задаёт main_loop.h (20 в секунду на колесо). WHEELFX_SV_OLD=1 — дыма из-под колёс нет
+#ifndef WHEELFX_SV_OLD
+#define WHEELFX_SV_OLD 0
+#endif
+int fxWheelSpin(float x, float y, float z, int surf, float vx, float vz, float k) {
+  if (WHEELFX_SV_OLD || !ready || k <= 0.f) return 0;
+  float r1 = fr() - .5f, r3 = fr() - .5f;
+  switch (surf) {
+    case 1: case 2: case 3: case 7:   // трава, песок, гравий, грунт: пыль и комья
+      dustSv(x, y + .1f, z, vx * .2f + r1 * 1.2f, .6f + fr() * .8f * k, vz * .2f + r3 * 1.2f, .55f * k); return 1;
+    case 4:                           // вода: брызги выше и дальше
+      fxSpawn(FX_SMOKE, x, y + .1f, z, vx * .3f + r1 * 2.f, 2.f + fr() * 2.f * k, vz * .3f + r3 * 2.f); return 1;
+    default:                          // дорога, дерево, металл: дым покрышек
+      fxSpawn(FX_SMOKE, x, y + .15f, z, vx * .15f + r1 * .8f, .5f + fr() * .6f, vz * .15f + r3 * .8f); return 1;
+  }
+}
+// сверка g11 круг 2 (от g01-cars, P11-14): удар машины о листву и статику (деревья, изгороди; тип 2) — частица ATC в точке касания на каждый удар. Здесь по материалу листвы: листья дуба (система 5), если
+// она есть в пакете уровня, иначе кусты (3). Порог импульса 10 x масса предмета (масса статики в COL1 не лежит) заменён порогом скорости удара FOLIAGE_FX_V. FOLIAGEFX_SV_OLD=1 — частиц нет
+#ifndef FOLIAGEFX_SV_OLD
+#define FOLIAGEFX_SV_OLD 0
+#endif
+#define FOLIAGE_FX_V 3.f
+int fxFoliageHit(const float pos[3], float v) {
+  if (FOLIAGEFX_SV_OLD || !ready || v < FOLIAGE_FX_V) return 0;
+  int id = fxFindInst(5); if (id < 0) id = fxFindInst(3);
+  return id >= 0 && fxBurst(id, pos, NULL) ? 1 : 0;
+}
+// сверка g11, P01_машины P01-12 (С, с поправкой второго читателя) и P11_объекты_мира P11-13: частицы удара машины игрока от импульса (Н·с = масса x скорость сближения).
+// Звёзды (eStars): только об забор, интенсивность импульс / 25000 (не больше 10: больше уменьшается в 10 раз), выпуск от импульса 250; на удар 10 жёлтых штрихов (~0,5 с) и 10 серых
+// клубков пыли в точке; идут мимо пула систем. Искры вдоль движения: машина о машину и о подвижный предмет, импульс / 5000 (у подвижного вполовину), от 50. Крошка цвета кузова:
+// только машина о машину, импульс / 5000. Об неподвижный мир (здания, стены) искр и звёзд нет. Число частиц растёт с интенсивностью. Цвет кузова поштучно сменить нельзя
+// (code_paint — одна система), крошка идёт цветом системы. CRASHFX_SV_OLD=1 — прежние искры от прироста урона (main_loop.h), без этих вызовов
+#ifndef CRASHFX_SV_OLD
+#define CRASHFX_SV_OLD 0
+#endif
+int fxCrashFxSv = !CRASHFX_SV_OLD;
+int fxCrashStars(float x, float y, float z, float impulse) {
+  if (!ready || impulse < 250.f) return 0;
+  float k = impulse / 25000.f; if (k > 10.f) k /= 10.f; if (k > 1.f) k = 1.f;
+  int n = 0, ns = 4 + (int)(6.f * k + .5f);   // штрихов 4..10 (интенсивность)
+  for (int i = 0; i < ns; i++, n++) {
+    float a = fr() * 6.2831853f, up = 2.f + fr() * 3.f, sp = 3.f + fr() * 4.f * (.5f + k);
+    fxSpawn(FX_SPARK, x, y, z, cosf(a) * sp, up, sinf(a) * sp);
+  }
+  for (int i = 0; i < ns; i++, n++) {
+    float a = fr() * 6.2831853f;
+    dustSv(x, y, z, cosf(a) * .8f, .3f + fr() * .4f, sinf(a) * .8f, .6f);
+  }
+  return n;
+}
+int fxCrashSparks(float x, float y, float z, float dx, float dz, float impulse, int movable) {
+  float k = impulse / 5000.f * (movable ? .5f : 1.f);
+  if (!ready || impulse < 50.f || k < .01f) return 0;
+  if (k > 10.f) k /= 10.f; if (k > 1.f) k = 1.f;
+  int n = 3 + (int)(12.f * k + .5f);
+  for (int i = 0; i < n; i++) {
+    float sp = 3.f + fr() * 6.f * (.5f + k);
+    fxSpawn(FX_SPARK, x, y, z, dx * sp + (fr() - .5f) * 3.f, fr() * 3.f + .5f, dz * sp + (fr() - .5f) * 3.f);
+  }
+  return n;
+}
+int fxCrashPaint(float x, float y, float z, float impulse) {
+  float k = impulse / 5000.f;
+  if (!ready || impulse < 50.f) return 0;
+  if (k > 1.f) k = 1.f;
+  int n = 2 + (int)(8.f * k + .5f);
+  for (int i = 0; i < n; i++) fxSpawn(FX_PAINT, x, y, z, (fr() - .5f) * 5.f, fr() * 3.f + .5f, (fr() - .5f) * 5.f);
+  return n;
+}
+// удар днищем о землю или предмет (P03-32): 30 искр в радиусе 2,5 м от точки, разлёт вверх и в стороны
+int fxCrashUnder(float x, float y, float z) {
+  if (!ready) return 0;
+  for (int i = 0; i < 30; i++) {
+    float a = fr() * 6.2831853f, r = fr() * 2.5f;
+    fxSpawn(FX_SPARK, x + cosf(a) * r, y + .1f, z + sinf(a) * r, cosf(a) * 2.f, 1.f + fr() * 3.f, sinf(a) * 2.f);
+  }
+  return 30;
 }
 
 // ---------- обновление ----------

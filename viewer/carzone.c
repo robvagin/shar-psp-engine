@@ -20,8 +20,49 @@ static float lagK(float lag, float dt) {   // как viewer/roomcam.c: доля 
   return 1.f - powf(1.f - lag, dt * 60.f);
 }
 
+// сверка g06 (02.11.2026, g06-camera:9,12,20,37; P08 Д2, Д5, P18-02): камера зоны для машины по данным оригинала. Допуск (биты данных, «только для машины» — скорость не меньше 20 м/с по
+// скорости центра масс) проверяется КАЖДЫЙ кадр, пока кузов касается объёма; включившаяся камера держится, пока кузов касается объёма, даже если скорость упала. Касание кузова —
+// сфера 1,5 м вокруг центра машины или любая из точек коробки кузова. Вход в объём включает камеру сразу, срез. Статичная: авто-зум по расстоянию до машины (10…25 м, 0,022), рельс — максимальный
+// угол. CARZONE_SV_OLD=1 — прежнее правило (рельс только на входе, середина кузова, порог 17 м/с, угол из данных)
+#ifndef CARZONE_SV_OLD
+#define CARZONE_SV_OLD 0
+#endif
+static int carZoneStepSv(const RoomCam *c, int n, CarZoneState *s, const float (*body)[3], int nbody, const float ref[3], float speed,
+                         float dt, float eye[3], float look[3], float *fovY) {
+  if (n > 32) n = 32;
+  unsigned now = 0;
+  for (int k = 0; k < n; k++) {
+    int hit = bodyIn(&c[k], body, nbody);
+    if (!hit && nbody > 0) for (int q = 0; q < c[k].ntrig && !hit; q++) hit = roomTrigIn(&c[k].trig[q], body[0][0], body[0][1], body[0][2], 1.5f);
+    if (hit) now |= 1u << k;
+  }
+  unsigned entered = now & ~s->in; s->in = now;
+  s->held &= now;
+  unsigned ok = 0;
+  for (int k = 0; k < n; k++) if ((now & (1u << k)) && ((s->held & (1u << k)) || roomCamAllows(&c[k], 1, speed))) ok |= 1u << k;
+  int i = -1;
+  for (int k = 0; k < n && i < 0; k++) if ((entered & ok & (1u << k)) && k != s->cur) i = k;   // вошла — берёт кадр сразу
+  if (i < 0) {
+    if (s->cur >= 0 && s->cur < n && (ok & (1u << s->cur))) i = s->cur;
+    else for (int k = 0; k < n; k++) if (ok & (1u << k)) { i = k; break; }
+  }
+  if (i < 0) { s->cur = -1; s->held = 0; return -1; }
+  s->held |= 1u << i;
+  const RoomCam *m = &c[i];
+  float e[3], l[3];
+  if (m->type == 1) { s->t = roomRailParamDt(m, i == s->cur ? s->t : -1.f, ref, dt); roomRailPose(m, s->t, ref, e, l); }
+  else { memcpy(e, m->pos, 12); if (m->follow) for (int k = 0; k < 3; k++) l[k] = ref[k] + m->target[k]; else memcpy(l, m->target, 12); }
+  if (i != s->cur) { memcpy(s->eye, e, 12); memcpy(s->look, l, 12); s->zoomH = 0.f; }
+  else { float kp = m->type == 1 ? lagK(m->posLag, dt) : 1.f, kt = lagK(m->targetLag, dt);
+    for (int k = 0; k < 3; k++) { s->eye[k] += (e[k] - s->eye[k]) * kp; s->look[k] += (l[k] - s->look[k]) * kt; } }
+  s->cur = i; memcpy(eye, s->eye, 12); memcpy(look, s->look, 12);
+  float dx = s->eye[0] - ref[0], dy = s->eye[1] - ref[1], dz = s->eye[2] - ref[2];
+  *fovY = roomCamFovCar(m, sqrtf(dx * dx + dy * dy + dz * dz), &s->zoomH, dt);
+  return i;
+}
 int carZoneStep(const RoomCam *c, int n, CarZoneState *s, const float (*body)[3], int nbody, const float ref[3], float speed,
                 float dt, float eye[3], float look[3], float *fovY) {
+  if (!CARZONE_SV_OLD) return carZoneStepSv(c, n, s, body, nbody, ref, speed, dt, eye, look, fovY);
 #ifdef CARZONE_OFF   // служебное: красный контроль tests/camera/carzone_ps2.py --old (камер зон у машины нет, как до №408)
   (void)c; (void)body; (void)nbody; (void)ref; (void)speed; (void)dt; (void)eye; (void)look; (void)fovY; s->cur = -1; return n < 0 ? n : -1;
 #endif

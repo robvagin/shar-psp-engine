@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Validate the owner's PAL instructions proving the Itchy & Scratchy reward contract.
-No leaked symbols/source or emulator. Fixed words include registration, branches, arguments,
+No emulator. Fixed words include registration, branches, arguments,
 card-count predicate, persistent bit names and Character Sheet serialization.
 """
 from pathlib import Path
