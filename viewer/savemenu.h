@@ -34,7 +34,7 @@ int  svmOpen(int mode, const SaveGame *game, int confirmLoad, int askQuit);
 // g09b-menu (сверка с исходником, 02.11.2026): askQuit — бит 0 «сохранить перед выходом?», бит 1 сначала «выйти?» (пауза; 3 — свободная езда, 2 — миссия).
 // svmQuitAsks/svmQuitAsk — что передать в savePauseOpen для QUIT GAME; svmPauseEnter — вход в паузу (флаг «записано в этой паузе» сбрасывается);
 // svmAskOpen(SVM_ASK_NEWGAME) — вопрос «Restart anyway?» главного меню: svmInput -> SVM_R_YES / SVM_R_NO
-enum { SVM_ASK_QUIT = 1, SVM_ASK_NEWGAME = 2, SVM_ASK_RESTART = 3, SVM_ASK_ABORT = 4 };   // 3, 4 — g09a-hud круг 5: svmOpen(SVM_SAVE, .., askQuit 4 / 8) — вопрос Restart / Abort Mission
+enum { SVM_ASK_QUIT = 1, SVM_ASK_NEWGAME = 2, SVM_ASK_RESTART = 3, SVM_ASK_ABORT = 4, SVM_ASK_STARTMSN = 5 };   // 5 — №1105 (сверка g11b-collect): «Would you like to load this mission?» из галереи миссий SCRAP BOOK   // 3, 4 — g09a-hud круг 5: svmOpen(SVM_SAVE, .., askQuit 4 / 8) — вопрос Restart / Abort Mission
 int  svmAskOpen(int kind);
 int  svmQuitAsks(void);
 int  svmQuitAsk(int freeRoam);

@@ -11,6 +11,13 @@
 #define CAM_GEOM_FAST 1
 #endif
 #define CG_VX .75f
+// №1141 (TEST84, L5, старт миссии: камера сразу проходит сквозь вывеску дома): сетка занятости строится по одной клетке, не больше CG_US2 мкс за кадр, — после переноса героя (старт миссии, сброс машины)
+// клетки у новой точки стояли без сетки, и пока она не достроится (десятки кадров), глаз и ближняя плоскость геометрию города не видели. Теперь при переносе опоры или загрузке уровня
+// клетки в CAM_START_R м от глаза и опоры достраиваются сразу, целиком (cgBuildNear, camGeomCollect), и список клеток луча обновляется при каждой достроенной клетке.
+// STARTCAM1141_OLD=1 — как в TEST84 (порционно, список клеток луча раз в 8 кадров)
+#ifndef STARTCAM1141_OLD
+#define STARTCAM1141_OLD 0
+#endif
 #ifndef CG_PROF
 #define CG_PROF 0   // 1 — считать мкс в cgStep/cgRayFrac (строка CAMIN gusray/gusstep); сам таймер дорог
 #endif
@@ -102,6 +109,7 @@ static void cgTriOldF(Cell *c, const float a[3], const float b[3], const float d
 static unsigned cgDone, cgVox, cgDbg, cgFrame, cgReuse, cgUsStep, cgUsRay, cgStepN;
 static float cgS[16]; static unsigned cgTotTri, cgSkipNy;
 static void cgStep2(float ex, float ez);
+static Cell *cgForceCell;   // №1141: клетка, которую cgStep2 достраивает целиком, без бюджета кадра
 // TEST24 (цена, ph6): стройка сетки съедала ~320 мкс на кадр при бюджете 100 (время сверялось через треугольник, крупные — до 96 меток). Теперь бюджет CG_US2 мкс, проверка каждый треугольник, до 32 меток.
 // CG_BUDGET_OLD=1 / flag cgbudgetold 1 — как было
 #ifndef CG_US2
@@ -120,18 +128,20 @@ static unsigned cgBuildN, cgBuildUs, cgScanN, cgScanUs;   // служебное 
 static void cgStep(float ex, float ez) { unsigned t0 = cgProf ? sceKernelGetSystemTimeLow() : 0; cgFrame++; cgStep2(ex, ez); if (!cgProf) { cgStepN++; return; } unsigned d_ = sceKernelGetSystemTimeLow() - t0; if (CG_PROF) cgUsStep += d_; cgStepN++; if (d_ > 150) { cgBuildN++; cgBuildUs += d_; } else { cgScanN++; cgScanUs += d_; } }
 static void cgStep2(float ex, float ez) {
   if (!CAM_GEOM_FAST || !cl) return;
+  Cell *forced = cgForceCell; cgForceCell = 0;
   // Аудит FPS: перебор всех клеток (1100+) каждый кадр ради «есть ли недостроенная» — впустую, когда всё построено. Нашли пусто — следующий перебор через 8 кадров
   // (клетка догружается — сетка начнёт строиться не позже чем через 8 кадров). CG_SCAN_OLD=1 — перебор каждый кадр
   // №924 (цена камеры в езде, тур TEST58 F_L4_CR, F_L7_CR: перебор клеток раз в 8 кадров в покое — 120 мкс на Маке, 27 мс на 540 кадров): клетка загрузилась — загрузчик (main_stream.h) двигает cgDirty,
   // в покое перебор только после этого (или раз в 64 кадра на всякий случай); стройка новой клетки начинается не позже, чем раньше. CG_DIRTY_OLD=1 / flag cgdirtyold 1 — раз в 8 кадров
-  static int cgIdle; if (!CG_SCAN_OLD && cgIdle && (cgDirtyOld ? (cgFrame & 7u) : (cgDirty == cgDirtySeen && (cgFrame & 63u)))) { cgIdleSkip++; return; }
+  static int cgIdle; if (!forced && !CG_SCAN_OLD && cgIdle && (cgDirtyOld ? (cgFrame & 7u) : (cgDirty == cgDirtySeen && (cgFrame & 63u)))) { cgIdleSkip++; return; }
   cgDirtySeen = cgDirty;
   unsigned tA_ = cgProf ? sceKernelGetSystemTimeLow() : 0; Cell *c = 0; float bd = 1e30f;
   // №924: пока идёт стройка, недостроенные клетки — короткий список (≤ CG_PEND_N), полный перебор 1100+ клеток раз в 16 кадров и при каждой загрузке клетки (cgDirty); выбор ближайшей из списка — то же правило, что у полного перебора.
   // Список переполнен (старт уровня) — полный перебор каждый кадр, как было. CG_PEND_OLD=1 / flag cgpendold 1 — полный перебор каждый вызов
   unsigned dirty_ = cgDirty; int fast_ = !cgPendOld && !CG_SCAN_OLD && cgPendN >= 0 && cgPendSeen == dirty_ && cgPendGen == cgGen && cgPendNc == ncell && cgPendCl == (const void *)cl && (cgFrame & 15u);
   cgPendK = -1;
-  if (fast_) { cgPendHit++;   // список — только недостроенные клетки (достроенная вычёркивается), центры в плотных массивах: цикл не трогает клетки
+  if (forced) { c = forced; }
+  else if (fast_) { cgPendHit++;   // список — только недостроенные клетки (достроенная вычёркивается), центры в плотных массивах: цикл не трогает клетки
     for (int k = 0; k < cgPendN; k++) {
       float dx = cgPendX[k] - ex, dz = cgPendZ[k] - ez, d = dx * dx + dz * dz;
       if (cgAhX > -1e8f) { float ax = cgPendX[k] - cgAhX, az = cgPendZ[k] - cgAhZ, da = ax * ax + az * az + 900.f; if (da < d) d = da; }
@@ -169,7 +179,7 @@ static void cgStep2(float ex, float ez) {
     if (r->flags & F_STRIP) { unsigned nl_; vbase = (const char *)pieceListT(d, 0, &nl_); if (!vbase) { c->cgk++; c->cgi = 0; continue; } n = (int)(nl_ - nl_ % 3); }   // К4: полосы -> список (слот 0)
     while (c->cgi < n && budget > 0) {
       int i = c->cgi; c->cgi += 3;
-      if (cgWork > (cgBudgetOld ? 96 : 32) || (camDet ? ++tick > CG_DET_TRIS : ((++tick & (cgBudgetOld ? 1 : 0)) == 0 && sceKernelGetSystemTimeLow() - t0 > (cgBudgetOld ? CG_US : CG_US2)))) budget = 0;   // крупный треугольник = много вокселей: ещё и по числу меток
+      if (!forced && (cgWork > (cgBudgetOld ? 96 : 32) || (camDet ? ++tick > CG_DET_TRIS : ((++tick & (cgBudgetOld ? 1 : 0)) == 0 && sceKernelGetSystemTimeLow() - t0 > (cgBudgetOld ? CG_US : CG_US2))))) budget = 0;   // крупный треугольник = много вокселей: ещё и по числу меток
       float w[3][3];
       for (int j = 0; j < 3; j++) {
         unsigned vi = noidx ? (unsigned)(i + j) : d->idx[i + j];
@@ -185,6 +195,19 @@ static void cgStep2(float ex, float ez) {
     if (c->cgi >= n) { c->cgk++; c->cgi = 0; }
   }
   if (c->cgk >= c->first + c->n) { c->cgs = 2; cgDone++; cgVox += c->cgbytes; cgPendDrop(); }   // gvox = байт сеток (без подсчёта занятых: перебор 100+ КБ стоил мс)
+}
+// №1141: достроить сразу, целиком, сетки клеток, чей ящик ближе R м к точке a или b (не больше maxCells за вызов). Зовётся после переноса опоры / загрузки уровня, окном в несколько кадров
+static float cgBoxDist(const Cell *c, const float p[3]) {
+  float d[3]; for (int k = 0; k < 3; k++) d[k] = fmaxf(fmaxf(c->bb[k] - p[k], p[k] - c->bb[k + 3]), 0.f);
+  return sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+}
+static int cgBuildNear(const float a[3], const float b[3], float R, int maxCells) {
+  if (!CAM_GEOM_FAST || !cl) return 0;
+  int n = 0;
+  for (unsigned i = 0; i < ncell && n < maxCells; i++) { Cell *q = &cl[i]; if (q->state != 2 || q->cgs == 2) continue;
+    if (cgBoxDist(q, a) > R && cgBoxDist(q, b) > R) continue;
+    cgForceCell = q; cgStep2(a[0], a[2]); n++; }
+  cgForceCell = 0; return n;
 }
 static inline int cgOcc(const Cell *c, const float p[3]) {
   int ix = (int)((p[0] - c->bb[0]) / CG_VX), iy = (int)((p[1] - c->bb[1]) / CG_VX), iz = (int)((p[2] - c->bb[2]) / CG_VX);
@@ -233,14 +256,14 @@ static float cgRayFrac2(const float a[3], const float b[3], float skip) {
   if (L < 1e-3f) return 1.f;
   float lo[3], hi[3]; for (int k = 0; k < 3; k++) { lo[k] = fminf(a[k], b[k]); hi[k] = fmaxf(a[k], b[k]); }
   // список клеток у луча — из кэша, пока луч внутри коробки кэша (± CG_CL_PAD м) и не прошло 8 кадров: перебор всех клеток на каждый из ~15 лучей кадра стоил больше самого шага
-  static const Cell *cc[8]; static int ccN; static float ccLo[3], ccHi[3]; static unsigned ccFr = 1u << 31, ccNcell, ccGen;
+  static const Cell *cc[8]; static int ccN; static float ccLo[3], ccHi[3]; static unsigned ccFr = 1u << 31, ccNcell, ccGen, ccDone;   // ccDone — №1141: сколько сеток было достроено при сборе списка
   const Cell **near = cc; int nn;
-  if (cgFrame - ccFr < 8u && ccNcell == ncell && ccGen == cgGen && lo[0] >= ccLo[0] && lo[1] >= ccLo[1] && lo[2] >= ccLo[2] && hi[0] <= ccHi[0] && hi[1] <= ccHi[1] && hi[2] <= ccHi[2]) nn = ccN;
+  if (cgFrame - ccFr < 8u && ccNcell == ncell && ccGen == cgGen && (STARTCAM1141_OLD || ccDone == cgDone) && lo[0] >= ccLo[0] && lo[1] >= ccLo[1] && lo[2] >= ccLo[2] && hi[0] <= ccHi[0] && hi[1] <= ccHi[1] && hi[2] <= ccHi[2]) nn = ccN;
   else {
     nn = 0; for (int k = 0; k < 3; k++) { ccLo[k] = lo[k] - 4.f; ccHi[k] = hi[k] + 4.f; }
     for (unsigned i = 0; i < ncell && nn < 8; i++) { const Cell *c = &cl[i];
       if (c->state == 2 && c->cg && c->cgs == 2 && c->bb[0] <= ccHi[0] && c->bb[3] >= ccLo[0] && c->bb[1] <= ccHi[1] && c->bb[4] >= ccLo[1] && c->bb[2] <= ccHi[2] && c->bb[5] >= ccLo[2]) cc[nn++] = c; }
-    ccN = nn; ccFr = cgFrame; ccNcell = ncell; ccGen = cgGen; }
+    ccN = nn; ccFr = cgFrame; ccNcell = ncell; ccGen = cgGen; ccDone = cgDone; }
   cgCalls++;
   if (!nn) return 1.f;
   int may[8]; for (int i = 0; i < 8; i++) may[i] = 1;

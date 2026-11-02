@@ -30,6 +30,17 @@
 #define PROP_TOON_H_TONE 16.f   // №951б: потолок высоты экземпляра при Ink Tone (пальма, фонарь)
 #define PROP_TOON_R_TONE 7.f
 #define PROP_TOON_MAXP_TONE 48
+// №1138 (Роб 02.11: «обводка только у персонажей и машин; у предметов — почтовых ящиков, гидрантов, урн, скамеек, всех сбиваемых и стейтпропов — убрать совсем»): проход контура пропов и стейтпропов выключен;
+// остаётся телефонная будка PhoneBooth (не случайный предмет, пока Роб не скажет убрать): стейтпроп из 7 кусков, где кусок 1 — плоский восьмиугольник (18 вершин) или уже убранный boothBase1052 (0), кусок 6 — 42
+// вершины или 0 (тот же признак, что в main_levels.h boothBase1052). Оболочки героя, пешеходов, персонажей миссий и машин рисуются в другом месте и не затронуты. Цена: контур пропов на кадр был до 2 экземпляров,
+// 2 кусков, 357 вершин (по журналам смоука PROPTOON), теперь у будки только её куски; PROPINK1138_OLD=1 / «flag propink1138old 1» — как в TEST84
+#include "propink1138.h"
+static int propInk1138Old = PROPINK1138_OLD;
+static int ptIsBooth(const StateProps *sp, const SpType *T) {
+  if (T->nPiece != 7) return 0;
+  const SpPiece *P = &sp->piece[T->firstPiece];
+  return propInkIsBooth(T->nPiece, T->kind, P[1].nv, P[6].nv);
+}
 typedef struct { const void *v; unsigned nv; float lo[3], hi[3]; } PtBox;
 static PtBox ptBox[256]; static unsigned ptDraws, ptInst, ptVerts, ptUs, ptFrames; static int ptLogLv = -1, ptLogN; static unsigned ptLogK[24];
 static void ptLog(int kind, unsigned i, float x, float y, float z, float h, float r, int got) {   // журнал смоука: первые 24 обведённых экземпляра уровня (где они, какого размера)
@@ -89,14 +100,14 @@ static int wrSprOn(void); static int wrSprInst(unsigned i);   // spritelight.h (
 #define PT_NEAR845_OLD 0
 #endif
 static void propToonPass(float ex, float ey, float ez) {
-  if (PROP_TOON_OLD || !skinToonEnabled() || geOver(GE_SOFT) || (!PROP_TOON_LITE_OLD && trafficFrameGov)) return;   // №838: перегрузка кадра — без обводки пропов
+  if (PROP_TOON_OLD || !skinToonEnabled() || geOver(GE_SOFT) || (!PROP_TOON_LITE_OLD && propsInkGov(trafficFrameGov))) return;   // №1096: регулятор кадра контур предметов больше не гасит (мигание)   // №838: перегрузка кадра — без обводки пропов
   unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0; int np = 0, on = 0; const float e3[3] = {ex, ey, ez}, D2 = PROP_TOON_D * PROP_TOON_D;
   const int tone = skinInkToneOn(); ptPoles = tone;   // №951б: Tone — и высокие предметы (деревья, пальмы, столбы), перо по тону текстуры куска
   const float tH = tone ? PROP_TOON_H_TONE : PROP_TOON_H, tR = tone ? PROP_TOON_R_TONE : PROP_TOON_R; const int tMaxP = tone ? PROP_TOON_MAXP_TONE : PROP_TOON_MAXP;
   // №845 (тур TEST38: обводка 0,2–0,4 мс кадра даже без обведённых — каждый кадр обход ВСЕХ пропов уровня): пропы ближе PROP_TOON_D + 12 м —
   // список, пересчёт раз в 8 кадров или после сдвига глаза на 6 м; стейтпропы — из сетки (spGridCollect). PT_NEAR845_OLD=1 — полный обход
   unsigned npi_ = haveProps ? props.ninst : 0; const unsigned *pi_ = 0;
-  if (!PT_NEAR845_OLD && haveProps) {
+  if (!PT_NEAR845_OLD && haveProps && propInk1138Old) {   // №1138: список предметов нужен, только если их обводим
     static unsigned *near_, nearN_, nearCap_, nearFr_, nearNi_; static float nearE_[3]; static const void *nearKey_; static int nearTone_;
     float mx_ = ex - nearE_[0], mz_ = ez - nearE_[2];
     if (nearKey_ != (const void *)props.st || nearNi_ != props.ninst || nearCap_ < props.ninst || nearTone_ != tone || !(nearFr_++ & 7) || mx_ * mx_ + mz_ * mz_ > 36.f) {
@@ -108,8 +119,10 @@ static void propToonPass(float ex, float ey, float ez) {
         if (!PT_TYPE852_OLD) { const PropType *ty_ = &props.types[props.def[i].type]; if (2.f * ty_->halfH > tH || ty_->radius > tR) continue; }   // №852: крупные не обводятся — не в список
         near_[nearN_++] = i; } }
     if (near_) { pi_ = near_; npi_ = nearN_; } }
-  if (haveProps) for (unsigned j_ = 0; j_ < npi_ && np < tMaxP; j_++) { unsigned i = pi_ ? pi_[j_] : j_; if (i >= props.ninst) continue;   // №845: индекс из списка — в пределах текущих пропов
+  const int inkX_ = INK1096_OLD ? 0 : 8;   // №1096: предметы, тронутые игроком, сверх потолка кусков (не выпадают при толпе предметов)
+  if (haveProps && propInk1138Old) for (unsigned j_ = 0; j_ < npi_ && np < tMaxP + inkX_; j_++) { unsigned i = pi_ ? pi_[j_] : j_; if (i >= props.ninst) continue;   // №845: индекс из списка — в пределах текущих пропов
     const PropState *st = &props.st[i];
+    if (np >= tMaxP && !st->inkTouch) continue;
     float x = pbP.on ? pbP.px[i] : st->x, z = pbP.on ? pbP.pz[i] : st->z, dx = x - ex, dz = z - ez;   // B1: положения подряд (кэш), иначе — состояние
     if (dx * dx + dz * dz > D2 || st->hidden) continue;
     const PropType *ty = &props.types[props.def[i].type];
@@ -119,7 +132,7 @@ static void propToonPass(float ex, float ey, float ez) {
     float dy = st->y - ey, dist = sqrtf(dx * dx + dy * dy + dz * dz), W = PROP_TOON_K * skinToonWorldW(dist); if (W <= 0.f) continue;
     unsigned ink = skinToonAirMix(skinInkAbgr(INK_PROP), dist) & 0xffffffu; int got = 0;
     if (!on) { texEnable(0); bound = -2; sceGuEnable(GU_FOG); fogK = -1.f; on = 1; }
-    for (unsigned k = 0; k < ty->nPiece && np < tMaxP; k++) {
+    for (unsigned k = 0; k < ty->nPiece && np < tMaxP + inkX_; k++) {
       const PropPiece *pp = &props.pieces[ty->firstPiece + k];
       if (pp->ni <= 0 || (pp->flags & (2 | F_ADDITIVE))) continue;
       float m[16]; propPieceMatrix(st, pp->ox, pp->oy, pp->oz, pp->sc, m);
@@ -130,6 +143,7 @@ static void propToonPass(float ex, float ey, float ez) {
   ptTone951 = tone; unsigned *cs_ = 0; unsigned ncs_ = haveSP ? (PT_NEAR845_OLD ? sprops.ninst : spGridCollect(PROP_TOON_D, e3, 0, &cs_)) : 0;   // №845: стейтпропы у глаза — из сетки
   if (haveSP) for (unsigned j_ = 0; j_ < ncs_ && np < tMaxP; j_++) { unsigned i = cs_ ? cs_[j_] : j_;
     SpRun *r = &sprops.run[i];
+    if (!propInkWanted(propInk1138Old, ptIsBooth(&sprops, &sprops.type[sprops.inst[i].type]))) continue;   // №1138: у предметов контура нет, только у будки
     if (!PT_WRSPR844_OLD && wrSprOn() && wrSprInst(i)) continue;   // №844: ключ рисуется спрайтом (кадры модели) — оболочка 3D-модели (крутится плавно) отставала от кадров спрайта бледным следом
     float x = pbS.on ? pbS.px[i] : r->x, z = pbS.on ? pbS.pz[i] : r->z, dx = x - ex, dz = z - ez;
     if (dx * dx + dz * dz > D2 || !r->alive) continue;

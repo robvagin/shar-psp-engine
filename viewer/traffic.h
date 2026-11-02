@@ -132,7 +132,7 @@ typedef struct {
   int mode, model;
   // маршрут: elem 0 — полоса дороги (road, lane, s), 1 — кривая через перекрёсток к (nroad, nlane); next — выбран ли выезд
   int elem, road, lane, nroad, nlane, next, junc; float s;
-  float bz[4][3], bzLen, bzTab[9];                            // Безье и таблица длины (9 точек)
+  float bz[4][3], bzLen, bzTab[9], bzVmax, jamT;                            // Безье и таблица длины (9 точек)
   float waitT, v, vt, wheelAng, stillT, hitCool;
   float hitV, stunT; int ramStrong, honkDone;   // №479: сила удара (сближение, м/с), сильный ли он, сигнал уже дан
   float rearX, rearZ; int rearOk;   // №400: задняя ось тянется за началом машины (wheelR), 0 — не задана
@@ -163,7 +163,7 @@ typedef struct {
   float waitT;                                                 // №692: сколько подряд путь перекрыт (стоит в ожидании), с
   float orbBest, orbStall, orbTx, orbTz;                       // №813: обход без продвижения к точке пути (лучшее расстояние, сколько с без продвижения, точка)
   // ---- сверка g02-traffic: общий таймер состояния, вне кадра, паника, разговор
-  float stT, offT, pTurnT, pDirX, pDirZ, talkCool; int run, partner, speaker, sideDir, knocked, homeRun, retPath; float homeSpeed; unsigned char talkChk;   // knocked: уже был сбит/пнут — повторный пинок события не даёт (3.4)   // stT — сколько в TRP_PANIC/FACE/TALK/CRINGE/SIDE; offT — вне кадра, с;
+  float stT, offT, pTurnT, pDirX, pDirZ, talkCool; int run, partner, speaker, sideDir, knocked, homeRun, retPath; float homeSpeed, detX, detZ, detT, detW; const Car *detCar; unsigned char talkChk;   // knocked: уже был сбит/пнут — повторный пинок события не даёт (3.4)   // stT — сколько в TRP_PANIC/FACE/TALK/CRINGE/SIDE; offT — вне кадра, с;
                                                               // круг 3 (7.3): homeSpeed/homeRun — рождённая скорость, retPath — идёт назад к тропе со скоростью 1,0
                                                               // pTurnT/pDir — паника: когда менять курс и куда; run — бежит (3 м/с); partner/speaker — разговор
   SkinMouth mouth; float mouthT;                               // круг 5 (P15-06): ход рта (skin.h SkinMouth) и сколько ещё звучит возглас, с
@@ -190,6 +190,7 @@ typedef struct {
   TrPed ped[TR_MAXPED]; int maxPeds;
   int group;                            // активная группа пешеходов
   int zoneGroup, missionPedGroup;        // группа ворот и UsePedGroup; −1 возвращает выбор ворот
+  unsigned long long zoneIn;             // №1132: в каких воротах группы игрок уже стоит (бит на ворота) — группа меняется только при входе
   float scanT, pedScanT, time; unsigned seed; int fresh, parkRR;
   float drawDist, pedDrawDist;
   int noSolid;                          // служебное: отрицательный контроль (flag trfnosolid) — трафик не твёрдый
@@ -237,6 +238,9 @@ int trafficSolid(void *traffic, float *x, float *z, float y, float r, float *top
 // пинок Гомера (сфера x,y,z,r, направление dx,dz): пешеходы в сфере летят; число задетых
 // правка 355: неподвижная машина k (оставленная своя): машины трафика и стоянки, задевшие её, отталкиваются (k не сдвигается)
 int trafficHitStill(Traffic *t, const ColWorld *w, const Car *k);
+// сверка g11b-collect круг 7 (P04 W5): снаряд осы по отрезку a -> b (dir — единичное направление): -> доля пути до первого пешехода на ногах или машины трафика (больше 1 — нет); apply = 1 — удар:
+// пешеход летит 10 м/с под 45° по dir (пешеходы — бросок через pedFly), машина получает урон 0,1 (не выше 0,999: один удар не разбивает). Игрока и ос не касается
+float trafficBoltHit(Traffic *t, const float a[3], const float b[3], const float dir[3], int apply);
 int trafficKick(Traffic *t, float x, float y, float z, float r, float dx, float dz);
 // служебное (сценарий, тесты): поставить стоящего пешехода модели m на землю в (x, z) курсом h; номер или -1
 int trafficPedPlace(Traffic *t, const ColWorld *w, int m, float x, float z, float h);
@@ -289,7 +293,14 @@ int trafficPopEvent(Traffic *t, TrEvent *e);
 #ifndef TR_PED_LIE_OLD
 #define TR_PED_LIE_OLD 0   // 1 — прежнее: лежит 1 с
 #endif
-#define TR_PED_DOWN (TR_PED_LIE_OLD ? 1.f : 3.f)   // сбитый лежит, с (видео PS2 L1, 15:37–15:41: лежит ~4 с не вставая; 3 с + клип get_up ≈ 1 с)
+// Лежание сбитого (сверка g02-traffic, находка ps2-twin по СВЕРКА_ГОМЕР 7.7 и чтение оригинала): в оригинале время не задано числом — тело кувыркается в физике, пока сглаженная
+// (15 отсчётов) линейная скорость не упадёт ниже 0,5 м/с и угловая ниже 0,7 рад/с (и пока касается машины, или стоит под игроковой машиной, или выше 1 м над землёй, его подталкивают
+// снова), потом играет клип get_up. Запись PS2 (удар на 10 м/с, один чистый случай): с удара до подъёма ~570 кадров вертикальной развёртки ≈ 11,4 с. Зависимость от скорости удара не снята
+// (запись на 5 и 15 м/с нужна). Берём 11,4 с от удара: минус типичный отлёт ~0,6 с = 10,8 с лежания после приземления. PEDLIE_PS2_OLD=1 — прежние 3 с (видео L1: ~4 с)
+#ifndef PEDLIE_PS2_OLD
+#define PEDLIE_PS2_OLD 0
+#endif
+#define TR_PED_DOWN (PEDLIE_PS2_OLD ? (TR_PED_LIE_OLD ? 1.f : 3.f) : 10.8f)   // сбитый лежит, с
 #define TR_HIT_PED .13f           // доля шкалы Hit & Run за сбитого человека (аудит 09.10: PS2 +13, tw_v14_multi30; было .10 по gameplay.md §6)
 int trafficCarHitsBody(const Car *k, float *x, float y, float *z, float r, float v[3]);
 int trafficBodyFly(const ColWorld *w, float p[3], float v[3], float *t, float dt);
@@ -314,6 +325,20 @@ int trafficNavArrows(const Traffic *t, float px, float pz, TrNavArrow *out, int 
 // сверка g02-traffic круг 2 (g11 P11-02): машины трафика, что не стоят и не OFF (едущие, сбитые, проснувшиеся стоящие), ближе r к (x, z); до max указателей. Зовёт main_loop.h
 // и передаёт каждую в propsHitCar: предметы ломает любая машина, не только игрока
 int trafficCarsNear(Traffic *t, float x, float z, float r, Car **out, int max);
+// Слой «персонаж ↔ машина» (g07 → g02): в оригинале любая машина толкает физика, касание = персонаж стоит 3,0 с. Здесь — какие машины считаются твёрдыми для пеших: трафик, стоящие места,
+// машины миссий (t->extra) и, если передана, машина игрока (extraCar), СТОЯЩИЕ или едущие медленнее 0,5 м/с (быстрые сбивают — pedHitBy / npcKnock). Цена: только машины в радиусе кузова + r
+// (быстрый отсев по расстоянию), для прохожих ≤ 7 × (5 + 6 + стоящие) проверок расстояния за кадр. PEDCAR_ALL_OLD=1 — как в TEST84 (только машина игрока)
+// №1132 (сверка g02-traffic, правка Роба: у АЭС (L1 E4-8) ходят простые пешеходы, а в городе — работники АЭС): в оригинале группа моделей прохожих —
+// ОДНА текущая; её меняют только вход игрока в ворота группы (раз при входе) и UsePedGroup миссии (раз при старте миссии, дальше ворота снова главные).
+// У нас UsePedGroup держал группу поверх ворот до конца миссии, а ворота срабатывали на каждом кадре внутри. PEDZONE1132_OLD=1 — как в TEST85.
+#ifndef PEDZONE1132_OLD
+#define PEDZONE1132_OLD 0
+#endif
+#ifndef PEDCAR_ALL_OLD
+#define PEDCAR_ALL_OLD 0
+#endif
+const Car *trafficSolidCarAt(const Traffic *t, float x, float z, float y, float r, const Car *extraCar);   // первая твёрдая машина, чей кузов касается круга (x, z, r) на высоте y; 0 — нет
+int trafficCarsSolid(const Traffic *t, float x, float z, float r, const Car **out, int max);          // твёрдые машины в радиусе r от (x, z) — для обхода по углам кузова
 extern int trfOneTapDeath;   // P16-17 «One Tap Traffic Death»: 1 — машина трафика, ударенная машиной игрока, гибнет с одного удара (выставит меню читов, когда оно будет)
 
 #ifdef __cplusplus

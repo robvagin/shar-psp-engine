@@ -96,6 +96,9 @@ def cho_idles(char):
         out.setdefault(int(m.group(1)), m.group(2))
     return [out[k] for k in sorted(out)]
 
+# сверка g04-homer круг 6: клипы круга 2 и круга 5 перечислены дважды (ndr_look_back, ndr_in_car_victory_*) — убрать повторы, порядок прежний
+CLIPS = list(dict.fromkeys(CLIPS))
+
 
 def clip_list(char, prefix):
     """CLIPS Гомера с префиксом персонажа; длинные idle — из .cho персонажа (у Гомера — те же три клипа, порядок прежний)"""

@@ -133,15 +133,19 @@ def parse_spt(path):
         objs.append((m.group(1), m.group(2), calls))
     return objs
 
-def load_scripts(lang_skip=('fr', 'ge', 'sp')):
+def load_scripts(lang_skip=('fr', 'ge', 'sp'), lang=None):
+    # №1111: lang ('fr', 'ge', 'sp') — вместо английских dialog.spt, nis.spt, interactive_props.spt читаются их языковые двойники (dialogfr.spt …): те же имена ресурсов, другие файлы
     res, cars, pos, glob_ = {}, {}, {}, {}
     for p in sorted(glob.glob(os.path.join(SCRIPTS, '*.spt'))):
         base = os.path.basename(p)[:-4]
-        if any(base.endswith(s) and base[:-2] in ('dialog', 'nis', 'interactive_props') for s in lang_skip):
+        if lang:
+            if base in ('dialog', 'nis', 'interactive_props'): continue
+            if base[:-2] in ('dialog', 'nis', 'interactive_props') and base[-2:] != lang: continue
+        elif any(base.endswith(s) and base[:-2] in ('dialog', 'nis', 'interactive_props') for s in lang_skip):
             continue
         for typ, name, calls in parse_spt(p):
             if typ == 'daSoundResourceData':
-                r = dict(name=name, script=base, files=[], trim=1.0, loop=False, stream=False, pitch=(1.0, 1.0))
+                r = dict(name=name, script=(base[:-2] if lang and base[:-2] in ('dialog', 'nis', 'interactive_props') else base), files=[], trim=1.0, loop=False, stream=False, pitch=(1.0, 1.0))
                 for meth, a, opt in calls:
                     if opt not in (None, 'PS2'):
                         continue
@@ -694,3 +698,32 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+# ---------------------------------------------------------------- №1111: языки (озвучка диалогов по языку копии игры)
+LANG_DIR = {'fr': 'dialogf', 'ge': 'dialogg', 'sp': 'dialogs'}
+def lang_index(lang):
+    """относительное имя (строчными, от корня языка: «agnes/d_answer_agn_01.rsd», «conversations/c_….rsd») -> путь к файлу озвучки на языке; нет папки языка на диске — {}"""
+    root = os.path.join(ROOT, 'hit-and-run-web', 'source', 'languages', LANG_DIR[lang])
+    if not os.path.isdir(root): return {}
+    return {os.path.relpath(p, root).replace('\\', '/').lower(): p for p in glob.glob(os.path.join(root, '**', '*.rsd'), recursive=True)}
+
+def build_lang_overlay(path, items):
+    """Файл поверх music.sap уровня: dialog_<язык>.sap. items — [(номер дорожки в music.sap, имя, путь файла языка)]. Формат: 'SAPL', версия 1, n, смещение номеров, смещение строк,
+    смещение данных (64 Б заголовок); u16 номер дорожки × n (до 64 Б); строки SapTrack × n (как в music.sap, off — от начала этого файла, ch = 2, bus = 2, без петли); данные VAG.
+    Пустой список — файл из заголовка (движок его читает как «нет озвучки»)."""
+    n = len(items); idxb = b''.join(struct.pack('<H', i) for i, _, _ in items); idxb += b'\0' * (-len(idxb) % 64)
+    rowOff = 64 + len(idxb); base = (rowOff + 64 * n + 2047) & ~2047
+    body = bytearray(); rows = bytearray(); offs = {}
+    for i, name, p in items:
+        rs = read_rsd(p); d = rs['data']
+        if rs['ch'] == 1: d = b''.join(d[k:k + 16] * 2 for k in range(0, len(d), 16))
+        key = os.path.realpath(p); off = offs.get(key)
+        if off is None:
+            off = base + len(body); body += d; body += b'\0' * (-len(body) % 2048); offs[key] = off
+        rows += pack_name(name, 28) + struct.pack('<IIIIIHBBhh4h', off, rs['nblk'], rs['nsamp'], 0, rs['nsamp'], rs['rate'], 2, 0, -1, 2, 0, 0, 0, 0)
+    hdr = b'SAPL' + struct.pack('<IIIII', 1, n, 64, rowOff, base) + b'\0' * 40
+    out = hdr + idxb + bytes(rows)
+    out += b'\0' * (base - len(out)) + bytes(body)
+    open(path, 'wb').write(out)
+    return len(out)

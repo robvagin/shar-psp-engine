@@ -1369,6 +1369,30 @@ static void aoBillGlint(unsigned i, const float *v, uint32_t col, float ex, floa
 #ifndef PHONE970_A
 #define PHONE970_A .5f    // №970: блик будки «слишком яркий» — вдвое прозрачнее
 #endif
+// №1148 (Роб, бонус-игра: «у нитро на трассе нет свечения — как у гаечного ключа»): блик нитро — тот же векторный шейп (glintshape941.h), ход слоёв (glintmotion970.h), размер (5,22 x WRENCH970_S) и прозрачность
+// (WRENCH970_A), что у ключа (wrGlowDraw, gvAdd), пачка одним вызовом. Центры — P (n точек подборов), высота центра модели CY (центр коробки типа; нет данных — как у ключа WRGLOW_CY). Цвета — данные нитро
+// (art/missions/generic/nitro.p3d, три плашки BQG): nitroShape3 (238,35,124) = 0xEE237C — большая звезда, nitroShape4 (255,91,72) = 0xFF5B48 — вторая (у ключа 0xFF2685 / 0xFF5B48). Дальше 40 м нет, дальше
+// 30 м гаснет, за предметом от камеры на 0,9 м, как у ключа. Видимость по глубине (№1031) не проверяется: у плашек бонус-игры её не было. NITROGLINT1148_OLD=1 — без блика (bonus_play.h)
+#ifndef NITROGLINT1148_OLD
+#define NITROGLINT1148_OLD 0
+#endif
+static void nitroGlintBatch1148(const float *P, const float *CY, int n, float ex, float ey, float ez) {
+  if (NITROGLINT1148_OLD) return;
+  int n0 = 0; glintBegin((unsigned)n);
+  for (int k = 0; k < n; k++) {
+    float dx = P[3 * k] - ex, dy = P[3 * k + 1] - ey, dz = P[3 * k + 2] - ez, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > 40.f * 40.f) continue;
+    float f = d2 < 30.f * 30.f ? 1.f : (40.f - sqrtf(d2)) / 10.f, cy = CY[k]; if (cy < .2f || cy > 3.f) cy = WRGLOW_CY;
+    float c3[3] = {P[3 * k], P[3 * k + 1] + cy, P[3 * k + 2]}, obj_[3] = {c3[0], c3[1], c3[2]};
+    float l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) l = 1e-3f; c3[0] += dx / l * .9f; c3[2] += dz / l * .9f;
+    float kp_ = gf1022Pull(c3, obj_, ex, ey, ez);
+    gvMode970 = 1; gvSrc1022 = "nitro";
+    glintAdd(c3, ex, ey, ez, 5.22f * (fxGlint970Old ? 1.f : WRENCH970_S) * kp_, 0xEE237Cu, 0xFF5B48u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * f * (fxGlint970Old ? 1.f : WRENCH970_A), (float)k * .37f + .15f); n0++;
+    gvMode970 = 0;
+  }
+  glintFlush();
+  if (smkOn && n0) { static int lg_; if (lg_++ < 3) { char l_[96]; snprintf(l_, sizeof l_, "NITROGLINT1148 n=%d t=%.1f\n", n0, smkT); smkWrite(l_); } }
+}
 static void wrGlowDraw(float ex, float ey, float ez, int inR) {
   if (!wrGlowOn || inR || !haveCol || !world.nwrench || !haveSP) return;
   if (smkOn) { static const void *wl_; if (wl_ != (const void *)world.wrench) { wl_ = world.wrench; char l_[200]; int o_ = snprintf(l_, sizeof l_, "WRENCHAT n=%u", world.nwrench);

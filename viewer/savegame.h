@@ -45,7 +45,25 @@ extern "C" {
 #define SV_LEVELS 8               // индексы 1..7 (как collect.h COLL_LEVELS)
 #define SV_WORLDCOINS 512         // бит i — монета мира i собрана (уровень 1: 207)
 #define SV_VERSION 2               // версия ГОЛОВЫ (байты 0..255): 2 (29.09) + купленное за монеты (owned); запись версии 1 читается
+// №1114 (Роб 02.11.2026: «старые сохранения можно не читать»): запись переписана целиком под всё, что хранит оригинал (docs/handoff/СОХРАНЕНИЯ_1114.md). Подпись "SHV3", версия 3,
+// размер SV_BYTES = 1536 Б, одна сверка CRC-32 на всё после байта 16; прежние записи ("SHSV" и 256/768 Б) не читаются — слот показывается «< Damaged Save >».
+// SAVEV3_1114_OLD=1 — прежний формат (голова 256 Б + хвост 512 Б, 768 Б)
+#ifndef SAVEV3_1114_OLD
+#define SAVEV3_1114_OLD 0
+#endif
+// Перевод прежних записей (просьба дирижёра 03.11.2026: у Роба на PSP и в эмуляторе лежат записи "SHSV", прогресс не терять): запись "SHSV" (256 Б до 05.10 или 768 Б с хвостом) читается
+// и переводится в память как есть; чего в ней не было (лучшие времена, попытки) пусто. Первая же запись игры ложится в SHV3. SAVEV3CONV_OLD=1 — прежние записи не читаются («< Damaged Save >»)
+#ifndef SAVEV3CONV_OLD
+#define SAVEV3CONV_OLD 0
+#endif
+#if SAVEV3_1114_OLD
 #define SV_BYTES 768              // правка 334: размер DATA.BIN — голова 256 Б (как до 05.10) + хвост 512 Б со своей проверкой
+#else
+#define SV_BYTES 1536             // №1114: размер DATA.BIN формата SHV3 (раскладка в savegame.c и СОХРАНЕНИЯ_1114.md)
+#endif
+#define SV_BYTES_OLD 768          // размер прежней записи (голова + хвост); svWriteVer/svRead прежнего формата
+#define SV_MREC_N 13              // №1114: записей о миссиях на уровень, как у оригинала: 8 сюжетных (0..7), 3 уличные гонки (8..10), бонус-миссия (11), гонка на ставку (12)
+#define SV_MREC_BEST 0            // лучшее время в секундах (оригинал: целые секунды, -1 нет; меньше — лучше)
 #define SV_BYTES_V2 256           // размер головы; записи до 05.10 — ровно голова (прежние сборки читают голову новой записи, хвост не видят)
 #define SV_TAIL_VERSION 1         // хвост с байта 256: "SHSX", версия 1, размер 512, CRC-32 тела (байты 268..767), тело: once[8], ext
 #define SV_ONCE_MAX 96            // правка 334: разовых предметов на уровень (L1 61, L2 51, L3–L5 50–51, L6 46, L7 44 — build/levels 03.10)
@@ -116,15 +134,19 @@ typedef struct {
   // (младший полубайт байта k/2 — чётный k): 0 — цел, иначе номер состояния машины (1..15). Уровень пересобран (другие n/sig) —
   // запись уровня не применяется, предметы целы (безопасная сторона)
   struct SvOnce { uint16_t n, sig; uint8_t st[SV_ONCE_BYTES]; } once[SV_LEVELS];
+  // №1114 (SHV3): запись о миссии как у оригинала: flags бит1 — выполнена второстепенная цель, бит2 — миссия пропущена; attempts — число попыток; best — лучшее время, секунды (<= 0 — нет)
+  struct SvMrec { uint8_t flags; uint16_t attempts; int32_t best; } mrec[SV_LEVELS][SV_MREC_N];
   uint8_t ext[SV_EXT_BYTES];      // хвост: запас (см. SV_EXT_BYTES); раскладку полей внутри ведёт тот, кто их добавляет (описать здесь)
 } SaveGame;
 typedef struct SvOnce SvOnce;
+typedef struct SvMrec SvMrec;
 
 void svClear(SaveGame *s);                                  // пустая игра (всё 0, настройки по умолчанию)
 int  svWrite(const SaveGame *s, uint8_t out[SV_BYTES]);     // -> SV_BYTES (голова версии 2 + хвост)
 // запись в раскладке ver: 1 и 2 — голова 256 Б, как писали сборки до 29.09 и до 05.10; 3 — голова + хвост (svWrite). Для гейта
 // «старая запись читается» (tests/savegame/host.c)
 int  svWriteVer(const SaveGame *s, uint8_t *out, unsigned n, int ver);   // -> байт записи, -1 — мало места / нет такой версии
+int  svIsOldFormat(const uint8_t *in, unsigned n);          // 1 — запись прежнего формата "SHSV" (читается с переводом в SHV3, SAVEV3CONV_OLD=0)
 int  svRead(const uint8_t *in, unsigned n, SaveGame *s);    // SV_OK / SV_DAMAGED (n — сколько байт прочитано: 256 — запись до 05.10, от 768 — с хвостом)
 uint32_t svCrc32(const uint8_t *p, unsigned n);
 // игра -> запись и обратно (общие с проверкой на Маке; NULL — модуля нет). Настройки (cfg) переносит main.c.
@@ -139,6 +161,13 @@ void svMsnProgress(const SaveGame *s, struct MsnProgress *p);
 int  svProgressText(const SaveGame *s, char *out, int n);
 // число пройденных миссий (биты маски) — для PARAM.SFO
 int  svMissionsDone(const SaveGame *s);
+// №1114: лучшие времена и попытки (как CharacterSheet оригинала). Живая таблица игры: svBestNote — миссия уровня L (запись slot 0..SV_MREC_N-1) пройдена за sec секунд; true — новый рекорд
+// (меньше — лучше). svAttemptNote — миссия начата. svBestLive / svAttemptsLive — прочитать. svCapture переносит таблицу в запись, svApply — обратно; svBestReset — новая игра
+int  svBestNote(int level, int slot, int sec);
+int  svBestLive(int level, int slot);
+void svAttemptNote(int level, int slot);
+int  svAttemptsLive(int level, int slot);
+void svBestReset(void);
 // правка 334: разовые предметы уровня (stateprops.h spOnce). Снять с уровня в памяти / применить к только что начатому уровню
 // (после newGame: монеты не выпадают, счётчики миссий не растут — spRestore). Apply -> сколько предметов поставлено разбитыми,
 // -1 — запись от другой сборки уровня (n/sig не совпали), ничего не тронуто

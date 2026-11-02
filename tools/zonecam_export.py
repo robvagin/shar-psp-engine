@@ -50,6 +50,10 @@ DATA_OLD = os.environ.get('ZONECAM_DATA_OLD') == '1'
 # только рельсы, чей объём касается зоны прыжка. Стало: пешком — рельсы без бита 1, в машину — рельсы с битом 1 (L1: r1_cam1, r3_cam2, r6_cam3,
 # z2_cam3, z2_cam4), зоны прыжка не нужны. Запись камеры не меняется (биты читает движок, viewer/roomcam.c). ZONECAM_RAIL_OLD=1 — прежнее
 RAIL_OLD = os.environ.get('ZONECAM_RAIL_OLD') == '1'
+# сверка g12-data круг 6 (P18-02, перепроверка по оригиналу): рельс без бита 1 и без бита 8 («никому не запрещён») включается и пешком, и из машины
+# (запрет — только у «только машина» на скорости ниже порога и у «только пешком» в машине). Было: в пакет машины шли лишь рельсы с битом 1, и
+# нейтральные рельсы (L1 1, L2 2, L4 1, L5 2) из машины не включались. ZONECAM_RAILNEUTRAL_OLD=1 — как было
+RAILNEUTRAL_OLD = os.environ.get('ZONECAM_RAILNEUTRAL_OLD') == '1'
 
 
 def rail_bits(r):
@@ -119,7 +123,7 @@ def car_cams(level):
             near = min(((_gap(b, zb), zn) for b in B for zn, zb in zones), default=(1e9, ''))
             if RAIL_OLD:
                 if near[0] <= JUMP_TOUCH: out.append((f.name, r, i, f'рельс у {near[1]}'))
-            elif rail_bits(r) & 1: out.append((f.name, r, i, f'рельс, биты {rail_bits(r)}'))
+            elif rail_bits(r) & 1 or (not RAILNEUTRAL_OLD and not rail_bits(r) & 8): out.append((f.name, r, i, f'рельс, биты {rail_bits(r)}'))
     return out
 
 

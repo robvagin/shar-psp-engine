@@ -89,6 +89,7 @@ unsigned csRayCalls, csNfCalls, csRaysMismatch;
 #define CAM_RAYBOX_RK 1.f   // красный контроль гейта: шар лучей меньше настоящего (-DCAM_RAYBOX_RK=0.35f) — тела у края отсеиваются зря
 #endif
 int camRayBoxOld = CAM_RAYBOX_OLD;
+int csSkipMoving;   // №1127 (см. camsafe.h)
 static int csFiltOn, csFiltNB, csFiltNC; static uint8_t csFiltB[CS_MAXBOX], csFiltC[CS_MAXCYL]; unsigned csFiltBoxIn, csFiltBoxAll, csFiltCylIn, csFiltCylAll;
 // №984б (камера стоит — лучи считались заново каждый кадр: на маршрутах ботов L3–L7 62–69 % кадров с неподвижным глазом): те же глаз, взгляд, угол и глубина, что в прошлом вызове, и ни одного
 // кузова/человека/стейтпропа в шаре лучей — ответ определяют только мир (коллизия) и сетка видимой геометрии, они не движутся: берём прошлый ответ. Не дольше CS_NFREUSE_N кадров подряд
@@ -116,6 +117,7 @@ static void csFiltBuild(const CsScene *s, const float eye[3], float R) {
   for (int k = 0; k < csFiltNB; k++) { const unsigned char *q = (const unsigned char *)&s->box[csFiltB[k]]; for (unsigned j = 0; j < sizeof(CsBox); j++) csFiltSig = (csFiltSig ^ q[j]) * 1099511628211ull; }
   for (int k = 0; k < csFiltNC; k++) { const unsigned char *q = (const unsigned char *)&s->cyl[csFiltC[k]]; for (unsigned j = 0; j < sizeof(CsCyl); j++) csFiltSig = (csFiltSig ^ q[j]) * 1099511628211ull; }
   csFiltSig ^= ((uint64_t)csFiltNB << 32) | (uint64_t)csFiltNC;
+  if (csSkipMoving) csFiltSig ^= 0x9e3779b97f4a7c15ull;   // №1127: ответ без движущихся машин — другой, прошлый кадр с ними не подходит
 }
 // CAMPERF (ускорение камеры, 23.10): лучи ближней плоскости — одним пакетом к коллизии (colRaysFrac), остальное (сетка, тела) по одному; ответ тот же. CAM_RAYS_OLD=1 / flag camraysold 1 — как было
 #ifndef CAM_RAYS_OLD
@@ -137,7 +139,8 @@ static float csRayFracC(const CsScene *s, const float a[3], const float b[3], in
     if (s->geomRay) { float g = s->geomRay(a, b, (bodies & 16) ? 0.f : CS_GEOM_SKIP); if (g < f) f = g; } }
   if (bodies & 38) {
     for (int ii = 0, nb_ = csFiltOn ? csFiltNB : s->nbox; ii < nb_; ii++) { int i = csFiltOn ? csFiltB[ii] : ii, o = s->box[i].own;
-      if (o == 2 ? !(bodies & 32) : !((bodies & 6) && ((bodies & 2) || !o))) continue;   // own 2 — стейтпроп (№727), только маска 32
+      if (o == 3 && csSkipMoving) continue;   // №1127: движущаяся чужая машина — только для ближней плоскости кадра, правило глаза её не видит
+      if ((o == 2 || o == 3) ? !(bodies & 32) : !((bodies & 6) && ((bodies & 2) || !o))) continue;   // own 2 — стейтпроп (№727), own 3 — движущаяся чужая машина (№1127): только маска 32
       if (segBox(&s->box[i], a, b, 0.f, &t, &in) && !in && t < f) f = t; }
     if ((bodies & 6) && !(bodies & 64)) for (int ii = 0, nc_ = csFiltOn ? csFiltNC : s->ncyl; ii < nc_; ii++) { int i = csFiltOn ? csFiltC[ii] : ii;   // 64 — №916в: луч промежуточного глаза не считает людей (идущий рядом с Гомером не обрывает перелёт рывком)
        if (segCyl(&s->cyl[i], a, b, 0.f, &t, &in) && !in && t < f) f = t; }
@@ -147,7 +150,7 @@ static float csRayFracC(const CsScene *s, const float a[3], const float b[3], in
 float csRayFrac(const CsScene *s, const float a[3], const float b[3], int bodies) { return csRayFracC(s, a, b, bodies, -1.f); }
 int csInBody(const CsScene *s, const float p[3], float pad) {
   float t; int in;
-  for (int i = 0; i < s->nbox; i++) { if (s->box[i].own == 2) continue; segBox(&s->box[i], p, p, pad, &t, &in); if (in) return 1; }
+  for (int i = 0; i < s->nbox; i++) { if (s->box[i].own == 2 || (s->box[i].own == 3 && csSkipMoving)) continue; segBox(&s->box[i], p, p, s->box[i].own == 3 ? 0.f : pad, &t, &in); if (in) return 1; }   // №1127: движущаяся машина — глаз негоден только внутри самой коробки
   for (int i = 0; i < s->ncyl; i++) { segCyl(&s->cyl[i], p, p, pad, &t, &in); if (in) return 1; }
   return 0;
 }

@@ -27,6 +27,9 @@ static float lagK(float lag, float dt) {   // как viewer/roomcam.c: доля 
 #ifndef CARZONE_SV_OLD
 #define CARZONE_SV_OLD 0
 #endif
+#ifndef CARZONE_RAILN_OLD
+#define CARZONE_RAILN_OLD 0
+#endif
 static int carZoneStepSv(const RoomCam *c, int n, CarZoneState *s, const float (*body)[3], int nbody, const float ref[3], float speed,
                          float dt, float eye[3], float look[3], float *fovY) {
   if (n > 32) n = 32;
@@ -71,7 +74,7 @@ int carZoneStep(const RoomCam *c, int n, CarZoneState *s, const float (*body)[3]
   for (int k = 0; k < n; k++) if (bodyIn(&c[k], body, nbody)) now |= 1u << k;
   unsigned entered = now & ~s->in;
   for (int k = 0; k < n; k++)   // рельс включается только на входе и только быстрой машиной (порог — carzone.h)
-    if ((entered & (1u << k)) && c[k].type == 1 && speed < CARZONE_RAIL_MINV) s->skip |= 1u << k;
+    if ((entered & (1u << k)) && c[k].type == 1 && speed < CARZONE_RAIL_MINV && (CARZONE_RAILN_OLD || ((int)(c[k].axisPlay[2] + .5f) & 1))) s->skip |= 1u << k;   // сверка g12-data круг 6 (P18-02): порог скорости только у рельса «только машина» (бит 1); нейтральный рельс включается на любой скорости. CARZONE_RAILN_OLD=1 — порог у всех
 #if !CARZONE_PS2_OLD
   // №378: рельс держит, пока в объёме середина кузова; вошла и вышла — рельс выключен до выхода всего кузова (carzone.h, В95)
   unsigned mid = 0;

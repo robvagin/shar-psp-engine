@@ -10,6 +10,11 @@
 #include <math.h>
 #include "world.h"
 #include "collect.h"
+#ifdef GAG_OUTRO_OLD
+#define GAG_OUTRO_OLD_H GAG_OUTRO_OLD
+#else
+#define GAG_OUTRO_OLD_H 0
+#endif
 
 static int nok, nfail;
 static void check(const char *name, int ok, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
@@ -122,7 +127,8 @@ int main(int argc, char **argv) {
       for (int t = 0; t < 60 * 12; t++) step(ex[k].x, ex[k].y, ex[k].z, 1, room, 0, 1 / 60.f, 0, NULL);
       unsigned nd1 = 0; for (unsigned i = coins.nworld; i < coins.n; i++) nd1 += coins.c[i].active;
       int got = (coins.collected - c0) + (int)(nd1 - nd0);
-      if (got == ex[k].coins) gagCoins++; else printf("  гэг %s: монет %d, в данных %d\n", ex[k].name, got, ex[k].coins);
+      int never_ = !GAG_OUTRO_OLD_H && C.gag[g].outro > 0.f && C.gag[g].coinDelay < 0.f;   // круг 7: окончание по кругу навсегда — монет «после конца» нет (gag_melt L1; оригинал)
+      if (got == (never_ ? 0 : ex[k].coins)) gagCoins++; else printf("  гэг %s: монет %d, в данных %d%s\n", ex[k].name, got, ex[k].coins, never_ ? " (ждали 0: окончание по кругу)" : "");
       if (strcmp(ex[k].fmv, "-") && !strcmp(C.gag[g].fmv, ex[k].fmv)) fmvOk++;
     }
   }

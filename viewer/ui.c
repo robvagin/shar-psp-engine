@@ -163,6 +163,7 @@ static inline int itemVarOff(const UiItem *it) {
   unsigned v = it->res[0] & 1536u; if (!v || UI_BUBBLEVAR_OLD) return 0;
   int plain = fieldv[UI_F_OBJICON] < 0; return (v & 512u) ? plain : !plain;
 }
+static unsigned hudAway1091;   // №1091: сколько раз рисовали пауза, меню, брифинг и прочие полноэкранные экраны (вход в HUD считается по ним, а не по времени)
 static unsigned tagMask[UI_SCREEN_MAX];                    // экраны пакета (второй пакет — до UI_SCREEN_MAX)
 static float rpx, rpz, rhead, rrange = 150.f;
 // Сверка g09a-hud, радар (M1 Д2, 8, 9, 10, 11). Выключатели: RADAR_CAM_OLD (карта по курсу машины), RADAR_RANGE_OLD (масштаб всегда 150 м),
@@ -173,11 +174,13 @@ static float rpx, rpz, rhead, rrange = 150.f;
 #ifndef RADAR_RANGE_OLD
 #define RADAR_RANGE_OLD 0
 #endif
+// №1129 (Роб 02.11, TEST84: радар сломан, клин стал большим жёлтым кругом): вид радара вернулся к тому, что было до сверки — значок цели без пульса, клин длиной до цели без затухания
+// (RADAR_PULSE_OLD и RADAR_CONE_OLD по умолчанию 1). Масштаб по цели (RADAR_RANGE), карта по взгляду камеры (RADAR_CAM) и мгновенное появление (RADAR_FADE) оставлены: они не меняют форму значков
 #ifndef RADAR_PULSE_OLD
-#define RADAR_PULSE_OLD 0
+#define RADAR_PULSE_OLD 1
 #endif
 #ifndef RADAR_CONE_OLD
-#define RADAR_CONE_OLD 0
+#define RADAR_CONE_OLD 1
 #endif
 // Сверка g09a-hud, M13:8 / Д13 / P07:36: таблица уровня (см. uiLevelStatsPct10 ниже); LSTATS_SV_OLD=1 — прежние целые проценты и суммарная формула
 #ifndef LSTATS_SV_OLD
@@ -221,6 +224,9 @@ void uiActionText(const char *s) {
 #endif
 static int msgHardBr = UI_MSG_HARDBR;   // правка 267: 1 — прежнее (жёсткие переносы, узкая строка без значка)
 static char msgText[160];                                    // uiMessage text ("" = objective string by index)
+// сверка g11b-collect №1117: полёт картинки просмотра в галереях SCRAP BOOK (250 мс). uiScrFly ставит ход; на один кадр, вызывается каждый кадр, пока идёт полёт
+static int scrFlyOn, scrFlyField; static float scrFlyS = 1.f, scrFlyCx, scrFlyCy, scrFlyGrid = 1.f, scrFlyView = 1.f;
+void uiScrFly(int on, int viewField, float s, float cx, float cy, float gridA, float viewA) { scrFlyOn = on; scrFlyField = viewField; scrFlyS = s; scrFlyCx = cx; scrFlyCy = cy; scrFlyGrid = gridA; scrFlyView = viewA; }
 static float subFadeA = 1.f;   // №639: прозрачность всего экрана на время кроссфейда (uiSubFade)
 static float mboxK = 1.f, mboxA = 1.f, mboxCx, mboxCy;   // №639: окно сообщения всплывает как пузырь задания (единый масштаб из центра рамки)
 static char mboxText[256];   // правка 122: текст окна сообщения (uiDrawMessageBox)
@@ -234,6 +240,13 @@ static unsigned pauseT0us, pauseCloseUs; static int pauseClosing; static float p
 static float pauseClk(unsigned t0) { return (unsigned)(sceKernelGetSystemTimeLow() - t0) * 1e-6f / pauseSlow; }
 void uiPauseSlow(float k) { pauseSlow = k > 0.f ? k : 1.f; }   // №631: анимация паузы
 static int pauseAnimPose(float *sc, float *al); static float pauseDimA(void);
+// №1122 (Роб 02.11, TEST84: «пропало затемнение фона под меню паузы»): при переходе из меню паузы в подэкран и обратно между ними есть пустые кадры, где ни одно из
+// затемнений не рисуется, а рамка подэкрана при кроссфейде тянет за собой и свою плашку: фон мигает светлым. Теперь пока пауза открыта и есть подэкран (или его переход),
+// фон затемняет один свой слой с непрерывным уровнем (7 % меню → плашка подэкрана и обратно за ~0,3 с), плашка пака на весь экран у подэкрана не рисуется. PAUSEDIM1122_OLD=1 — как в TEST84
+#ifndef PAUSEDIM1122_OLD
+#define PAUSEDIM1122_OLD 0
+#endif
+static int dim1122On; static float dim1122L, dim1122Plate = .75f; static unsigned dim1122T;
 static int paused, pauseSel, pauseScr = UI_SCREEN_PAUSE;   // pauseScr — какая пауза открыта: свободной езды или миссии
 static const signed char PM_MAP[] = {UI_P_CONTINUE, UI_P_RESTART_MISSION, UI_P_ABORT_MISSION, UI_P_OPTIONS, UI_P_QUIT_GAME};
 static int spinPx, spinN;   // №703: площадь (px) и число вращающихся слоёв за кадр
@@ -315,6 +328,10 @@ static float psPulse(float t) {
 #define MENU_PULSE_AMP .1f       // 0x1a7068
 static float menuPulse(float tMs) { return MENU_PULSE_MID + MENU_PULSE_AMP * sinf(2.f * 3.14159265f * tMs / MENU_PULSE_MS - 3.14159265f / 6.f); }
 static int menuPulseSel = -1, menuPulseKey = -1; static unsigned menuPulseLast; static float menuPulseMs;
+#ifndef FAILPULSE1097_OLD
+#define FAILPULSE1097_OLD 0   // №1097: 1 — прежнее накопление кадров на экране провала
+#endif
+static unsigned failPulseT0, failPulseSeen;   // №1097: начало фазы пульса и время последнего рисования экрана провала, мкс
 // Правка 413/412 (хвост, 09.10): тот же пульс на остальных меню. SLES_518.97 — флаги пункта у каждого экрана (пятый аргумент
 // конструктора CGuiMenu 0x1a5c30): 2 (масштаб) — MainMenu 0x1b8208, PauseSunday 0x1d79cc, PauseMission 0x1d611c, PauseOptions 0x1d65c4,
 // Sound 0x1c0df8, Options 0x1be078, Controller 0x1b6c50, ViewMovies 0x1c2698, ScrapBook 0x1bf2d0, GameSlots 0x1b7344 / 0x1dd73c,
@@ -712,8 +729,17 @@ int uiScrBackInput(unsigned hit) {   // экран без строк (VIEW CREDI
 #ifndef MENU_PICK_OLD
 #define MENU_PICK_OLD 0
 #endif
+// №1087/№1089 (Роб 02.11: «все наши изинги внутри меню паузы вернуть, они красивее»; «при переходе между разделами OPTIONS рамки и затемнение исчезают и появляются, дёргается»):
+// в паузе и её подэкранах (OPTIONS, звук, режим мультика, слоты, вопросы) движение наше, логика оригинала. Затемнение экрана 0,25 с при входе и выходе (MENU_XIT) гасило и рамки,
+// и затемнение фона на каждом переходе между разделами. Теперь по умолчанию 1: экраны входят и выходят как в TEST81 (наш кроссфейд паузы №639 и анимация паузы №631 не тронуты).
+// MENU_XIT_OLD=0 — затемнение оригинала возвращается
 #ifndef MENU_XIT_OLD
-#define MENU_XIT_OLD 0
+#define MENU_XIT_OLD 1
+#endif
+// №1087: задержка 0,25 с после выбора пункта была временем затемнения оригинала; без затемнения она только откладывает наш уход и переход. По умолчанию 1: пункты паузы и подэкранов
+// (uiPauseInput, uiScrMenuInput) действуют сразу, звук выбора тот же. Карусель главного меню (uiMenuInput) не затронута — её MENU_PICK_OLD. MENUPICK_SUB_OLD=0 — задержка 0,25 с
+#ifndef MENUPICK_SUB_OLD
+#define MENUPICK_SUB_OLD 1
 #endif
 #ifndef SLIDER_SV_OLD
 #define SLIDER_SV_OLD 0
@@ -724,7 +750,7 @@ static int xitScr = -1, xitMode, xitOut, xitPend; static unsigned xitT0, xitLast
 static float xitA = 1.f;                                                            // прозрачность экрана на время входа/выхода (умножается на subFadeA)
 // 0 — ввод принимается; 1 — ввод глохнет; 2 — вернуть отложенное действие *res
 static int xitGate(int screen, int none, int *res) {
-  if (MENU_XIT_OLD && MENU_PICK_OLD) return 0;
+  if (MENU_XIT_OLD && (MENU_PICK_OLD || MENUPICK_SUB_OLD)) { if (screen != xitScr) { xitScr = screen; sliderMovedMask = 0; } return 0; }   // №1087: без затемнения; смена экрана только сбрасывает «двигали ползунок»
   unsigned now = sceKernelGetSystemTimeLow();
   if (!MENU_XIT_OLD && xitMode != 2 && (screen != xitScr || (unsigned)(now - xitLast) > 1000000u)) { xitScr = screen; xitMode = 1; xitT0 = now; xitOut = 0; sliderMovedMask = 0; }
   xitLast = now;
@@ -746,7 +772,7 @@ int uiScrMenuInput(int screen, int *sel, unsigned hit) {
   { int pend = 0, g = xitGate(screen, UI_SCR_NONE, &pend); if (g == 1) return UI_SCR_NONE; if (g == 2) return pend; }   // M1:3, 6, Д3: вход, выход и 0,25 с после выбора
   if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) {
     pauseEv(UI_EV_BACK, 1);
-    if (!MENU_XIT_OLD || !MENU_PICK_OLD) { xitArm(UI_SCR_BACK, !MENU_XIT_OLD); return UI_SCR_NONE; }   // экран гаснет 0,25 с, затем возвращается «назад»
+    if (!MENU_XIT_OLD || !(MENU_PICK_OLD || MENUPICK_SUB_OLD)) { xitArm(UI_SCR_BACK, !MENU_XIT_OLD); return UI_SCR_NONE; }   // экран гаснет 0,25 с, затем возвращается «назад»
     return UI_SCR_BACK;
   }   // △ — Back (Back.pag), ○ — тоже назад
   int dir = (hit & PSP_CTRL_UP) ? -1 : (hit & PSP_CTRL_DOWN) ? 1 : 0, was = *sel;
@@ -785,7 +811,7 @@ int uiScrMenuInput(int screen, int *sel, unsigned hit) {
   }
   if (kind == UI_ROW_ITEM && (hit & PSP_CTRL_CROSS)) {
     pauseEv(UI_EV_ACCEPT, 1);
-    if (!MENU_PICK_OLD) { xitArm(*sel, 0); return UI_SCR_NONE; }   // M1:3: действие через 0,25 с, ввод глохнет
+    if (!(MENU_PICK_OLD || MENUPICK_SUB_OLD)) { xitArm(*sel, 0); return UI_SCR_NONE; }   // M1:3: действие через 0,25 с, ввод глохнет
     return *sel;
   }
   return UI_SCR_NONE;
@@ -1411,6 +1437,7 @@ void uiRadarConeOff(int on) { coneOff = on; }
 #endif
 static int radarHarassOld = RADAR_HARASS_OLD;
 void uiRadarHarassOld(int on) { radarHarassOld = on; }
+static const UiItem *radarIconsItem(void); static inline float radarClip(const UiItem *it);   // №1093: ниже по файлу
 static void drawPoly(const UiItem *it) {
   // Правка Роба 50 (эталон PS2 2:10–2:30, кадры радара 4:25…28:20): клин RadarCone0 — от центра к цели миссии; цель за краем —
   // до обода; цели нет — клина нет. В данных Hud.pag клин смотрит вверх (остриё — точка 0), поворачивает его код оригинала
@@ -1437,16 +1464,35 @@ static void drawPoly(const UiItem *it) {
     float aa = rhead - rcarh; arC = cosf(aa); arS = sinf(aa); arrowRot = fabsf(aa) > 1e-4f;
     for (unsigned i = 0; i < it->count; i++) { arCx += pts[it->first + i].x; arCy += pts[it->first + i].y; } arCx /= it->count; arCy /= it->count;
   }
+  float clipCx_ = 0.f, clipCy_ = 0.f, clipR_ = 0.f; int clipOn_ = 0;
+  if (cone) { const UiItem *ri_ = radarIconsItem(); if (ri_) { clipCx_ = (float)ri_->px; clipCy_ = (float)ri_->py; clipR_ = radarClip(ri_) - (RADARCLIP1093_OLD ? 0.f : 1.f); clipOn_ = 1; } }   // №1093/№1129: центр и радиус круга радара
   if (coneFade <= 0.f) return;   // клин не виден (цель далеко внутри радара) — не рисуем вовсе
   bflush();
   texEnable(0);
   unsigned n = it->count;
   void *b; VFCol *v = (VFCol *)vbeg(n * sizeof(VFCol), &b);
+  float tx_[16], ty_[16]; int outside_ = 0;   // №1129: вершины клина до пересчёта в экран — для обрезки по кругу
   for (unsigned i = 0; i < n; i++) {
     const UiPt *p = &pts[it->first + i]; float x = p->x, y = p->y;
     if (cone) { float dx = (x - ax) * sc, dy = (y - ay) * sc; x = ax + dx * ca - dy * sa; y = ay + dx * sa + dy * ca; }   // поворот по часовой (y вниз)
     if (arrowRot) { float dx = x - arCx, dy = y - arCy; x = arCx + dx * arC - dy * arS; y = arCy + dx * arS + dy * arC; }   // сверка g09a-hud, M1 Д2: стрелка машины на разность курса и взгляда
+    if (cone && !RADARCLIP1093_OLD && clipOn_) uiRadarClampPt(clipCx_, clipCy_, clipR_, &x, &y);   // №1093: клин не выходит за круг радара
     v[i] = (VFCol){mulAlpha(p->color, (xf.on ? xf.a : 1.f) * coneFade), xfX(x), xfY(y), 0};
+    if (i < 16) { tx_[i] = x; ty_[i] = y; if (clipOn_ && (x - clipCx_) * (x - clipCx_) + (y - clipCy_) * (y - clipCy_) > clipR_ * clipR_) outside_ = 1; }
+  }
+  if (!RADARCLIP1129_OLD && cone && clipOn_ && outside_ && n >= 3 && n <= 16) {   // №1129: клин, вышедший за круг радара, режется по кругу (веер — по треугольникам), без слоя поверх
+    for (unsigned j = 1; j + 1 < n; j++) {
+      UiCV in[3], out[UI_CLIP_CAP]; const unsigned idx[3] = {0, j, j + 1};
+      for (int q = 0; q < 3; q++) { const UiPt *pp = &pts[it->first + idx[q]]; unsigned c = pp->color; in[q] = (UiCV){tx_[idx[q]], ty_[idx[q]], 0.f, 0.f, {(float)(c & 255u), (float)(c >> 8 & 255u), (float)(c >> 16 & 255u), (float)(c >> 24 & 255u)}}; }
+      int m = uiClipCircle(in, 3, out, clipCx_, clipCy_, clipR_ - 0.5f); if (m < 3) continue;
+      VFCol *w = (VFCol *)vbeg((unsigned)m * sizeof(VFCol), &b);
+      for (int q = 0; q < m; q++) {
+        unsigned c = (unsigned)(out[q].c[0] + .5f) | (unsigned)(out[q].c[1] + .5f) << 8 | (unsigned)(out[q].c[2] + .5f) << 16 | (unsigned)(out[q].c[3] + .5f) << 24;
+        w[q] = (VFCol){mulAlpha(c, (xf.on ? xf.a : 1.f) * coneFade), xfX(out[q].x), xfY(out[q].y), 0};
+      }
+      vend(b, (unsigned)m * sizeof(VFCol)); sceGuDrawArray(GU_TRIANGLE_FAN, VT_FCOL, m, 0, w); st.draws++; st.verts += m;
+    }
+    return;
   }
   vend(b, n * sizeof(VFCol));
   sceGuDrawArray(GU_TRIANGLE_FAN, VT_FCOL, (int)n, 0, v);
@@ -1714,12 +1760,12 @@ int uiScrDrawCredits(int screen, float scroll, UiCredits *info) {
   unsigned keep = tagMask[screen];
   tagMask[screen] = 1u << UI_T_ALWAYS; drawScreen(screen, -1);
   beginUi(); bn = 0; btex = -1; xf.on = 0;
-  float y = 0.f; int lines = 0, blocks = 0, first = -1, top = 9999, bot = -9999, lx0 = 9999, lx1 = -9999; char ln[128];
+  float y = 0.f; int lines = 0, blocks = 0, first = -1, top = 9999, bot = -9999, lx0 = 9999, lx1 = -9999; char ln[128]; int lh0 = 0;
   for (unsigned i = 0; i < sc->count; i++) {
     const UiItem *it = &items[sc->first + i];
     if (it->type != T_TEXT || it->tag != UI_T_SKIP || it->font >= H->nfont) continue;
     const UiFont *f = &fonts[it->font]; int lh = f->h.lh > it->h ? f->h.lh : it->h;
-    if (!blocks) y = it->y - scroll;
+    if (!blocks) { y = it->y - scroll; lh0 = lh; }
     const char *s = str(it->first);
     for (const char *p = s;;) {
       const char *e = p; while (*e && *e != '\\') e++;
@@ -1741,7 +1787,7 @@ int uiScrDrawCredits(int screen, float scroll, UiCredits *info) {
   tagMask[screen] = 1u << UI_T_STREETRACE; drawScreen(screen, -1);
   tagMask[screen] = keep; scrMode = 0; pakSet(&mainPak);
   if (info) { info->blocks = blocks; info->lines = lines; info->first = first; info->top = top; info->bottom = bot;
-              info->x0 = lx0; info->x1 = lx1; info->end = y; }
+              info->x0 = lx0; info->x1 = lx1; info->end = y; info->lh = lh0; }
   return y > 0.f;
 }
 void uiPlaceCode(const char *s) { snprintf(placeText, sizeof placeText, "%s", s ? s : ""); }
@@ -1762,6 +1808,39 @@ int uiText(int font, int x, int y, unsigned abgr, const char *s) {
   drawTextItem(&it, s, abgr);
   bflush();
   return w;
+}
+// №1145 (Роб 02.11: «бонус-игра: интерфейс старым шрифтом везде»): строка бонус-гонки гранью bart_16bit (Bart vs the Space Mutants) с чёрной тенью на пиксель вправо-вниз, как цифры HUD основной игры
+// (тень 0,78 чёрного, сдвиг 1, 1). uiTextSh — то же, что uiText, но тень HUD; uiTextW — ширина строки гранью font без рисования; uiFontFindExact — грань ровно по имени (без варианта «*k»)
+int uiFontFindExact(const char *name) {
+  if (!H || !name) return -1;
+  for (unsigned i = 0; i < H->nfont; i++) if (!strcmp(str(fonts[i].h.name), name)) return (int)i;
+  return -1;
+}
+int uiTextW(int font, const char *s) {
+  if (!H || (unsigned)font >= H->nfont || !s) return 0;
+  return lineWidth(&fonts[font], s, (int)strlen(s));
+}
+int uiFontLh(int font) { return H && (unsigned)font < H->nfont ? fonts[font].h.lh : 0; }
+int uiTextSh(int font, int x, int y, unsigned abgr, const char *s) {
+  if (!H || (unsigned)font >= H->nfont || !s) return 0;
+  const UiFont *f = &fonts[font];
+  int n = (int)strlen(s), w = lineWidth(f, s, n);
+  beginUi();
+  bn = 0; btex = -1;
+  UiItem it; memset(&it, 0, sizeof it);
+  it.x = (short)x; it.y = (short)y; it.w = (short)w; it.h = (short)f->h.lh; it.font = (unsigned char)font;
+  it.flags = F_SHADOW; it.sdx = 1; it.sdy = 1; it.color2 = 0xc8000000u; it.color = abgr;
+  drawTextItem(&it, s, abgr);
+  bflush();
+  return w;
+}
+// №1149 (Роб: отсчёт перед бонус-гонкой — тот же, что у уличных гонок): HUD рисует только метку отсчёта (цифра 3-2-1 или слово GO!, анимация и шрифт HUD), остальные метки экрана
+// на время вызова сняты. Показ цифры и слова — те же uiHudSet / uiCountdownText / uiHudShow, что у сценариев миссий
+void uiDrawCountdownOnly(void) {
+  unsigned keep = tagMask[UI_SCREEN_HUD];
+  tagMask[UI_SCREEN_HUD] = keep & (1u | 1u << UI_T_COUNTDOWN);
+  drawScreen(UI_SCREEN_HUD, -1);
+  tagMask[UI_SCREEN_HUD] = keep;
 }
 int uiFontFind(const char *name) {   // номер шрифта пакета: грань base; есть вариант для текстов миссий (base*k) — он
   if (!H || !name) return 0;
@@ -1870,6 +1949,9 @@ static unsigned numColor(const UiItem *it) {
   }
   return c;
 }
+#ifndef RADAR1091_OLD
+#define RADAR1091_OLD 0
+#endif
 #ifndef HUD_ENTER_OLD
 #define HUD_ENTER_OLD 0
 #endif
@@ -2090,6 +2172,27 @@ static float radarPulseT(float *t0, int had) {   // секунды пульса 
   if (*t0 < 0.f) *t0 = uiClk;
   return uiClk - *t0;
 }
+// №1129: значок как четырёхугольник (углы по кольцу: верх-лево, верх-право, низ-право, низ-лево); если хоть один угол за кругом радиуса R — режется по кругу и рисуется веером (1),
+// иначе ничего не делает (0), и значок рисуется как раньше. viaXf — учесть сдвиг и всплывание HUD (gDx, gDy, xf) так же, как у спрайтов пакета
+static int radarIconClip(const UiIcon *ic, const float *qx, const float *qy, unsigned col, float cx, float cy, float R, int viaXf) {
+  if (RADARCLIP1129_OLD) return 0;
+  int out_ = 0; for (int i = 0; i < 4; i++) if ((qx[i] - cx) * (qx[i] - cx) + (qy[i] - cy) * (qy[i] - cy) > R * R) out_ = 1;
+  if (!out_) return 0;
+  const float uu[4] = {(float)ic->u, (float)(ic->u + ic->w), (float)(ic->u + ic->w), (float)ic->u}, vv[4] = {(float)ic->v, (float)ic->v, (float)(ic->v + ic->h), (float)(ic->v + ic->h)};
+  UiCV in[4], res[UI_CLIP_CAP];
+  for (int i = 0; i < 4; i++) in[i] = (UiCV){qx[i], qy[i], uu[i], vv[i], {0.f, 0.f, 0.f, 0.f}};
+  int m = uiClipCircle(in, 4, res, cx, cy, R - 0.5f); if (m < 3) return 1;
+  bflush(); bindTex(ic->tex, 0);
+  void *vb; VFTex *v = (VFTex *)vbeg((unsigned)m * sizeof(VFTex), &vb);
+  unsigned c = viaXf && xf.on ? mulAlpha(col, xf.a) : col;
+  for (int i = 0; i < m; i++) {
+    float x = res[i].x, y = res[i].y;
+    if (viaXf) { x += gDx; y += gDy; if (xf.on) { x = xfX(x); y = xfY(y); } }
+    v[i] = (VFTex){res[i].u, res[i].v, c, x, y, 0.f};
+  }
+  vend(vb, (unsigned)m * sizeof(VFTex)); sceGuDrawArray(GU_TRIANGLE_FAN, VT_FTEX, m, 0, v); st.draws++; st.verts += m;
+  return 1;
+}
 static void drawRadarIcons(const UiItem *it) {
   static float msnT0 = -1.f, hnrT0 = -1.f; int hadMsn = 0, hadHnr = 0;
   for (int i = 0; i < nricon; i++) { if (ricon[i].type == UI_R_MISSION) hadMsn = 1; if (ricon[i].type == UI_R_HARASS) hadHnr = 1; }
@@ -2105,6 +2208,8 @@ static void drawRadarIcons(const UiItem *it) {
     float dx = ricon[i].x - rpx, dz = ricon[i].z - rpz;
     float sx = (-c * dx + s * dz) * k, sy = -(s * dx + c * dz) * k;
     float d = sqrtf(sx * sx + sy * sy), lim = radarClip(it) - (ic->w > ic->h ? ic->w : ic->h) * 0.35f;
+    float ksP = 1.25f + .25f * sinf(2.f * 3.14159265f * msnT / .5f);   // тот же пульс, что ниже (M1:9)
+    if (!RADARCLIP1093_OLD && !RADAR_PULSE_OLD && ricon[i].type == UI_R_MISSION && !ricon[i].hasH) lim = uiRadarIconLim(radarClip(it), (float)ic->w, (float)ic->h, ksP);   // №1093: пульсирующий значок целиком внутри круга
     if (d > lim && !coneOff && !radarSticks(ricon[i].type)) continue;   // не цель — за краем не показываем
     if (d > lim && d > 0) { sx *= lim / d; sy *= lim / d; rdRim++; if (!radarSticks(ricon[i].type)) rdRimOther++; }
     rdDrawn++;
@@ -2113,6 +2218,9 @@ static void drawRadarIcons(const UiItem *it) {
     if (ricon[i].hasH) {   // правка 122 (запись PS2 5:05, 15:30): стрелка машины миссии — по её курсу относительно радара
       bflush(); bindTex(ic->tex, 0);
       float ang = rhead - ricon[i].h, co = cosf(ang), sn = sinf(ang), hw = ic->w * .5f, hh = ic->h * .5f, ox = cx + sx, oy = cy + sy;
+      { static const signed char rq[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}}; float qx[4], qy[4];   // №1129: углы значка-стрелки по кольцу, за кругом — обрезка
+        for (int k2 = 0; k2 < 4; k2++) { float dx2 = rq[k2][0] * hw, dy2 = rq[k2][1] * hh; qx[k2] = ox + dx2 * co - dy2 * sn; qy[k2] = oy + dx2 * sn + dy2 * co; }
+        if (radarIconClip(ic, qx, qy, icol0, cx, cy, radarClip(it), 0)) continue; }
       void *vb; VFTex *v = (VFTex *)vbeg(4 * sizeof(VFTex), &vb);
       static const signed char q[4][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
       for (int k2 = 0; k2 < 4; k2++) {
@@ -2125,12 +2233,16 @@ static void drawRadarIcons(const UiItem *it) {
     }
     unsigned icol = ricon[i].type == UI_R_HARASS && !radarHarassOld ? radarHarassCol(hnrT) : ic->color;   // №241: в данных стрелка белая, красной её делает игра (запись PS2: ≈(200,0,0))
     if (!RADAR_PULSE_OLD && ricon[i].type == UI_R_MISSION) {   // M1:9 — значок миссии в фокусе пульсирует от центра 1,0…1,5, период 0,5 с, на старте 1,25 и растёт
-      float ks = 1.25f + .25f * sinf(2.f * 3.14159265f * msnT / .5f);
+      float ks = ksP;
       int dw = (int)(ic->w * ks + .5f), dh = (int)(ic->h * ks + .5f);
+      { float x0 = floorf(cx + sx - dw * .5f + .5f), y0 = floorf(cy + sy - dh * .5f + .5f), qx[4] = {x0, x0 + dw, x0 + dw, x0}, qy[4] = {y0, y0, y0 + dh, y0 + dh};   // №1129
+        if (radarIconClip(ic, qx, qy, icol, cx, cy, radarClip(it), 1)) continue; }
       baddS(ic->tex, ic->u, ic->v, ic->w, ic->h, (int)floorf(cx + sx - dw * .5f + .5f), (int)floorf(cy + sy - dh * .5f + .5f), dw, dh, icol);
       continue;
     }
     int x = (int)floorf(cx + sx - ic->w * 0.5f + 0.5f), y = (int)floorf(cy + sy - ic->h * 0.5f + 0.5f);
+    { float qx[4] = {(float)x, (float)(x + ic->w), (float)(x + ic->w), (float)x}, qy[4] = {(float)y, (float)y, (float)(y + ic->h), (float)(y + ic->h)};   // №1129
+      if (radarIconClip(ic, qx, qy, icol, cx, cy, radarClip(it), 1)) continue; }
     badd(ic->tex, ic->u, ic->v, ic->w, ic->h, x, y, icol);
   }
 }
@@ -2360,6 +2472,7 @@ static int radarRimIdx(const UiScreen *sc) {   // рамка-кольцо — п
 }
 static void drawScreen(int sidx, int selected) {
   if (!H || (unsigned)sidx >= H->nscreen || typoShot >= 2) return;
+  if (scrMode || (sidx != UI_SCREEN_HUD && sidx != UI_SCREEN_LETTERBOX && sidx != UI_SCREEN_TUTORIAL && sidx != UI_SCREEN_MESSAGE)) hudAway1091++;   // №1091
   if (xitA < 1.f && (unsigned)(sceKernelGetSystemTimeLow() - xitLast) > 300000u) { xitA = 1.f; xitMode = 0; }   // сверка g09a-hud: вход/выход прерван (экран закрыли) — прозрачность не залипает
   const int pfOn = !UI_PROF2_OLD && uiProfOn && sidx == UI_SCREEN_HUD && !scrMode; unsigned pf0 = pfOn ? sceKernelGetSystemTimeLow() : 0, pfLoop0 = 0;
   const UiScreen *sc = &screens[sidx];
@@ -2404,10 +2517,14 @@ static void drawScreen(int sidx, int selected) {
     mask |= hudForce;
     // Сверка g09a-hud круг 5 (M2:Д14): при каждом входе в игровой HUD передний слой (радар, счётчики) 0,1 с прозрачен и затем проявляется (радар — своим входом 0,25 с);
     // вход = HUD не рисовали дольше 0,3 с (пауза, меню, брифинг). Подсказка △ и задание не затронуты. HUD_ENTER_OLD=1 — прежнее
-    { static unsigned lastHud, enterAt; unsigned nowh = sceKernelGetSystemTimeLow();
+    // №1091 (Роб 02.11: «радар с картой во время езды то появляется, то пропадает, мигает», в TEST81 не было): вход в HUD считался по времени (HUD не рисовали дольше 0,3 с), и любой
+    // долгий кадр игры на PSP (подгрузка клеток, смена зоны) прятал радар и счётчики на 0,1 с и проявлял заново. Теперь вход = между кадрами HUD рисовалась пауза, меню, брифинг или
+    // другой полноэкранный экран (hudAway1091). Остальное по сверке то же: 0,1 с пустой передний слой. RADAR1091_OLD=1 — как TEST83 (по времени)
+    { static unsigned lastHud, enterAt, awaySeen; unsigned nowh = sceKernelGetSystemTimeLow();
       if (!HUD_ENTER_OLD) {
-        if (!lastHud || (unsigned)(nowh - lastHud) > 300000u) enterAt = nowh;
-        lastHud = nowh;
+        int away_ = RADAR1091_OLD ? (unsigned)(nowh - lastHud) > 300000u : hudAway1091 != awaySeen;
+        if (!lastHud || away_) { enterAt = nowh; uiLogf("R1091 HUD enter gap=%.2f s away=%u\n", lastHud ? (unsigned)(nowh - lastHud) * 1e-6f : -1.f, hudAway1091 - awaySeen); }
+        awaySeen = hudAway1091; lastHud = nowh;
         if ((unsigned)(nowh - enterAt) < 100000u)
           mask &= ~(1u << UI_T_RADAR | 1u << UI_T_SPEED | 1u << UI_T_HNR_METER | 1u << UI_T_HNR_FULL | 1u << UI_T_COINS | 1u << UI_T_TIMER | 1u << UI_T_PARTIME | 1u << UI_T_LAP | 1u << UI_T_POSITION | 1u << UI_T_COLLECTIBLES | 1u << UI_T_DAMAGE);
       } }
@@ -2510,6 +2627,9 @@ static void drawScreen(int sidx, int selected) {
     if (pAnim) { xf.on = 1; xf.s = pS; xf.a = pA; xf.cx = 240.f; xf.cy = 120.f; }   // №631 (центр: по кадрам PS2 плита растёт из середины по x и около 0,44 высоты по y): рамка и пункты паузы растут из центра
     // №631: у PS2 отдельной плашки на весь экран нет, мир темнеет на 7 % (pauseDimA выше); плашка пака (75 % чёрного на весь экран) при включённой анимации не рисуется
     if (!PAUSE_ANIM_OLD && !scrMode && (sidx == UI_SCREEN_PAUSE || sidx == UI_SCREEN_PAUSEMSN) && it->type == T_RECT && it->x <= 0 && it->y <= 0 && it->w >= 480 && it->h >= 272) continue;
+    if (dim1122On && paused && (scrMode || sidx == UI_SCREEN_LEVELSTATS) && it->type == T_RECT && it->x <= 0 && it->y <= 0 && it->w >= 480 && it->h >= 272) {   // №1122: плашка подэкрана — вместо неё слой затемнения (его уровень до плашки)
+      if (it->color >> 24 > 40) dim1122Plate = (float)(it->color >> 24) / 255.f;
+      continue; }
     UiItem brIt;
     if (brAnim) {   // №512: вход слева / выход вправо; руки — только на время переезда; полосы фона — на месте, гаснут при выезде
       float dx = (brWaitLoad && !brLeaving && it->tag == UI_T_LOADING) ? 0.f : ITEM_ARML(it) ? brArmL : ITEM_ARMR(it) ? brArmR : ITEM_BACK(it) ? 0.f : brDx, al = ITEM_BACK(it) ? brBackA : (ITEM_ARML(it) || ITEM_ARMR(it)) ? brCardA : brCardA;
@@ -2545,6 +2665,7 @@ static void drawScreen(int sidx, int selected) {
     if (hud && popKind(it->tag) >= 0 && !(animOff & UI_ANIM_NOPOP)) {   // всплывание / угасание группы от её центра
       int on = (mask & tb) != 0; float s_, a_;
       uiPopState(popKind(it->tag), on, popAgeOf(it->tag, on), &s_, &a_);
+      if (it->tag == UI_T_RADAR && (a_ < 1.f || !on)) { static unsigned lg1091; unsigned n1091 = sceKernelGetSystemTimeLow(); if ((unsigned)(n1091 - lg1091) > 100000u) { lg1091 = n1091; uiLogf("R1091 radar fade on=%d a=%.2f s=%.2f rr=%.0f\n", on, a_, s_, rrange); } }   // №1091 служебно: радар не в полной видимости (должно быть только у входа в HUD)
       // №610: текст пузыря (строка задания, окно сообщения) не рисуем, пока рамка растёт: он раскладывался узко и перестраивался. BUBBLE_TEXT_LATE_OLD=1 — прежнее
       if (BUBBLE_UNIFORM_OLD && !BUBBLE_TEXT_LATE_OLD && on && it->type == T_TEXT && (popKind(it->tag) == UI_POP_PILL || popKind(it->tag) == UI_POP_BOX) && (s_ != 1.f || a_ < 1.f)) continue;
       if (uiBubble992Old && !BUBBLE_TEXT942_OLD && !BUBBLE_UNIFORM_OLD && popKind(it->tag) == UI_POP_PILL && on && bubContent(it)) {   // №942 (и №992: только в режиме TEST70, новое — содержимое едет с рамкой по ветке ниже): текст и аватар не растут с рамкой: после раскрытия рамки проявляются на месте, конечной раскладкой
@@ -2566,6 +2687,9 @@ static void drawScreen(int sidx, int selected) {
       }
     }
     if (subFadeA * xitA < 1.f) { if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.cx = xf.cy = 0.f; } xf.a *= subFadeA * xitA; }   // №639: кроссфейд подэкранов паузы
+    if (scrMode && scrFlyOn && (it->tag == UI_T_SKIP || it->tag == UI_T_STREETRACE)) {   // сверка g11b-collect №1117: просмотр в галерее альбома — сетка гаснет, картинка просмотра летит от слота (масштаб вокруг точки) и проявляется
+      float a_ = it->tag == UI_T_SKIP ? scrFlyGrid : scrFlyView; int fly_ = it->tag == UI_T_STREETRACE && it->field == scrFlyField;
+      if (a_ < 1.f || fly_) { if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.cx = xf.cy = 0.f; } xf.a *= a_; if (fly_) { xf.s = scrFlyS; xf.cx = scrFlyCx; xf.cy = scrFlyCy; } } }
     lastSpr[0] = lastSpr[1] = 1e9f; lastSpr[2] = lastSpr[3] = -1e9f;
     int ok_ = sidx == UI_SCREEN_HUD ? ovIndex(it->tag) : -1;
     gDy = ok_ >= 0 ? ovDy[ok_] : 0;
@@ -2743,6 +2867,11 @@ static void drawScreen(int sidx, int selected) {
                    ((it->flags & F_MENU) && it->menu == selected))) {   // правка 412: пульс выбранного пункта
           unsigned now = sceKernelGetSystemTimeLow(); float d = (now - menuPulseLast) * 1e-3f; menuPulseLast = now;
           int key = scrMode * 256 + sidx;
+          if (!FAILPULSE1097_OLD && sidx == UI_SCREEN_MISSIONOVER && !scrMode) {   // №1097 (Роб 02.11): YES / NO экрана провала пульсируют всегда — фаза по часам от смены пункта или появления экрана, а не накопление кадров (кадр длиннее 100 мс сбрасывал пульс в начало, и пункт стоял)
+            if (selected != menuPulseSel || key != menuPulseKey || now - failPulseSeen > 500000u) { menuPulseSel = selected; menuPulseKey = key; failPulseT0 = now; }
+            failPulseSeen = now;
+            menuPulseMs = fmodf((float)(now - failPulseT0) * 1e-3f, MENU_PULSE_MS);
+          } else
           if (selected != menuPulseSel || key != menuPulseKey || d > 100.f || d < 0.f) { menuPulseSel = selected; menuPulseKey = key; menuPulseMs = 0.f; }   // смена пункта / экрана / пауза
           else menuPulseMs = fmodf(menuPulseMs + d, MENU_PULSE_MS);
           // №924: до правки (MENU_PULSE924_OLD=1) главное меню стояло. Ветка та же, но масштаб 1 и без преобразования: строка рисуется как раньше, а рамка всё равно попадает в журнал MENUITEM —
@@ -3311,10 +3440,23 @@ static int pauseAnimPose(float *sc, float *al) {
 }
 // затемнение мира на 7 % (запись PS2 кадры 28–34, без отдельной плашки на весь экран): нарастает за 0,12 с, держится, при закрытии уходит за 0,06 с
 static float pauseDimA(void) {
-  if (PAUSE_ANIM_OLD || scrMode) return 0.f;
+  if (PAUSE_ANIM_OLD || scrMode || dim1122On) return 0.f;   // №1122: при подэкране затемняет общий слой
   if (paused) { float t = pauseClk(pauseT0us); return .07f * (t >= .12f ? 1.f : t / .12f); }
   if (pauseClosing) { float t = pauseClk(pauseCloseUs); return t >= UI_PAUSE_CLOSE_S ? 0.f : .07f * (1.f - t / UI_PAUSE_CLOSE_S); }
   return 0.f;
+}
+// №1122: шаг слоя затемнения паузы за кадр; sub = открыт подэкран (OPTIONS, LEVEL PROGRESS, VIEW CARDS) или идёт его переход. Возвращает прозрачность слоя (0 — слой не нужен,
+// затемнение рисует само меню паузы). Уровень меняется непрерывно: вверх 0,07 → плашка подэкрана за 0,38 с (меню гаснет и пусто), вниз за 0,28 с (пусто и меню проявляется)
+float uiPauseDimStep(int sub) {
+  if (PAUSEDIM1122_OLD || PAUSE_ANIM_OLD || !paused) { dim1122On = 0; dim1122L = 0.f; return 0.f; }
+  unsigned now = sceKernelGetSystemTimeLow(); float dt = (unsigned)(now - dim1122T) * 1e-6f; dim1122T = now; if (dt > .1f) dt = .1f;
+  const float lo = .07f, hi = dim1122Plate;
+  if (!dim1122On && !sub) { dim1122L = lo; return 0.f; }   // ровное меню паузы: затемнение рисует оно само
+  if (!dim1122On) { dim1122On = 1; dim1122L = lo; }
+  float tg = sub ? hi : lo, st = (hi - lo) / (sub ? .38f : .28f) * dt;
+  dim1122L = dim1122L < tg ? fminf(dim1122L + st, tg) : fmaxf(dim1122L - st, tg);
+  if (!sub && dim1122L <= lo + .0005f) { dim1122On = 0; dim1122L = lo; return 0.f; }
+  return dim1122L;
 }
 // радар и значок цели возвращаются резко через 0,4 с после нажатия (запись PS2 кадр 180): до этого HUD не рисуется. 1 — ещё прячем
 static int pauseHudHidden(void) {
@@ -3338,7 +3480,7 @@ int  uiPauseSelected(void) { return pauseCode(pauseSel); }
 void uiPauseCloseNow(void) { if (paused) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); } }
 int  uiPauseInput(unsigned hit) {
   if (!paused) return UI_P_NONE;
-  if (!MENU_PICK_OLD && pickOn) {   // M1:3: пункт паузы выбран — ввод глохнет 0,25 с, затем действие (закрытие паузы и код пункта)
+  if (!(MENU_PICK_OLD || MENUPICK_SUB_OLD) && pickOn) {   // M1:3: пункт паузы выбран — ввод глохнет 0,25 с, затем действие (закрытие паузы и код пункта)
     unsigned el_ = sceKernelGetSystemTimeLow() - pickT0;
     if (el_ <= XIT_US) return UI_P_NONE;
     pickOn = 0; if (el_ > 1500000u) return UI_P_NONE; int c = pickPend;
@@ -3359,7 +3501,7 @@ int  uiPauseInput(unsigned hit) {
   if (hit & PSP_CTRL_CROSS) {
     if (menuOff[pauseScr] >> pauseSel & 1) { pauseEv(UI_EV_LOCKED, 1); return UI_P_NONE; }
     int c = pauseCode(pauseSel);
-    if (!MENU_PICK_OLD) {   // M1:3: звук выбора сразу, действие через 0,25 с (закрывающие паузу пункты — звук закрытия тогда же)
+    if (!(MENU_PICK_OLD || MENUPICK_SUB_OLD)) {   // M1:3: звук выбора сразу, действие через 0,25 с (закрывающие паузу пункты — звук закрытия тогда же)
       pauseEv(UI_EV_ACCEPT, 1); pickOn = 1; pickT0 = sceKernelGetSystemTimeLow(); pickPend = c; return UI_P_NONE;
     }
     if (c == UI_P_CONTINUE || c == UI_P_RESET_CAR || (PAUSE_CONFIRM_OLD && (c == UI_P_RESTART_MISSION || c == UI_P_ABORT_MISSION))) { paused = 0; pauseCloseStart(); pauseEv(UI_EV_PAUSE, 0); }

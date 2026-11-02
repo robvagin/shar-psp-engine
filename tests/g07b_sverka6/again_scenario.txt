@@ -1,0 +1,17 @@
+# Окно g07b-msnview, круг 6 (P17-23): «Race again». Нужен эмулятор (запрещён наряду круга 6): прогнать дирижёру одним запуском.
+# Ждём в smoke.txt: BONUS ev=again yes=1 (серия wins/pts не нулевая), затем второй заезд, BONUS ev=again yes=0, возврат в меню; следующий вход из меню — wins/pts снова 0.
+flag menu
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+flag bonusagain 1
+wait 2
+press left
+wait 0.6
+press cross
+wait 1.5
+flag bonusgo
+wait 70
+wait 70
+shot bonus_after_again
+end

@@ -6,6 +6,7 @@
 #pragma once
 #include "pano917io.h"
 typedef struct { float u, v; unsigned c; float x, y, z; } PnoV;
+static int pano917Force;   // сверка g12-data №1109: 1 — перечитать панорамы при следующем рисовании (вход в бонус-трассу и выход из неё: уровень игры тот же, файл другой)
 static int pano917Any = 1;   // №917б: кольцо за краем города при любой дальности (не только 150 м); «flag pano917any 0» — прежнее правило
 static int pano917Punch = 1;   // «flag pano917punch 0» — без пробивки (A/B гейта); PANO917_OLD гасит всё кольцо
 static unsigned pnoUsAcc, pnoUsN, pnoUsMax, pnoLayers, pnoSegs, pnoStepT, pnoLogReady, pnoPunches;   // цена: мкс процессора на кадр, слоёв и сегментов в кадре
@@ -30,7 +31,7 @@ static const float pnoSinT[PNO_NAZ + 1] = {0.f, 0.38268343f, 0.70710678f, 0.9238
 static const float pnoCosT[PNO_NAZ + 1] = {1.f, 0.92387953f, 0.70710678f, 0.38268343f, 0.f, -0.38268343f, -0.70710678f, -0.92387953f, -1.f, -0.92387953f, -0.70710678f, -0.38268343f, 0.f, 0.38268343f, 0.70710678f, 0.92387953f, 1.f};
 // ex, ey, ez — глаз; сегмент вне взгляда (по горизонтали шире кадра на запас) не рисуем
 static void pano917Draw(float ex, float ey, float ez) {
-  { static int lv_ = -99; if (lv_ != gameLevel) { lv_ = gameLevel; pano917Load(); } }   // панорамы уровня (нет файла — кольца нет)
+  { static int lv_ = -99; if (lv_ != gameLevel || pano917Force) { lv_ = gameLevel; pano917Force = 0; pano917Load(); } }   // панорамы уровня (нет файла — кольца нет)
   if (!pano917Active() || pano917On == 2 || inRoom() || (!pano917Any && (drawDist < 149.5f || drawDist > 155.f))) return;   // pano917On 2 — тест: город 150 м без кольца (красный контроль гейта: «везде 150»)
   unsigned t0 = sceKernelGetSystemTimeLow();
   int ids[PNO_SLOTS]; float f[2], a[2]; int pre = 0; int c = pno917Pick(pnoE, pnoN, ex, ez, ids, f, &pre);

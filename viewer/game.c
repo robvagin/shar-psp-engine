@@ -272,8 +272,9 @@ void gameCarInput(const Game *g, const GamePad *p, CarInput *in) {
 #define CARDEAD_STEER_OLD 0
 #endif
 void gameCarLimits(const Game *g, CarInput *in) {
-  // P01-17 (сверка g10-flow): после смерти машина без управления — газ, тормоз И РУЛЬ в ноль (оригинал). Было: руль оставался. CARDEAD_STEER_OLD=1 — как было
-  if (car.destroyed && !carHuskDrives(&car)) { in->throttle = 0.f; in->brake = 0.f; in->handbrake = 1.f; if (!CARDEAD_STEER_OLD) in->steer = 0.f; }   // разбита и горит — не едет; остов после взрыва едет медленно (правка 355); тормоз стоя = задний ход, поэтому ручник
+  // P01-17 (сверка g10-flow, круг 7 против оригинала): после смерти в ноль только газ и тормоз (газ и тормоз уничтоженной машины принимаются как ноль); руль живой (в круге 1 по ошибке обнулялся). Ручник 1 — пустой водитель, водителя выбрасывает.
+  // CARDEAD_STEER_OLD=1 — руль тоже в ноль (прежняя ошибочная правка круга 1)
+  if (car.destroyed && !carHuskDrives(&car)) { in->throttle = 0.f; in->brake = 0.f; in->handbrake = 1.f; if (CARDEAD_STEER_OLD) in->steer = 0.f; }   // разбита и горит — не едет; остов после взрыва едет медленно (правка 355); тормоз стоя = задний ход, поэтому ручник
   if (gameOnFoot(g)) { in->throttle = in->brake = in->steer = 0.f; in->handbrake = 1.f; }   // этап 4: водителя нет — стоит на ручнике
 }
 
@@ -338,6 +339,34 @@ static int coinGround(void *u, float x, float z, float yTop, float *gy) {   // �
 #ifndef KICKWAVE_AIR_OLD
 #define KICKWAVE_AIR_OLD 0     // P02-19: 1 — волна удара и с земли
 #endif
+// сверка g11b-collect круг 7 (P04 W5, удар снаряда в оригинале): снаряд осы бьёт подвижные предметы — стейтпропы (кроме ящиков и торгоматов, у них объём едет за суставом) толчком силой 400
+// (событие HIT и spImpulse, как пинок) и пропы PRP1 (скорость 400 / масса под 45° по полёту). По отрезку полёта a -> b: -> доля пути до первого (больше 1 — нет); apply = 1 — удар. Игрока и ос не касается
+float gameBoltProps(Game *g, const float a[3], const float b[3], const float dir[3], int apply) {
+  float best = 2.f; int bi = -1, bk = 0;
+  float sx = b[0] - a[0], sy = b[1] - a[1], sz = b[2] - a[2], sl2 = sx * sx + sy * sy + sz * sz;
+#define BOLT_U(cx, cy, cz) ({ float u_ = sl2 > 1e-9f ? (((cx) - a[0]) * sx + ((cy) - a[1]) * sy + ((cz) - a[2]) * sz) / sl2 : 0.f; u_ < 0.f ? 0.f : u_ > 1.f ? 1.f : u_; })
+  if (haveSP) for (unsigned i = 0; i < sprops.ninst; i++) {
+    const SpRun *r = &sprops.run[i]; if (!r->alive || (!r->colOn && !r->col2On)) continue;
+    const SpType *T = &sprops.type[sprops.inst[i].type]; if (T->kind == 1 || (sprops.follow && sprops.follow[sprops.inst[i].type])) continue;   // обломок; ящик и торгомат
+    float c[3], rad; spBounds(&sprops, i, c, &rad); rad = fminf(rad, 1.5f);
+    float u = BOLT_U(c[0], c[1], c[2]), dx = a[0] + sx * u - c[0], dy = a[1] + sy * u - c[1], dz = a[2] + sz * u - c[2];
+    if (dx * dx + dy * dy + dz * dz <= rad * rad && u < best) { best = u; bi = (int)i; bk = 1; }
+  }
+  if (haveProps) for (unsigned i = 0; i < props.ninst; i++) {
+    const PropState *st = &props.st[i]; if (st->hidden) continue;
+    float u = BOLT_U(st->x, st->y, st->z), pt[3] = {a[0] + sx * u, a[1] + sy * u, a[2] + sz * u}, cl[3]; propsClosestPoint(&props, i, pt, cl);
+    float dx = pt[0] - cl[0], dy = pt[1] - cl[1], dz = pt[2] - cl[2];
+    if (dx * dx + dy * dy + dz * dz <= .25f * .25f && u < best) { best = u; bi = (int)i; bk = 2; }
+  }
+#undef BOLT_U
+  if (apply && bi >= 0) {
+    if (bk == 1) { spEvent(&sprops, (unsigned)bi, SP_EV_HIT); spImpulse(&sprops, (unsigned)bi, dir[0], dir[2], 400.f); }
+    else { PropState *st = &props.st[bi]; const PropType *ty = &props.types[props.def[bi].type];
+      float dl = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]), dx = dl > 1e-4f ? dir[0] / dl : 0.f, dz = dl > 1e-4f ? dir[2] / dl : 1.f, v = 400.f / (ty->mass > 0.f ? ty->mass : 100.f), h45 = v * .70710678f;
+      st->vel[0] = dx * h45; st->vel[2] = dz * h45; st->vel[1] = h45; st->w[0] = dz * h45; st->w[2] = -dx * h45; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; }
+  }
+  return best;
+}
 void gameAfterCar(Game *g, const GamePad *p, float dt) {
   unsigned xt_ = XS_T(), xw_ = XS_W();
   carBoomCoins(&car, haveCoins ? &coins : NULL, haveCol ? &world : NULL, &g->coinBoomArmed); XS_LAP(4, xt_, xw_);
@@ -352,9 +381,13 @@ void gameAfterCar(Game *g, const GamePad *p, float dt) {
       hi.mx = p->ax; hi.my = -p->ay;
       // P17-12 / СВЕРКА_ГОМЕР 1.7 (сверка g10-flow): пешком крестовина имеет ПОЛНЫЙ приоритет — нажата любая её сторона: обе оси берутся с
       // крестовины (аналог не учитывается совсем; сравнения «чей модуль больше» в оригинале на PS2 нет). Было: приоритет по каждой оси отдельно
-      if (!FOOT_DPAD_FULL_OLD && (p->buttons & (GP_LEFT | GP_RIGHT | GP_UP | GP_DOWN))) { hi.mx = 0.f; hi.my = 0.f; }
-      if (p->buttons & GP_LEFT) hi.mx = -1.f; if (p->buttons & GP_RIGHT) hi.mx = 1.f;
-      if (p->buttons & GP_UP) hi.my = 1.f; if (p->buttons & GP_DOWN) hi.my = -1.f;
+      // круг 7 (против оригинала): крестовина берётся, только если её сумма не нулевая: ← и → вместе гасят друг друга (x = 0), ↑ и ↓ тоже; когда обе оси крестовины в нуле — идёт аналог.
+      // Было (круг 1): любая сторона крестовины забирала обе оси, ← + → давали →. FOOT_DPAD_FULL_OLD=1 — так
+      { int dx_ = ((p->buttons & GP_RIGHT) != 0) - ((p->buttons & GP_LEFT) != 0), dz_ = ((p->buttons & GP_UP) != 0) - ((p->buttons & GP_DOWN) != 0);
+        if (FOOT_DPAD_FULL_OLD) {
+          if (p->buttons & GP_LEFT) hi.mx = -1.f; if (p->buttons & GP_RIGHT) hi.mx = 1.f;
+          if (p->buttons & GP_UP) hi.my = 1.f; if (p->buttons & GP_DOWN) hi.my = -1.f;
+        } else if (dx_ || dz_) { hi.mx = (float)dx_; hi.my = (float)dz_; } }
       // раскладка оригинала пешком (frontend.p3d ControllerPS2.pag): X JUMP, □ ATTACK, ○ DASH / SPRINT (зажат — бег;
       // srr2: «PRESS AND HOLD ○ TO RUN»), △ GET IN CAR / TALK TO CHARACTER (main.c). Стомп — X X □ (homer.c)
       hi.jump = (p->hit & GP_CROSS) != 0; hi.attack = (p->hit & GP_SQUARE) != 0; hi.dash = (p->buttons & GP_CIRCLE) != 0;
@@ -543,6 +576,10 @@ int gameWrenchStep(Game *g) {
     if (dx * dx + dy * dy + dz * dz > r * r) continue;
     int wreck = car.destroyed || car.damage > 0.f;
     g->wrenchTaken |= 1u << k; g->wrenchAway[k] = 0.f; g->wrenches++; got++;
+#ifndef WASP_WRENCH_AGGR_OLD
+#define WASP_WRENCH_AGGR_OLD 0   // сверка g11b-collect круг 7 (P04 Д12): подбор ключа переводит ос в агрессию, как карточка (в оригинале событие подбора вещи одно на все). 1 — прежнее
+#endif
+    if (!WASP_WRENCH_AGGR_OLD && g->pColl) collectWatchersAggro(g->pColl);
     if (g->wrenchInst[k] >= 0) { SpRun *R = &sprops.run[g->wrenchInst[k]]; R->alive = 0; R->colOn = R->col2On = 0; }
     if (wreck) { car.damage = 0.f; car.destroyed = 0; wasDestroyed = 0; g->wrenchRepairs++; }   // вся машина, и остов
     if (g->hk.wrench) g->hk.wrench(g->hk.u, W->p, wreck);
@@ -771,8 +808,7 @@ void gameCarHealthLoad(Game *g, int n, const uint16_t *hash, const float *frac) 
 }
 
 // ---- стик (P17-9; СВЕРКА_МАШИНЫ 1.4): мёртвая зона 0,25 по каждой оси отдельно, остаток пересчитан в 0..1 (плавный старт), значение оси
-// меняется, только если новое отличается от прежнего больше чем на 0,05. Возврат в ноль — сразу (правило порта: иначе значение .03 осталось бы
-// навсегда, а в оригинале стик у нуля попадает в зону). Допуск оси 0,01 и колесо-руль в отчёте без применения на PSP
+// меняется, только если новое отличается от прежнего больше чем на 0,05. Возврат в ноль — сразу (как в оригинале: значение внутри зоны становится нулём без проверки на 0,05). Допуск оси 0,01 и колесо-руль в отчёте без применения на PSP
 static float stickPrev[2];
 static float stickAxis(float raw, float *prev) {
   float a = fabsf(raw), v = 0.f;
@@ -782,3 +818,16 @@ static float stickAxis(float raw, float *prev) {
   return *prev;
 }
 void gameStick(float rawx, float rawy, float *ax, float *ay) { *ax = stickAxis(rawx, &stickPrev[0]); *ay = stickAxis(rawy, &stickPrev[1]); }
+// №1104 (коды оригинала): таблица включённых кодов живёт здесь, ввод — viewer/cheats.h; меню зовут gameCheatsFrame, остальные модули спрашивают gameCheatOn
+#include "cheats.h"
+static CheatSys gameCheats;
+static void gameCheatsSync(void) {   // флаги машины игрока (car.c) от таблицы кодов
+  carCheatNoDrag = cheatOn(&gameCheats, CH_NOTOP); carCheatAccel = cheatOn(&gameCheats, CH_ACCEL);
+  carCheatInvincible = cheatOn(&gameCheats, CH_INVINC); carCheatOneTap = cheatOn(&gameCheats, CH_ONETAP); carCheatHornJump = cheatOn(&gameCheats, CH_HORNJUMP);
+}
+int gameCheatOn(int id) { return cheatOn(&gameCheats, id); }
+void gameCheatsReset(void) { cheatsReset(&gameCheats); gameCheatsSync(); }
+int gameCheatsFrame(unsigned held, unsigned hit, int allStory, int *id) { int ev = cheatsFrame(&gameCheats, held, hit, allStory, id); gameCheatsSync(); return ev; }
+int gameCheatsActive(void) { return cheatsActive(&gameCheats); }
+int gameCheatsPending(void) { return cheatsActive(&gameCheats) && gameCheats.idx == 3; }   // следующее нажатие завершит четвёрку (тогда нужно знать, пройдена ли игра)
+void gameCheatsSet(unsigned mask) { gameCheats.on = mask; gameCheatsSync(); }   // служебно (хост-тест): включить коды без ввода

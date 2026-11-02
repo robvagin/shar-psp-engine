@@ -210,7 +210,10 @@ static int dmgStage;
 #endif
 #define SV_MASS_KG 1500.f    // масса машины для интенсивности удара (P01-13: e≈0,5, масса 1500; 19000 Н·с ≈ 8 м/с)
 static float svCarMass = SV_MASS_KG;
-void sndCarMass(float kg) { svCarMass = kg > 100.f ? kg : SV_MASS_KG; }
+#ifndef SV_MASS_OLD
+#define SV_MASS_OLD 0   // круг 6 (g08, P09:25): масса машины для размера удара — своя у каждой машины (car.p.mass); 1 — всегда 1500 кг
+#endif
+void sndCarMass(float kg) { svCarMass = !SV_MASS_OLD && kg > 100.f ? kg : SV_MASS_KG; }
 static float impI(float v) { return v * svCarMass * 1.5f * (1.f / 100000.f); }   // 0..1 по шкале оригинала (1 = импульс 100000)
 // очередь реплик героя (P09:12): до 16 мест, строка ждёт жизнь по таблице и пропадает; одинаковую реплику второй раз не ставят
 #define SQ_N 16
@@ -222,7 +225,7 @@ static int emitMute;
 #define SV_POSLOOP_OLD 0
 #endif
 static int ambLatchSp;
-static int specialOn, houseMus, alwaysMus; static float zoneAt[128], zoneClk; static int zoneLast = -1;   // особые куски музыки по зонам, музыка дома
+static int specialOn, houseMus, alwaysMus; static float zoneAt[128]; static int zoneLast = -1;   // особые куски музыки по зонам, музыка дома
 void sndMusicAlways(int on) { alwaysMus = !!on; }   // этап «музыка всегда» (msn_audio): после выхода из машины фон улицы не возвращается
 static float busNow[5]; static int busLive, modeSnap, storeKind, justMusicOn, loadDuckOn; static unsigned modeClkUs;   // шины режимов
 static float ambFootG = 1.f; static int ambLatch;   // фон улицы только пешком
@@ -273,8 +276,19 @@ static int levelOfDir(const char *dir) {   // «…/l3/audio/» -> 3, «…/audi
   for (const char *p = dir; p && *p; p++) if ((p == dir || p[-1] == '/') && p[0] == 'l' && p[1] >= '2' && p[1] <= '7' && p[2] == '/') return p[1] - '0';
   return 1;
 }
+const char *sndLevelChangeStinger(void) { return NEWSMUS1128_OLD ? "newspaper_spin" : "loading_screen"; }
+int sndVariantPick(int n, unsigned clockUs) {
+  if (n <= 1) return 0;
+  if (NEWSMUS1128_OLD) return rand() % n;
+  unsigned x = clockUs * 2654435761u; x ^= x >> 15; x *= 2246822519u; x ^= x >> 13; return (int)(x % (unsigned)n);   // перемешанные часы: разные запуски и разные переходы дают разные варианты
+}
+int sndLang; static int sndLangApplied; static char sndAudioDir[256];
+int audioLangAvail(const char *dir, int lang);
+void sndSetLanguage(int lang) { sndLang = lang >= 0 && lang <= 3 ? lang : 0; }
+int sndLangAvail(int lang) { return lang == 0 ? 1 : (LANGVO1111_OLD || lang < 0 || lang > 3 || !sndAudioDir[0]) ? 0 : audioLangAvail(sndAudioDir, lang); }
+int sndLangPending(void) { return !LANGVO1111_OLD && sndLang != sndLangApplied; }
 int sndInit(const char *dir) {
-  ready = 0;
+  ready = 0; snprintf(sndAudioDir, sizeof sndAudioDir, "%s", dir); audioSetLanguage(LANGVO1111_OLD ? 0 : sndLang); sndLangApplied = sndLang;
   s250 = !SND_250_OLD && levelOfDir(dir) == 1; audioMix250(s250);   // правка 250: сведение по замерам уровня 1 — только на уровне 1
   if (audioInit(dir) < 0) { snprintf(err, sizeof err, "%s", audioError()); return -1; }
   snprintf(err, sizeof err, "%s", audioError());   // "music.sap not found: effects only" is not fatal
@@ -397,6 +411,7 @@ void sndHorn(int on) { if (ready) audioHorn(on); }
 // сверка g08-sound (P10-5,8,10,11,15,16, P09:2): состояние машины игрока раз в кадр до sndEngine. topSpeedMs — TopSpeed именно этой машины (шкала передач);
 // skid01 — уровень заноса/буксования (skidSoundLevel); air — все колёса вне земли; parked — игрок вышел (после конца анимации выхода: только холостой
 // клип, 15/50 м); life01 — остаток жизни машины 0..1. Буксование с места = занос при скорости < 3 м/с и газе > 0,3; его начало — реплика Burn (15 %)
+void sndBurnLevel(float level01) { audioEngineBurn(level01); }
 void sndCarState(float topSpeedMs, float skid01, int air, int parked, float life01, int burnout, int brakeOrRev) {
   static int skidWas;
   if (!ready) return;
@@ -525,9 +540,12 @@ static int collPlay(const char *why, int id, float x, float y, float z, float vo
 }
 
 // металлический удар (small/medium/large_car_crash = *_vehicle_crash_01..03, collide.spt) в точке контакта + реплики
+#ifndef SV_CRASH7_OLD
+#define SV_CRASH7_OLD 0   // круг 7: 1 — границы размера удара нестрогие (>=)
+#endif
 static int crashSize(float s) {   // 0 small, 1 medium, 2 large
   if (SV_CRASH_OLD) return s250 ? (s >= 24.f ? 2 : s >= 12.f ? 1 : 0) : (s >= 12.f ? 2 : s >= 6.f ? 1 : 0);   // правка 250: пороги ×2 (правило порта)
-  float it = impI(s); return it >= IMP_LARGE ? 2 : it >= IMP_MEDIUM ? 1 : 0;   // сверка g08 (P09:25): до 0,15 small, 0,15–0,25 medium, выше 0,25 large
+  float it = impI(s); return SV_CRASH7_OLD ? (it >= IMP_LARGE ? 2 : it >= IMP_MEDIUM ? 1 : 0) : (it > IMP_LARGE ? 2 : it > IMP_MEDIUM ? 1 : 0);   // круг 7: границы строгие (> 0,15 medium, > 0,25 large)   // сверка g08 (P09:25): до 0,15 small, 0,15–0,25 medium, выше 0,25 large
 }
 static float crashMin(void) { return SV_CRASH_OLD ? 2.f : IMP_EVENT / (svCarMass * 1.5f * (1.f / 100000.f)); }   // события нет ниже интенсивности 0,06 (≈ 2,7 м/с)
 static void crash(float s, float x, float y, float z) {
@@ -693,17 +711,35 @@ void sndCoin(void) { sndPlay2D(rCoin, 1.f); }
 // elevator — позиционные (пара дальностей из positionalsettings.spt в пакет не выгружается — 3–100 м по умолчанию). Звать при запуске клипа объекта
 static float swT = -1.f;
 void sndSwitchPress(void) { if (ready) swT = 0.3f; }
+#ifndef ANIMOBJ_RANGE_OLD
+#define ANIMOBJ_RANGE_OLD 0   // круг 6 (g08, P05:8): дальность звуков подвижных объектов по настройкам диска (платформа 14-20 м, кран 25-45, лифт 50-75, рука-робот 10-25); 1 — общие 3-100 м
+#endif
+static float animStreamT;   // сколько ещё идёт дорожка подвижного объекта на позиционном потоке (лифт L2/L5 не помещается в резидентный банк: звучит из music.sap)
+#ifndef ANIMCRANE_SV_OLD
+#define ANIMCRANE_SV_OLD 0
+#endif
+#define ANIMCRANE_NAME (ANIMCRANE_SV_OLD ? "cranes" : "crane")
 int sndAnimObj(const char *obj, float x, float y, float z) {
-  static const struct { const char *obj, *clip; int pos; } T[] = {
-    {"TD", "trapdoor", 0}, {"Splatform1Trans", "platform_02", 1}, {"Splatform4Trans", "platform_01", 1}, {"Splatform5Trans", "platform_01", 1},
-    {"Splatform6Trans", "platform_01", 1}, {"Splatfrom7Trans", "platform_01", 1}, {"Aplatform6Trans", "aplatform6", 1}, {"truck1", "duff_truck", 0},
-    {"hdoortrans1", "plantdoor", 0}, {"elevator", "elevator", 1}, {"library", "gag_library", 0},
-    {"Splatform2Trans", "platform_02", 1}, {"Aplatform1Trans", "platform_01", 1}, {"Aplatform2Trans", "platform_01", 1}, {"trapdoor1Trans", "platform_01", 1},   // круг 5 (g11, P11-15): остальные платформы по таблице отчёта
-    {"cranes", "platform_02", 1}, {"roboarm", "robo_arm", 1}};
+  // mn/mx — настройки positionalsettings.spt по названию (platform_settings 14-20, crane_settings 25-45, loud_elevator_settings 50-75, robo_arm 10-25); какая настройка у какого объекта
+  // в данных диска не записано (записаны только имена) — пара выбрана по имени. Люки, дверь, грузовик, библиотека без позиции
+  static const struct { const char *obj, *clip; int pos; float mn, mx; } T[] = {
+    {"TD", "trapdoor", 0, 0, 0}, {"Splatform1Trans", "platform_02", 1, 14, 20}, {"Splatform4Trans", "platform_01", 1, 14, 20}, {"Splatform5Trans", "platform_01", 1, 14, 20},
+    {"Splatform6Trans", "platform_01", 1, 14, 20}, {"Splatfrom7Trans", "platform_01", 1, 14, 20}, {"Aplatform6Trans", "aplatform6", 1, 14, 20}, {"truck1", "duff_truck", 0, 0, 0},
+    {"hdoortrans1", "plantdoor", 0, 0, 0}, {"elevator", "elevator", 1, 50, 75}, {"library", "gag_library", 0, 0, 0},
+    {"Splatform2Trans", "platform_02", 1, 14, 20}, {"Aplatform1Trans", "platform_01", 1, 14, 20}, {"Aplatform2Trans", "platform_01", 1, 14, 20}, {"trapdoor1Trans", "platform_01", 1, 14, 20},   // круг 5 (g11, P11-15): остальные платформы, кран, рука-робот
+    {ANIMCRANE_NAME, "platform_02", 1, 25, 45}, {"roboarm", "robo_arm", 1, 10, 25}};   // круг 7 (g11, по оригиналу): имя объекта крана в таблице звуков — "crane" (L6) точно; "cranes" (L5) в таблице нет и звука не имеет. ANIMCRANE_SV_OLD=1 — "cranes"
   if (!ready || !obj) return 0;
-  for (unsigned i = 0; i < sizeof T / sizeof *T; i++) if (!strcasecmp(obj, T[i].obj)) {
-    int id = sndId(T[i].clip); if (id < 0) return 0;
-    sfxWhy = "animobj"; int h = T[i].pos ? sndPlayId(id, x, y, z, 1.f) : sndPlay2D(id, 1.f); sfxWhy = "fx"; return h;
+  for (unsigned i = 0; i < sizeof T / sizeof *T; i++) if (sndAnimNameMatch(T[i].obj, obj)) {
+    int id = sndId(T[i].clip);
+    if (id < 0) {   // нет в резидентном банке уровня: длинный лифт L2 и L5 идёт позиционным потоком (дорожка anim_<клип> в music.sap)
+      char tn[40]; snprintf(tn, sizeof tn, "anim_%s", T[i].clip); int t = audioTrack(tn);
+      if (t < 0 || ANIMOBJ_RANGE_OLD) return 0;
+      audioStream(AUDIO_ST_POSITIONAL, t, 0.f); audioStreamSet(AUDIO_ST_POSITIONAL, 1.f, 0.f); audioStreamAt(AUDIO_ST_POSITIONAL, x, y, z, T[i].mn, T[i].mx);
+      animStreamT = audioTrackSeconds(t) + 0.02f; emitCur = -2; return 1;   // круг 7: дорожка позиционного потока зациклена в пакете — период ровно на длину клипа, чтобы второй проход не начался
+    }
+    sfxWhy = "animobj";
+    int h = !T[i].pos ? sndPlay2D(id, 1.f) : ANIMOBJ_RANGE_OLD ? sndPlayId(id, x, y, z, 1.f) : audioPlayAtGain(id, 1.f, x, y, z, T[i].mn, T[i].mx);
+    sfxWhy = "fx"; return h;
   }
   return 0;
 }
@@ -712,6 +748,16 @@ void sndCardFound(float x, float y, float z) {
   if (!ready) return;
   if (SV_MUSZONE_OLD || !onFootNow) { sndPlay("card_collect", x, y, z, 1.f); return; }
   sndMusicEvent("OF_found_card", 0);
+}
+const char *sndPickupClip(int level, int mission) {
+  static char nm[40];
+  if (level < 1 || level > 7 || (SV_PICKUP_OLD && level > 6)) return "";
+  const char *want = !SV_PICKUP_OLD && level == 7 ? "nuclear_waste_collect" : !SV_PICKUP_OLD && level == 2 && mission == 6 ? "monkey_collect" : 0;
+  if (!want) { snprintf(nm, sizeof nm, "level_%d_pickup_sfx", level); want = nm; }
+  // круг 6: экспорт сводит ресурсы диска с тем же первым файлом в один (level_6_pickup_sfx, nuclear_waste_collect — это card_collect_01, monkey_collect — card_collect_01 и _02):
+  // названного клипа в банке может не быть, тогда играет тот, под которым файл лежит в банке (card_collect; для обезьяны 50/50 с level_2_pickup_sfx = card_collect_02)
+  if (ready && sndId(want) < 0) want = !strcmp(want, "monkey_collect") && sndId("level_2_pickup_sfx") >= 0 && frand() < .5f ? "level_2_pickup_sfx" : "card_collect";
+  return want;
 }
 void sndCoinLose(float x, float y, float z) { sndPlayId(rCoinLose, x, y, z, 1.f); }
 void sndFootstep(int g, float x, float y, float z) {
@@ -752,12 +798,31 @@ int sndSayStats(char *b, int n) {
 // (MissP, Dodge, AIDestroy, LongJump) молчат; Turbo — только по таймеру рывка (sndStepFoot)
 static const float svChance[SND_SAY_COUNT] = {1.f, .2f, .2f, .15f, 1.f, .2f, .2f, .2f, 0.f, .2f, 1.f, .2f, 1.f, 1.f, .2f, .2f,
                                               1.f, 1.f, 1.f, 1.f, 1.f, 1.f, .2f, .2f, .2f, 1.f, 0.f, 1.f, 0.f, 0.f};
-static float svLife(int e) { return e == SND_SAY_MVIC || e == SND_SAY_MFAIL ? 4.f : e == SND_SAY_DCAR ? 5.f : 2.5f; }   // жизнь строки в очереди
+#ifndef SV_SAYQ7_OLD
+#define SV_SAYQ7_OLD 0   // круг 7 (сверка с оригиналом, P09:12): четыре ступени очереди (неизвестная < случайная < желательная < обязательная), Mstart живёт без срока, переполнение отбрасывает новую, та же реплика, что играет, не ставится
+#endif
+static float svLife(int e) {   // жизнь строки в очереди, с (оригинал: по умолчанию 2,5; Mfail и Mvic 4; Dcar 5; Mstart без срока)
+  if (!SV_SAYQ7_OLD && e == SND_SAY_MSTART) return 1e9f;
+  return e == SND_SAY_MVIC || e == SND_SAY_MFAIL ? 4.f : e == SND_SAY_DCAR ? 5.f : 2.5f;
+}
+// ступень в очереди (круг 7): у оригинала 0 неизвестная (событий нет в таблице: Bcrash, Time, Fall, Springboard, Door, NewAI, Turbo), 1 случайная (с броском),
+// 2 желательная (Dcar, Mfail, Mvic, Tail), 3 обязательная (Card, Mstart)
+static short svTier(int e) {
+  if (SV_SAYQ7_OLD) return svChance[e] >= 1.f ? 2 : 0;
+  switch (e) {
+    case SND_SAY_DCAR: case SND_SAY_MFAIL: case SND_SAY_MVIC: case SND_SAY_TAIL: return 2;
+    case SND_SAY_CARD: case SND_SAY_MSTART: return 3;
+    case SND_SAY_BURN: case SND_SAY_MCRASH: case SND_SAY_DAMAGE: case SND_SAY_BREAK: case SND_SAY_AIR: case SND_SAY_HITP: case SND_SAY_CARWAY:
+    case SND_SAY_ARRIVE: case SND_SAY_GOC: case SND_SAY_GIC: case SND_SAY_PASS: case SND_SAY_PASSED: case SND_SAY_HITBYC: return 1;
+    default: return 0;
+  }
+}
+static int sayNowEv = -1;   // событие реплики, что звучит сейчас
 static int sayStart(int e) {   // выдать реплику события e (поток диалогов свободен)
   int n = sayN[e], k;
   if (SV_SAYTAB_OLD) { k = (int)(frand() * n) % n; if (n > 1 && k == sayLast[e]) k = (k + 1) % n; }
   else k = sayLast[e] == 0xFF ? (int)(frand() * n) % n : (sayLast[e] + 1) % n;   // P09:13: по кругу от случайного начала
-  sayLast[e] = (unsigned char)k; sayT[e] = 0; sinceLine = 0; sayOk[e]++;
+  sayLast[e] = (unsigned char)k; sayT[e] = 0; sinceLine = 0; sayOk[e]++; sayNowEv = e;
   audioStream(AUDIO_ST_DIALOG, sayTrack[e][k], 0);
   sayLastName = audioTrackName(sayTrack[e][k]);
   { size_t hl = strlen(sayHist), nl = strlen(sayLastName); if (hl + nl + 2 < sizeof sayHist) { memcpy(sayHist + hl, sayLastName, nl); sayHist[hl + nl] = ','; sayHist[hl + nl + 1] = 0; } }
@@ -773,14 +838,17 @@ int sndSay(int e, int force) {
     if (e == SND_SAY_MISSP || e == SND_SAY_DODGE || e == SND_SAY_AIDESTROY || e == SND_SAY_LONGJUMP) return 0;
     // круг 3 (проверка): Turbo разрешён — единственный зовущий это таймер рывка 5 с в main_loop.h (g10b), внутреннего таймера sndStepFoot больше нет в цепочке
     if (force != 1 && force != 2 && svChance[e] < 1.f && frand() >= svChance[e]) { sayRoll[e]++; return 0; }
+    if (audioStreamTrack(AUDIO_ST_DIALOG) < 0) sayNowEv = -1;
     if (audioStreamTrack(AUDIO_ST_DIALOG) >= 0) {   // занято: ждёт в очереди жизнь строки, дубликат не ставят
       sayBusy[e]++;
+      if (!SV_SAYQ7_OLD && e == sayNowEv) return 0;   // та же реплика уже звучит — в очередь не ставят
       for (int i = 0; i < sqn; i++) if (sq[i].ev == e) return 0;
       // круг 3 (проверка P09:12): очередь по ступеням важности — обязательные (события без броска) впереди случайных; новая встаёт после равных и перед слабыми;
       // при переполнении вытесняет самую слабую (последнюю), если та слабее новой
-      short tier = svChance[e] >= 1.f ? 2 : 0; int at = sqn;
+      short tier = svTier(e); int at = sqn;
       while (at > 0 && sq[at - 1].tier < tier) at--;
-      if (sqn >= SQ_N) { if (sq[sqn - 1].tier >= tier) return 0; sqn--; if (at > sqn) at = sqn; }
+      if (SV_SAYQ7_OLD) { if (sqn >= SQ_N) { if (sq[sqn - 1].tier >= tier) return 0; sqn--; if (at > sqn) at = sqn; } }
+      else if (sqn >= SQ_N) return 0;   // круг 7: очередь полна (16) — новая отбрасывается, как в оригинале (вытеснения слабейшей там на деле нет)
       for (int k = sqn; k > at; k--) sq[k] = sq[k - 1];
       sq[at].ev = (short)e; sq[at].tier = tier; sq[at].life = svLife(e); sqn++;
       return 0;
@@ -1056,7 +1124,8 @@ void sndMode(int m) {
 // Правка Роба 87: пауза — набор шин тюнера диска «Pause» (global.spt: музыка, эффекты, мотор, голос, фон = 0 — тишина) поверх всего
 void sndPause(int on) {
   on = !!on; if (!ready || on == pauseMode) return;
-  pauseMode = on; applyMode(on ? SND_MODE_PAUSE : lbMode ? SND_MODE_LETTERBOX : curMode);
+  pauseMode = on; if (!nmode) audioPauseAll(on);   // №1144: в пакете нет таблицы режимов (бонус-игра) — пауза общим множителем
+  applyMode(on ? SND_MODE_PAUSE : lbMode ? SND_MODE_LETTERBOX : curMode);
 }
 void sndLetterbox(int on) {
   on = !!on; if (!ready || on == lbMode) return;
@@ -1087,19 +1156,29 @@ static void modeTargets(float *t) {
   if (curMode != SND_MODE_DIALOGUE && audioStreamTrack(AUDIO_ST_DIALOG) >= 0) modeLayer(mult, "Dialogue");   // любая реплика
   { int cur = audioStreamTrack(AUDIO_ST_MUSIC);
     (void)cur;
-    if (storeKind) modeLayer(mult, "Store"); }   // круг 3 (проверка): «магазин» включают будка и лавка машин, экран провала, итог мини-игры; в данных реплика на полной громкости, гардероб состояния не включает
+    if (storeKind) {
+      modeLayer(mult, "Store");
+      if (!BOOTHMUTE1135_OLD && storeKind == 1) mult[0] = 0.f;   // №1135: пока открыта будка (или лавка машин), мировые эффекты (оса, удары, сирены, моторы трафика) молчат; голос и музыка будки идут, звуки меню на своей шине
+    } }   // круг 3 (проверка): «магазин» включают будка и лавка машин, экран провала, итог мини-игры; в данных реплика на полной громкости, гардероб состояния не включает
   if (justMusicOn) modeLayer(mult, "JustMusic");
   for (int b = 0; b < 5; b++) t[b] = (n ? n->v[b] : 1.f) * mult[b];
 }
+#ifndef SV_FADE7_OLD
+#define SV_FADE7_OLD 0   // круг 7: 1 — шаг шины один на весь размах (переход на часть размаха короче 750 мс)
+#endif
 static void modeTick(void) {
   if (SV_MODEMIX_OLD || !ready || !nmode) return;
   unsigned now = audioClockUs(); float dt = modeClkUs ? (float)(now - modeClkUs) * 1e-6f : 1.f; modeClkUs = now;
   float t[5]; modeTargets(t);
   int snap = !busLive || dt > 0.4f || modeSnap; modeSnap = 0;
   if (dt > 0.1f) dt = 0.1f;
-  float step = dt / 0.75f;
+  // круг 7 (сверка с оригиналом, P09:15, P10-18): любой переход шины идёт ровно 750 мс при любой его величине — шаг считается при смене цели как |текущий уровень - цель| / 0,75 с
+  // (раньше шаг был один на весь размах 0..1, и переход на половину размаха длился вдвое короче). SV_FADE7_OLD=1 — прежнее
+  static float busTgt[5], busStp[5];
   for (int b = 0; b < 5; b++) {
     float d = t[b] - busNow[b];
+    if (!SV_FADE7_OLD && fabsf(t[b] - busTgt[b]) > 1e-4f) { busTgt[b] = t[b]; busStp[b] = fabsf(d) / 0.75f; }
+    float step = SV_FADE7_OLD ? dt / 0.75f : busStp[b] * dt;
     busNow[b] = snap ? t[b] : (d > step ? busNow[b] + step : d < -step ? busNow[b] - step : t[b]);
   }
   busLive = 1;
@@ -1353,6 +1432,7 @@ void sndFrame(float dt, float cx, float cy, float cz, float rx, float rz, float 
   }
   ppx = px; ppy = py; ppz = pz;
   // positional loop: the nearest audible emitter (they are far apart in the level; one stream)
+  if (animStreamT > 0.f) { animStreamT -= dt; if (animStreamT > 0.f) return; emitCur = -2; }   // круг 6: дорожка подвижного объекта занимает позиционный поток, петля излучателя ждёт
   int best = -1; float bd = 1e18f;
   for (unsigned i = 0; i < nemit; i++) {
     const XEmit *e = &emits[i];

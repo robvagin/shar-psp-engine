@@ -89,6 +89,15 @@ void sndLoadDuck(int on);                                    // газета н�
 void sndCardFound(float x, float y, float z);                // карточка: card_collect — в машине, пешком — вставка OF_found_card
 void sndMissionAmbience(int level, int mission, int onFoot); // атмосфера старта миссии по таблице уровень × номер (пешком)
 void sndSwitchPress(void);                                   // нажат красный переключатель: щелчок switch на 0,3 с
+// Круг 7 (g11, по оригиналу): любой люк, чьё имя начинается на «TD» (TD01…TD12 на L7), звучит как запись «TD» таблицы; остальные имена — точное совпадение без учёта регистра. ANIMTD_SV_OLD=1 — только точное «TD»
+#ifndef ANIMTD_SV_OLD
+#define ANIMTD_SV_OLD 0
+#endif
+static inline int sndAnimNameMatch(const char *tableName, const char *obj) {
+  if (!ANIMTD_SV_OLD && tableName[0] == 'T' && tableName[1] == 'D' && !tableName[2]) return obj[0] == 'T' && obj[1] == 'D';
+  for (; *tableName && *obj; tableName++, obj++) { char a = *tableName, b = *obj; if (a >= 'A' && a <= 'Z') a = (char)(a + 32); if (b >= 'A' && b <= 'Z') b = (char)(b + 32); if (a != b) return 0; }
+  return !*tableName && !*obj;
+}
 int  sndAnimObj(const char *objKey, float x, float y, float z); // звук подвижного объекта по имени объекта уровня (запуск клипа)
 void sndModeSnap(void);                                      // шины сразу в целевое значение (смена экрана)
 #ifndef SV_GIC_OLD
@@ -225,4 +234,39 @@ void sndMusicRelease(void);   // правка 239: музыку больше н�
 #ifdef __cplusplus
 }
 #endif
+#endif
+
+// сверка g08-sound круг 6 (P09:23): клип подбора предмета цели «собрать» по уровню и миссии: L1-L6 level_N_pickup_sfx, на L2 в миссии 6 monkey_collect, на L7 nuclear_waste_collect;
+// пустая строка — клипа нет. SV_PICKUP_OLD=1 — прежнее: общий клип уровня L1-L6, на L7 тишина
+#ifndef SV_PICKUP_OLD
+#define SV_PICKUP_OLD 0
+#endif
+const char *sndPickupClip(int level, int mission);
+void sndBurnLevel(float level01);   // круг 7 (P10-11): уровень бернаута 1 - 0,5 · доля скорости / диапазон бернаута (0 — нет), до sndCarState
+
+// №1111 (языки; признак языка один на игру, его ставит g09b-menu): 0 English, 1 French, 2 German, 3 Spanish. Озвучка диалогов и гэгов читается из lN/audio/dialog_<fr|ge|sp>.sap
+// (tools/sound_export.py --lang), применяется при следующей загрузке пакета звука (sndInit; смена языка ставит sndLangPending). Нет файла языка или перевода реплики — английская.
+// LANGVO1111_OLD=1 — язык озвучки не применяется
+#ifndef LANGVO1111_OLD
+#define LANGVO1111_OLD 0
+#endif
+extern int sndLang;
+void sndSetLanguage(int lang);
+int sndLangAvail(int lang);      // 1 — для языка есть озвучка в пакете звука (английский всегда 1)
+int sndLangPending(void);        // 1 — язык сменился после загрузки пакета: перезагрузить звук уровня
+
+// №1128 (газета между уровнями, сверка с оригиналом): при выходе из игры в загрузку (в том числе на следующий уровень) оригинал запускает музыкальное событие Loading_screen — одно из трёх
+// (fe_trans01..03, «нагнетающие»), случайно; событие Newspaper_Spin (одно из двух, newspaper_spin01/02) идёт только при старте игры из меню (NEW GAME, загрузка, продолжение).
+// sndLevelChangeStinger — имя события для смены уровня; sndVariantPick(n, часы_мкс) — какой из n вариантов играть (по часам, а не по неинициализированному rand(): прежний выбор повторялся в каждом запуске).
+// NEWSMUS1128_OLD=1 — прежнее (на смене уровня Newspaper_Spin, выбор rand() % n)
+#ifndef NEWSMUS1128_OLD
+#define NEWSMUS1128_OLD 0
+#endif
+const char *sndLevelChangeStinger(void);
+int sndVariantPick(int n, unsigned clockUs);
+
+// №1135: пока открыта телефонная будка (sndStore(1)), шина мировых эффектов в нуле (оригинал: набор «Store» оставляет эффекты 0,8, но в будке мир стоит; по слову Роба оса и прочее не звучат),
+// остальное по строке «Store» диска: музыка Muzak 1,0, голос 1,0, машина 0, фон 0; на выходе шина возвращается за 750 мс, а петля осы, если она ещё рядом, звучит дальше. BOOTHMUTE1135_OLD=1 — прежнее (эффекты 0,8)
+#ifndef BOOTHMUTE1135_OLD
+#define BOOTHMUTE1135_OLD 0
 #endif

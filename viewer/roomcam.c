@@ -2,6 +2,7 @@
 #include <string.h>
 #include <math.h>
 #include "roomcam.h"
+#include "camlaw.h"
 
 static unsigned u32at(const unsigned char *b) { unsigned v; memcpy(&v, b, 4); return v; }
 static int finite3(const float *v) { return isfinite(v[0]) && isfinite(v[1]) && isfinite(v[2]); }
@@ -76,11 +77,16 @@ int roomCamCut(const RoomCam *c) {
   if (c->type == 0) return c->cut != 0 || c->posLag >= .999f;
   return ((int)(c->axisPlay[2] + .5f) & 2) != 0 || c->axisPlay[0] >= .999f;
 }
+float roomCamTransRate(const RoomCam *c) {
+  float r = c->type == 0 ? c->posLag : (c->axisPlay[0] > .001f ? c->axisPlay[0] : .02f);   // по данным камеры; у оригинала время перехода идёт со скоростью 30 × скорость, 1000 мс лимит
+  return r < .001f ? .001f : r;
+}
 float roomCamFovFromH(float hdeg) { return 2.f * atanf(tanf(hdeg * (3.14159265f / 360.f)) * .75f) * (180.f / 3.14159265f); }
 float roomCamFovCar(const RoomCam *c, float dist, float *cur, float dt) {
   float mx = c->fov > 1.f ? c->fov : 90.f, mn = 20.f;
   if (mn > mx) mn = mx;
-  float want = c->type == 1 || dist <= 10.f ? mx : dist >= 25.f ? mn : mx + (mn - mx) * (dist - 10.f) / 15.f;
+  // круг 6 (g06-camera:12, СВЕРКА_КАМЕРА 5.1): у машины статичная и рельсовая камеры держат ПОЛНЫЙ угол данных; зум по расстоянию 10–25 м есть только у одной из чит-камер. ROOMCAM_FOVCAR_SV_OLD=1 — зум
+  float want = ROOMCAM_FOVCAR_SV_OLD ? (c->type == 1 || dist <= 10.f ? mx : dist >= 25.f ? mn : mx + (mn - mx) * (dist - 10.f) / 15.f) : mx;
   if (!(*cur > 0.f) || c->type == 1) *cur = want;
   else *cur += (want - *cur) * (1.f - powf(1.f - .022f, dt * 60.f));
   return roomCamFovFromH(*cur);
@@ -344,6 +350,27 @@ switched:
 void roomCamRestart(RoomCamState *s) {   // №1085: стек, переход, выход и признак «первая камера» — заново; поза прошлого кадра не нужна
   s->cur = -1; s->in = 0; s->nstk = 0; s->firstDone = 0; s->trOn = 0; s->exiting = 0; s->want = -1; s->wantT = 0.f; s->hasP = 0;
 }
+// Круг 6 (СВЕРКА_КАМЕРА 3.5, P08:14): выход из последней камеры зоны в камеру ходьбы идёт не рывком и не e^(-t/0,15), а так: до 7 с, шаг за кадр — доля ((1 − 0,02)·t/7 + 0,02), положение камеры
+// движется кубическим шагом по трём числам вокруг точки взгляда камеры ходьбы (поворот, наклон, дальность), точка взгляда — по трём осям; заканчивается через 7 с или когда обе точки совпали
+// (< 0,03 м). Камера ходьбы идёт своим ходом, поэтому места берутся заново каждый кадр
+#define ROOMCAM_EXIT_S 7.f
+#define ROOMCAM_PI 3.14159265f
+static void exitSph(const float v[3], float *m, float *rot, float *el) { *m = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); *rot = atan2f(v[0], v[2]); float c = *m > 1e-5f ? v[1] / *m : 1.f; *el = acosf(c > 1.f ? 1.f : c < -1.f ? -1.f : c); }
+static int exitStep(RoomCamState *s, const float bE[3], const float bL[3], float dt, float eye[3], float look[3]) {
+  if (!s->xInit) { memcpy(s->xE, s->exitE, 12); memcpy(s->xL, s->exitL, 12); s->xR[0] = s->xR[1] = s->xR[2] = 0.f; s->xLv[0] = s->xLv[1] = s->xLv[2] = 0.f; s->xInit = 1; s->exitT = 0.f; }
+  s->exitT += dt;
+  float I = (.98f * (s->exitT / ROOMCAM_EXIT_S) + .02f) * (dt / .016f); if (I > 1.f) I = 1.f; if (I < 0.f) I = 0.f;
+  float a[3] = {s->xE[0] - bL[0], s->xE[1] - bL[1], s->xE[2] - bL[2]}, b[3] = {bE[0] - bL[0], bE[1] - bL[1], bE[2] - bL[2]}, am, ar, ae, bm, br, be;
+  exitSph(a, &am, &ar, &ae); exitSph(b, &bm, &br, &be);
+  while (br - ar > ROOMCAM_PI) br -= 2.f * ROOMCAM_PI; while (br - ar < -ROOMCAM_PI) br += 2.f * ROOMCAM_PI;
+  float nr = camHermite(ar, &s->xR[0], br, I), ne = camHermite(ae, &s->xR[1], be, I), nm = camHermite(am, &s->xR[2], bm, I);
+  s->xE[0] = bL[0] + nm * sinf(ne) * sinf(nr); s->xE[1] = bL[1] + nm * cosf(ne); s->xE[2] = bL[2] + nm * sinf(ne) * cosf(nr);
+  for (int k = 0; k < 3; k++) s->xL[k] = camHermite(s->xL[k], &s->xLv[k], bL[k], I);
+  float d1 = 0.f, d2 = 0.f; for (int k = 0; k < 3; k++) { d1 += (s->xE[k] - bE[k]) * (s->xE[k] - bE[k]); d2 += (s->xL[k] - bL[k]) * (s->xL[k] - bL[k]); }
+  memcpy(eye, s->xE, 12); memcpy(look, s->xL, 12);
+  if (s->exitT >= ROOMCAM_EXIT_S || (d1 < .03f * .03f && d2 < .03f * .03f)) { s->exiting = 0; s->xInit = 0; return 0; }
+  return 1;
+}
 int roomCamStep(const RoomCam *c, int n, RoomCamState *s, const float p[3], float dt, float eye[3], float look[3], float *fovY) {
   return roomCamStepFrom(c, n, s, p, dt, eye, look, fovY, 0, 0);
 }
@@ -372,8 +399,9 @@ int roomCamStepFrom(const RoomCam *c, int n, RoomCamState *s, const float p[3], 
     if (s->cur >= 0) {   // вышел из последней камеры: срез при CutInOut, иначе плавный возврат к камере ходьбы
       int cutOut = roomCamCut(&c[s->cur]) || !baseE || ROOMCAM_TRANS_SV_OLD;
       s->cur = -1; s->trOn = 0;
-      if (!cutOut) { s->exiting = 1; s->exitT = 0.f; memcpy(s->exitE, s->outE, 12); memcpy(s->exitL, s->outL, 12); } else s->exiting = 0;
+      if (!cutOut) { s->exiting = 1; s->exitT = 0.f; s->xInit = 0; memcpy(s->exitE, s->outE, 12); memcpy(s->exitL, s->outL, 12); } else s->exiting = 0;
     }
+    if (s->exiting && baseE && !ROOMCAM_EXIT_SV_OLD) { if (exitStep(s, baseE, baseL, dt, eye, look)) { *fovY = 0.f; return -2; } return -1; }
     if (s->exiting && baseE) {
       s->exitT += dt; float w = expf(-s->exitT / .15f);
       if (w < .02f) s->exiting = 0;
@@ -386,11 +414,13 @@ int roomCamStepFrom(const RoomCam *c, int n, RoomCamState *s, const float p[3], 
   if (c[i].type == 1) { s->t = roomRailParamDt(&c[i], !sw ? s->t : -1.f, p, dt); roomRailAt(&c[i], s->t, e); railLook(&c[i], s->t, p, l); }
   if (sw) {
     float fromE[3], fromL[3]; int have = 0;
-    if (s->exiting) { float w = expf(-s->exitT / .15f); if (baseE) { for (int k = 0; k < 3; k++) { fromE[k] = baseE[k] + (s->exitE[k] - baseE[k]) * w; fromL[k] = baseL[k] + (s->exitL[k] - baseL[k]) * w; } have = 1; } s->exiting = 0; }
+    if (s->exiting && !ROOMCAM_EXIT_SV_OLD) { if (s->xInit) { memcpy(fromE, s->xE, 12); memcpy(fromL, s->xL, 12); have = 1; } else if (baseE) { memcpy(fromE, s->exitE, 12); memcpy(fromL, s->exitL, 12); have = 1; } s->exiting = 0; s->xInit = 0; }
+    else if (s->exiting) { float w = expf(-s->exitT / .15f); if (baseE) { for (int k = 0; k < 3; k++) { fromE[k] = baseE[k] + (s->exitE[k] - baseE[k]) * w; fromL[k] = baseL[k] + (s->exitL[k] - baseL[k]) * w; } have = 1; } s->exiting = 0; }
     else if (s->cur >= 0) { memcpy(fromE, s->outE, 12); memcpy(fromL, s->outL, 12); have = 1; }
     else if (baseE) { memcpy(fromE, baseE, 12); memcpy(fromL, baseL, 12); have = 1; }
     int cut = ROOMCAM_TRANS_SV_OLD || !have || !s->firstDone || roomCamCut(&c[i]);
     s->firstDone = 1; memcpy(s->eye, e, 12); memcpy(s->look, l, 12);
+    s->trRate = ROOMCAM_RATE_SV_OLD ? .02f : roomCamTransRate(&c[i]);
     if (cut) s->trOn = 0; else { s->trOn = 1; s->trT = 0.f; memcpy(s->trFromE, fromE, 12); memcpy(s->trFromL, fromL, 12); }
   } else {
     float kp = c[i].type == 1 ? lagK(c[i].posLag, dt) : 1.f, kt = lagK(c[i].targetLag, dt);
@@ -398,7 +428,7 @@ int roomCamStepFrom(const RoomCam *c, int n, RoomCamState *s, const float p[3], 
   }
   memcpy(eye, s->eye, 12); memcpy(look, s->look, 12);
   if (s->trOn) {
-    s->trT += dt * .6f; float u = s->trT >= 1.f ? 1.f : s->trT, w = 2.f * u - u * u, d2 = 0.f;
+    s->trT += dt * 30.f * (s->trRate > .001f ? s->trRate : .02f); /* круг 7: 0,6 только при скорости 0,02; по данным камеры — своя */ float u = s->trT >= 1.f ? 1.f : s->trT, w = 2.f * u - u * u, d2 = 0.f;
     for (int k = 0; k < 3; k++) { eye[k] = s->trFromE[k] + (s->eye[k] - s->trFromE[k]) * w; look[k] = s->trFromL[k] + (s->look[k] - s->trFromL[k]) * w; d2 += (eye[k] - s->eye[k]) * (eye[k] - s->eye[k]); }
     if (u >= 1.f || d2 < .03f * .03f) s->trOn = 0;
   }

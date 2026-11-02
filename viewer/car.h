@@ -132,6 +132,7 @@ typedef struct {
   float bodyTensor[6]; // operative whole-car tensor, updated from wheel positions, kg m²
   CarParams p;
   int flightZone;           // jump-zone of this uninterrupted flight; -1 after landing/placement
+  int beef;                 // круг 7, 7.3: 1 — прочность выросла на 1 (игрок сел в целую машину из списка с HitPoints ≤ 1); не снимается
   int zoneIn, zoneId, zoneOk; unsigned bigAirSeq;   // круг 5, P01-07: в зоне прыжка / её номер / въехал по курсу зоны; счётчик выходов игрока из зоны (событие «большой прыжок»)
   int boosts, boostZone;    // зоны прыжка JMP1: подшаги разгона зоны (правка 342; прежнее правило 47 — отрывы с подбросом), номер последней зоны (-1 — не было)
   uint32_t fkeep[COL_FOL_KEEP]; int nfkeep;     // правка 304: заборы-изгороди, пропущенные на прошлом подшаге (col.h colFolKeep)
@@ -154,6 +155,7 @@ typedef struct {
   int wheelSurf[4];         // 3.3: тип поверхности под колесом (SURF_*), последний подшаг
   float jturn;              // 3.1: 1 — идёт разворот задним ходом
   float sideT;              // P01-18: секунд подряд на боку/крыше при скорости < 1 м/с
+  float bushPassT;                // №1101 (g11): сколько ещё секунд машина «продавливает» кусты-шары (stateprops.c): следующий куст в ряду не останавливает её
   float burnLevel; int burnBig;   // №1082 (сверка g11): уровень пробуксовки 0..1 (вперёд 1 − 0,5 × доля TopSpeed / BurnoutRange, назад — сила тормоза), рывок со старта копился 2,5 с и больше — огонь вместо пыли; читает main_loop.h (дым колёс)
   float lastThr; int lastHb, spinDrive;   // P01 Д3/P01-23: последний газ и ручник (с защёлкой); ведущие колёса: +1 пробуксовка вперёд, −1 назад (рисует carvis.c), 0 — обычно
   int huskParams; float huskSave[8];   // P01-16: у остова игрока после взрыва ходовые huska из .con; сохранённые прежние (газ, занос, высокая тяга, тормоз, TopSpeed, пробуксовка, прочность, порог)
@@ -166,7 +168,7 @@ typedef struct {
   float boomDelay;          // 7.4: через сколько секунд после разбития взрыв (игрок и гонка 3 с, трафик и ИИ в обычной игре 0); carInit ставит CAR_BOOM_DELAY
   int boomDone;             // взрыв уже записан в svBoom
   int svRace;               // 1 — машина гоночной сцены (bonus_play, миссия-гонка): взрыв через 3 с и у ИИ; ставит хозяин машины
-  int svKind;               // вид для svBoom: 0 игрок, 1 трафик, 2 ИИ миссии, 3 полиция, 4 стоящая; по умолчанию 1, хозяин машины может поменять
+  int svKind;               // вид для svBoom: 0 игрок, 1 трафик, 2 ИИ миссии, 3 полиция, 4 стоящая, 5 цель destroy / dump (круг 7: взрыв не двигает шкалу Hit & Run); по умолчанию 1, хозяин машины может поменять
   float brkLit;             // №465: 1 — стоп-сигналы горят (тормоз / ждёт у стоп-линии), ставит carUpdate и viewer/traffic.c; рисует trafficDrawModel
 } Car;
 
@@ -266,6 +268,9 @@ static inline int carHuskDrives(const Car *c) { return !CAR_HUSK_OLD && c->huskD
 typedef struct { int revert, tries, bn, wn; float bdepth; unsigned char btype[8]; unsigned bidx[8]; float bnx[8], bnz[8], bd[8]; unsigned wref[8]; float wn3[8][3], wdepth[8]; } CarDbg1050;
 extern CarDbg1050 carDbg1050; extern int carDbgOn1050;
 void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt);
+// №1104 (коды оригинала, viewer/cheats.h): ставит main_loop.h каждый кадр. Действуют только на машину игрока (huskDrive / svPlayer)
+extern int carCheatNoDrag, carCheatAccel, carCheatInvincible, carCheatOneTap, carCheatHornJump;   // нет сопротивления / тяга ×2 / нет урона / касание разбивает чужую машину
+void carHornLeap(Car *c, float amount);   // №1104, код Car Jump on Horn: пока машина на земле и гудок зажат — скорость += (вперёд + 2 вверх) × 5 × нажатие
 extern unsigned carNanFixes;   // правка 252: сколько раз машину с NaN/inf вернули на надёжное место (чёрный ящик, поле fpe)
 // кузов в формате colPushCar/colProbeCar для текущего положения
 void carBox(const Car *c, CarBox *b);
@@ -324,4 +329,13 @@ static inline void carRamDamage(Car *k, float before) {
 
 extern int carJumpZoneGateOld;   // №705 ч.2: 1 — окно разгона зоны прыжка без расширения тонких зон (как в TEST73); 0 — полудлина вдоль въезда не меньше JUMP_ZONE_MIN_ALONG
 extern void (*carResetFlash)(void);   // сверка: вспышка сброса машины игрока (ставит интерфейс, в ботах не задана)
+// Круг 7 (g11): частица листвы (удар о изгородь, куст, мелкое дерево) — по импульсу, как в оригинале: масса строки листвы в таблице ATC 5 кг, порог 10 × масса = 50 Н·с, у машины 1500 кг это 0,03 м/с (любой удар).
+// Было: порог скорости 3 м/с (число наше). FOLIAGEIMP_SV_OLD=1 — как было
+#ifndef FOLIAGEIMP_SV_OLD
+#define FOLIAGEIMP_SV_OLD 0
+#endif
+#ifndef FOLIAGE_IMPULSE
+#define FOLIAGE_IMPULSE 50.f
+#endif
+static inline int foliageFxOk(float carMass, float v) { return FOLIAGEIMP_SV_OLD ? v >= 3.f : carMass * v >= FOLIAGE_IMPULSE; }
 #endif

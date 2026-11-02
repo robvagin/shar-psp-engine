@@ -7,7 +7,8 @@ out=root/'build/pedgroup';out.mkdir(exist_ok=True)
 lib=shlex.split(subprocess.check_output(['bash','-c','V=viewer; . tools/bots/lib.sh; printf "%s" "$BOTS_LIB"'],text=True))
 source=root/'hit-and-run-web/source/game/scripts/missions'
 results={}
-for side,flags in [('new',[]),('old',['-DUSE_PED_GROUP_OLD=1'])]:
+# №1132: этот тест держит прежнее «миссия поверх ворот» (PEDZONE1132_OLD=1); новое правило проверяет tests/pedzone
+for side,flags in [('new',['-DPEDZONE1132_OLD=1']),('old',['-DPEDZONE1132_OLD=1','-DUSE_PED_GROUP_OLD=1'])]:
  binary=out/side
  cmd=['cc','-std=c11','-O2','-w','-DSKIN_HOST','-Iviewer','-Itools/bots',*flags,'tests/pedgroup/host.c',*lib,'-lm','-o',str(binary)]
  with (out/(side+'.cc')).open('w') as f:

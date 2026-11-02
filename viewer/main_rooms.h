@@ -298,7 +298,27 @@ static int rdTexKey(int tex) { if (tex >= RTEX0) tex -= RTEX0; return tex < 0 ||
 #ifndef ROOM_MIRROR_OLD
 #define ROOM_MIRROR_OLD 0
 #endif
+// №1106 (зеркала у Мо и в комнате Барта): отражённый проход тоже считается «от глаза», как №1083, чтобы на GE (float24) не было щелей между кусками. Вид без переноса умножается на
+// линейное отражение (знак оси плоскости), перенос куска = центр - отражённый глаз (e' = отражение глаза через плоскость): V*Rf*(M) = Vrot*Rl*(M - e'), Rf = Rl + сдвиг. MIRROR1106_OLD=1 — отражённый
+// проход с абсолютным переносом, как в круге 5 (с щелями на железе)
+#ifndef MIRROR1106_OLD
+#define MIRROR1106_OLD 0
+#endif
 static int roomMirrorOn;
+static float rdMirE[3];   // №1106: глаз, отражённый через плоскость зеркала (ставит roomDrawMirrored)
+// №1106, цена: в отражённый проход идут только куски, чей ОТРАЖЁННЫЙ ящик (ось плоскости зеркала перевёрнута) попадает в пирамиду видимости настоящей камеры (раньше шли все непрозрачные, 143 куска и
+// 7871 треугольник у Moe's) и не мельче 1 м по диагонали ящика (BartRoom: 49 кусков из 118, треугольников 8023 из 9307; Moe's: 120 из 143; мелочь в отражении за стеной не читается).
+// MIRRORCULL1106_OLD=1 — все непрозрачные куски, как в круге 5
+#ifndef MIRRORCULL1106_OLD
+#define MIRRORCULL1106_OLD 0
+#endif
+static int rdMirAx; static float rdMirPv;
+static int rdMirVis(const float *b) {
+  if (MIRRORCULL1106_OLD) return 1;
+  { float dx = b[3] - b[0], dy = b[4] - b[1], dz = b[5] - b[2]; if (dx * dx + dy * dy + dz * dz < 1.f) return 0; }   // мельче 1 м по диагонали — не в отражение
+  float r[6]; memcpy(r, b, sizeof r); r[rdMirAx] = 2.f * rdMirPv - b[rdMirAx + 3]; r[rdMirAx + 3] = 2.f * rdMirPv - b[rdMirAx];
+  return visBox(r, 0, 0, 0);
+}
 static int roomNameIs(const char *n, const char *w) { if (!n) return 0; for (; *n && *w; n++, w++) if ((*n | 32) != *w) return 0; return !*n && !*w; }
 static void roomDraw(void) {   // куски комнаты: пирамида видимости, ближняя версия; полупрозрачное — в очередь tq
   // правка Роба 27: камеры комнат оригинала стоят за стенами — оболочка повёрнута лицом в комнату и рисуется с отсечением
@@ -314,7 +334,7 @@ static void roomDraw(void) {   // куски комнаты: пирамида в
   static unsigned short rdOrd[4096], rdCnt[2048]; unsigned rdN = 0;
   if (!ROOM_TEXSORT_OLD && rg.npc <= 4096) {
     memset(rdCnt, 0, sizeof rdCnt);
-    for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; if (roomMirrorOn ? !(d->r.flags & 3) : visBox(d->r.bb, 0, 0, 0)) {
+    for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; if (roomMirrorOn ? (!(d->r.flags & 3) && rdMirVis(d->r.bb)) : visBox(d->r.bb, 0, 0, 0)) {
         int t = rdTexKey(d->r.tex); rdOrd[rdN++] = (unsigned short)i; rdCnt[((d->r.flags & 3) << 9) | t]++; } }
     unsigned s_ = 0; for (int k = 0; k < 2048; k++) { unsigned c_ = rdCnt[k]; rdCnt[k] = (unsigned short)s_; s_ += c_; }
     static unsigned short rdSorted[4096];
@@ -326,26 +346,80 @@ static void roomDraw(void) {   // куски комнаты: пирамида в
   // вершины во float24 (шаг у 500 м ~ 4-8 мм): общая вершина двух кусков (скос и спинка — разные куски со своими центрами) округляется по-разному и ребро расходится на пиксель.
   // Так же город чинили правками 224/237/251: вид без переноса (глаз в начале), перенос куска = центр - глаз считает процессор во float32. Тот же приём для куска комнаты.
   // Общее правило для всех комнат (не координаты одного места). Отражённый проход Moe's/BartRoom (круг 5) остаётся прежним. TVGAP1083_OLD=1 — как было
-  ScePspFMatrix4 vAbs_; int rel_ = !TVGAP1083_OLD && !roomMirrorOn;
-  if (rel_) { sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&vAbs_); sceGumMatrixMode(GU_MODEL); ScePspFMatrix4 vr_ = vAbs_; vr_.w.x = vr_.w.y = vr_.w.z = 0.f; sceGuSetMatrix(GU_VIEW, &vr_); }
-  for (unsigned j = 0; j < rdN; j++) { unsigned i = rdOrd[j]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? (roomMirrorOn ? !(d->r.flags & 3) : visBox(d->r.bb, 0, 0, 0)) : 1) {
+  ScePspFMatrix4 vAbs_; int rel_ = !TVGAP1083_OLD && (!roomMirrorOn || !MIRROR1106_OLD), mv_ = rel_ && !roomMirrorOn;   // mv_: вид меняем здесь (в отражённом проходе его уже задал roomDrawMirrored)
+  const float *E_ = roomMirrorOn ? rdMirE : ggE;
+  if (mv_) { sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&vAbs_); sceGumMatrixMode(GU_MODEL); ScePspFMatrix4 vr_ = vAbs_; vr_.w.x = vr_.w.y = vr_.w.z = 0.f; sceGuSetMatrix(GU_VIEW, &vr_); }
+  for (unsigned j = 0; j < rdN; j++) { unsigned i = rdOrd[j]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? (roomMirrorOn ? (!(d->r.flags & 3) && rdMirVis(d->r.bb)) : visBox(d->r.bb, 0, 0, 0)) : 1) {
       if (trLeft == TR_FRAMES && trDetail) {   // след 259: кусок комнаты в первом кадре камеры миссии — до отправки на GE
         const Tex *x_ = texAt(d->r.tex); char t_[200];
         int l_ = snprintf(t_, sizeof t_, "TRR i=%u fl=%x ni=%d v=%p idx=%p tex=%d pal=%p lv0=%p slv0=%p lv=%d list=%d\n", i, d->r.flags, d->r.ni, (void *)d->v, (void *)d->idx,
                           d->r.tex, x_ ? (void *)x_->pal : 0, x_ ? (void *)x_->lv[0] : 0, x_ ? (void *)x_->slv[0] : 0, x_ ? x_->levels : -1, (int)sceGuCheckList());
         trLine(t_, l_); }
       int t0_ = d->r.tex; if (roomAnN) d->r.tex = roomAnimTex(t0_);   // круг 5 (P16-11): анимация текстуры
-      if (rel_ && !(tqOn && (d->r.flags & 2) && !(d->r.flags & 4))) drawPiece(d, 0, -ggE[0], -ggE[1], -ggE[2], 1.f, 0.f);   // №1083: перенос = центр - глаз (полупрозрачное идёт в очередь с обычным видом, как у города)
+      if (rel_ && !(tqOn && (d->r.flags & 2) && !(d->r.flags & 4))) drawPiece(d, 0, -E_[0], -E_[1], -E_[2], 1.f, 0.f);   // №1083: перенос = центр - глаз (полупрозрачное идёт в очередь с обычным видом, как у города)
       else drawPiece(d, 0, 0.f, 0.f, 0.f, 1.f, 0.f);
       d->r.tex = t0_; } }
-  if (rel_) sceGuSetMatrix(GU_VIEW, &vAbs_);
+  if (mv_) sceGuSetMatrix(GU_VIEW, &vAbs_);
+}
+// №1118 (правка Роба: отражение без героя не нужно): отражённый проход Moe's и BartRoom выключен, вместо него на панели зеркала — холодный оттенок стекла и мягкий блик, медленно
+// скользящий по стеклу вслед за положением камеры (векторный приём света psp-render §5: ровный цвет по вершинам, обычная прозрачность, без текстуры, один вызов сетки 14 x 3 клетки).
+// Панели — по данным комнат (плоские куски у плоскости зеркала): Moe's x = 54,88 (перед панелью 54,91..54,98), z 198,4..202,6, y -19,1..-17,45; BartRoom z = 447,14 (панель 447,03..447,06),
+// x 498,56..500,45, y -19,2..-18,1. Блик — полоса вдоль стекла со смещением по высоте (диагональ), плюс тонкая вторая полоса слабее. Положение полосы = смещение камеры вдоль стекла / расстояние
+// до стекла (как отражение источника света: камера влево — блик по стеклу влево), плюс медленный дрейф +-0,06 за 12 с, чтобы стоящая камера не давала мёртвую картинку.
+// MIRRORGLINT1118_OLD=1 — прежнее: отражённый проход (круг 5, №1106) без блика
+#ifndef MIRRORGLINT1118_OLD
+#define MIRRORGLINT1118_OLD 0
+#endif
+#include "mirrorglint.h"
+typedef struct { unsigned c; float x, y, z; } GlintV;
+typedef struct { int nx, la; float p, sg, l0, l1, y0, y1; } GlintPanel;
+static void roomGlint(int k) {
+  // ось нормали nx (0 = x, 2 = z), положение стекла p, сторона комнаты sg (-1/+1), боковая ось la, границы по боковой оси l0..l1 и по высоте y0..y1
+  static const GlintPanel M_[2] = {
+    { 0, 2, 54.88f, -1.f, 198.4f, 202.6f, -19.1f, -17.45f },       // Moe's
+    { 2, 0, 447.14f, 1.f, 498.56f, 500.45f, -19.2f, -18.1f } };    // BartRoom
+  const GlintPanel *m = &M_[k - 1];
+  enum { NX = 14, NY = 3 };
+  GlintV *q = (GlintV *)sceGuGetMemory(NX * NY * 6 * sizeof(GlintV)); if (!q) return;
+  float cpos = glintPos(ggE[m->la], (m->l0 + m->l1) * .5f, ggE[m->nx], m->p, ggE[1], (m->y0 + m->y1) * .5f, (float)(sceKernelGetSystemTimeLow() & 0xFFFFFFu) * 1e-6f);
+  GlintV g[(NX + 1) * (NY + 1)];
+  for (int j = 0; j <= NY; j++) for (int i = 0; i <= NX; i++) {
+    float u = (float)i / NX, w = (float)j / NY, h = glintH(u, w, cpos);
+    float lat = m->l0 + (m->l1 - m->l0) * u, y = m->y0 + (m->y1 - m->y0) * w;
+    GlintV *o = &g[j * (NX + 1) + i]; o->c = glintColor(h);
+    float P[3]; P[m->nx] = m->p; P[m->la] = lat; P[1] = y;
+    o->x = P[0] - ggE[0]; o->y = P[1] - ggE[1]; o->z = P[2] - ggE[2];
+  }
+  int n = 0;
+  for (int j = 0; j < NY; j++) for (int i = 0; i < NX; i++) {
+    const GlintV *a_ = &g[j * (NX + 1) + i], *b_ = a_ + 1, *c_ = a_ + (NX + 1), *d_ = c_ + 1;
+    q[n++] = *a_; q[n++] = *b_; q[n++] = *d_; q[n++] = *a_; q[n++] = *d_; q[n++] = *c_;
+  }
+  resetState();
+  ScePspFMatrix4 vAbs_, vr_; sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&vAbs_); sceGumMatrixMode(GU_MODEL);   // вид без переноса, координаты считаем от глаза (как №1083)
+  vr_ = vAbs_; vr_.w.x = vr_.w.y = vr_.w.z = 0.f; sceGuSetMatrix(GU_VIEW, &vr_);
+  ScePspFMatrix4 id; memset(&id, 0, sizeof id); id.x.x = id.y.y = id.z.z = id.w.w = 1.f; sceGuSetMatrix(GU_MODEL, &id);
+  sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_ALPHA_TEST); sceGuDisable(GU_CULL_FACE); sceGuEnable(GU_DEPTH_TEST); sceGuDepthMask(GU_TRUE);
+  sceGuEnable(GU_BLEND); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+  sceGuDrawArray(GU_TRIANGLES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, n, 0, q);
+  sceGuDepthMask(GU_FALSE); sceGuDisable(GU_BLEND); sceGuSetMatrix(GU_VIEW, &vAbs_);
+  resetState();
 }
 static void roomDrawMirrored(void) {   // круг 5 (P16-10): вызывается вместо roomDraw
   const char *nm = roomName(); int k = ROOM_MIRROR_OLD ? 0 : roomNameIs(nm, "moes") ? 1 : roomNameIs(nm, "bartroom") ? 2 : 0;
+  if (k && !MIRRORGLINT1118_OLD) { roomDraw(); roomGlint(k); return; }   // №1118: без отражённого прохода, блик на стекле
   if (k) {
     ScePspFMatrix4 v0, rf; memset(&rf, 0, sizeof rf); rf.x.x = rf.y.y = rf.z.z = rf.w.w = 1.f;
     if (k == 1) { rf.x.x = -1.f; rf.w.x = 2.f * 54.75f; } else { rf.z.z = -1.f; rf.w.z = 2.f * 447.f; }
-    sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&v0); sceGumMultMatrix(&rf); sceGumMatrixMode(GU_MODEL);
+    rdMirAx = k == 1 ? 0 : 2; rdMirPv = k == 1 ? 54.75f : 447.f;
+    sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&v0);
+    if (!TVGAP1083_OLD && !MIRROR1106_OLD) {   // №1106: вид без переноса x линейное отражение; глаз отражаем отдельно, перенос куска = центр - отражённый глаз
+      ScePspFMatrix4 vr = v0, rl = rf; vr.w.x = vr.w.y = vr.w.z = 0.f; rl.w.x = rl.w.y = rl.w.z = 0.f;
+      sceGumLoadMatrix(&vr); sceGumMultMatrix(&rl);
+      rdMirE[0] = ggE[0]; rdMirE[1] = ggE[1]; rdMirE[2] = ggE[2];
+      if (k == 1) rdMirE[0] = 2.f * 54.75f - ggE[0]; else rdMirE[2] = 2.f * 447.f - ggE[2];
+    } else sceGumMultMatrix(&rf);
+    sceGumMatrixMode(GU_MODEL);
     sceGuFrontFace(GU_CW); roomMirrorOn = 1; roomDraw(); roomMirrorOn = 0; sceGuFrontFace(GU_CCW);
     sceGumMatrixMode(GU_VIEW); sceGumLoadMatrix(&v0); sceGumMatrixMode(GU_MODEL);
     sceGuClear(GU_DEPTH_BUFFER_BIT);

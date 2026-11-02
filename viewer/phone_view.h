@@ -22,6 +22,7 @@ void phoneViewHusk3DForce(int on);   // №569: принудительный п�
 void phoneViewDraw2D(Shop *s);
 const char *phoneViewEnd(Shop *s);               // экран снят: выбранная машина (имя) или NULL
 void phoneViewSetCar(const char *name, float damage);   // перед открытием: машина игрока (NULL — своя уровня) и урон 0..1
+extern int phoneCheatAll;   // №1104: код Vehicles — все машины-награды в будке
 void phoneViewSetProgress(int reached);   // №682: старший уровень, открытый в сохранении (svLvReached)
 void phoneViewSetLog(void (*log)(const char *));   // строки PHONEV open/sel/deny/accept в smoke.txt
 #endif

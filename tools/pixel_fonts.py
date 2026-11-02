@@ -47,6 +47,7 @@ def _same(a, b):
 def build(name, buttons):
     """-> запись all_fonts: image RGBA 160x160, glyphs {код: x, y, w, h, adv, left}, height, baseline, pixel=True. buttons — знаки кнопок {код: 8 строк-масок} как у msx_thin"""
     font = ImageFont.truetype(str(FONT_DIR / FONTS[name]['file']), NATIVE)
+    import accents   # №1095
     ref = _mask(font, '')
     img = np.zeros((160, 160, 4), np.uint8)
     glyphs = {}
@@ -60,7 +61,7 @@ def build(name, buttons):
                         img[y0 + y, x0 + x] = 255
             glyphs[code] = dict(x=x0, y=y0, w=8, h=LINE, adv=9, left=0)
             continue
-        ch = chr(code)
+        ch = {0x8C: '\u0152', 0x9C: '\u0153', 0x8F: '\u00bf'}.get(code, chr(code)) if os.environ.get('FONT1095_OLD') != '1' else chr(code)   # №1095: Œ œ ¿ на свободных кодах (0xBF — кнопка X)
         bm = _mask(font, ch)
         if code != 32 and (bm is None or _same(bm, ref)):
             continue                                     # нет в шрифте: движок возьмёт «?»
@@ -72,6 +73,13 @@ def build(name, buttons):
         w = min(rows.shape[1], 10)
         img[y0:y0 + LINE, x0:x0 + w, :] = (rows[:LINE, :w] * 255)[..., None]
         glyphs[code] = dict(x=x0, y=y0, w=w, h=LINE, adv=adv, left=left)
+    if not accents.off():   # №1095: в этих файлах знаков с диакритикой нет — шрифт отдаёт рамку .notdef; рамки убираем только на кодах, которые рисуем сами (остальное как было)
+        nd = _mask(font, '\ue000')
+        for chx in list(accents.COMBOS) + list('æÆ«»¡ßº'):
+            cx = ord(chx)
+            if cx in glyphs and cx not in buttons and _same(_mask(font, chx), nd):
+                del glyphs[cx]; img[(cx // 16) * 10:(cx // 16) * 10 + LINE, (cx % 16) * 10:(cx % 16) * 10 + 10] = 0
+    accents.add_pixel(img, glyphs, 'thin' if name == 'bart_16bit' else 'thick')   # №1095: é è ê … œ æ « » ¿ в той же сетке (в файлах шрифта их нет)
     return dict(image=Image.fromarray(img, 'RGBA'), glyphs=glyphs, height=LINE, baseline=BASE, pixel=True)
 
 

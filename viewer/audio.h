@@ -163,3 +163,11 @@ int audioMeState(char *out, int n);
 int audioQualityLine(char *out, int n);
 void audioMeWbOld(int on);
 #endif
+
+// №1100: окно колец потоков в задании звука не больше 1024 Б (ME_HAND), выключатель на ходу и строка AUDH
+void audioMeHand(int on); int audioMeHandOn(void); int audioHandLine(char *out, int n);
+void audioEngineBurn(float level01);   // круг 7: уровень бернаута (0 — нет), до audioEngineEx
+void audioSetLanguage(int lang);   // №1111: 0 English, 1 French, 2 German, 3 Spanish — читается в audioInit (со следующей загрузки уровня)
+int audioLanguageTracks(void);    // сколько дорожек с озвучкой языка в пакете сейчас
+void audioPauseAll(int on);   // №1144: пауза без таблицы режимов (бонус-игра): всё в 0 за 750 мс, потоки стоят
+float audioPauseLevel(void);

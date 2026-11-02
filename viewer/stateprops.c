@@ -20,6 +20,21 @@ _Static_assert(sizeof(SpInst) == 32, "SpInst");
 #define SP_HIT_SPEED 2.f     // удар машиной засчитывается от 2 м/с сближения (как в веб-порте)
 #define SP_COOL 0.3f         // новое событие от машины — только после 0.3 с без касания
 #define SP_CAR_E 0.1f        // отскок машины от целого пропа
+// №1101 (Роб 02.11, ответ на вопрос сверки по кустам-шарам cls 2: «усреднить между нашим, немножко проезжаемые, и тем, как они были в source файлах»): было два края.
+//   наш (SPBUSH_SV_OLD=1, TEST83): куст не держит вовсе — насквозь на любой скорости, без торможения;
+//   оригинал (SPBUSH_SV_OLD=0): твёрдое тело, как стена, на любой скорости, отскок SP_CAR_E 0,1.
+// Середина (числа наши, не из оригинала): машина входит в куст медленнее BUSH_PASS_V (7 м/с, 25 км/ч) — куст держит как стена (отскок BUSH_E_MID = половина от целого пропа, 0,05, можно сдать назад);
+// быстрее — продавливает насквозь, но скорость в момент входа падает на BUSH_BRAKE (60 %), без выталкивания и пружины (решение «проходит» держится, пока касание не кончилось).
+// BUSHMID1101_OLD=1 — край «наш» (насквозь всегда); SPBUSH_SV_OLD=0 — край «оригинал».
+#ifndef BUSHMID1101_OLD
+#define BUSHMID1101_OLD 0
+#endif
+#define BUSH_PASS_V 7.0f
+#define BUSH_BRAKE 0.6f
+#define BUSH_PASS_T 1.0f        // с: после прохода куста следующий в ряду (кусты стоят рядами) тоже продавливается...
+#define BUSH_PASS_V_CHAIN 3.0f  // ...если скорость входа не меньше 3 м/с,
+#define BUSH_BRAKE_CHAIN 0.25f  // ...и тормозит слабее: 25 %
+#define BUSH_E_MID (SP_CAR_E * .5f)
 #define SP_SMASH_LOSS 0.3f   // потеря скорости машины при разрушении: 0.3 * m / (M + m)
 #define SP_FX_RATE 20.f      // частиц в секунду, пока открыто окно EFX
 #define SP_FX_BURST 8        // и столько сразу при входе в окно
@@ -91,6 +106,29 @@ static void mulRR(const float A[9], const float B[9], float o[9]) {
 
 #define ALIGN16(x) (((x) + 15u) & ~15u)
 
+// №1137/1154 (Роб на L7: «проваливаюсь в кусты» в J9-8 и «кусты полностью прозрачные и проезжаются насквозь» в J9-5): в данных уровней на каждом уровне 20–26 кустов-стейтпропов (класс 2, высота 0,4–3 м, не шире 2,5 м полуразмера:
+// l*_shrub*, спящие качающиеся кусты и подобные) стоят без объёма: nCol = 0, машина проезжает сквозь них как через воздух (и идёт речь о телах «у видимых кустов» — в оригинале куст-статика с объёмом). Теперь такому типу при загрузке
+// даётся один объём-ящик по ящику его кусков (горизонтальные полуразмеры × BUSH_BODY_K = 0,8: крона шире тела; число наше, не из оригинала), и машина встречает его по правилу №1101 (медленно — держит, быстро — продавливает
+// с торможением). Пешком Гомер по-прежнему проходит класс 2 (homer.c). BUSHFALL1137_OLD=1 — без тел, как было
+#ifndef BUSHFALL1137_OLD
+#define BUSHFALL1137_OLD 0
+#endif
+#define BUSH_BODY_K .8f
+static void bushBodies(StateProps *sp, unsigned ncol) {
+  if (BUSHFALL1137_OLD || !sp->ntype) return;
+  unsigned nc = 0;
+  for (unsigned t = 0; t < sp->ntype; t++) { const SpType *T = &sp->type[t]; if (T->cls == 2 && !T->kind && !T->nCol && T->nPiece && 2.f * T->h[1] >= .4f && 2.f * T->h[1] <= 3.f && fmaxf(T->h[0], T->h[2]) <= 2.5f) nc++; }
+  if (!nc) return;
+  SpCol *arr = (SpCol *)calloc(ncol + nc, sizeof(SpCol)); SpType *ty = (SpType *)malloc(sp->ntype * sizeof(SpType)); if (!arr || !ty) { free(arr); free(ty); return; }
+  if (ncol) memcpy(arr, sp->col, ncol * sizeof(SpCol));
+  memcpy(ty, sp->type, sp->ntype * sizeof(SpType)); sp->typeOwn = ty; sp->type = ty;
+  unsigned k = 0;
+  for (unsigned t = 0; t < sp->ntype; t++) { SpType *T = &ty[t]; if (!(T->cls == 2 && !T->kind && !T->nCol && T->nPiece && 2.f * T->h[1] >= .4f && 2.f * T->h[1] <= 3.f && fmaxf(T->h[0], T->h[2]) <= 2.5f)) continue;
+    SpCol *C = &arr[ncol + k]; C->kind = 0; C->second = 0; memcpy(C->c, T->c, sizeof C->c);
+    C->a[0] = 1.f; C->a[4] = 1.f; C->a[8] = 1.f; C->h[0] = T->h[0] * BUSH_BODY_K; C->h[1] = T->h[1]; C->h[2] = T->h[2] * BUSH_BODY_K;
+    T->firstCol = (uint16_t)(ncol + k); T->nCol = 1; k++; }
+  sp->colOwn = arr; sp->col = arr;
+}
 int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys) {
   memset(sp, 0, sizeof *sp);
   if (!section || size < 64) return -1;
@@ -183,12 +221,13 @@ int spInitResident(StateProps *sp, const void *section, unsigned size, int detac
       r->t = (float)(hq & 0xFFFFu) * (10.f / 65536.f);
     }
   }
+  bushBodies(sp, ncol);   // №1137/1154
   return 0;
 }
 
 int spInit(StateProps *sp, const void *section, unsigned size) { return spInitResident(sp, section, size, 0); }
 
-void spFree(StateProps *sp) { free(sp->follow); free(sp->followOk); free(sp->followT0); if (sp->run) for (unsigned i = 0; i < sp->ninst; i++) free(sp->run[i].jm0); free(sp->mem); memset(sp, 0, sizeof *sp); }   // №923: jm0 — отдельные выделения
+void spFree(StateProps *sp) { free(sp->colOwn); free(sp->typeOwn); free(sp->follow); free(sp->followOk); free(sp->followT0); if (sp->run) for (unsigned i = 0; i < sp->ninst; i++) free(sp->run[i].jm0); free(sp->mem); memset(sp, 0, sizeof *sp); }   // №923: jm0 — отдельные выделения
 
 static const SpType *TY(const StateProps *sp, unsigned i) { return &sp->type[sp->inst[i].type]; }
 static const SpState *ST(const StateProps *sp, unsigned i) { return &sp->state[TY(sp, i)->firstState + sp->run[i].state]; }
@@ -676,12 +715,13 @@ static void lastEntry(float ov, float a, float *bestT, float *impact) {
   float t = ov / a; if (t < *bestT) { *bestT = t; *impact = a; }
 }
 static float spColOff[3];   // круг 5 (g11): сдвиг объёма за суставом, в осях объекта; ноль — объём стоит в позе кадра 0
+static float spColOffW[3];  // круг 7 (g11): сдвиг объёма за суставом в осях МИРА, без поворота экземпляра (положение сустава целиком; см. FOLLOWABS1107_OLD)
 static int spVRelax;   // №975: 1 — объём считается от земли (без проверки «над кузовом»): столб с базой в стене мира (см. carContact)
 static int spBaseExt;   // №975: 1 — вертикальный цилиндр (ствол) высокого предмета cls 10 тянется вниз до земли (см. carContact)
 static int hitVolume(const SpRun *r, const SpCol *C, const CarBox *cb, const float vel[3], float *nx, float *nz, float *depth, float *impact) {
   float c[3], a[3][3];
   { float cc[3] = {C->c[0] + spColOff[0], C->c[1] + spColOff[1], C->c[2] + spColOff[2]}; mulRv(r->R, cc, c); }
-  c[0] += r->x; c[1] += r->y; c[2] += r->z;
+  c[0] += r->x + spColOffW[0]; c[1] += r->y + spColOffW[1]; c[2] += r->z + spColOffW[2];
   for (int k = 0; k < 3; k++) mulRv(r->R, C->a + 3 * k, a[k]);
   float ey = 0.f;
   int circle = C->kind == 1 || (C->kind == 2 && fabsf(a[1][1]) > 0.9f);
@@ -740,6 +780,35 @@ static int hitVolume(const SpRun *r, const SpCol *C, const CarBox *cb, const flo
   return 1;
 }
 
+#ifndef FOLLOWABS1107_OLD
+#define FOLLOWABS1107_OLD 0
+#endif
+#ifndef SPFOLLOW_SV_OLD
+#define SPFOLLOW_SV_OLD 0
+#endif
+static void followOffsets(StateProps *sp, unsigned i) {
+  SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
+  spColOff[0] = spColOff[1] = spColOff[2] = 0.f; spColOffW[0] = spColOffW[1] = spColOffW[2] = 0.f;
+  if (!SPFOLLOW_SV_OLD && sp->follow && sp->inst[i].type < sp->nfollow && sp->follow[sp->inst[i].type]) {
+    unsigned t_ = sp->inst[i].type, j_ = sp->follow[t_] - 1u;
+    if (j_ < T->nJoint) {
+      if (!sp->followOk[t_]) {   // сдвиг сустава в кадре 0: один раз по первому подошедшему экземпляру (ключи могут быть ещё не подгружены — тогда повтор позже)
+        float keep = r->poseF; r->poseF = 0.f; r->poseValid = 0; spPose(sp, i);
+        if (r->poseValid) { memcpy(&sp->followT0[3 * t_], r->jm + j_ * 12 + 9, 12); sp->followOk[t_] = 1; }
+        r->poseF = keep; r->poseValid = 0;
+      }
+      if (sp->followOk[t_]) { spPose(sp, i); if (r->poseValid) for (int q_ = 0; q_ < 3; q_++) { if (FOLLOWABS1107_OLD) spColOff[q_] = r->jm[j_ * 12 + 9 + q_] - sp->followT0[3 * t_ + q_]; else spColOffW[q_] = r->jm[j_ * 12 + 9 + q_]; } }
+    }
+  }
+}
+// Круг 7: центр объёма k экземпляра i в мире с учётом следования за суставом (для теста и отладки); 0 — нет такого объёма
+int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]) {
+  if (i >= sp->ninst) return 0;
+  const SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i); if (k >= T->nCol) return 0;
+  followOffsets(sp, i);
+  const SpCol *C = &sp->col[T->firstCol + k]; float cc[3] = {C->c[0] + spColOff[0], C->c[1] + spColOff[1], C->c[2] + spColOff[2]}, c[3];
+  mulRv(r->R, cc, c); out[0] = c[0] + r->x + spColOffW[0]; out[1] = c[1] + r->y + spColOffW[1]; out[2] = c[2] + r->z + spColOffW[2]; return 1;
+}
 static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *car, Coins *coins, CarBox *cb) {
   SpRun *r = &sp->run[i]; const SpType *T = TY(sp, i);
   if (!r->alive || !r->colOn || !T->nCol) return;
@@ -752,18 +821,10 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #ifndef SPFOLLOW_SV_OLD
 #define SPFOLLOW_SV_OLD 0
 #endif
-  spColOff[0] = spColOff[1] = spColOff[2] = 0.f;
-  if (!SPFOLLOW_SV_OLD && sp->follow && sp->inst[i].type < sp->nfollow && sp->follow[sp->inst[i].type]) {
-    unsigned t_ = sp->inst[i].type, j_ = sp->follow[t_] - 1u;
-    if (j_ < T->nJoint) {
-      if (!sp->followOk[t_]) {   // сдвиг сустава в кадре 0: один раз по первому подошедшему экземпляру (ключи могут быть ещё не подгружены — тогда повтор позже)
-        float keep = r->poseF; r->poseF = 0.f; r->poseValid = 0; spPose(sp, i);
-        if (r->poseValid) { memcpy(&sp->followT0[3 * t_], r->jm + j_ * 12 + 9, 12); sp->followOk[t_] = 1; }
-        r->poseF = keep; r->poseValid = 0;
-      }
-      if (sp->followOk[t_]) { spPose(sp, i); if (r->poseValid) for (int q_ = 0; q_ < 3; q_++) spColOff[q_] = r->jm[j_ * 12 + 9 + q_] - sp->followT0[3 * t_ + q_]; }
-    }
-  }
+  // круг 7 (g11, по оригиналу): к положению экземпляра добавляется положение сустава ЦЕЛИКОМ (не сдвиг от кадра 0) и без поворота экземпляра; поворот у объёма — экземпляра, сустав его не вращает.
+  // У ящика сустав 3 в покое в нуле (разницы нет, кроме поворота экземпляра), у автомата сустав 1 в покое на 0,261 м по оси Z, у паука L7 сустав 1 в покое в (0,92; −0,52; 0) и за клип уходит на 5,1 м.
+  // FOLLOWABS1107_OLD=1 — сдвиг от кадра 0 в осях экземпляра (круг 5)
+  followOffsets(sp, i);
   spBaseExt = !spPoleBaseOld && T->cls == 10 && T->h[1] >= 2.f;
   for (unsigned k = 0; k < T->nCol; k++) {
     const SpCol *C = &sp->col[T->firstCol + k];
@@ -816,6 +877,7 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
   // сверка g11, P11-09 (Н): первое касание не-ломаемого стейтпропа (типы 2, 3, 10) подаёт FEATHER_TOUCH до проверки силы, на каждое срабатывание контакта (кулдаун SP_COOL);
   // HIT и VEHICLE_HIT — только при импульсе выше SP_HIT_IMPULSE. SPFEATHER_SV_OLD=1 — как было (FEATHER не подаётся)
   if (!SPFEATHER_SV_OLD && r->cool <= 0.f && (T->cls == 2 || T->cls == 3 || T->cls == 10)) spEvent(sp, i, SP_EV_FEATHER);
+  const int bushEntry = r->cool <= 0.f;   // №1101: первое касание этого заезда (до взведения остывания ниже)
   float vn = car->vel[0] * bn[0] + car->vel[2] * bn[1];   // < 0 — едем в проп
 #if SP_HIT_MINAXIS
   float closing = -vn;     // прежнее: сближение по оси наименьшего перекрытия в плане
@@ -883,12 +945,22 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #endif
   // сверка g11, P11-08 (С): куст-шар (тип 2) — жёсткое неподвижное тело, машина сталкивается с ним как со стеной, контакт не отменяется (удар с импульсом больше 100 даёт HIT/VEHICLE_HIT — куст трясётся и
   // возвращается через 1,3 с). SPBUSH_SV_OLD=1 (по умолчанию, ждём слова Роба) — насквозь с тряской
-  int bushSolid = !SPBUSH_SV_OLD && T->cls == 2;
-  if ((T->cls == 2 && SPBUSH_SV_OLD) || !r->alive || !r->colOn || (!SP_REACT_PASS_OLD && r->state != 0 && !bushSolid)) return;   // куст-шар (cls 2) — насквозь, с тряской (гипотеза §9.3)
+  const int bushMid = T->cls == 2 && SPBUSH_SV_OLD && !BUSHMID1101_OLD;   // №1101: середина между «насквозь» и «стена»
+  int bushSolid = (!SPBUSH_SV_OLD || bushMid) && T->cls == 2;
+  if (bushMid && r->alive && r->colOn) {
+    if (bushEntry) {
+      const int chain = car->bushPassT > 0.f;
+      r->bushPass = (hypotf(car->vel[0], car->vel[2]) >= (chain ? BUSH_PASS_V_CHAIN : BUSH_PASS_V));   // по скорости машины, а не по нормальной составляющей: бортом скорость та же
+      if (r->bushPass) { const float kb = chain ? BUSH_BRAKE_CHAIN : BUSH_BRAKE; car->vel[0] *= 1.f - kb; car->vel[2] *= 1.f - kb; car->v *= 1.f - kb; car->bushPassT = BUSH_PASS_T; }
+    }
+    if (r->bushPass) return;   // продавливает: без выталкивания и отскока
+  }
+  if ((T->cls == 2 && SPBUSH_SV_OLD && !bushMid) || !r->alive || !r->colOn || (!SP_REACT_PASS_OLD && r->state != 0 && !bushSolid)) return;   // куст-шар (cls 2) — насквозь, с тряской (гипотеза §9.3)
   // целый проп — как стена: вытолкнуть кузов и погасить скорость в проп
   car->x += bn[0] * bd; car->z += bn[1] * bd; cb->x += bn[0] * bd; cb->z += bn[1] * bd;
   vn = car->vel[0] * bn[0] + car->vel[2] * bn[1];
-  if (vn < 0.f) { car->vel[0] -= (1.f + SP_CAR_E) * vn * bn[0]; car->vel[2] -= (1.f + SP_CAR_E) * vn * bn[1]; }
+  const float eCar = bushMid ? BUSH_E_MID : SP_CAR_E;
+  if (vn < 0.f) { car->vel[0] -= (1.f + eCar) * vn * bn[0]; car->vel[2] -= (1.f + eCar) * vn * bn[1]; }
 }
 
 // Правка «быстрый расчёт» (слово Роба 10.10): машина против ВСЕХ экземпляров каждый кадр — у каждого центр коробки через поворот и корень

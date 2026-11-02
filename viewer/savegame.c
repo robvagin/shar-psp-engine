@@ -46,7 +46,7 @@ static uint64_t g64(Cur *c) { uint64_t a = g32(c); return a | (uint64_t)g32(c) <
 #define TAIL SV_BYTES_V2                    // начало хвоста
 #define TAIL_HDR 12                         // "SHSX" + версия 2 + размер 2 + CRC 4
 int svWriteVer(const SaveGame *s, uint8_t *out, unsigned n, int ver) {
-  unsigned size = ver == 3 ? SV_BYTES : SV_BYTES_V2;
+  unsigned size = ver == 3 ? SV_BYTES_OLD : SV_BYTES_V2;
   if (ver < 1 || ver > 3 || !out || n < size) return -1;
   memset(out, 0, size);
   Cur c = {out, SV_BYTES_V2, 0, 0};
@@ -72,8 +72,8 @@ int svWriteVer(const SaveGame *s, uint8_t *out, unsigned n, int ver) {
   uint32_t crc = svCrc32(out + HDR, SV_BYTES_V2 - HDR);
   c.at = 8; p32(&c, crc);
   if (ver == 3) {   // правка 334: хвост — разовые предметы по уровням, затем запас ext
-    Cur t = {out, SV_BYTES, TAIL, 0};
-    memcpy(out + TAIL, "SHSX", 4); t.at = TAIL + 4; p16(&t, SV_TAIL_VERSION); p16(&t, SV_BYTES - TAIL); p32(&t, 0);
+    Cur t = {out, SV_BYTES_OLD, TAIL, 0};
+    memcpy(out + TAIL, "SHSX", 4); t.at = TAIL + 4; p16(&t, SV_TAIL_VERSION); p16(&t, SV_BYTES_OLD - TAIL); p32(&t, 0);
 #ifndef SV_BROKEN_ONCE
     for (int L = 0; L < SV_LEVELS; L++) {
       p16(&t, s->once[L].n); p16(&t, s->once[L].sig);
@@ -83,21 +83,34 @@ int svWriteVer(const SaveGame *s, uint8_t *out, unsigned n, int ver) {
     t.at += SV_LEVELS * (4 + SV_ONCE_BYTES);                    // отрицательный контроль tests/savegame: разовые не пишутся
 #endif
     for (unsigned i = 0; i < SV_EXT_BYTES; i++) p8(&t, s->ext[i]);
-    bad |= t.bad || t.at != SV_BYTES;
-    uint32_t tc = svCrc32(out + TAIL + TAIL_HDR, SV_BYTES - TAIL - TAIL_HDR);
+    bad |= t.bad || t.at != SV_BYTES_OLD;
+    uint32_t tc = svCrc32(out + TAIL + TAIL_HDR, SV_BYTES_OLD - TAIL - TAIL_HDR);
     t.at = TAIL + 8; p32(&t, tc);
   }
   return bad ? -1 : (int)size;
 }
-int svWrite(const SaveGame *s, uint8_t out[SV_BYTES]) { return svWriteVer(s, out, SV_BYTES, 3); }
+static int svWrite3(const SaveGame *s, uint8_t *out);
+static int svRead3(const uint8_t *in, unsigned n, SaveGame *s);
+static int svReadOld(const uint8_t *in, unsigned n, SaveGame *s);
+int svWrite(const SaveGame *s, uint8_t out[SV_BYTES]) { return SAVEV3_1114_OLD ? svWriteVer(s, out, SV_BYTES_OLD, 3) : svWrite3(s, out); }
 
+static int liveBest[SV_LEVELS][SV_MREC_N];   // №1114: живая таблица лучших времён и попыток (svBestNote)
+static uint16_t liveTry[SV_LEVELS][SV_MREC_N];
 static int vol(int32_t v) { return v >= 0 && v <= 1000; }
 
+int svIsOldFormat(const uint8_t *in, unsigned n) { return in && n >= SV_BYTES_V2 && !memcmp(in, "SHSV", 4); }
+// перевод: прежняя запись читается своим разбором (тот же SaveGame в памяти: настройки, прогресс уровней, прочность машин и секунды лежат в ext, как и раньше),
+// лучшие времена и попытки пусты; следующая svWrite кладёт всё в SHV3. Границы и CRC прежнего формата прежние — испорченная прежняя запись по-прежнему «Damaged»
 int svRead(const uint8_t *in, unsigned n, SaveGame *s) {
+  if (SAVEV3_1114_OLD) return svReadOld(in, n, s);
+  if (!SAVEV3CONV_OLD && svIsOldFormat(in, n)) return svReadOld(in, n, s);
+  return svRead3(in, n, s);
+}
+static int svReadOld(const uint8_t *in, unsigned n, SaveGame *s) {
   if (!in || n < SV_BYTES_V2 || memcmp(in, "SHSV", 4)) return SV_DAMAGED;
   // правка 334: ровно 256 Б — запись до 05.10 (файл save<NN>.bin); больше, но меньше полной — оборвана; полная (и буфер утилиты
   // 1 КБ) — хвост: нули за головой — запись до 05.10, иначе хвост обязан сойтись (магия, версия, размер, CRC)
-  if (n > SV_BYTES_V2 && n < SV_BYTES) return SV_DAMAGED;
+  if (n > SV_BYTES_V2 && n < SV_BYTES_OLD) return SV_DAMAGED;
   Cur c = {(uint8_t *)in, SV_BYTES_V2, 4, 0};
   int ver = g16(&c); if ((ver != SV_VERSION && ver != 1) || g16(&c) != SV_BYTES_V2) return SV_DAMAGED;   // версия 1 — без купленного
   uint32_t crc = g32(&c);
@@ -117,13 +130,13 @@ int svRead(const uint8_t *in, unsigned n, SaveGame *s) {
   if (ver >= 2) for (int i = 0; i < SV_LEVELS; i++) t.owned[i] = (uint16_t)g16(&c);
   if (ver >= 2) t.skin = (uint8_t)g8(&c);   // правка 107: в записях до 30.09 — ноль (обычный Гомер)
   int tailBad = 0;
-  if (n >= SV_BYTES) {   // правка 334: хвост
-    int zero = 1; for (unsigned i = TAIL; i < SV_BYTES && zero; i++) zero = in[i] == 0;
+  if (n >= SV_BYTES_OLD) {   // правка 334: хвост
+    int zero = 1; for (unsigned i = TAIL; i < SV_BYTES_OLD && zero; i++) zero = in[i] == 0;
     if (!zero) {
-      Cur u = {(uint8_t *)in, SV_BYTES, TAIL + 4, 0};
+      Cur u = {(uint8_t *)in, SV_BYTES_OLD, TAIL + 4, 0};
       unsigned tv = g16(&u), tsz = g16(&u); uint32_t tc = g32(&u);
-      if (memcmp(in + TAIL, "SHSX", 4) || tv != SV_TAIL_VERSION || tsz != SV_BYTES - TAIL ||
-          (SV_CHECK_CRC && tc != svCrc32(in + TAIL + TAIL_HDR, SV_BYTES - TAIL - TAIL_HDR))) return SV_DAMAGED;
+      if (memcmp(in + TAIL, "SHSX", 4) || tv != SV_TAIL_VERSION || tsz != SV_BYTES_OLD - TAIL ||
+          (SV_CHECK_CRC && tc != svCrc32(in + TAIL + TAIL_HDR, SV_BYTES_OLD - TAIL - TAIL_HDR))) return SV_DAMAGED;
       for (int L = 0; L < SV_LEVELS; L++) {
         t.once[L].n = (uint16_t)g16(&u); t.once[L].sig = (uint16_t)g16(&u);
         for (unsigned i = 0; i < SV_ONCE_BYTES; i++) t.once[L].st[i] = (uint8_t)g8(&u);
@@ -165,6 +178,7 @@ void svCapture(SaveGame *s, const MsnProgress *p, const Collect *c, const Coins 
     if (c->level >= 1 && c->level < SV_LEVELS) s->level = (uint8_t)c->level;
     for (int L = 1; L < SV_LEVELS && L < COLL_LEVELS; L++) { s->cards[L] = (uint8_t)collectCards(c, L); s->wasps[L] = collectWasps(c, L); s->gags[L] = collectGags(c, L); }
   }
+  for (int L = 1; L < SV_LEVELS; L++) for (int m = 0; m < SV_MREC_N; m++) { s->mrec[L][m].best = svBestLive(L, m); s->mrec[L][m].attempts = (uint16_t)svAttemptsLive(L, m); }   // №1114
   if (k) {
     s->coins = k->collected; s->nworld = (uint16_t)(k->nworld < SV_WORLDCOINS ? k->nworld : SV_WORLDCOINS);
     memset(s->worldCoins, 0, sizeof s->worldCoins);
@@ -173,6 +187,8 @@ void svCapture(SaveGame *s, const MsnProgress *p, const Collect *c, const Coins 
   }
 }
 void svApply(const SaveGame *s, Collect *c, Coins *k) {
+  svBestReset();   // №1114: загрузка заменяет лучшие времена и попытки записанными
+  for (int L = 1; L < SV_LEVELS; L++) for (int m = 0; m < SV_MREC_N; m++) { if (s->mrec[L][m].best > 0) svBestNote(L, m, s->mrec[L][m].best); liveTry[L][m] = s->mrec[L][m].attempts; }
   if (c) for (int L = 1; L < SV_LEVELS && L < COLL_LEVELS; L++) collectSetProgress(c, L, s->cards[L], s->wasps[L], s->gags[L]);
   if (k) {
     k->collected = s->coins;
@@ -300,3 +316,153 @@ int svCarHealthGet(const SaveGame *s, uint16_t *hash, float *frac) {
   }
   return n;
 }
+
+// ================================================================================================================================
+// №1114: формат SHV3 (Роб 02.11.2026). Раскладка (все числа little endian, байты от начала файла; подробно — docs/handoff/СОХРАНЕНИЯ_1114.md):
+//   0..31    голова: "SHV3", u16 версия 3, u16 размер головы 32, u32 размер записи SV_BYTES, u32 CRC-32 байт 16..SV_BYTES-1, u32 seq, u16 год, месяц, день, час, минута, секунда (u8 ×5),
+//            u8 уровень записи 1..7, u8 старший достигнутый уровень, u8 флаги (бит0 — секунды записаны), 2 байта запаса
+//   32..111  прогресс: u8 уровень миссий, сюжетная, фаза, этап; u32 маска пройденных (текущий уровень); i32 монеты; u16 монет мира; 2 б запас; 64 б собранные монеты мира
+//   112..143 настройки: i16 музыка, эффекты, машина, голос; u8 радар; u8 костюм; u8 настройки (бит0 прыжковые камеры, бит1 навигация, бит7 «записано»); u8 вид за машиной (бит0..1, бит7);
+//            u8 камера (бит0 инвертировать, бит7); u8 билет/допуск (бит0..2, бит7); u16 показанные подсказки; u16 показанные ролики (бит0..8); u8 (бит7 — ролики записаны); запас до 143
+//   144..177 машины игрока: u8 число (бит7 «таблица записана», 0..8); 1 б запас; 8 × (u16 хеш имени, u8 прочность 0..255, 1 б запас)
+//   192..1479 уровни 1..7, по 184 Б: u32 маска пройденных миссий; u8 строки MISSION SELECT (бит7 — известны); u8 флаги (бит0 — маска записана); u8 карточки; 1 б запас;
+//            u32 осы; u64 гэги; u16 купленное; 13 × запись о миссии (u8 флаги, 1 б запас, u16 попытки, i32 лучшее время, с; -1 нет); u16 n + u16 sig разовых предметов; 48 б разовые; запас до 184
+//   1480..1535 запас (нули)
+#define V3_HDR 32
+#define V3_PROG 32
+#define V3_SET 112
+#define V3_CARS 144
+#define V3_LV 192
+#define V3_LVSZ 184
+#define V3_END (V3_LV + 7 * V3_LVSZ)
+#define V3_BESTMAX 359999   // 99:59:59
+
+static void putSet(Cur *c, int bit7, int v) { p8(c, (uint32_t)((bit7 ? 0x80 : 0) | v)); }
+
+static int svWrite3(const SaveGame *s, uint8_t *out) {
+  memset(out, 0, SV_BYTES);
+  Cur c = {out, SV_BYTES, 0, 0};
+  memcpy(out, "SHV3", 4); c.at = 4; p16(&c, 3); p16(&c, V3_HDR); p32(&c, SV_BYTES); p32(&c, 0);
+  p32(&c, s->seq); p16(&c, s->year); p8(&c, s->month); p8(&c, s->day); p8(&c, s->hour); p8(&c, s->minute);
+  int secOk = (s->ext[83] & 0x80) != 0; p8(&c, secOk ? s->ext[83] & 0x7f : 0);   // секунды записи (savemenu.c): ext[83] в памяти, в файле — своё поле
+  p8(&c, s->level); p8(&c, (uint32_t)svLvReached(s)); p8(&c, secOk ? 1 : 0);
+  c.at = V3_PROG;
+  p8(&c, s->msnLevel); p8(&c, s->msnStory); p8(&c, s->msnPhase); p8(&c, s->msnStage); p32(&c, s->msnCompleted);
+  p32(&c, (uint32_t)s->coins); p16(&c, s->nworld); p16(&c, 0);
+  for (unsigned i = 0; i < sizeof s->worldCoins; i++) p8(&c, s->worldCoins[i]);
+  c.at = V3_SET;
+#ifndef SV_BROKEN_SETTINGS
+  p16(&c, (uint32_t)s->music); p16(&c, (uint32_t)s->effects); p16(&c, (uint32_t)s->vehicle); p16(&c, (uint32_t)s->voice);
+  p8(&c, (uint32_t)s->radar); p8(&c, s->skin);
+  const uint8_t *e = s->ext;
+  p8(&c, (uint32_t)((e[SV_EXT_OPTS] & SV_EXT_OPTS_SET ? 0x80 : 0) | (e[SV_EXT_OPTS] & SV_EXT_OPTS_JUMP ? 1 : 0) | (e[SV_EXT_OPTS] & SV_EXT_OPTS_NAV ? 2 : 0)));
+  putSet(&c, e[SV_EXT_CHASE] & SV_EXT_CHASE_SET, e[SV_EXT_CHASE] & 3);
+  putSet(&c, e[SV_EXT_CAM] & SV_EXT_CAM_SET, e[SV_EXT_CAM] & SV_EXT_CAM_INV ? 1 : 0);
+  putSet(&c, e[SV_EXT_TICKET] & SV_EXT_TICKET_SET, e[SV_EXT_TICKET] & 7);
+  p16(&c, (uint32_t)e[SV_EXT_MOVIES + 2] | (uint32_t)e[SV_EXT_MOVIES + 3] << 8);
+  p16(&c, (uint32_t)(e[SV_EXT_MOVIES] & 1) << 8 | e[SV_EXT_MOVIES + 1]);
+  p8(&c, e[SV_EXT_MOVIES] & SV_EXT_MOVIES_SET);
+#endif
+  c.at = V3_CARS;
+#ifndef SV_BROKEN_CARHP   // отрицательный контроль tests/savegame/host.sh: прочность машин не пишется
+  { uint16_t h[SV_EXT_CARHP_MAX]; float f[SV_EXT_CARHP_MAX]; int n = svCarHealthGet(s, h, f);
+    p8(&c, n < 0 ? 0 : (uint32_t)(0x80 | n)); p8(&c, 0);
+    for (int i = 0; i < (n < 0 ? 0 : n); i++) { p16(&c, h[i]); p8(&c, (uint32_t)(f[i] * 255.f + .5f)); p8(&c, 0); } }
+#endif
+  for (int L = 1; L < SV_LEVELS; L++) {
+    c.at = V3_LV + (L - 1) * V3_LVSZ;
+    uint32_t m = 0; unsigned rows = 0; int got = svLvGet(s, L, &m, &rows);
+#ifdef SV_BROKEN_LV
+    got = 0;
+#endif
+    if (got != 2) { m = 0; rows = 0; }   // «уровень ниже пройден» из записи до 05.10 (got 1) в SHV3 держит старший достигнутый уровень в голове (svLvReached)
+    p32(&c, m); p8(&c, rows); p8(&c, got == 2 ? 1 : 0); p8(&c, s->cards[L]); p8(&c, 0);
+    p32(&c, s->wasps[L]); p64(&c, s->gags[L]);
+#ifndef SV_BROKEN_OWNED
+    p16(&c, s->owned[L]);
+#else
+    p16(&c, 0);
+#endif
+    for (int k = 0; k < SV_MREC_N; k++) {
+#ifndef SV_BROKEN_BEST
+      const SvMrec *r = &s->mrec[L][k];
+      p8(&c, r->flags & 6); p8(&c, 0); p16(&c, r->attempts); p32(&c, (uint32_t)(r->best > 0 ? r->best : -1));
+#else
+      p8(&c, 0); p8(&c, 0); p16(&c, 0); p32(&c, (uint32_t)-1);
+#endif
+    }
+#ifndef SV_BROKEN_ONCE
+    p16(&c, s->once[L].n); p16(&c, s->once[L].sig);
+    for (unsigned i = 0; i < SV_ONCE_BYTES; i++) p8(&c, s->once[L].st[i]);
+#endif
+  }
+  int bad = c.bad;
+  c.at = 12; p32(&c, svCrc32(out + 16, SV_BYTES - 16));
+  return bad ? -1 : SV_BYTES;
+}
+
+static int svRead3(const uint8_t *in, unsigned n, SaveGame *s) {
+  if (!in || n < SV_BYTES || memcmp(in, "SHV3", 4)) return SV_DAMAGED;   // "SHSV" сюда не приходит: svRead переводит их svReadOld (SAVEV3CONV_OLD=0)
+  Cur c = {(uint8_t *)in, SV_BYTES, 4, 0};
+  if (g16(&c) != 3 || g16(&c) != V3_HDR || g32(&c) != SV_BYTES) return SV_DAMAGED;
+  uint32_t crc = g32(&c);
+  if (SV_CHECK_CRC && crc != svCrc32(in + 16, SV_BYTES - 16)) return SV_DAMAGED;
+  SaveGame t; svClear(&t);
+  t.seq = g32(&c); t.year = (uint16_t)g16(&c); t.month = (uint8_t)g8(&c); t.day = (uint8_t)g8(&c); t.hour = (uint8_t)g8(&c); t.minute = (uint8_t)g8(&c);
+  unsigned sec = g8(&c); t.level = (uint8_t)g8(&c); unsigned reached = g8(&c), hf = g8(&c);
+  if (hf & 1) t.ext[83] = (uint8_t)(0x80 | (sec < 60 ? sec : 59));
+  c.at = V3_PROG;
+  t.msnLevel = (uint8_t)g8(&c); t.msnStory = (uint8_t)g8(&c); t.msnPhase = (uint8_t)g8(&c); t.msnStage = (uint8_t)g8(&c); t.msnCompleted = g32(&c);
+  t.coins = (int32_t)g32(&c); t.nworld = (uint16_t)g16(&c); g16(&c);
+  for (unsigned i = 0; i < sizeof t.worldCoins; i++) t.worldCoins[i] = (uint8_t)g8(&c);
+  c.at = V3_SET;
+  t.music = (int16_t)g16(&c); t.effects = (int16_t)g16(&c); t.vehicle = (int16_t)g16(&c); t.voice = (int16_t)g16(&c);
+  t.radar = (int32_t)g8(&c); t.skin = (uint8_t)g8(&c);
+  unsigned opts = g8(&c), chase = g8(&c), cam = g8(&c), tick = g8(&c), tut = g16(&c), mov = g16(&c), movSet = g8(&c);
+  if (opts & 0x80) t.ext[SV_EXT_OPTS] = (uint8_t)(SV_EXT_OPTS_SET | (opts & 1 ? SV_EXT_OPTS_JUMP : 0) | (opts & 2 ? SV_EXT_OPTS_NAV : 0));
+  if (chase & 0x80) t.ext[SV_EXT_CHASE] = (uint8_t)(SV_EXT_CHASE_SET | (chase & 3));
+  if (cam & 0x80) t.ext[SV_EXT_CAM] = (uint8_t)(SV_EXT_CAM_SET | (cam & 1 ? SV_EXT_CAM_INV : 0));
+  if (tick & 0x80) t.ext[SV_EXT_TICKET] = (uint8_t)(SV_EXT_TICKET_SET | (tick & 7));
+  t.ext[SV_EXT_MOVIES + 2] = (uint8_t)tut; t.ext[SV_EXT_MOVIES + 3] = (uint8_t)(tut >> 8);
+  if (movSet & 0x80) { t.ext[SV_EXT_MOVIES] = (uint8_t)(SV_EXT_MOVIES_SET | (mov >> 8 & 1)); t.ext[SV_EXT_MOVIES + 1] = (uint8_t)mov; }
+  c.at = V3_CARS;
+  { unsigned cn = g8(&c); g8(&c); uint16_t h[SV_EXT_CARHP_MAX]; float f[SV_EXT_CARHP_MAX]; unsigned k = cn & 15;
+    if (k > SV_EXT_CARHP_MAX) return SV_DAMAGED;
+    for (unsigned i = 0; i < k; i++) { h[i] = (uint16_t)g16(&c); f[i] = g8(&c) / 255.f; g8(&c); }
+    if (cn & 0x80) svCarHealthPut(&t, (int)k, h, f); }
+  for (int L = 1; L < SV_LEVELS; L++) {
+    c.at = V3_LV + (L - 1) * V3_LVSZ;
+    uint32_t m = g32(&c); unsigned rows = g8(&c), fl = g8(&c);
+    t.cards[L] = (uint8_t)g8(&c); g8(&c);
+    t.wasps[L] = g32(&c); t.gags[L] = g64(&c); t.owned[L] = (uint16_t)g16(&c);
+    for (int k = 0; k < SV_MREC_N; k++) {
+      SvMrec *r = &t.mrec[L][k];
+      r->flags = (uint8_t)(g8(&c) & 6); g8(&c); r->attempts = (uint16_t)g16(&c); int32_t b = (int32_t)g32(&c);
+      if (b != -1 && (b < 1 || b > V3_BESTMAX)) return SV_DAMAGED;
+      r->best = b == -1 ? 0 : b;
+    }
+    t.once[L].n = (uint16_t)g16(&c); t.once[L].sig = (uint16_t)g16(&c);
+    for (unsigned i = 0; i < SV_ONCE_BYTES; i++) t.once[L].st[i] = (uint8_t)g8(&c);
+    if (fl & 1) svLvPut(&t, L, m, rows);
+  }
+  if (reached >= 1 && reached < SV_LEVELS && (t.ext[SV_EXT_LV] & SV_EXT_LV_SET)) { if ((t.ext[SV_EXT_LV] & 7) < reached) t.ext[SV_EXT_LV] = (uint8_t)(SV_EXT_LV_SET | reached); }
+  else if (reached >= 1 && reached < SV_LEVELS && reached > t.level) t.ext[SV_EXT_LV] = (uint8_t)(SV_EXT_LV_SET | reached);
+  if (c.bad || t.level < 1 || t.level >= SV_LEVELS || t.nworld > SV_WORLDCOINS || t.coins < 0 || !vol(t.music) || !vol(t.effects) || !vol(t.vehicle) || !vol(t.voice) ||
+      t.radar < 0 || t.radar > 1 || t.month > 12 || t.day > 31 || t.hour > 23 || t.minute > 59 || t.skin > 7 || reached < 1 || reached >= SV_LEVELS)
+    return SV_DAMAGED;
+  *s = t;
+  return SV_OK;
+}
+
+// ---- №1114: лучшие времена и попытки (живая таблица игры; savegame.h)
+static int slotOk(int L, int k) { return L >= 1 && L < SV_LEVELS && k >= 0 && k < SV_MREC_N; }
+int svBestNote(int L, int k, int sec) {
+  if (!slotOk(L, k) || sec < 1) return 0;
+  if (sec > V3_BESTMAX) sec = V3_BESTMAX;
+  if (liveBest[L][k] > 0 && liveBest[L][k] <= sec) return 0;
+  liveBest[L][k] = sec; return 1;
+}
+int svBestLive(int L, int k) { return slotOk(L, k) && liveBest[L][k] > 0 ? liveBest[L][k] : 0; }
+void svAttemptNote(int L, int k) { if (slotOk(L, k) && liveTry[L][k] < 65535) liveTry[L][k]++; }
+int svAttemptsLive(int L, int k) { return slotOk(L, k) ? liveTry[L][k] : 0; }
+void svBestReset(void) { memset(liveBest, 0, sizeof liveBest); memset(liveTry, 0, sizeof liveTry); }

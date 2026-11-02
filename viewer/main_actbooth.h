@@ -1,8 +1,11 @@
 // Блок △ у телефонной будки (правка 62, №682, №842, №1051, №1060), вынесен из main_loop.h без изменений: сверка g10b-loop круг 3 (P05:2) вызывает его дважды —
 // раньше двери, гэга и выключателя (ранг будки 2) и на прежнем месте (ACTION_RANK_OLD=1). Включается внутрь функции кадра игры, не отдельно
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && haveCol && !fly && !flyChord && onFoot() && !(mvBoothBlocked() || uiPaused() || phoneViewOn())) {   // сверка g07 круг 5 (P05-25): не при проваленной миссии, аресте, открытой паузе и открытой будке   // правка 62: △ у будки — своя машина
-      int pk = phoneNear(); if (pk >= 0) { char sd[256]; levelFile(sd, ""); phoneK = pk;
+      int pk = phoneNear(), pb_ = pbPress(&pbArm, pk, !mvBoothsOff());   // ps2-twin P05:25 (PHONEBUSY_OLD=1 — прежнее): будки выключены (миссия с принудительной машиной) — гудок «занято» и ничего не открывается; вошёл при выключенных — молча
+      if (pb_ == PB_BUSY) { uiSfxPlayNamed("phonebusy"); if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "PHONE busy t=%.1f\n", smkT); smkWrite(s_); } hit &= ~PSP_CTRL_TRIANGLE; }
+      else if (pk >= 0 && (pb_ == PB_OPEN)) { char sd[256]; levelFile(sd, ""); phoneK = pk;
         phoneViewSetProgress(svLvReached(&lvKeep));   // №682: пройденные уровни открывают свои машины в будке
+        phoneCheatAll = !CHEATS1104_OLD && gameCheatOn(CH_VEHICLES);   // №1104: код Vehicles — все машины-награды в будке
         phoneViewSetCar(mvForcedCar(), car.destroyed ? 1.f : car.damage);   // правка 104: «Damaged: N %» у машины, на которой игрок сейчас
         if (boothMem1051 && !PHONE_ROOM842_OLD) boothRoom1051(0);   // №1051: место — до первой попытки, не после неудачи
         int po_ = phoneFailTest > 0 ? (phoneFailTest--, -1) : phoneViewOpen(mvShop(), sd);   // phoneFailTest — №842 тест

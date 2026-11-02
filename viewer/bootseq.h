@@ -155,17 +155,17 @@ static void bsqK(char *b, int n, const char *pre, int v, const char *post) {   /
 //   HOURS 38 — игровых часов в журналах прогонов, что ещё лежат на диске (последнее время t= журнала: smoke 26,5 ч, эмулятор 6,1 ч, туры PSP 5,9 ч;
 //         нижняя граница: старые прогоны удалены)
 //   FIXES 862 — правок Роба (docs/handoff/ПРАВКИ_РОБА.md, номер последней), за 46 тестовых сборок (TEST1–TEST46, номер сборки — в нижней строке)
-//   LIGHT / DRAW — закон света (конус к камере, пятно на полу, тени 20 %) и даль (дальние LOD, HLOD, горизонт)
+//   LIGHT / DRAW — закон света (конус к камере, пятно на полу, тени 20 %) и даль (дальние LOD, кольцо панорам №917, горизонт; HLOD отменён Робом, №1090)
 // Строки железа (CPU, MEMORY…) и «PSP-2000» — BOOT_WORK_OLD=1
 #ifndef BOOT_WORK_OLD
 #define BOOT_WORK_OLD 0
 #endif
 #define BOOT_W_DISC 18754
-#define BOOT_W_RUNS 4501   // TEST83: 4489 (TEST82) + 2 проверки кадра в сборке наборов + тур TEST82 на PSP + 9 прогонов эмулятора окон 02.11 после 12:20
+#define BOOT_W_RUNS 3345   // №1090 (Роб 02.11 «полностью проверяем»): пересчёт 02.11 22:4x по журналам на диске без копий (skills/shar-test-release/scripts/boot_count.py): 3328 журналов smoke.txt (эмулятор, туры PSP, проверки кадра) + 17 прогонов каталога близнецов без журнала. Прежние 4501 считали каталог дважды (его 987 прогонов лежат и журналами); нижняя граница
 #define BOOT_W_PS2REC 130
-#define BOOT_W_HOURS 51   // TEST70 (№988): пересчёт 26.10 — сумма последнего « t=» по 2287 журналам smoke.txt на диске (без копий): smoke 43,3 ч, туры PSP 7,5 ч, эмулятор 0,5 ч; нижняя граница
-#define BOOT_W_FIXES 1086   // TEST83: номер последней строки ПРАВКИ_РОБА.md
-#define BOOT_W_BUILDS 83
+#define BOOT_W_HOURS 80   // №1090: сумма последнего « t=» по тем же 3328 журналам без копий, 02.11 22:4x: 80,1 ч (туры PSP 10,2, остальное эмулятор); нижняя граница
+#define BOOT_W_FIXES 1155   // TEST85: номер последней строки ПРАВКИ_РОБА.md (обновить при сборке)
+#define BOOT_W_BUILDS 85
 // №988 (Роб 26.10: «вся инфа, сколько мы сожгли токенов»): журналы Claude Code этого проекта 26.09–26.10 (~/.claude/projects/*shar*, ответы без повторов):
 // 66 сессий, 51 882 ответа, 18,69 млрд токенов (из них 18,48 млрд — чтение кэша, написано 34,5 млн); журналы старше 30 дней стёрты — нижняя граница.
 // Строка встаёт после FIXES; чтобы «Loading…» осталась над «Press START», убран пустой ряд перед ней. BOOT_AI988_OLD=1 — как TEST69
@@ -177,8 +177,8 @@ static void bsqK(char *b, int n, const char *pre, int v, const char *post) {   /
 #ifndef BOOTNAME1027_OLD
 #define BOOTNAME1027_OLD 0
 #endif
-#define BOOT_W_TOKENS_DM 187   // десятые доли миллиарда: 18,7 млрд
-#define BOOT_W_SESSIONS 66
+#define BOOT_W_TOKENS_DM 365   // №1090: журналы Claude Code проекта 30.09–02.11 (skills/shar-test-release/scripts/tokens.py, ответы без повторов): 36,56 млрд (чтение кэша 36,21 млрд, написано 72,8 млн); старше 30 дней стёрты — нижняя граница
+#define BOOT_W_SESSIONS 131
 static void bootSeqDraw(int n, const BootSys *s, BuiPut put, void *u) {
   char b[80], c[40];
   if (n <= 0) {   // первый кадр: производитель и копирайт слева вверху, подсказка и идентификатор внизу — как у BIOS сразу при включении
@@ -214,7 +214,7 @@ static void bootSeqDraw(int n, const BootSys *s, BuiPut put, void *u) {
     }
     if (n >= (BOOT_AI988_OLD ? BSQ_AUDIO : BSQ_POWER)) bsqCheck(put, u, r, "LIGHT", "cones, floor pools, shade", "OK", BUI_ACC);
     r++;
-    if (n >= (BOOT_AI988_OLD ? BSQ_POWER : BSQ_POWER + 4)) bsqCheck(put, u, r, "DRAW", "far LOD, HLOD, horizon", "OK", BUI_ACC);
+    if (n >= (BOOT_AI988_OLD ? BSQ_POWER : BSQ_POWER + 4)) bsqCheck(put, u, r, "DRAW", "LOD, panorama, horizon", "OK", BUI_ACC);
     r += 2;
   } else {
   // железо: настоящие значения PSP

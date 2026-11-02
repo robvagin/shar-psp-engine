@@ -189,6 +189,12 @@ static void cfgApply(void) {
   if (cfg.camDist < 0 || cfg.camDist > 4) cfg.camDist = 2;
   { float h_ = camCfg996On ? camCfgH996[cfg.camHeight] : 1.f, d_ = camCfg996On ? camCfgD996[cfg.camDist] : 1.f;
     if (h_ != homerCamUserH || d_ != homerCamUserD) { homerCamUserH = h_; homerCamUserD = d_; camCfgSnap996 = 1; } }
+  if (!CAMMENU1151_OLD) {   // №1151: раздел CAMERA паузы — шесть настроек камеры (ступени 0..4); смена — сглаживание камеры сбросить, кадр за паузой сразу новый
+    int *q_[6] = {&cfg.carTilt, &cfg.carFov, &cfg.footHeight, &cfg.footDist, &cfg.camHeight, &cfg.camDist}; for (int k_ = 0; k_ < 6; k_++) *q_[k_] = mrCamClamp(*q_[k_]);
+    float v_[6] = {camCfg996On ? mrCamH(cfg.camHeight) : 1.f, camCfg996On ? mrCamD(cfg.camDist) : 1.f, mrCamTilt(cfg.carTilt), mrCamFov(cfg.carFov),
+                   camCfg996On ? mrCamH(cfg.footHeight) : 1.f, camCfg996On ? mrCamD(cfg.footDist) : 1.f};
+    float *w_[6] = {&camUserCarH, &camUserCarD, &camUserCarTilt, &camUserCarFov, &camUserFootH, &camUserFootD};
+    for (int k_ = 0; k_ < 6; k_++) if (*w_[k_] != v_[k_]) { *w_[k_] = v_[k_]; camCfgSnap996 = 1; } }
   flatTexUser = cfg.texturesOn != 0;   // №912: Textures On — родные текстуры (заливку включает flatPoll при Cartoon и Off)
   if ((cfg.toon != 0) != toneToon()) { toneSetToon(cfg.toon != 0); if (cfg.toon) toneToonPrep(); toneApplyAll(); toonModeChanged = 1; }   // №754: пресет 90-х на палитрах — вместе с Cartoon, фоновым заданием
   sndUserVolumes(cfg.music / 1000.f, cfg.effects / 1000.f, cfg.vehicle / 1000.f, cfg.voice / 1000.f);
@@ -213,7 +219,8 @@ static void cfgLoad(void) {
       if (t.ver == 1 || n < (int)sizeof t) { Settings d = cfg; memcpy((char *)&d, &t, t.ver == 1 ? (size_t)n1 : (size_t)n); t = d; }
       if (!DRAWDEF1042_OLD && t.ver < 13) t.drawDist = 2;   // №1042б: миграция один раз — Draw Distance 250 (выбор игрока потом сохраняется как есть)
       if (t.ver < 14) t.curbTint = 0;   // №1064: старые сохранения получают «Original» (родной бордюр)
-      t.ver = DRAWDEF1042_OLD ? 12 : 14; if (t.curbTint < 0 || t.curbTint > 1) t.curbTint = 0; if (t.carShadow < 0 || t.carShadow > 1) t.carShadow = 0; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; if (t.jumpCam < 0 || t.jumpCam > 1) t.jumpCam = 1; if (t.navSys < 0 || t.navSys > 1) t.navSys = 1; cfg = t; }   // круг 5 (g10-flow): Jump Cameras / Navigation System — только 0 или 1, старый файл — On   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
+      t.footHeight = mrCamFootMigrate(n, (int)offsetof(Settings, footHeight), t.footHeight, t.camHeight); t.footDist = mrCamFootMigrate(n, (int)offsetof(Settings, footHeight), t.footDist, t.camDist);   // №1151: у прежнего файла пешком — те же Height / Distance, что были на обе камеры
+      t.ver = DRAWDEF1042_OLD ? 12 : 14; if (t.curbTint < 0 || t.curbTint > 1) t.curbTint = 0; if (t.carShadow < 0 || t.carShadow > 1) t.carShadow = 0; t.movies |= 1u; if (t.camHeight < 0 || t.camHeight > 4) t.camHeight = 2; if (t.camDist < 0 || t.camDist > 4) t.camDist = 2; if (t.ink < 0 || t.ink > 2) t.ink = INK951_DEF; if (t.oldTv < 0 || t.oldTv > 10) t.oldTv = 5; if (t.texturesOn < 0 || t.texturesOn > 1) t.texturesOn = 0; if (t.jumpCam < 0 || t.jumpCam > 1) t.jumpCam = 1; if (t.navSys < 0 || t.navSys > 1) t.navSys = 1; { int *q_[4] = {&t.carTilt, &t.carFov, &t.footHeight, &t.footDist}; for (int k_ = 0; k_ < 4; k_++) if (*q_[k_] < 0 || *q_[k_] > 4) *q_[k_] = 2; } cfg = t; }   // круг 5 (g10-flow): Jump Cameras / Navigation System — только 0 или 1, старый файл — On   // ver 1 — без tutorial / tutSeen / movies; ver 2 — без colour; ver 3 — без invertCam; ver 4 — без contrast … toonTex; ver 5 — без drawDist; ver 6 — без oldTv (по умолчанию)
     sceIoClose(f); }
   cfgApply();
 }
@@ -244,7 +251,7 @@ static void saveCapture(SaveGame *s) {
   if (!MOVIES_SAVE_OLD) { s->ext[SV_EXT_MOVIES] = (uint8_t)(SV_EXT_MOVIES_SET | (cfg.movies >> 8 & 1u)); s->ext[SV_EXT_MOVIES + 1] = (uint8_t)(cfg.movies & 255u);
                           s->ext[SV_EXT_MOVIES + 2] = (uint8_t)(cfg.tutSeen & 255u); s->ext[SV_EXT_MOVIES + 3] = (uint8_t)(cfg.tutSeen >> 8 & 255u); }   // круг 2 (g11b P07:24, P14:12/22): ролики и показанные подсказки — в слот
   if (!CAMNAV_OPT_OLD) s->ext[SV_EXT_OPTS] = (uint8_t)(SV_EXT_OPTS_SET | (cfg.jumpCam ? SV_EXT_OPTS_JUMP : 0) | (cfg.navSys ? SV_EXT_OPTS_NAV : 0));   // круг 5 (g10-flow, P08:22/P16:08): Jump Cameras и Navigation System — в слот
-  if (!CHASEVIEW_SAVE_OLD) s->ext[SV_EXT_CHASE] = (uint8_t)(SV_EXT_CHASE_SET | (chaseView & 3));   // СВЕРКА_КАМЕРА 1.3 (передано g06): выбранный вид за машиной (дальний/ближний/бампер)
+  if (!CHASEVIEW_SAVE_OLD) s->ext[SV_EXT_CHASE] = (uint8_t)(SV_EXT_CHASE_SET | (chaseView > 2 ? 0 : chaseView & 3));   // СВЕРКА_КАМЕРА 1.3 (передано g06): выбранный вид за машиной (дальний/ближний/бампер)
   if (!CAR_HEALTH_OLD) { uint16_t ch[8]; float cf[8]; int cn = gameCarHealthDump(&G, ch, cf); svCarHealthPut(s, cn, ch, cf); }   // сверка g10-flow P01 Д1: прочность личных машин
   if (!gameLvProgOld) {   // облако 05.10 (карьера): прогресс миссий всех уровней (savegame.h SV_EXT_LV) — прежние из lvKeep, текущий из миссий
     svLvKeep(s, &lvKeep);
@@ -358,7 +365,7 @@ static void saveService(const char *f) {   // служебные флаги ге
   }
 }
 static int rowOf(int scr, const char *label) {   // строка экрана по подписи из данных (без регистра, по началу)
-  for (int r = 0; r < uiScrRows(scr); r++) { const char *l = uiScrRowLabel(scr, r); int k = 0;
+  for (int r = 0; r < uiScrRows(scr); r++) { const char *l = langKey(uiScrRowLabel(scr, r)); int k = 0;   // №1111: на другом языке подпись строки сводится к английской (lang/<буква>/rowkeys.txt)
     while (label[k] && l[k] && toupper((unsigned char)l[k]) == toupper((unsigned char)label[k])) k++;
     if (!label[k]) return r; }
   return -1;
@@ -384,8 +391,11 @@ static int *cfgSlot(int scr, int row, int sound) {   // значение нас�
   if (row == rowOf(scr, "CONTRAST")) { cfgContrastRow = (cfg.contrast - 50) / 10; return &cfgContrastRow; }   // №777: подстраница PICTURE
   if (row == rowOf(scr, "LINE")) return &cfg.lineWidth;                                                   // №777: подстраница CARTOON — Line Width
   if (row == rowOf(scr, "INK")) return &cfg.ink;                                                          // №951: Ink — Indigo / Black / Tone
-  if (row == rowOf(scr, "HEIGHT")) return &cfg.camHeight;                                                // №996: страница CAMERA — Height (Low … High)
-  if (row == rowOf(scr, "DISTANCE")) return &cfg.camDist;                                                // №996: Distance (Near … Far)
+  if (!CAMMENU1151_OLD) {   // №1151: страница настроек камеры
+    if (row == rowOf(scr, "CAR HEIGHT")) return &cfg.camHeight; if (row == rowOf(scr, "CAR DISTANCE")) return &cfg.camDist; if (row == rowOf(scr, "CAR TILT")) return &cfg.carTilt;
+    if (row == rowOf(scr, "CAR VIEW")) return &cfg.carFov; if (row == rowOf(scr, "FOOT HEIGHT")) return &cfg.footHeight; if (row == rowOf(scr, "FOOT DISTANCE")) return &cfg.footDist; }
+  if (CAMMENU1151_OLD && row == rowOf(scr, "HEIGHT")) return &cfg.camHeight;                                                // №996: страница CAMERA — Height (Low … High)
+  if (CAMMENU1151_OLD && row == rowOf(scr, "DISTANCE")) return &cfg.camDist;                                                // №996: Distance (Near … Far)
   if (row == rowOf(scr, "EYE")) return &cfg.eyeLines;                                                     // Eye Lines: Off / Soft / Full
   if (row == rowOf(scr, "TEXTURE")) { cfgTexRow = cfg.toonTex / 5; return &cfgTexRow; }                   // Texture Detail
   if (row == rowOf(scr, "DRAW")) return &cfg.drawDist;                                                     // №795: Draw Distance 150 / 200 / 250 м
@@ -426,8 +436,10 @@ static void optLog(const char *pack, int scr, int sel, int r) {
 // меню паузы: 0 pauseoptions, 1 pausesound, 2 pausesettings (pmenu.shr открыт на время); -1 — закрыто
 // №777 (Роб 18.10): пакет с подстраницами (7 экранов, tools/menu_export.py SUBPAGES) — 2 раздел SETTINGS (пункты CAMERA / GAME / PICTURE / CARTOON),
 // 3..6 строки подстраниц; △ с подстраницы — в раздел, из раздела — в OPTIONS. Пакет из 3 экранов — прежняя одна страница SETTINGS
-enum { PM_OPTIONS = 0, PM_SOUND = 1, PM_SETTINGS = 2, PM_CAMERA = 3, PM_GAME = 4, PM_PICTURE = 5, PM_CARTOON = 6, PM_N = 7 };
-static int pmPages(void) { return uiScrScreens() >= PM_N; }   // раздел SETTINGS с подстраницами
+enum { PM_OPTIONS = 0, PM_SOUND = 1, PM_SETTINGS = 2, PM_CAMERA = 3, PM_GAME = 4, PM_PICTURE = 5, PM_CARTOON = 6, PM_N = 7, PM_CAMADJ = 7 };   // №1151: 7 — страница настроек камеры (пакет из 8 экранов)
+static int pmPages(void) { return uiScrScreens() >= PM_N; }
+static int pmCamAdj(void) { return !CAMMENU1151_OLD && uiScrScreens() > PM_CAMADJ; }   // №1151: в пакете есть страница настроек камеры
+static int camLinkRow = -1, camResetRow = -1;   // раздел SETTINGS с подстраницами
 // №783 (Роб 18.10 после TEST34): «в OPTIONS сразу SOUND, CAMERA, GAME, PICTURE; внутри PICTURE — CARTOON; внутри CARTOON под вкл/выкл — его настройки».
 // Пакет с пунктом PICTURE на OPTIONS (tools/menu_export.py MENU_FLAT_OLD) — раздел SETTINGS не открывается; на PICTURE строка «Cartoon» без значения —
 // переход на страницу CARTOON, △ оттуда — обратно на PICTURE (курсор на переходе). MENU_FLAT_OLD=1 у экспорта — прежний пакет, движок ведёт себя как TEST34
@@ -441,7 +453,11 @@ static int pmFlat(void) { return !MENU_FLAT_ENGINE_OLD && pmPages() && rowOf(PM_
 static void pmEnterPage(int scr, int *sel) {   // страница значений: строки из cfg; на PICTURE — строка-переход «Cartoon» доступна
   optLinkScr = optLinkRow = -1;
   if (pmFlat() && scr == PM_PICTURE) { int lr = rowOf(PM_PICTURE, "CARTOON"); if (lr >= 0 && uiScrRowKind(PM_PICTURE, lr, NULL) == UI_ROW_ITEM) { optLinkScr = PM_PICTURE; optLinkRow = lr; } }
+  camLinkRow = camResetRow = -1;
   *sel = optEnter(scr, scr == PM_SOUND);
+  if (pmCamAdj() && pmFlat()) {   // №1151: «Adjust Camera» внизу CAMERA и «Reset to Default» внизу страницы настроек — строки-переходы без значения
+    if (scr == PM_CAMERA) { camLinkRow = rowOf(PM_CAMERA, "ADJUST"); if (camLinkRow >= 0) uiScrEnable(PM_CAMERA, camLinkRow, 1); }
+    if (scr == PM_CAMADJ) { camResetRow = rowOf(PM_CAMADJ, "RESET"); if (camResetRow >= 0) uiScrEnable(PM_CAMADJ, camResetRow, 1); } }
   if (optLinkRow >= 0) { uiScrEnable(PM_PICTURE, optLinkRow, 1);
     if (!PICTURE_CARTOON_FIRST_OLD && optLinkRow < *sel) *sel = optLinkRow; }   // №891: Cartoon — первая строка PICTURE, курсор входит на неё
 }
@@ -578,12 +594,19 @@ static void pauseSubInput(unsigned hit) {   // пауза стоит; △/○ �
   if (r == UI_SCR_BACK) {
     if (pauseSub == PM_OPTIONS) { optLog("pmenu", -1, 0, r); SCR_CLOSE(); pauseSub = -1; return; }
     if (pmValues(pauseSub)) cfgSave();
-    if (pmFlat()) { int was_ = pauseSub; pauseSub = was_ == PM_CARTOON ? PM_PICTURE : PM_OPTIONS;   // №783: CARTOON → PICTURE, прочие → OPTIONS
-      if (pauseSub == PM_PICTURE) { pmEnterPage(PM_PICTURE, &pauseSubSel[PM_PICTURE]); if (optLinkRow >= 0) pauseSubSel[PM_PICTURE] = optLinkRow; } else optLinkScr = optLinkRow = -1; }
+    if (pmFlat()) { int was_ = pauseSub; pauseSub = was_ == PM_CARTOON ? PM_PICTURE : (was_ == PM_CAMADJ && pmCamAdj()) ? PM_CAMERA : PM_OPTIONS;   // №783: CARTOON → PICTURE, прочие → OPTIONS; №1151: настройки камеры → CAMERA
+      if (pauseSub == PM_PICTURE) { pmEnterPage(PM_PICTURE, &pauseSubSel[PM_PICTURE]); if (optLinkRow >= 0) pauseSubSel[PM_PICTURE] = optLinkRow; }
+      else if (pauseSub == PM_CAMERA && was_ == PM_CAMADJ) { pmEnterPage(PM_CAMERA, &pauseSubSel[PM_CAMERA]); if (camLinkRow >= 0) pauseSubSel[PM_CAMERA] = camLinkRow; }   // №1151
+      else optLinkScr = optLinkRow = -1; }
     else pauseSub = pmPages() && pauseSub >= PM_CAMERA ? PM_SETTINGS : PM_OPTIONS;   // №777: с подстраницы — в раздел SETTINGS (курсор на её пункте)
   } else if (pmFlat() && pauseSub == PM_OPTIONS && r >= 0) {   // №783: пункт OPTIONS -> его страница
     static const char *op[4] = {"SOUND", "CAMERA", "GAME", "PICTURE"}; static const int ps[4] = {PM_SOUND, PM_CAMERA, PM_GAME, PM_PICTURE};
     for (int k = 0; k < 4; k++) if (r == rowOf(PM_OPTIONS, op[k])) { pauseSub = ps[k]; pmEnterPage(pauseSub, &pauseSubSel[pauseSub]); break; }
+  } else if (pmFlat() && pmCamAdj() && pauseSub == PM_CAMERA && r >= 0 && r == camLinkRow) {   // №1151: «Adjust Camera» -> страница настроек камеры
+    pauseSub = PM_CAMADJ; pmEnterPage(PM_CAMADJ, &pauseSubSel[PM_CAMADJ]);
+  } else if (pmFlat() && pmCamAdj() && pauseSub == PM_CAMADJ && r >= 0 && r == camResetRow) {   // №1151: «Reset to Default» — шесть настроек камеры на середину, кадр за паузой сразу новый
+    cfg.camHeight = cfg.camDist = cfg.carTilt = cfg.carFov = cfg.footHeight = cfg.footDist = 2; cfgApply(); cfgSave();
+    int keep_ = pauseSubSel[PM_CAMADJ]; pmEnterPage(PM_CAMADJ, &pauseSubSel[PM_CAMADJ]); pauseSubSel[PM_CAMADJ] = keep_;
   } else if (pmFlat() && pauseSub == PM_PICTURE && r >= 0 && r == optLinkRow) {   // №783: «Cartoon» на PICTURE -> страница CARTOON
     pauseSub = PM_CARTOON; pmEnterPage(PM_CARTOON, &pauseSubSel[PM_CARTOON]);
   } else if (pauseSub == PM_OPTIONS && r >= 0) {
@@ -610,7 +633,45 @@ static void pauseSubInput(unsigned hit) {   // пауза стоит; △/○ �
 #define CREDITS_SPEED_OLD 0
 #endif
 #define CREDITS_SPEED ((CREDITS_SPEED_OLD ? 35.f : 20.f) * 272.f / 480.f)
-static float creditsRate(unsigned held) { return CREDITS_SPEED_OLD ? 1.f : (held & PSP_CTRL_DOWN) ? 5.f : (held & PSP_CTRL_UP) ? -5.f : 1.f; }
+// №1104, код Play Credits Dialog / конец игры (против оригинала): в титрах Кэнг и Кодос говорят по 13 диалогам (31 реплика, дорожки KK_<диалог>_<n> в пакете fe_audio.sap, tools/credvo_export.py).
+// Диалог стартует, когда на экран выходит строка титров с его номером. Счёт строк: каждый кадр, если прокрутка − 80 (px Scrooby) ≥ (прошло строк) × шаг строки, счётчик +1 и это
+// номер строки (шаг строки у оригинала — высота шрифта × 1,15, у нас — шаг блоков титров; прокрутка px PSP = px Scrooby × 272/480). Номера строк — оригинала для PAL (+16 после строки 178: лишний блок
+// локализации). Включается кодом Play Credits Dialog или когда пройдена последняя миссия игры (титры после финала — всегда). Пока диалог включён, ↓ (ускорение) не работает. CREDVO_OLD=1 — без диалога
+#ifndef CREDVO_OLD
+#define CREDVO_OLD 0
+#endif
+#include "flowrules.h"   // круг 7: правила потока (титры: ↑/↓, счёт строк), чистый C, тест tests/flow
+static const struct { short line; const char *name; } CRED_VO[] = {{7, "pubcredits"}, {55, "foxcredits"}, {178 + 16, "radproducer"}, {190 + 16, "radlead"}, {204 + 16, "raddesign"},
+  {221 + 16, "radworld"}, {230 + 16, "radmodel"}, {235 + 16, "radfx"}, {242 + 16, "radfmvart"}, {251 + 16, "radfeart"}, {260 + 16, "radprog"}, {279 + 16, "radtest"}, {289 + 16, "radsound"}};
+static struct { int on, last, nq, qi; int q[40]; } credVo;
+static int creditsVoLine(int line, int *tr) {   // дорожки диалога строки line (по порядку) -> tr, сколько; 0 — строки в таблице нет
+  for (unsigned i = 0; i < sizeof CRED_VO / sizeof *CRED_VO; i++) if (CRED_VO[i].line == line) {
+    int n = 0; char nm[40]; for (int k = 1; k < 12; k++) { snprintf(nm, sizeof nm, "KK_%s_%d", CRED_VO[i].name, k); int t = audioExtraTrack(nm); if (t < 0) break; tr[n++] = t; }
+    return n; }
+  return 0;
+}
+static int creditsVoDone7(void) {   // пройдена ли последняя миссия последнего уровня (по последней записи)
+  SaveGame t; memset(&t, 0, sizeof t); uint32_t m = 0;
+  return svmLatest(&t) && svLvGet(&t, 7, &m, NULL) && (m & 0x40u);
+}
+static void creditsVoBegin(int gameEnd) {
+  memset(&credVo, 0, sizeof credVo);
+  if (CREDVO_OLD || CHEATS1104_OLD) return;
+  credVo.on = gameEnd || gameCheatOn(CH_CREDITS) || creditsVoDone7();
+}
+static void creditsVoStop(void) { if (credVo.on) audioStream(AUDIO_ST_DIALOG, -1, 0); credVo.on = 0; }
+static void creditsVoFrame(float scrollPsp, int lhPsp, int *playing) {   // каждый кадр титров; scrollPsp — прокрутка, px PSP; playing: звучит ли реплика
+  if (!credVo.on || lhPsp <= 0) return;
+  int ln_ = flowCreditsLine(scrollPsp, lhPsp, &credVo.last);
+  if (ln_) {
+    int tr[12], n = creditsVoLine(ln_, tr);
+    for (int k = 0; k < n && credVo.nq < 40; k++) credVo.q[credVo.nq++] = tr[k];
+  }
+  int busy = audioStreamTrack(AUDIO_ST_DIALOG) >= 0;
+  if (!busy && credVo.qi < credVo.nq) { audioStreamSet(AUDIO_ST_DIALOG, 1.f, 0.f); audioStream(AUDIO_ST_DIALOG, credVo.q[credVo.qi++], 0.f); busy = 1; }
+  if (playing) *playing = busy;
+}
+static float creditsRate(unsigned held) { return flowCreditsRate((held & PSP_CTRL_UP) != 0, (held & PSP_CTRL_DOWN) != 0 && !credVo.on); }
 enum { OPT_MAIN = 0, OPT_SOUND = 1, OPT_CREDITS = 2, OPT_MOVIES = 3 };
 // M3 Д9 (сверка g10-flow): в списке роликов ВСЕГДА открыты два — intro и ролик новой игры (fmv1a); остальные семь открываются, когда открыт ролик
 // своего уровня. Было: всегда только intro, fmv1a после первого показа. MOVIES_NEWGAME_OLD=1 — как было
@@ -699,6 +760,25 @@ static void scrapRun(int mainSel, void **fbp, const unsigned char *c) {
   scrapLast = L; scrapGen = lvGen;   // P14 Д5: страница, на которой вышли
   gameLevel = keep;
 }
+#include "cheats.h"   // №1104
+// №1104 (коды оригинала): все 7 сюжетных миссий всех 7 уровней пройдены — условие кода Vehicles. В паузе — по игре в памяти, в главном меню — по последней записи
+static int cheatAllStory(int fromPause) {
+  SaveGame t; memset(&t, 0, sizeof t);
+  if (fromPause) saveCapture(&t); else if (!svmLatest(&t)) return 0;
+  for (int L = 1; L <= 7; L++) { uint32_t m = 0; int r = svLvGet(&t, L, &m, NULL); if (r == 0 || (r != 1 && (m & 0x7Fu) != 0x7Fu)) return 0; }
+  return 1;
+}
+// кадр ввода кодов на верхнем экране OPTIONS (главное меню и пауза): L и R зажаты + четыре нажатия ✕ ○ □ △; пока зажаты, меню кнопок не получает. Звук: cheat_success / cheat_fail
+static void cheatMenuFrame(unsigned held, unsigned rawHit, unsigned *hit, int fromPause, int onTop) {
+  if (CHEATS1104_OLD) return;
+  if (!onTop) { gameCheatsFrame(0, 0, 0, NULL); return; }   // ушли с верхнего экрана: набор сброшен
+  int face = (rawHit & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE | PSP_CTRL_SQUARE | PSP_CTRL_TRIANGLE)) != 0;
+  int all = (face && gameCheatsPending()) ? cheatAllStory(fromPause) : 0, id = -1;
+  int ev = gameCheatsFrame(held, rawHit, all, &id);
+  if (ev) uiSfxPlayNamed(ev == CHEV_OK ? "cheat_success" : "cheat_fail");
+  if (ev && smkOn) { char s_[96]; snprintf(s_, sizeof s_, "CHEAT %s id=%d on=%d t=%.1f\n", ev == CHEV_OK ? "ok" : "fail", id, id >= 0 ? gameCheatOn(id) : 0, smkT); smkWrite(s_); }
+  if (gameCheatsActive()) *hit = 0;
+}
 static void optionsRun(int mainSel, void **fbp) {
   char fn[256]; sibling(fn, "menu.shr");
   if (uiScrOpen(fn)) return;
@@ -716,13 +796,16 @@ static void optionsRun(int mainSel, void **fbp) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
     unsigned hit = pad.Buttons & ~prev; prev = pad.Buttons;
+    unsigned rawHit_ = hit;
     hit = uiPadRepeat(pad.Buttons, hit);   // правка 202: автоповтор ↑/↓ в OPTIONS
+    cheatMenuFrame(pad.Buttons, rawHit_, &hit, 0, scr == OPT_MAIN);   // №1104: коды оригинала (верхний экран OPTIONS)
     SmokeCmd sc; while (smokeNext(dt, &sc)) if (sc.op == 2 && !strcmp(sc.name, "moviesseen")) cfg.movies = (unsigned)sc.a | 1u;   // служебно (гейт)
     if (scr == OPT_CREDITS) {
       int done = !credShot && ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
       if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }   // снимок окна: титры стоят, пока ppsspp_run.sh не снимет
+      creditsVoFrame(credT * CREDITS_SPEED, ci.lh, NULL);   // №1104: реплики Кэнга и Кодос по строкам титров
       if (uiScrBackInput(hit) || done) {
-        creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci);
+        creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); creditsVoStop();
         sndMode(prevMode); sndMusic(SND_MUS_FRONTEND); scr = OPT_MAIN; hit = 0;
       }
     } else {
@@ -731,7 +814,7 @@ static void optionsRun(int mainSel, void **fbp) {
       if (r == UI_SCR_BACK) { if (scr == OPT_MAIN) { optLog("menu", -1, 0, r); break; } if (scr == OPT_SOUND) cfgSave(); scr = OPT_MAIN; }
       else if (scr == OPT_MAIN && r >= 0 && r == rSound) { scr = OPT_SOUND; sel[1] = optEnter(1, 1); }
       else if (scr == OPT_MAIN && r >= 0 && r == rCredits) {   // титры: музыка «Credits», тюнер Credits (global.spt: только музыка и голос)
-        scr = OPT_CREDITS; credT = 0.f; memset(&ci, 0, sizeof ci); prevMode = sndModeCur(); sndMode(SND_MODE_CREDITS);
+        scr = OPT_CREDITS; credT = 0.f; memset(&ci, 0, sizeof ci); prevMode = sndModeCur(); sndMode(SND_MODE_CREDITS); creditsVoBegin(0);
         int id = audioTrack("credits"); if (id >= 0) audioMusic(id, .5f);
         if (smkOn) { char s[96]; snprintf(s, sizeof s, "CREDITS on music=%s t=%.1f\n", id >= 0 ? "credits" : "-", smkT); smkWrite(s); }
       }
@@ -777,7 +860,7 @@ static void creditsRun(void **fbp) {
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "CREDITS on music=%s src=gameend t=%.1f\n", id >= 0 ? "credits" : "-", smkT); smkWrite(s); }
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow();
-  float credT = 0.f; UiCredits ci; memset(&ci, 0, sizeof ci);
+  float credT = 0.f; UiCredits ci; memset(&ci, 0, sizeof ci); creditsVoBegin(1);   // титры после финала игры — реплики всегда (№1104)
   for (;;) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
@@ -785,7 +868,8 @@ static void creditsRun(void **fbp) {
     SmokeCmd sc; while (smokeNext(dt, &sc)) {}
     int done = ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
     if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }
-    if (uiScrBackInput(hit) || done) { creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); break; }
+    creditsVoFrame(credT * CREDITS_SPEED, ci.lh, NULL);   // №1104
+    if (uiScrBackInput(hit) || done) { creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); creditsVoStop(); break; }
     sceGuStart(GU_DIRECT, list); resetState();
     sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
     { int was = ci.blocks; uiScrDrawCredits(OPT_CREDITS, credT * CREDITS_SPEED, &ci); if (!was) creditsLog("start", 0.f, &ci); }
@@ -795,3 +879,5 @@ static void creditsRun(void **fbp) {
   }
   sndMode(prevMode); SCR_CLOSE();
 }
+
+static void svRecordHook1114(int level, int slot, int kind, int sec) { if (kind) svBestNote(level, slot, sec); else svAttemptNote(level, slot); }   // №1114 (game_msn.h gameMsnRecordHook)

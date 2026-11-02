@@ -19,7 +19,23 @@ No game files are included, and none will be.
 - [Tests](tests/README.md): how every fix is checked
 - [All documents](docs/index.md)
 
-## What's new in build 83
+## What's new in build 85
+
+November 3, 2026. Since build 83 (November 2):
+
+- Four languages: English, French, German and Spanish, text and voices
+- Saves keep best times and attempts for every mission, like the original. Saves from earlier builds are read and converted on load, progress included
+- Mini Game: the full set of bonus cars, rivals drive the track roads and bump into each other instead of passing through, the countdown is the same as in street races, the HUD and the pause menu use the main game's fonts, the pause stops the music, and Select cycles the race views plus the top view
+- Pause menu: a new CAMERA section with six camera settings; the backdrop and frames no longer blink between OPTIONS sections
+- Scrapbook: every page, with its transitions; small captions in the Bart font, Accept and Back on every page
+- The original cheat codes, including the four extra cameras
+- Cars: physics in even sub-steps, with corner grip checked against PS2 recordings, so cars stay on their wheels at speed
+- Collectibles: from the car, cards and gags are picked up with the original reach; the wasp's shot now pushes props, knocks down pedestrians and dents traffic
+- Level 7: solid bushes, no invisible fences or poles after a booth is knocked down, windows drawn as plain textures without blinking
+- Ink outlines only on characters and cars
+- Look-back in the car is gone; the radar is back to its earlier look, with the blinking dot kept inside its edge
+
+### Build 83
 
 November 2, 2026. Since build 81 (October 31):
 
@@ -31,17 +47,6 @@ November 2, 2026. Since build 81 (October 31):
 - The level 7 camera tilt stays outside, it no longer leans the room and talk cameras
 - Any car can push and break street props, traffic and mission cars included, and it costs almost nothing: only moving cars and props nearby are checked
 - Level loading is faster again: the baked traffic data is rebuilt with every data set, so the PSP no longer recomputes it at each load
-- In the car, look back with D-pad down
-
-### Build 81
-
-October 31, 2026. Since build 78 (October 28):
-
-- Mission Select inside the same level now works like a real mission change: the music restarts with the level intro, and the loading screen shows every time and stays up until the move is done, even when you switch fast
-- The mission car waits at its own spot (usually by the phone booth). It is moved next to you only when you stand close on the same ground or are far away, so it no longer lands on a ledge it cannot drive off (level 6, mission 4 by the observatory)
-- The loading screen stays up until the characters of the mission, the bonus characters nearby and the mission cars are loaded. Nothing pops in after the picture opens (Grandpa in the Simpsons' house); the dark screen at a house door waits the same way
-- The level sound bank has one fixed place in memory for the whole game, sized for the largest bank, so a level never loses its sound after many level changes (level 5 used to go silent)
-- The visibility table of levels 1 and 4 loads in small pieces when memory is tight, so the level always gets it
 
 ## Build
 
@@ -84,7 +89,7 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About five weeks, 83 test builds and 40 full tours on a real PSP. 1,086 playtest notes, logged and worked through one by one.
+About five weeks, 85 test builds and 42 full tours on a real PSP. 1,157 playtest notes, logged and worked through one by one.
 Over 3,300 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 

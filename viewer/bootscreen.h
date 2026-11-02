@@ -255,6 +255,49 @@ static void bootMarksLoad(const char *name) {
   bmkFlow = 0;   // правка 257: раскладка потока считается заново для этого набора
   if (bootMarkN > 0) bootSeqMarks = &bootMarkSet; else { free(bootMarkData); bootMarkData = 0; }
 }
+static int bootVoBytes = -1;   // размер bootvo.bin (-1 — не искали, 0 — нет файла, иначе байт)
+static void bootVoOpen(void) {   // №1094: файл рядом с EBOOT -> bootVoPcm; BOOTVO1094_OLD=1 / файл bootvo1094old — писк
+  bootVoBytes = 0; if (bootHas("bootvo1094old")) bootVo1094Old = 1;
+  if (bootVo1094Old) return;
+  char fn[256]; bootSib(fn, "bootvo.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;
+  int len = (int)sceIoLseek(f, 0, PSP_SEEK_END); sceIoLseek(f, 0, PSP_SEEK_SET);
+  if (len > 12 && len <= 131072) { unsigned char *d = (unsigned char *)malloc(len);
+    if (d && sceIoRead(f, d, len) == len) { bootVoBytes = len; if (bootVoLoad(d, len) != 0) bootVoBytes = -2; }
+    free(d); }
+  sceIoClose(f);
+}
+// №1111: язык. Из системы PSP, если он английский, французский, немецкий или испанский (как у оригинала PAL: язык железа); иначе экран «Select Language» со списком English / Français / Deutsch / Español,
+// стрелки и ✕ / START. Языка нет среди файлов (lang/<буква>/ui.shr) — его нет и в списке. Служебные файлы рядом с EBOOT: lang_e, lang_f, lang_g, lang_s — язык без вопросов (смоук, снимки).
+// LANG1111_OLD=1 — только английский
+static int bootLangAvail(int id) { static const char *const f[LANG_N] = {"", "lang/F/ui.shr", "lang/G/ui.shr", "lang/S/ui.shr"}; return id == 0 || bootHas(f[id]); }
+static void bootLangDraw(BuiPut put, void *u, int sel) {
+  for (int y = 0; y < BUI_H; y++) for (int x = 0; x < BUI_W; x++) put(u, x, y, BUI_BG);
+  int rows = (BUI_H - 2 * BUI_Y0) / BUI_CH, r0 = (rows - 6) / 2; char b[40];
+  buiTextX(put, u, (BUI_W - buiTextW("SELECT LANGUAGE")) / 2, BUI_Y0 + r0 * BUI_CH, BUI_HI, "SELECT LANGUAGE");
+  for (int i = 0, r = 0; i < LANG_N; i++) { if (!bootLangAvail(i)) continue; r++;
+    snprintf(b, sizeof b, "%s%s", i == sel ? "> " : "  ", langName(i));
+    buiTextX(put, u, (BUI_W - buiTextW("> Deutsch")) / 2, BUI_Y0 + (r0 + 1 + r) * BUI_CH, i == sel ? BUI_HI : BUI_VAL, b); }
+}
+static void bootLangPick(void) {
+  langSetDir(bootDir);   // №1111: подписи строк меню на языке (rowkeys.txt)
+  if (LANG1111_OLD) { langSet(0); return; }
+  static const char *const forced[LANG_N] = {"lang_e", "lang_f", "lang_g", "lang_s"};
+  for (int i = 0; i < LANG_N; i++) if (bootHas(forced[i])) { langSet(bootLangAvail(i) ? i : 0); return; }
+  int sys = langFromSystem();
+  if (sys >= 0) { langSet(bootLangAvail(sys) ? sys : 0); return; }
+  int n = 0; for (int i = 0; i < LANG_N; i++) n += bootLangAvail(i);
+  if (n < 2) { langSet(0); return; }   // выбирать не из чего
+  int sel = 0; unsigned prev = 0xffffffffu; SceCtrlData p;
+  bootLangDraw(BP, sel); if (bootShotsOn) bootShot("boot_lang");
+  for (;;) {
+    sceCtrlPeekBufferPositive(&p, 1); unsigned hit = p.Buttons & ~prev; prev = p.Buttons;
+    int d = (hit & PSP_CTRL_DOWN) ? 1 : (hit & PSP_CTRL_UP) ? -1 : 0;
+    if (d) { do sel = mrLangMove(sel, d); while (!bootLangAvail(sel)); bootLangDraw(BP, sel); }
+    if (hit & (PSP_CTRL_CROSS | PSP_CTRL_START)) break;
+    sceKernelDelayThread(8000);
+  }
+  langSet(sel);
+}
 static void bootBegin(const char *argv0, const char *marksFile) {
   if (!bootFirstDone) bootFirst(argv0);
   if (bootHas("elbarto1010old")) bootElbarto1010Old = 1;   // №1010: прежний тег El Barto (файл Роба), прежним цветом
@@ -268,6 +311,7 @@ static void bootBegin(const char *argv0, const char *marksFile) {
   bootDataScan(&s, bootRd, bootDirCount, 0);   // правка 203: настоящие числа данных игры — до первой строки проверок
   s.memK = (int)((bootHeapFree() + sceKernelTotalFreeMemSize()) / 1024); s.beepHz = BOOT_BEEP_HZ;
   if (bootHas("bootsnd1011old")) bootSnd1011Old = 1;   // №1011: прежняя партитура (щелчок, кулер, бип POST)
+  bootVoOpen();   // №1094: реплика продавца комиксов вместо нот (нет файла — ноты №1011)
   if (bootHas("nobeep")) { bootBeepCh = -1; bootSndDone = 1; } else bootBeep();
   s.batt = scePowerIsBatteryExist() ? scePowerGetBatteryLifePercent() : -1; if (s.batt > 100) s.batt = 100;
   { int i = 0; for (; argv0 && argv0[i] && argv0[i] != ':' && i < 6; i++) s.media[i] = (char)toupper((unsigned char)argv0[i]);
@@ -293,6 +337,7 @@ static void bootBegin(const char *argv0, const char *marksFile) {
       bootNoticeWait(BOOT_FONTCREDIT_MS, held);
     }
   }
+  bootLangPick();   // №1111: язык игры — до первой загрузки любого пакета с текстами
   bootSeqMarks = 0; free(bootMarkData); bootMarkData = 0;   // знаки больше не нужны: куча свободна до игры
 }
 // строки для smoke.txt (main.c после smokeInit): звук сыгран? ch — канал, out — сэмплов партитуры отдано в звук (полная
@@ -303,5 +348,8 @@ static void bootReport(char *s, int n) {
            bootSnd1011Old ? BOOT_BEEP_HZ : (int)(BOOT_TUNE_HZ + .5f), bootSndName[BOOT_SND_VARIANT], !bootSnd1011Old, BOOT_SND_MS, BOOT_SND_N, bootSndBeepMs(BOOT_SND_VARIANT), bootBeepCh, bootBeepOut, bootBeepRc,
            bootSndStopped, bootSndDone, bootSndUs, bootFrames, bootSeqLen(), bootSkip,
            (int)((bootTFirst - bootTMain) / 1000), (int)((bootTEnd - bootTMain) / 1000));
+  k = (int)strlen(s); if (k > 0 && k < n)   // №1094: реплика вместо нот — файл, размер, длительность, момент старта (кадр заставки 64 -> BOOT_TUNE_AT_MS)
+    snprintf(s + k, n - k, "BOOTVO file_bytes=%d play=%d old=%d rate=%d samples=%d dur_ms=%d at_ms=%d\n", bootVoBytes, bootVoPcm && !bootVo1094Old && !bootSnd1011Old, bootVo1094Old,
+             bootVoRate, bootVoN, bootVoRate ? (int)((long long)bootVoN * 1000 / bootVoRate) : 0, BOOT_TUNE_AT_MS);
 }
 #endif

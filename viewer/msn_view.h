@@ -89,6 +89,9 @@ float mvHnrDecay(void);
 int mvIsPolice(const char *name);
 void mvPoliceAdd(void);                       // сверка g09b-menu круг 5 (P03-08): одна машина погони
 int  mvPoliceLimit(void);                     // сколько положено уровню
+int mvPoliceSuspend(void);   // круг 7: машины погони уходят в запас (поза и урон), -> сколько
+void mvPoliceResume(void);   // и возвращаются на те же места
+void mvPoliceDrop(int i);   // круг 7: снять одну машину погони по номеру в списке машин миссии
 void mvPoliceFar(float px, float pz, float R);   // снять по одной машины погони дальше R м
 void mvPoliceHold(void);                      // №627: полиция после ареста стоит на месте (исчезает через mvPolice(0) по концу таймера)
 void mvPolice(int on);                        // правка 64: погоня Hit & Run — полицейская машина уровня едет за игроком / уходит
@@ -97,7 +100,9 @@ int  mvWorldCarNear(float x, float z, float r, float out[4]);    // -> номе�
 int  mvTakeWorldCar(int i);                                       // 1 — игрок пересел в неё
 int  mvHnrOff(void);                         // перепроверка 96: миссия выключила Hit & Run (DisableHitAndRun)
 int mvPhoneCar(const char *car);             // правка 94: машина из галереи будки (1 — сменилась, 0 — машина уровня / нет модели)
+int mvHudHidden(void);   // сверка g07 круг 6 (P06-21): ShowHUD("false") (L7 m8) — HUD игры не рисовать; раньше флаг ставился, а читал его никто
 int mvBoothBlocked(void);   // сверка g07 круг 5 (P05-25): будка закрыта — миссия провалена или арест
+int mvBoothsOff(void);   // ps2-twin P05:25: будки выключены — миссия с принудительной машиной в ходе (PHONEBUSY_OLD=1 — никогда)
 void mvWorldCarsStep(float px, float pz);   // сверка g10b-loop круг 5 (P03-20)
 void mvSetState(int transition, int arrested, const char *entering);   // сверка g10b-loop круг 2 (g07 P06-11, P07:32): main сообщает миссии переход в помещение, арест, имя интерьера
 int mvShopAllowed(void);                    // сверка g10b-loop круг 2 (P05:11): 1 — лавка и гардероб разрешены (вступление миссии и вне миссий)

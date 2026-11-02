@@ -1,0 +1,31 @@
+# №1146 / №1150: бонус-игра, Select ×4 — все виды основной игры по кругу (сверху → дальний → бампер → ближний → сверху), снимок каждого вида; надписи «SELECT: …» нет.
+# Прогон: tools/smoke.sh (или tests/bonus/emu.sh со своим сценарием). Красный контроль: EBOOT с -DBONUSCAM1146_OLD=1 -DBONUSSELLABEL1150_OLD=1 (надпись и ближняя 1,5 м у бампера).
+flag menu
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+wait 2
+press left
+wait 0.6
+press cross
+wait 1.5
+flag bonusgo
+wait 9
+shot bonus_view0_top
+press select 0.2
+wait 1.5
+shot bonus_view1_far
+press select 0.2
+wait 1.5
+shot bonus_view2_bumper
+press select 0.2
+wait 1.5
+shot bonus_view3_near
+press select 0.2
+wait 1.5
+shot bonus_view4_top_again
+press select 0.2
+wait 1.5
+shot bonus_view5_far_again
+wait 3
+end

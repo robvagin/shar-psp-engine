@@ -73,6 +73,23 @@
 #endif
 #define HOMER_SLOPE_NY 0.866f
 #define HOMER_SLOPE_RISE 0.5f   // порт: бордюры и ступени с крутой гранью (до 0,5 м) берутся, сопка круче 30° — нет
+#ifndef HOMER_MOUTHNAME_OLD
+#define HOMER_MOUTHNAME_OLD 0    // круг 6, герой уровня (L2 Барт, L3 Лиза, L4 Мардж, L5 Апу): рот говорящего игрока берёт строку таблицы своего героя (homerCharName), а не всегда Гомера; 1 — всегда "homer" как в TEST83
+#endif
+#ifndef HOMER_ROCKOUT_OLD
+#define HOMER_ROCKOUT_OLD 0      // круг 7+, P06:Д5 (сверено с оригиналом): команда миссии AllowRockOut действует ЗА РУЛЁМ, не пешком: если команда у текущего этапа, то через 3 с после посадки (один раз, считая с начала пребывания в машине) покой водителя меняется на кайф ndr_in_car_victory_small по кругу; жесты поверх него, потом снова он. Темп под бит музыки в порту не делается (бита нет): скорость 1. 1 — покой остаётся
+#endif
+#ifndef HOMER_HITCULL_OLD
+#define HOMER_HITCULL_OLD 0      // круг 6, цена на PSP (урок №1086): сбивание машинами миссий проверяется только у машин рядом и быстрее 1 м/с (до: все до 6 машин миссии каждый кадр, с пересчётом матриц кузова); 1 — как в TEST83
+#endif
+#ifndef HOMER_AIR_TICK_HZ
+// круг 7, сверено с оригиналом: прибавка воздуха 0,078 × желаемая скорость и доля поворота лица (темп × dt) считаются КАЖДЫЙ КАДР игры (шаг героя вызывается раз за кадр, на dt прибавка не умножается).
+// Расчётный кадр оригинала 33,3 мс (порог размытия при просадке кадра), на PAL с вертикальной синхронизацией реальный кадр кратен 20 мс. 30 Гц — РАСЧЁТНОЕ число; реальная частота PS2 по записи не подтверждена
+#define HOMER_AIR_TICK_HZ 30.f
+#endif
+#ifndef HOMER_TURNTICK_OLD
+#define HOMER_TURNTICK_OLD 0     // круг 7, ГОМЕР 1.2/2.4/P02-4: доля поворота лица за кадр = темп × dt (линейно, как в оригинале), пересчитана на тик HOMER_AIR_TICK_HZ: эффективный темп ходьбы 12,2/с вместо 10; 1 — экспонента с темпом 10
+#endif
 #ifndef HOMER_CARHIT_ALL_OLD
 #define HOMER_CARHIT_ALL_OLD 0   // ГОМЕР 5.7: на ногах сбивают только машины ИИ миссий (HomerCar.hostile), порог 1 м/с; 1 — любая быстрее 3 м/с
 #endif
@@ -83,7 +100,7 @@
 #define HOMER_STEPFX_OLD 0       // P02-Д2: событие STEP на каждое касание ноги при желаемой скорости > 1 м/с (r = желаемая скорость); 1 — только бег
 #endif
 #ifndef HOMER_STEPSND_OLD
-#define HOMER_STEPSND_OLD 1      // P02-34: звук шага на каждое касание ноги (sndFootstep), набор по svSurfaceAt (бетон/металл/дерево; в помещении бетон); 1 — без звука шагов
+#define HOMER_STEPSND_OLD 0      // круг 6: было 1 — в TEST83 шаги Гомера были БЕЗ ЗВУКА совсем (main_state.h звук не играет, sndStepFoot никто не зовёт); теперь звук шагов играет отсюда один раз на касание ноги. P02-34: звук шага на каждое касание ноги (sndFootstep), набор по svSurfaceAt (бетон/металл/дерево; в помещении бетон); 1 — без звука шагов
 #endif
 #ifndef HOMER_IDLE_PS2_OLD
 #define HOMER_IDLE_PS2_OLD 0     // P02-36, ГОМЕР 1.9: ожидание — 10–20 с случайно, клипы 5/10, 3/10, 2/10, подряд один и тот же не берётся; 1 — 8 с и по очереди
@@ -421,13 +438,14 @@ typedef struct {
   float stepPh; int indoor;    // шаги: фаза; признак интерьера (homerIndoor)
   float airCap; int airRun, dashHeld;   // круг 3: потолок горизонтальной скорости в полёте и бег на отрыве (запоминаются при отрыве)
   int cDodge, cDrvBack, cCarVic[2]; float gRevT;   // круг 5: клипы уворота, взгляда назад, радости за рулём (малый, большой); время после реверса
-  int rockOut;                 // круг 2: этап с AllowRockOut
+  float inCarT; int rockOn;    // круг 7+: время в машине с посадки, с; кайф включён (3 с с флагом rockOut)
+  int rockOut;                 // круг 2: этап с AllowRockOut. Круг 7+: ставит game_msn.c по команде этапа; кайф — за рулём, клип ndr_in_car_victory_small (см. HOMER_ROCKOUT_OLD)
   float celT; int celKind;     // праздничный клип: 0 нет, 1 малый (стик прерывает), 2 большой (не прерывает)
   int celClip;                 // клип праздника, который играет
   int cSurf[3], surfSt;        // сёрфинг на крыше едущей машины: surf_in / surf_cycle / surf_out; 0 нет, 1 вход, 2 цикл, 3 выход
   int onCar, carPrevOk; float carPrevX, carPrevZ, carPrevAng, carPrevRoof;   // стоит на крыше машины и её прошлое положение (едет вместе с ней)
-  float waitCar, doorT, doorBudget; int doorHold;   // посадка: ожидание остановки машины, время подхода к двери и его бюджет, дверь остаётся открытой при выходе
-  int gKind; float gHold, drvPrevSpd;               // жест водителя: 1 руль, 2 газ, 3 тормоз; кадр держания, с; прошлая скорость машины
+  float doorT, doorBudget; int doorHold;   // посадка: время подхода к двери и его бюджет, дверь остаётся открытой при выходе (круг 6: поле ожидания остановки машины waitCar убрано — ожидания нет, посадка идёт сразу ирисом)
+  int gKind; float drvPrevSpd;                      // жест водителя: 1 руль, 2 газ, 3 тормоз; прошлая скорость машины (круг 6: неиспользуемое gHold убрано)
   float bobOff, bobPrevY, bobPrevVy; int bobInit;   // качание фигуры водителя
 } Homer;
 
@@ -435,6 +453,8 @@ typedef struct {
 int homerInit(Homer *H, const SkinModel *m);
 // правка 352: префикс клипов последней homerInit (hom_ / brt_ / lsa_ / mrg_ / apu_ — игрок уровня, пакет l<N>/player.shr)
 const char *homerClipPrefix(void);
+// круг 6: имя героя игрока по префиксу клипов (hom_ homer, brt_ bart, lsa_ lisa, mrg_ marge, apu_ apu) — для таблицы рта; HOMER_MOUTHNAME_OLD=1 — всегда "homer"
+const char *homerCharName(void);
 // поставить на землю под (x, y + 2, z) с курсом h, пешком
 void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h);
 // шаг кадра. car — машина игрока (NULL — нет): посадка/выход/в машине и толкание кузовом
@@ -451,6 +471,8 @@ void homerHurt(Homer *H, float fromX, float fromZ, float power);
 void homerStun(Homer *H, float sec);
 // сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (c->hostile = 1) наехала на пешего — сбить (падает и встаёт); 1 — сбит. Зовёт traffic.c / car.c, передано g02-traffic / g03-aicars
 int homerKnockedByCar(Homer *H, const HomerCar *c);
+// круг 6 (цена на PSP): стоит ли вообще строить HomerCar для этой машины и звать homerKnockedByCar — рядом (кузов + 1 м) и быстрее 1 м/с по модулю. HOMER_HITCULL_OLD=1 — всегда 1
+int homerCarWorth(const Homer *H, const Car *c);
 // круг 2, P05:3: Гомер нажимает выключатель (клип hom_hit_switch, стоя). yaw — курс лицом по локатору (NAN — не поворачивать). 1 — клип запущен
 int homerPressButton(Homer *H, float yaw);
 // круг 2, P06:Д5: AllowRockOut — пока этап идёт, в покое играет рок-стойка (клипа в homer.shr нет: флаг хранится, играет, когда клип выгрузят)

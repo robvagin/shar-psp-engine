@@ -1,0 +1,44 @@
+# №1118: блик и оттенок на зеркалах Moe's (L2) и комнаты Барта (L7), по два положения камеры в каждой. Сценарий для tools/smoke.sh (эмулятор, не запускала).
+# Ожидание: отражённого прохода нет (в журнале нет ROOMMIRROR), на панели зеркала холодный оттенок и мягкий блик; во втором положении блик на другом месте стекла
+# (камера смещена вдоль панели): Moes_a / Moes_b и Bart_a / Bart_b — блик в разных местах панели. Положения взяты из сценариев tests/rooms (камеры комнат срабатывают по месту Гомера).
+scene start
+wait 3
+scene L2_load
+flag golevel 2
+wait 20
+scene Moes_door
+foot -169.90 -24.55 -1.5708 7.53
+wait 1.5
+press up 0.3
+press circle 0.3
+wait 1
+press triangle
+wait 2
+scene Moes_a
+foot 45.750 195.911 0.0000 -19.50
+wait 1.5
+shot Moes_a
+scene Moes_b
+foot 45.750 204.500 0.0000 -19.50
+wait 1.5
+shot Moes_b
+scene L7_load
+flag golevel 7
+wait 20
+scene BartRoom_door
+foot 224.69 204.46 3.1416 7.00
+wait 1.5
+press up 0.3
+press circle 0.3
+wait 1
+press triangle
+wait 2
+scene Bart_a
+foot 500.281 449.766 0 -19.50
+wait 1.5
+shot Bart_a
+scene Bart_b
+foot 498.653 452.422 0 -19.50
+wait 1.5
+shot Bart_b
+end

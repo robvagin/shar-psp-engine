@@ -21,7 +21,7 @@ void feAudioStop(void){
 }
 void feAudioFree(void){feAudioStop();loaded=0;}
 int feAudioLoad(const char *path){
- feAudioFree();int n=audioExtraStreams(path);if(n!=12){status=-1;return -1;}
+ feAudioFree();int n=audioExtraStreams(path);if(n<12){status=-1;return -1;}   /* №1104: после 12 реплик меню в пакете могут идти реплики титров (KK_*) */
  for(int i=0;i<12;i++){ids[i]=audioExtraTrack(names[i]);if(ids[i]<0){status=-1;return -1;}}
  loaded=1;return n;
 }

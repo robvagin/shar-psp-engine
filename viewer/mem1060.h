@@ -158,7 +158,7 @@ static int boothRebuild1060(const char *sd, void **fbp) {
   else if (!fe) mem1060BarTo(fbp, 300, 8);
   levelUnload();
   if (!mem1060Fe) { if (!gz) { mem1060BarTo(fbp, 400, 4); gz = mem1060NewsIn(fbp); }
-    if (gz) { ldBase = LOAD_RES_SHARE; sndMaster(1.f); feStinger("newspaper_spin"); } else { sndMaster(1.f); mem1060TransLog("rebuild-nonews", 1); } }
+    if (gz) { ldBase = LOAD_RES_SHARE; sndMaster(1.f); feStinger(sndLevelChangeStinger()); } else   /* №1128 */ { sndMaster(1.f); mem1060TransLog("rebuild-nonews", 1); } }
   else {
     if (!fe) { mem1060BarTo(fbp, 400, 4); fe = mem1060FeIn(fbp); }
     if (fe) { ldScr1060 = UI_LOAD_FE; ldBase = LOAD_RES_SHARE; loadBegin(fbp); sndMaster(1.f); mem1060TransLog("rebuild-fe", 1); }   // экран загрузки уровня на время пересборки — LoadingFE, ход чтения — loadPump

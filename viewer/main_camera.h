@@ -1,5 +1,7 @@
 #include "sverka_shared.h"   // сверка g06: svBoom (событие взрыва машины, окно g01) — тряска камеры
 #include "camroll.h"   // №1084: закон крена камеры пешком
+#include "camuser.h"   // №1151: настройки камеры игрока (меню CAMERA в паузе)
+#include "camlaw.h"    // круг 6: законы камеры (чистые функции, tests/camera)
 // ---- камера за машиной, как в оригинале: FollowCameraData (чанк 0x3000100) машины уровня (CarParams camElev/camMag из
 // CAR1 v2; famil_v: rotation 180° (сзади), elevation 1.23 рад от вертикали, magnitude 7.2 м — 6.8 м позади, 2.4 м над целью;
 // у всех семи машин игрока угол 1.2–1.23, дистанция 6.25–7.2 м; цель (0, 0.5, 3) данных не берём — правило порта CAM_TGT_H/LOOK_H).
@@ -29,7 +31,7 @@ static int camStatAlwaysOld = CAM_STAT_ALWAYS_OLD, camStatOn;   // гейт test
 typedef struct { int init; float ex, ez, ey, evx, evz, evy, vyLP, yaw, yawV, pull, lx, ly, lz, lvx, lvy, lvz, ay, lift, liftV, wallD, rise, tilt, bumpLift; int hits;
   int svInit; float fD, fDv, fE, fEv, fLk[3], fLkV[3], roll, stabT, bodyUpY;   // фильтры дальности, угла и взгляда (g06-camera:6,7,30–32); крен; сколько стоит устойчиво
   int fz; float fzE[3], fzL[3], preE[3], preL[3], bkE[3], bkEv[3], bkL[3], bkLv[3];   // замирание в полёте (g06-camera:3,42): смещения от опоры; плавный возврат
-  int rev; float revV[3], revE[3], revL[3]; } ChaseCam;   // камера заднего хода (g06-camera:4,13)
+  int rev; float revV[3], revE[3], revL[3], revD, revOy; } ChaseCam;   // камера заднего хода (g06-camera:4,13)
 static ChaseCam chase;
 static void cdStep(float *e, float *ev, float w, float dt) {   // критическое затухание, точное решение за dt
   float x = *e, v = *ev, k = expf(-w * dt), c = v + w * x;
@@ -69,6 +71,21 @@ static void svStep(float *e, float *ev, float w, float z, float dt) {
 #endif
 #ifndef CAM_OCCL_SV_OLD
 #define CAM_OCCL_SV_OLD 0    // 1 — при загораживании без подъёма на 6 м над машиной
+#endif
+#ifndef CAM_REVERSE2_SV_OLD
+#define CAM_REVERSE2_SV_OLD 0 // круг 6 (СВЕРКА_КАМЕРА 1.11, P08:10): 1 — задний ход как в круге 1 (3D-дистанция, бросок вбок на полдистанции, вход и в воздухе)
+#endif
+#ifndef CAMCARS1127_OLD
+#define CAMCARS1127_OLD 0   // №1127 (TEST84: камера резко «огибает» проезжающие машины): 1 — как в TEST84 (движущиеся чужие машины тянут глаз к опоре, режут срезом на идеальное место и двигают глаз по правилу ближней плоскости)
+#endif
+#ifndef CAM_OCCLCUT_SV_OLD
+#define CAM_OCCLCUT_SV_OLD 0  // круг 6 (СВЕРКА_КАМЕРА 1.15): 1 — при закрытой линии камера только подтягивается вдоль луча, без среза на идеальное место за машиной
+#endif
+#ifndef CAM_SHAKEPH_SV_OLD
+#define CAM_SHAKEPH_SV_OLD 0  // круг 6 (СВЕРКА_КАМЕРА 1.17): 1 — фаза тряски с нуля (sin(58,9·t)), а не 0,87 + шаг
+#endif
+#ifndef CAM_BUMPFWD_SV_OLD
+#define CAM_BUMPFWD_SV_OLD 0  // круг 6 (СВЕРКА_КАМЕРА 1.20): 1 — глаз бампера на носу кузова минус 1,0 м, а не на передней оси минус 1,0 м
 #endif
 #ifndef CAM_LOOKUP_SV_OLD
 #define CAM_LOOKUP_SV_OLD 0  // 1 — взгляд вверх не действует
@@ -155,13 +172,17 @@ static float rayCarFrac(const float a[3], const float b[3], const Car *k) {
 static float camCarsFrac(const float a[3], const float b[3]) {
   if (camCarsOld) return 1.f;
   float f = 1.f, mx = (a[0] + b[0]) * .5f, mz = (a[2] + b[2]) * .5f, R = hypotf(b[0] - a[0], b[2] - a[2]) * .5f + 8.f;
+// №1127: движущаяся чужая машина (трафик, машины миссий) не тянет глаз к опоре: в оригинале линия «машина → камера» проверяется по статике мира, а сфера камеры отталкивается от машины
+  // с запаздыванием 0,2 за кадр; ближняя плоскость её по-прежнему видит (csNearFree, own = 3). Стоящие и своя машина — как были. CAMCARS1127_OLD=1 — как в TEST84
+#define CAMCAR_MV(K) do { const Car *km_ = (K); float v_[3]; carAnchorVelocity(km_, v_); if (CAMCARS1127_OLD || !camCarMoving(v_[0], v_[2])) CAMCAR(km_); } while (0)
 #define CAMCAR(K) do { const Car *k_ = (K); if (hypotf(k_->x - mx, k_->z - mz) < R) { float g_ = rayCarFrac(a, b, k_); if (g_ < f) { f = g_; CarBox cb_; carBox(k_, &cb_); homerCamCarTop = cb_.y + cb_.hi; } } } while (0)   // №982: верх задержавшего кузова — камере у машины над крышей
   if (haveTraffic) {
-    for (int i = 0; i < traffic.maxCars; i++) if (traffic.car[i].mode != TRM_OFF) CAMCAR(&traffic.car[i].car);
-    for (int i = 0; i < traffic.npark; i++) if (!traffic.park[i].gone) CAMCAR(&traffic.park[i].car);
+    for (int i = 0; i < traffic.maxCars; i++) if (traffic.car[i].mode != TRM_OFF) CAMCAR_MV(&traffic.car[i].car);
+    for (int i = 0; i < traffic.npark; i++) if (!traffic.park[i].gone) CAMCAR_MV(&traffic.park[i].car);
   }
-  { const MsnCars *m = mvCars(); if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on) CAMCAR(&m->c[i].car); }
+  { const MsnCars *m = mvCars(); if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on) CAMCAR_MV(&m->c[i].car); }
   if (onFoot() && haveCol) { CAMCAR(&car); if (oldCarOn) CAMCAR(&oldCar); }
+#undef CAMCAR_MV
 #undef CAMCAR
   return f;
 }
@@ -286,12 +307,17 @@ static void camSubReport(void) {
 }
 #define CPT0 unsigned cpt_ = cgProf ? sceKernelGetSystemTimeLow() : 0
 #define CPT(i) do { if (cgProf) { unsigned n_ = sceKernelGetSystemTimeLow(); cpT[i] += n_ - cpt_; cpt_ = n_; } } while (0)
+static int csMovingN;   // №1127: сколько движущихся чужих машин (own = 3) ближе CAM_CARNEAR_R к глазу в сцене камеры (сбрасывает camSafeSceneX)
+#define CAM_CARNEAR_R 6.f
 static void csAddCar(const Car *k, const float e[3], float R) {
   int own = k == &car && !onFoot();
   if (csScene.nbox >= CS_MAXBOX || hypotf(k->x - e[0], k->z - e[2]) > R || fabsf(k->y - e[1]) > R) return;
   CarBox cb; memset(&cb, 0, sizeof cb); carBox(k, &cb);
   CsBox *b = &csScene.box[csScene.nbox++];
   b->x = cb.x; b->z = cb.z; b->fx = cb.fx; b->fz = cb.fz; b->hw = cb.hw; b->hl = cb.hl; b->y = cb.y; b->gx = cb.gx; b->gz = cb.gz; b->lo = cb.lo; b->hi = cb.hi; b->own = own;
+  // №1127: чужая машина, которая едет (скорость по земле > CAMLAW_CARMOVE_V) — тело только для ближней плоскости (own = 3): положение глаза от неё не меняется, кадр не режется у края.
+  // Своя машина (при пешем Гомере) и оставленная — не в счёт: их скорость — наша. CAMCARS1127_OLD=1 — как в TEST84
+  if (!own && !CAMCARS1127_OLD && k != &car && k != &oldCar) { float v1[3]; carAnchorVelocity(k, v1); if (camCarMoving(v1[0], v1[2])) { b->own = 3; if (hypotf(k->x - e[0], k->z - e[2]) < CAM_CARNEAR_R) csMovingN++; } }
   // TEST19 (видео 4:44, L3): проезжающая машина за кадр проходит 0,3-0,5 м, камера уворачивалась от кузова там, где он был, и он «входил» в неё. Ящик чужого
   // тела растёт по скорости (до CAM_VEL_PAD м); CAM_VEL_PAD_OLD=1 / flag camvelpadold 1 — прежнее
   if (!own && !camVelPadOld) { float v[3]; carAnchorVelocity(k, v); float sp = sqrtf(v[0] * v[0] + v[2] * v[2]), pad = fminf(CAM_VEL_PAD, sp * .06f); b->hw += pad; b->hl += pad; }
@@ -315,6 +341,10 @@ static int camGeomOld = CAM_GEOM_OLD;
 #define CS_SP_MAX 3.5f   // полуось коробки больше — не в счёт (деревья с кроной, вышки)
 static int camNearSpOld = CAM_NEAR_SP_OLD, camNearDataOld, nearPassClrOld;   // nearPassClrOld — второй проход своей машины (main_loop.h, NEARPASS_CLR)
 static int camGeomTris, camGeomOver;
+#define CAM_START_JUMP 6.f   // №1141: м; опора ушла дальше за кадр — перенос героя
+#define CAM_START_WIN 120    // вызовов сбора сцены (≈ 1–2 с) после переноса: клетки у глаза достраиваются целиком
+#define CAM_START_R 16.f     // м от глаза и от опоры до ящика клетки
+static unsigned camStartBuilt;   // служебное: сколько клеток достроено окном старта
 static void camGeomCollect(const float P[3], const float e[3]) {
   { CPT0;
     // TEST25 (разовая стройка сетки на новой клетке = рывок при въезде): строим в первую очередь клетки по ходу глаза (через ~1,5 с вперёд), а не ближайшие к нему.
@@ -323,6 +353,14 @@ static void camGeomCollect(const float P[3], const float e[3]) {
     if (!cgAheadOld && peOk) { float vx = e[0] - pe[0], vz = e[2] - pe[2]; if (fabsf(vx) < 3.f && fabsf(vz) < 3.f) { ax += fmaxf(-60.f, fminf(60.f, vx * 45.f)); az += fmaxf(-60.f, fminf(60.f, vz * 45.f)); } }
     memcpy(pe, e, 12); peOk = 1;
     cgAhX = cgAheadOld ? -1e9f : ax; cgAhZ = az; cgStep(e[0], e[2]); CPT(1); }
+  // №1141: перенос опоры больше CAM_START_JUMP м (старт миссии, сброс машины) или первая загрузка уровня — окно CAM_START_WIN вызовов: клетки рядом достраиваются сразу (camgrid.h cgBuildNear),
+  // чтобы глаз и ближняя плоскость видели вывески, навесы и стенки с первого кадра. STARTCAM1141_OLD=1 — как в TEST84
+  if (!STARTCAM1141_OLD && !inRoom()) {
+    static float lp[3]; static int lpOk; static unsigned lgen; static int win;
+    if (!lpOk || lgen != cgGen || hypotf(hypotf(P[0] - lp[0], P[1] - lp[1]), P[2] - lp[2]) > CAM_START_JUMP) win = CAM_START_WIN;
+    memcpy(lp, P, 12); lpOk = 1; lgen = cgGen;
+    if (win > 0) { win--; camStartBuilt += (unsigned)cgBuildNear(e, P, CAM_START_R, 6); }
+  }
   csScene.ntri = 0; camGeomTris = 0; csScene.geomRay = (CAM_GEOM_FAST && !camGeomOld && !inRoom()) ? cgRayFracCam : 0;
   if (!pc || !cl || inRoom()) return;
   if (CAM_GEOM_FAST ? !(smkOn && camInOn && camInGeom) : (camGeomOld && !(smkOn && camInOn))) return;   // быстрый путь: треугольники только для замера «flag camingeom 1» (с flag camin они раньше шли всегда и в туре давали ph6 +1,4…2,4 мс)
@@ -371,7 +409,7 @@ static int camRoofAbove(const float p[3]) {
 }
 static void camSafeSceneX(const float e[3], float R) {
   csScene.roofAbove = camRoofAbove;   CPT0; camGeomCollect(camPivot, e); CPT(6); csScene.useTri = !CAM_GEOM_FAST && !camGeomOld;
-  csScene.w = onFoot() && G.pHomerWorld ? G.pHomerWorld : &world; csScene.nbox = csScene.ncyl = 0;
+  csScene.w = onFoot() && G.pHomerWorld ? G.pHomerWorld : &world; csScene.nbox = csScene.ncyl = 0; csMovingN = 0;
   if (inRoom()) return;   // комната: свои стены, машин и прохожих нет
   if (haveTraffic) {
     for (int i = 0; i < traffic.maxCars; i++) if (traffic.car[i].mode != TRM_OFF) csAddCar(&traffic.car[i].car, e, R);
@@ -462,7 +500,7 @@ static void camSafeScene(const float e[3], float R) { CPT0; camSafeSceneX(e, R);
 #endif
 static int camHighOld, cam554Old = CAM_554_OLD, camLensOld = CAM_LENS_OLD;
 // линза (№650): вертикальный угол кадра машины / пешком (runtime-откат flag camlensold 1 / cam554old 1) и перевод FOV камер из данных (вертикаль 4:3 -> широкий кадр, горизонталь та же)
-static float lensCar(void) { return cam554Old ? 62.f : camLensOld ? 55.f : FOVY; }
+static float lensCar(void) { float b = cam554Old ? 62.f : camLensOld ? 55.f : FOVY; return CAMSET1151_OLD ? b : camUserFovY(b, camUserFovNow); }   // №1151: множитель угла из CAMERA
 static float lensFoot(void) { return cam554Old ? 54.f : camLensOld ? 48.f : HOMER_CAM_FOVY; }
 static float lensData(float fy) { return camLensOld || cam554Old ? fy : 2.f * atanf(tanf(fy * (GU_PI / 360.f)) * .75f) * (180.f / GU_PI); }
 // №617 (решение Роба 15.10): SELECT за рулём переключает вид камеры по кругу из данных машины (FollowCameraData: дальний, ближний; бампера и капота в данных
@@ -507,6 +545,7 @@ static float camFit(void) {
   float hp = tanf(CAM_PS2_HFOV * (GU_PI / 360.f)), vp = hp / CAM_PS2_ASPECT, vq = tanf(fov * (GU_PI / 360.f)), hq = vq * ASPECT;
   return sqrtf(hp * vp / (hq * vq));
 }
+static int chaseRetry;   // круг 6 (СВЕРКА_КАМЕРА 1.15): второй проход после среза на идеальное место
 static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], float look[3]) {
   ChaseCam *s = &chase;
   camBurstK += ((!CAM_BURST_SV_OLD && c->burstOn ? CAM_BURST_K : 1.f) - camBurstK) * (1.f - expf(-dt / .25f));   // сверка g06 круг 2 (g01-cars 2.2)
@@ -604,12 +643,13 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
     }
     tgtY = lift + cd->ty; tgtF = cd->tz;
   } else { back = c->p.camMag * sinf(c->p.camElev) + s->pull; eyeH = CAM_TGT_H + c->p.camMag * cosf(c->p.camElev); }   // прежнее: ближний (CAR1 v2)
-  if (chaseView != 2) { back *= homerCamUserD; eyeH = tgtY + (eyeH - tgtY) * homerCamUserH; }   // №996: Distance и Height страницы CAMERA (дальше стены считают уже новый глаз); бампер — глаз у кузова, не трогаем
+  if (chaseView != 2) { back *= camUserCarDe(homerCamUserD); eyeH = tgtY + (eyeH - tgtY) * camUserCarHe(homerCamUserH); }   // №1151: свои высота и дальность машины (CAMSET1151_OLD=1 — общие с пешком)   // №996: Distance и Height страницы CAMERA (дальше стены считают уже новый глаз); бампер — глаз у кузова, не трогаем
   // сверка g06 (g06-camera:31, 35, 45): дальность и вертикальный угол догоняют цель каждый своим фильтром (дальность 63% за 0,26 с, угол 63% за 0,45 с, 95% за 0,82 с), поэтому
   // смена вида (дальний/ближний), своя настройка Distance/Height и другие скачки цели идут плавно; в бампере и после него фильтры начинаются заново (срез, g06-camera:35, 45).
   // CAM_PITCH_SV_OLD=1 — как было (цель сразу)
   { static float lastUD = -1.f, lastUH = -1.f;
-    if (homerCamUserD != lastUD || homerCamUserH != lastUH) { lastUD = homerCamUserD; lastUH = homerCamUserH; s->svInit = 0; }   // №996: смена Height/Distance — сразу на новом месте
+    float uD_ = camUserCarDe(homerCamUserD), uH_ = camUserCarHe(homerCamUserH);
+    if (uD_ != lastUD || uH_ != lastUH) { lastUD = uD_; lastUH = uH_; s->svInit = 0; }   // №996: смена Height/Distance — сразу на новом месте
     if (chaseView == 2) s->svInit = 0;
     else if (!CAM_PITCH_SV_OLD) {
       float pl = carModelLift(c, cv.lift > 0.f ? cv.lift : 0.f), u = eyeH - pl, D = hypotf(back, u), E = atan2f(u, back);
@@ -676,10 +716,27 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
   if (!CAM_REVERSE_SV_OLD && chaseView != 2 && dt > 0.f) {
     int back_ = c->v < -.5f;
     if (!s->rev) {
-      if (camSvBrk > .3f && back_ && (c->v * c->v > 45.f || c->contacts > 0)) { s->rev = 1; memcpy(s->revE, cam, 12); memcpy(s->revL, look, 12);
-        for (int k = 0; k < 3; k++) { float ak = k == 0 ? ax : k == 1 ? ay + tgtY : az; s->revV[k] = cam[k] - ak; } }
+      int stable_ = CAM_REVERSE2_SV_OLD || (c->wheels > 0 && 1.f - 2.f * (c->q[1] * c->q[1] + c->q[3] * c->q[3]) >= .866f);   // круг 6: не в воздухе и не опрокинута
+      if (stable_ && camSvBrk > .3f && back_ && (c->v * c->v > 45.f || c->contacts > 0)) { s->rev = 1; memcpy(s->revE, cam, 12); memcpy(s->revL, look, 12);
+        for (int k = 0; k < 3; k++) { float ak = k == 0 ? ax : k == 1 ? ay + tgtY : az; s->revV[k] = cam[k] - ak; }
+        s->revD = sqrtf(s->revV[0] * s->revV[0] + s->revV[1] * s->revV[1] + s->revV[2] * s->revV[2]);
+        { float f_[3] = {look[0] - cam[0], look[1] - cam[1], look[2] - cam[2]}, fl_ = sqrtf(f_[0] * f_[0] + f_[1] * f_[1] + f_[2] * f_[2]), un_[3] = {0.f, 1.f, 0.f};   // высота взгляда над машиной: пересечение вертикали машины с плоскостью камеры
+          if (fl_ > 1e-3f) { for (int k = 0; k < 3; k++) f_[k] /= fl_; un_[0] = -f_[0] * f_[1]; un_[1] = 1.f - f_[1] * f_[1]; un_[2] = -f_[2] * f_[1]; }
+          s->revOy = un_[1] > .2f ? (un_[0] * s->revV[0] + un_[1] * s->revV[1] + un_[2] * s->revV[2]) / un_[1] : s->revV[1]; } }
     } else if (!back_ && camSvThr >= .5f) s->rev = 0;   // выход срезом: камера за машиной стоит там, где её ведёт фильтр
-    if (s->rev) {
+    if (s->rev && !CAM_REVERSE2_SV_OLD) {
+      // круг 6 (оригинал): желаемое место — от ТЕКУЩЕГО положения камеры: дальше дистанции включения — на неё, высота = высоте включения; ближе 7 м и машина едет на камеру — ползёт вбок
+      // на (дистанция / 2) × 0,05 за кадр; подтяжка 0,05 + v²/400 (не больше 1) за кадр; взгляд — на машину, поднятый на высоту взгляда над машиной, запаздывание 0,5; закрыто стеной — над целью на 6 м
+      float tg[3] = {ax, ay + tgtY, az}, d3[3] = {s->revE[0] - tg[0], s->revE[1] - tg[1], s->revE[2] - tg[2]}, des[3];
+      float vv = c->v * c->v, lagc = .05f + fminf(vv / 400.f, 1.f), k1 = lagc >= 1.f ? 1.f : 1.f - powf(1.f - lagc, dt * 60.f), k2 = 1.f - powf(.5f, dt * 60.f);
+      camRevDesired(d3, s->revD, s->revV[1], c->vel, sinf(c->h), cosf(c->h), dt, des);
+      for (int k = 0; k < 3; k++) s->revE[k] += (tg[k] + des[k] - s->revE[k]) * k1;
+      float lt[3] = {tg[0], tg[1] + s->revOy, tg[2]};
+      for (int k = 0; k < 3; k++) s->revL[k] += (lt[k] - s->revL[k]) * k2;
+      if (haveCol && colRayFrac(&world, s->revL, s->revE, 0) < 1.f) { s->revE[0] = s->revL[0]; s->revE[1] = s->revL[1] + 6.f; s->revE[2] = s->revL[2]; s->revD = 6.f; }
+      memcpy(cam, s->revE, 12); memcpy(look, s->revL, 12);
+    }
+    else if (s->rev && CAM_REVERSE2_SV_OLD) {
       float tg[3] = {ax, ay + tgtY, az}, d3[3] = {s->revE[0] - tg[0], s->revE[1] - tg[1], s->revE[2] - tg[2]}, d = sqrtf(d3[0] * d3[0] + d3[1] * d3[1] + d3[2] * d3[2]);
       float D0 = sqrtf(s->revV[0] * s->revV[0] + s->revV[1] * s->revV[1] + s->revV[2] * s->revV[2]), vv = c->v * c->v, lagc = .05f + fminf(vv / 400.f, 1.f);
       float k1 = lagc >= 1.f ? 1.f : 1.f - powf(1.f - lagc, dt * 60.f), k2 = 1.f - powf(.5f, dt * 60.f);
@@ -707,7 +764,7 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
     if (!camWallOrgOld && c->wheels > 0) { float A[3] = {ax, look[1], az}; if (colRayFrac(&world, look, A, 0) < 1.f && colRayFrac(&world, look, cam, 0) < .15f) { T[0] = ax; T[2] = az; } }   // только если точка взгляда за стеной относительно опоры (крыша/край: прежний луч строже)
     float want = sqrtf((cam[0] - T[0]) * (cam[0] - T[0]) + (cam[2] - T[2]) * (cam[2] - T[2]));
     float fx = want > 1e-3f ? (cam[0] - T[0]) / want : 0.f, fz = want > 1e-3f ? (cam[2] - T[2]) / want : 1.f, got = 0.f, rise = 0.f;
-    s->hits = 0;
+    s->hits = 0; int centerHit = 0;
     for (int k = 0; k < 4; k++) {
       float up = k * .8f, E[3] = {cam[0], cam[1] + up, cam[2]}, fr = 1.f;
       float L = sqrtf((E[0] - T[0]) * (E[0] - T[0]) + (E[1] - T[1]) * (E[1] - T[1]) + (E[2] - T[2]) * (E[2] - T[2]));
@@ -720,8 +777,12 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
       }
       for (int r = 0; r < 5; r++) {                             // центр и 4 края: вбок ±0.4 м, вверх/вниз ±0.25 м
         float sx = r == 1 ? .4f : r == 2 ? -.4f : 0.f, sy = r == 3 ? .25f : r == 4 ? -.25f : 0.f;
-        float Er[3] = {E[0] - fz * sx, E[1] + sy, E[2] + fx * sx}, f = fminf(camRaysOld ? colRayFrac(&world, T, Er, 0) : cfr_[r], camCarsFrac(T, Er));   // 284: и машины
-        if (k == 0 && f < 1.f) s->hits++;
+        float Er[3] = {E[0] - fz * sx, E[1] + sy, E[2] + fx * sx}, fWorld = camRaysOld ? colRayFrac(&world, T, Er, 0) : cfr_[r], f = fminf(fWorld, camCarsFrac(T, Er));   // 284: и машины
+        // №1127: «закрыто» для подъёма на 6 м и среза на идеальное место — только по статике мира (в оригинале линия машина → камера проверяется по статике; проезжающая машина её не рвёт).
+        // Машины по-прежнему подтягивают глаз ниже (f), но стоящие, не движущиеся. CAMCARS1127_OLD=1 — как в TEST84 (и машины)
+        float fSee = CAMCARS1127_OLD ? f : fWorld;
+        if (k == 0 && fSee < 1.f) s->hits++;
+        if (k == 0 && r == 0 && fSee < 1.f) centerHit = 1;
         if (f < fr) fr = f;
       }
       float d = fr >= 1.f ? want : fmaxf(0.f, fr * L - CAM_WALL_MARGIN) / fmaxf(L, 1e-3f) * want;
@@ -731,8 +792,16 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
     // сверка g06 (g06-camera:5): загорожено ближе, чем дальность минус 2 м — камера поднимается на 6 м над машиной (у оригинала при этом линия от машины к камере закрыта);
     // у нас луч идёт от точки взгляда и четыре края, остальное правило порта (зазор 0,4, отпускание 4 м/с) не тронуто. CAM_OCCL_SV_OLD=1 — подъём только до 2,4 м
     if (!CAM_OCCL_SV_OLD && s->hits > 0 && want - got > 2.f) { float r6 = ay + 6.f - cam[1]; if (r6 > rise) rise = r6; }
+    // круг 6 (СВЕРКА_КАМЕРА 1.15): линия от опоры к глазу закрыта (не при взгляде назад) — оригинал сразу, срезом, ставит камеру на идеальное место за машиной (без запаздываний), и только
+    // если и оттуда закрыто, прижимает к точке касания; ближе «дальность − 2 м» — над целью на 6 м. Здесь: фильтры начинаются заново на идеальном месте, второй проход с dt 0.
+    // CAM_OCCLCUT_SV_OLD=1 — как в круге 5 (только подтягивание вдоль луча)
+    if (!CAM_OCCLCUT_SV_OLD && centerHit && !chaseRetry && !s->fz && !s->rev && chaseView != 2 && dt > 0.f) {
+      chaseRetry = 1; s->yaw = ty; s->yawV = 0.f; s->svInit = 0; s->wallD = 0.f; s->rise = 0.f; memset(s->fLk, 0, sizeof s->fLk); memset(s->fLkV, 0, sizeof s->fLkV);
+      chaseCamUpdate(c, yawOfs, 0.f, cam, look);
+      chaseRetry = 0; return;
+    }
     if (!(s->wallD > 0.f) || got < s->wallD) s->wallD = got; else s->wallD = fminf(got, s->wallD + 4.f * dt);
-    s->rise += (rise - s->rise) * fminf(1.f, dt * (rise > s->rise ? 8.f : 2.f));
+    if (chaseRetry) s->rise = rise; else s->rise += (rise - s->rise) * fminf(1.f, dt * (rise > s->rise ? 8.f : 2.f));
     float sk = want > 1e-3f ? fminf(1.f, s->wallD / want) : 1.f, E[3] = {cam[0], cam[1] + s->rise, cam[2]};
     for (int i = 0; i < 3; i++) cam[i] = T[i] + (E[i] - T[i]) * sk;
     chaseNear = sk < .999f ? fmaxf(.3f, fminf(NEAR_Z, .8f * CAM_WALL_MARGIN)) : NEAR_Z;
@@ -752,7 +821,7 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
     } else {
     // сверка g06 (g06-camera:18, 29): глаз над кузовом на высоте верха коробки + 0,3 м, вперёд на половину базы минус 1,0 м (ближняя плоскость); цель на 2 м вперёд на той же высоте;
     // положение и взгляд — в осях кузова (с тангажем и креном), вертикаль кадра — вертикаль кузова (camUpV, main_loop.h берёт её для вида), без запаздывания. CAM_BUMPER_SV_OLD=1 — как было
-    float fwB = c->p.bodyOfs + c->p.halfL - 1.0f, upB = c->p.bodyHi + c->modelRaise + .3f, ul = sqrtf(ux * ux + uy * uy + uz * uz);
+    float fwB = CAM_BUMPFWD_SV_OLD ? c->p.bodyOfs + c->p.halfL - 1.0f : camBumperFwd(c->p.wheelF), upB = c->p.bodyHi + c->modelRaise + .3f, ul = sqrtf(ux * ux + uy * uy + uz * uz);
     if (ul > 1e-4f) { ux /= ul; uy /= ul; uz /= ul; } else { ux = 0.f; uy = 1.f; uz = 0.f; }
     cam[0] = c->x + fx * fwB + ux * upB; cam[1] = c->y + fy * fwB + uy * upB; cam[2] = c->z + fz * fwB + uz * upB;
     look[0] = cam[0] + fx * 2.f; look[1] = cam[1] + fy * 2.f; look[2] = cam[2] + fz * 2.f; chaseInfo.wall = 1.f;
@@ -782,9 +851,10 @@ static void chaseCamUpdate(const Car *c, float yawOfs, float dt, float cam[3], f
       else if (c->carHitV > 0.f) camShakeFire(c->x - c->carHitP[0], c->z - c->carHitP[2]);
       else camShakeFire(-c->vel[0], -c->vel[2]); }
     if (camShakeT < CAM_SHAKE_LEN) {
-      float a = CAM_SHAKE_AMP * (1.f - camShakeT / CAM_SHAKE_LEN) * sinf(CAM_SHAKE_W * camShakeT);
+      float a = CAM_SHAKEPH_SV_OLD ? CAM_SHAKE_AMP * (1.f - camShakeT / CAM_SHAKE_LEN) * sinf(CAM_SHAKE_W * camShakeT) : camShakeAt(camShakeT);   // круг 6: фаза оригинала 0,87 + шаг
       cam[0] += camShakeDx * a; cam[2] += camShakeDz * a; camShakeT += dt; }
   }
+  if (!CAMSET1151_OLD && chaseView != 2 && camUserTiltNow != 0.f) camUserTilt(cam, look, camUserTiltNow);   // №1151: наклон взгляда из CAMERA (положение глаза не меняется — закон объектива цел)
 }
 // ---- сверка g06: камера пешком, добавки к позе homerCamera (homer.c — окно g04, не правится): склон, автозум, крен уровня 7 (g06-camera:8,17,33,34) ----
 // walkCamSv вызывается из main_loop.h сразу после homerCamera. hp — ноги Гомера, cp/lk — поза камеры (правится), spd — скорость Гомера, м/с. Возврат: множитель tan(FOV/2) кадра
@@ -803,7 +873,19 @@ static float walkFovK = 1.f;   // множитель tan(FOV/2) пешей ка�
 #ifndef CAM_NPCLIST_SV_OLD
 #define CAM_NPCLIST_SV_OLD 0
 #endif
-static float wkSlope, wkClose, wkRollA, wkZoomT = 99.f; static int wkSeen, wkPick = -1;
+// Круг 6 (сверка с оригиналом, СВЕРКА_КАМЕРА 2.6, 2.9, P08:20): автозум — угол пешком (по горизонтали 70°) уменьшается НА 0,49 рад × близость (до 42°), а не до 28°, с запаздыванием 0,022 за кадр;
+// персонаж виден, если в пирамиде кадра с узким углом 0,567 рад (шар 1 м), стены не в счёт; склон: второе условие (−0,2 рад) — стик камеры не тронут, верхний луч свободен, нижний закрыт;
+// крен — тем же кубическим шагом (0,01 за кадр) в обе стороны, скорость — вектор целиком. CAM_WALKZOOM_SV_OLD / CAM_SLOPE2_SV_OLD / CAM_TWIST_SV_OLD = 1 — как в TEST83
+#ifndef CAM_WALKZOOM_SV_OLD
+#define CAM_WALKZOOM_SV_OLD 0
+#endif
+#ifndef CAM_SLOPE2_SV_OLD
+#define CAM_SLOPE2_SV_OLD 0
+#endif
+#ifndef CAM_TWIST_SV_OLD
+#define CAM_TWIST_SV_OLD 0
+#endif
+static float wkSlope, wkClose, wkRollA, wkRollV, wkFov = CAMLAW_WALK_FOV_MAX, wkFovV, wkZoomT = 99.f; static int wkSeen, wkPick = -1;
 static float walkCamSv(const float hp[3], float cp[3], float lk[3], float spd, float dt) {
   if (CAM_WALK_SV_OLD || dt <= 0.f) return 1.f;
   float hx = cp[0] - lk[0], hz = cp[2] - lk[2], hd = hypotf(hx, hz);
@@ -811,35 +893,51 @@ static float walkCamSv(const float hp[3], float cp[3], float lk[3], float spd, f
   if (!CAM_LOOKUP_SV_OLD && camLookUp > 0.f) { lk[1] += 3.f * camLookUp; }   // сверка g06 (g06-camera:8)
   // склон под ногами
   { float g, n[3] = {0.f, 1.f, 0.f}; int steep = haveCol && colGround(&world, hp[0], hp[2], hp[1] + 1.f, hp[1] - 3.f, &g, n) && n[1] < .97f;
-    wkSlope += ((steep ? .3f : 0.f) - wkSlope) * (1.f - expf(-dt / .3f));
+    int topFree = 1, botFree = 1, still = homer.camTurn == 0.f;
+    if (!CAM_SLOPE2_SV_OLD && !steep && still && haveCol) {   // лучи оригинала: от глаза вверх на 0,8 м (радиус = ближняя плоскость 1,0 × 0,8) и вперёд на 1,0 к точке над головой; от пояса героя назад
+      float tp[3] = {hp[0], hp[1] + 1.f, hp[2]}, f[3] = {lk[0] - cp[0], lk[1] - cp[1], lk[2] - cp[2]}, fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+      if (fl > 1e-3f) { f[0] /= fl; f[1] /= fl; f[2] /= fl;
+        float ul = sqrtf(f[0] * f[0] * f[1] * f[1] + (1.f - f[1] * f[1]) * (1.f - f[1] * f[1]) + f[2] * f[2] * f[1] * f[1]), u[3] = {-f[0] * f[1], 1.f - f[1] * f[1], -f[2] * f[1]};
+        if (ul > 1e-4f) { u[0] /= ul; u[1] /= ul; u[2] /= ul; }
+        float A[3] = {cp[0] + u[0] * .8f + f[0], cp[1] + u[1] * .8f + f[1], cp[2] + u[2] * .8f + f[2]}, B[3] = {tp[0] + u[0] * .5f - f[0] * .5f, tp[1] + u[1] * .5f - f[1] * .5f, tp[2] + u[2] * .5f - f[2] * .5f};
+        topFree = colRayFrac(&world, A, B, 0) >= 1.f;
+        float Lo[3] = {tp[0], tp[1] + .5f, tp[2]}, Fr[3] = {cp[0] - f[0] * .2f - Lo[0], 0.f, cp[2] - f[2] * .2f - Lo[2]}, Fy = Lo[1] - Lo[1], mg = hypotf(cp[0] - tp[0], hypotf(cp[1] - tp[1], cp[2] - tp[2])) + .5f, fm = sqrtf(Fr[0] * Fr[0] + Fr[2] * Fr[2]);
+        (void)Fy;
+        if (fm > 1e-4f) { float C[3] = {Lo[0] + Fr[0] / fm * mg, Lo[1], Lo[2] + Fr[2] / fm * mg}; botFree = colRayFrac(&world, Lo, C, 0) >= 1.f; } }
+    }
+    float want = CAM_SLOPE2_SV_OLD ? (steep ? .3f : 0.f) : camSlopeWant(steep, still, topFree, botFree);
+    wkSlope += (want - wkSlope) * (1.f - expf(-dt / .3f));
     if (wkSlope > 1e-3f) {
       float dy = cp[1] - lk[1], D = hypotf(hd, dy), e1 = atan2f(dy, hd) + wkSlope, nc[3] = {lk[0] + hx / hd * D * cosf(e1), lk[1] + D * sinf(e1), lk[2] + hz / hd * D * cosf(e1)};
       if (!haveCol || colRayFrac(&world, lk, nc, 0) >= 1.f) memcpy(cp, nc, 12);
     } }
   // персонаж миссии рядом
-  // сверка g06 круг 5 (СВЕРКА_КАМЕРА 2.9, CAM_NPCLIST_SV_OLD): был один персонаж — собеседник цели mvTalkNpcAt; стали все персонажи миссии в 5 м (mvNpcNearList, g07b-msnview:
-  // AddNPC, бонус-персонажи, продавцы; прохожих там нет), по возрастанию расстояния. Виден = в передней полуплоскости камеры и грудь не загорожена стеной (луч от камеры). Берётся ближний видимый
+  // сверка g06 круг 5 (СВЕРКА_КАМЕРА 2.9, CAM_NPCLIST_SV_OLD): все персонажи миссии в 5 м из mvNpcNearList (g07b-msnview), по возрастанию расстояния, прохожих там нет; ближний ВИДИМЫЙ.
+  // Круг 6: видимость — пирамида кадра (camWalkPedSeen), без луча к стене. CAM_WALKZOOM_SV_OLD=1 — полуплоскость и луч, как круг 5
   float npc[3] = {0.f, 0.f, 0.f}; int have = 0, viaList = 0;
   if (!CAM_NPCLIST_SV_OLD) { float lst[6][4]; int nl = mvNpcNearList(lst, 6, hp[0], hp[2], 5.f);
     if (nl > 0) { have = viaList = 1; npc[0] = lst[0][0]; npc[1] = lst[0][1]; npc[2] = lst[0][2];
-      if (wkZoomT >= 1.5f) { float fx = lk[0] - cp[0], fz = lk[2] - cp[2]; int pick = -1;   // ближний из видимых; нет видимого — ближний (проверка не прошла)
+      if (wkZoomT >= 1.5f) { float fx = lk[0] - cp[0], fz = lk[2] - cp[2]; int pick = -1;
         for (int i = 0; i < nl && pick < 0; i++) { float ch[3] = {lst[i][0], lst[i][1] + .9f * lst[i][3], lst[i][2]};
-          if (((lst[i][0] - cp[0]) * fx + (lst[i][2] - cp[2]) * fz) > 0.f && (!haveCol || colRayFrac(&world, cp, ch, 0) >= 1.f)) pick = i; }
+          int seen = CAM_WALKZOOM_SV_OLD ? (((lst[i][0] - cp[0]) * fx + (lst[i][2] - cp[2]) * fz) > 0.f && (!haveCol || colRayFrac(&world, cp, ch, 0) >= 1.f)) : camWalkPedSeen(cp, lk, lst[i]);
+          if (seen) pick = i; }
         wkPick = pick; }
       if (wkPick >= 0 && wkPick < nl) { npc[0] = lst[wkPick][0]; npc[1] = lst[wkPick][1]; npc[2] = lst[wkPick][2]; } } }
   if (!have) have = mvTalkNpcAt(npc);
   float d = have ? hypotf(npc[0] - hp[0], npc[2] - hp[2]) : 99.f;
   wkZoomT += dt;
-  if (wkZoomT >= 1.5f) { wkZoomT = 0.f; float fx = lk[0] - cp[0], fz = lk[2] - cp[2];   // видимость раз в 1,5 с: в передней полуплоскости камеры
+  if (wkZoomT >= 1.5f) { wkZoomT = 0.f; float fx = lk[0] - cp[0], fz = lk[2] - cp[2];   // видимость раз в 1,5 с
     wkSeen = have && d < 5.f && (viaList ? wkPick >= 0 : ((npc[0] - cp[0]) * fx + (npc[2] - cp[2]) * fz) > 0.f); }
   float want = wkSeen && d < 5.f ? 1.f - d / 5.f : 0.f;
-  wkClose += (want - wkClose) * (1.f - powf(.9f, dt * 60.f));
+  if (CAM_WALKZOOM_SV_OLD) wkClose += (want - wkClose) * (1.f - powf(.9f, dt * 60.f)); else wkClose = want;   // оригинал: близость берётся каждый кадр как есть, плавность даёт фильтр угла
   float k = 1.f;
-  { float tb = tanf(35.f * (GU_PI / 180.f)), tt = tanf(.245f); k = 1.f + wkClose * (tt / tb - 1.f); }   // 70° → 28,1° по горизонтали, пропорционально близости
+  if (CAM_WALKZOOM_SV_OLD) { float tb = tanf(35.f * (GU_PI / 180.f)), tt = tanf(.245f); k = 1.f + wkClose * (tt / tb - 1.f); }   // было: 70° → 28,1° по горизонтали, пропорционально близости
+  else { float wantF = camWalkZoomWant(wkClose), e = wkFov - wantF, ev = wkFovV; svStep(&e, &ev, CAMLAW_PED_W, CAM_SV_Z, dt); wkFov = wantF + e; wkFovV = ev; k = camWalkZoomK(wkFov); }
   // крен уровня 7
-  // №1084 (Роб, TEST82: крен в комнатах при беге вправо-влево): закон крена вынесен в camroll.h (плавный подъём), применение — только к камере пешком (main_loop.h). ROLL1084_OLD=1 — как в TEST82
-  wkRollA = camRollStepSv(wkRollA, gameLevel, wkClose, spd, dt);
-  if (wkRollA > 1e-4f) { float fx = lk[0] - cp[0], fy = lk[1] - cp[1], fz = lk[2] - cp[2], fl = sqrtf(fx * fx + fy * fy + fz * fz); if (fl > 1e-4f) { fx /= fl; fy /= fl; fz /= fl;
+  if (CAM_TWIST_SV_OLD) { float wantR = gameLevel == 7 && wkClose > 0.f && spd < 8.f / 3.f ? .176f * wkClose : 0.f;
+    wkRollA = ROLL1084_OLD ? (wkRollA > wantR ? fmaxf(wantR, wkRollA - .01f * dt * 60.f * .176f) : wantR) : camRollStepSv(wkRollA, gameLevel, wkClose, spd, dt); }
+  else camTwistStep(&wkRollA, &wkRollV, camTwistWant(gameLevel, wkClose, spd), dt);
+  if (wkRollA > 1e-4f || wkRollA < -1e-4f) { float fx = lk[0] - cp[0], fy = lk[1] - cp[1], fz = lk[2] - cp[2], fl = sqrtf(fx * fx + fy * fy + fz * fz); if (fl > 1e-4f) { fx /= fl; fy /= fl; fz /= fl;
       float rx = fy * 0.f - fz * 1.f, rz = fx * 1.f - fy * 0.f, ry = fz * 0.f - fx * 0.f, rl = sqrtf(rx * rx + ry * ry + rz * rz);
       if (rl > 1e-4f) { rx /= rl; ry /= rl; rz /= rl; float c_ = cosf(wkRollA), s_ = sinf(wkRollA);
         float ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;   // up = right × forward

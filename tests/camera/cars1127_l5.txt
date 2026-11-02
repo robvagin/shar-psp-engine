@@ -1,0 +1,19 @@
+# №1127: погоня L5 с трафиком — рывки глаза (CAMIN jump, jmax; строки CAMJUMP) до/после. Прогон: зелёный EBOOT (viewer/build_sv) и красный (viewer/build_sv_old, -DCAMCARS1127_OLD=1) этим же сценарием; сравнить jump, jmax, JUMPSEC
+flag player
+scene T20_L5_load
+flag golevel 5
+wait 20
+scene T20_L5_chase
+flag camin 1
+flag caminlog
+flag msn
+wait 3
+flag repair
+flag hnr 100
+flag drive 75
+wait 16
+flag stop
+flag hnr 0
+wait 1
+flag camin
+end

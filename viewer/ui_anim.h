@@ -226,11 +226,103 @@ static inline float uiPillScale(float t) {   // t — секунды с пока
 // картинка остаётся невидимой, пока файл не пришёл (если чтение дольше 1,8 с, газета встаёт сразу на место) — это решает main_frontend.h (g09b).
 // Выключатель — LOAD_NEWS18_OLD в main_frontend.h (1 — прежний разворот 0,9 с)
 #define UI_NEWS_DUR 1.8f
-static inline void uiNewsPose(float t, float *ang, float *scale, float *alpha) {
+// №1088 (Роб 02.11: «вертится красивая издалека, но в конце очень резко останавливается»): влёт оригинала (вход, вращение, проявление) сохранён до 65 % времени, последние 35 % — мягкая посадка:
+// масштаб подходит к 1 с плавным замедлением (кубическая вставка: скорость на стыке прежняя, затем чуть растёт и гаснет до нуля, без перелёта), скорость вращения плавно гаснет до нуля
+// ровно к концу (угол — интеграл скорости, профиль (1−доля^m)², m подобран при первом вызове так, чтобы скорость на стыке не прыгала, а газета встала прямой; целые обороты
+// добавлены ко всему вращению, на вид ничего не меняют), прозрачность прежняя. Время 1,8 с не меняется. NEWLAND1088_OLD=1 — как в TEST83: линейный масштаб, вращение обрывается на 4,2 об/с
+#ifndef NEWLAND1088_OLD
+#define NEWLAND1088_OLD 0
+#endif
+#define UI_NEWS_LAND 0.65f   // с какой доли времени начинается посадка
+static inline void uiNewsPoseOld(float t, float *ang, float *scale, float *alpha) {   // закон оригинала целиком (до №1088)
   float u = t <= 0.f ? 0.f : (t >= UI_NEWS_DUR ? 1.f : t / UI_NEWS_DUR);
   float revs = u >= 1.f ? 15.f : (t <= 0.f ? 0.f : t / (0.06f * (1.f + u)));
   *ang = 2.f * UI_PI * (revs - 15.f);   // оборотов от конца назад: целое число оборотов = прямая газета
   *scale = (0.25f + 1.7f * u) / 1.95f; *alpha = u;
+}
+static inline void uiNewsPoseGeo(float t, float *ang, float *scale, float *alpha) {   // угол и масштаб (№1088); прозрачность — ниже, uiNewsPose
+  uiNewsPoseOld(t, ang, scale, alpha);
+  if (NEWLAND1088_OLD || t >= UI_NEWS_DUR || t <= 0.f) return;
+  const float T = UI_NEWS_DUR, t0 = UI_NEWS_LAND * T, tp = 2.f * UI_PI;
+  static float a0, R, m, G1, sc0; static int ready;
+  if (!ready) {   // константы посадки: угол и скорость вращения оригинала на стыке, остаток угла до целого числа оборотов, показатель профиля
+    float rv0 = t0 / (0.06f * (1.f + UI_NEWS_LAND)), om0 = tp * T * T / (0.06f * (T + t0) * (T + t0));
+    float R0 = -tp * (rv0 - 15.f), want = 0.567f * om0 * (T - t0);
+    int n = (int)floorf((R0 - want) / tp + .5f); R = R0 - tp * (float)n; a0 = -R0 + tp * (float)n;
+    float q = R / (om0 * (T - t0)), lo = 1.f, hi = 12.f;   // G(1) = 1 − 2/(m+1) + 1/(2m+1) растёт с m: ищем m, при котором стартовая скорость профиля равна скорости оригинала
+    for (int i = 0; i < 40; i++) { m = (lo + hi) * .5f; float g = 1.f - 2.f / (m + 1.f) + 1.f / (2.f * m + 1.f); if (g < q) lo = m; else hi = m; }
+    G1 = 1.f - 2.f / (m + 1.f) + 1.f / (2.f * m + 1.f); sc0 = (0.25f + 1.7f * UI_NEWS_LAND) / 1.95f; ready = 1;
+  }
+  const float rv = t / (0.06f * (1.f + t / T)), early = -tp * (15.f - rv);
+  if (t < t0) {   // до посадки: тот же влёт, обороты сдвинуты на целое число (на экране то же)
+    *ang = early + (a0 - (-tp * (15.f - t0 / (0.06f * (1.f + UI_NEWS_LAND))))); return;
+  }
+  float s = (t - t0) / (T - t0), g = s - 2.f * powf(s, m + 1.f) / (m + 1.f) + powf(s, 2.f * m + 1.f) / (2.f * m + 1.f);
+  *ang = a0 + R * g / G1;
+  *scale = sc0 + (1.f - sc0) * (s + s * s - s * s * s);
+}
+// №1123 (Роб 02.11, TEST84: «газета на загрузке сразу видна; пусть начинается невидимой и проявляется, вращаясь издалека»): прозрачность была равна доле времени на всём влёте (к 10 % около
+// 0,1, к 50 % 0,5, глаз видит бледную газету почти с первого кадра, а полностью она проявлялась лишь к самой посадке). Теперь первый кадр полностью прозрачен, плавное проявление
+// (сглаженная лесенка) 0 → 1 за первые 45 % влёта (0,81 с): к 10 % ≈ 0,13, к 50 % уже 1; дальше газета непрозрачна и садится по №1088. NEWSFADE1123_OLD=1 — прозрачность равна доле времени, как в TEST84
+#ifndef NEWSFADE1123_OLD
+#define NEWSFADE1123_OLD 0
+#endif
+#define UI_NEWS_FADE 0.45f   // до какой доли влёта длится проявление
+static inline void uiNewsPose(float t, float *ang, float *scale, float *alpha) {
+  uiNewsPoseGeo(t, ang, scale, alpha);
+  if (NEWSFADE1123_OLD) return;
+  float u = t <= 0.f ? 0.f : (t >= UI_NEWS_DUR ? 1.f : t / UI_NEWS_DUR), k = u / UI_NEWS_FADE; if (k > 1.f) k = 1.f;
+  *alpha = k * k * (3.f - 2.f * k);
+}
+// ---- №1093 (Роб 02.11: мигающая точка цели и клин радара выходят за край круга и просвечивают в полосе шкалы полиции). Логика пульса оригинала прежняя (1,25 + 0,25·sin, период 0,5 с);
+// значок цели прижимается к краю с учётом его ТЕКУЩЕГО размера: центр не дальше (край круга − половина диагонали значка с пульсом − 1 пиксель), поэтому ни один угол значка не выходит
+// за круг на всех фазах пульса. Клин: вершины, вышедшие за круг, подтянуты к его краю. RADARCLIP1093_OLD=1 — как TEST83 (отступ 0,35 большей стороны, клин как есть)
+// №1129 (Роб 02.11, TEST84: «указатель на цель стал большим жёлтым отставшим кругом вместо стрелки»): подтягивание вершин клина к краю (№1093) сминало треугольник в круг, а подгонка значка
+// меняла его место. Заменено на №1129 (ниже): вид радара как до сверки, значок и клин только обрезаются по кругу. Здесь по умолчанию 1 — как TEST83 (отступ 0,35 большей стороны, клин как есть)
+#ifndef RADARCLIP1093_OLD
+#define RADARCLIP1093_OLD 1
+#endif
+static inline float uiRadarIconLim(float clip, float w, float h, float ks) {   // предельное расстояние центра значка от центра круга, пиксели
+  float lim = clip - 0.5f * ks * sqrtf(w * w + h * h) - 1.f; return lim < 0.f ? 0.f : lim;
+}
+static inline void uiRadarClampPt(float cx, float cy, float rad, float *x, float *y) {   // вершина клина внутрь круга радиуса rad
+  float dx = *x - cx, dy = *y - cy, d = sqrtf(dx * dx + dy * dy);
+  if (d > rad && d > 0.f) { *x = cx + dx * rad / d; *y = cy + dy * rad / d; }
+}
+// ---- №1129 (Роб 02.11): обрезка значков и клина радара по кругу, без видимого слоя. Вид и место значков те же, что были до сверки; то, что выходит за круг карты (на кольцо шкалы полиции,
+// заполняемое по часовой), отрезается геометрией: многоугольник значка или клина режется по 48-угольнику, вписанному в круг (отсечение Сазерленда — Ходжмена по полуплоскостям), текстурные
+// координаты и цвет вершин пересчитываются на новых вершинах. Ни трафарета, ни маски, ни полупрозрачной подложки; внутри круга пиксели те же. RADARCLIP1129_OLD=1 — без обрезки
+#ifndef RADARCLIP1129_OLD
+#define RADARCLIP1129_OLD 0
+#endif
+#define UI_CLIP_SEG 48
+#define UI_CLIP_CAP 96
+typedef struct { float x, y, u, v, c[4]; } UiCV;   // вершина: место, текстурные координаты, цвет (каналы)
+static inline int uiClipCircle(const UiCV *in, int n, UiCV *out, float cx, float cy, float r) {   // сколько вершин осталось (0 — всё снаружи)
+  static UiCV A[UI_CLIP_CAP], B[UI_CLIP_CAP]; static float nx[UI_CLIP_SEG], ny[UI_CLIP_SEG]; static int ready;
+  if (!ready) { for (int k = 0; k < UI_CLIP_SEG; k++) { float f = 2.f * UI_PI * ((float)k + .5f) / (float)UI_CLIP_SEG; nx[k] = cosf(f); ny[k] = sinf(f); } ready = 1; }
+  if (n < 3 || n > 16) return 0;
+  const float off = r * cosf(UI_PI / (float)UI_CLIP_SEG);
+  UiCV *src = A, *dst = B; int m = n;
+  for (int i = 0; i < n; i++) src[i] = in[i];
+  for (int k = 0; k < UI_CLIP_SEG; k++) {
+    int mm = 0;
+    for (int i = 0; i < m && mm < UI_CLIP_CAP - 2; i++) {
+      const UiCV *p = &src[i], *q = &src[(i + 1) % m];
+      float dp = (p->x - cx) * nx[k] + (p->y - cy) * ny[k] - off, dq = (q->x - cx) * nx[k] + (q->y - cy) * ny[k] - off;
+      if (dp <= 0.f) dst[mm++] = *p;
+      if ((dp <= 0.f) != (dq <= 0.f)) {
+        float t = dp / (dp - dq); UiCV w;
+        w.x = p->x + (q->x - p->x) * t; w.y = p->y + (q->y - p->y) * t; w.u = p->u + (q->u - p->u) * t; w.v = p->v + (q->v - p->v) * t;
+        for (int c = 0; c < 4; c++) w.c[c] = p->c[c] + (q->c[c] - p->c[c]) * t;
+        dst[mm++] = w;
+      }
+    }
+    m = mm; UiCV *tmp = src; src = dst; dst = tmp;
+    if (m < 3) return 0;
+  }
+  for (int i = 0; i < m; i++) out[i] = src[i];
+  return m;
 }
 // ---- 2д. Сверка с исходником (02.11, окно g09a-hud): три баннера со своими кривыми вместо общей пружины -------------------------
 // Строки сверки M2_движение_в_игре 1, 2, 3 (и поправки второго читателя). Числа и формулы — поведение оригинала, код свой.
@@ -251,8 +343,11 @@ static inline void uiNewsPose(float t, float *ang, float *scale, float *alpha) {
 // Круг 2 (g09a-hud): радар проявляется и гаснет 0,25 / 0,25 с (С_ИСХ 7.12, RADAR_FADE_OLD); карточка коллекционного — вход 0,5 с «вылетом» из центра, выход 0,3 с (7.5, CARDPOP_OLD);
 // надпись Hit & Run — прозрачность и размер 0→1 за 0,2 с, держится, уходит обратно за 0,2 с (7.7 и g09b M2:4, HNRTXT_POP_OLD); «Item Dropped» въезжает 0,2 с и мигает
 // каждые 0,25 с, пока висит (M2:6, DROP_BLINK_OLD). Длительность удержания задаёт вызывающий (msn_view / collect)
+// КРУГ 7 (проверка по самому оригиналу, №1091): плавный выход и вход радара за 0,25 с в оригинале ЕСТЬ ТОЛЬКО В ЗАКОММЕНТИРОВАННОМ КОДЕ (экран HUD, обработка показа и скрытия оверлея карты,
+// по таймеру 250 мс) — в игре он не работает; радар включается и гасится мгновенно (настройка Radar, вход в помещение, 0,1 с передней пустоты при входе в HUD). Строка отчёта 7.12 прочитала
+// отключённый код. Поэтому по умолчанию радар без плавности: RADAR_FADE_OLD=1 (так было в TEST81); 0 — плавность 0,25 с (TEST83)
 #ifndef RADAR_FADE_OLD
-#define RADAR_FADE_OLD 0
+#define RADAR_FADE_OLD 1
 #endif
 #ifndef CARDPOP_OLD
 #define CARDPOP_OLD 0

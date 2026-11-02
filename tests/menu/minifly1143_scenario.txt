@@ -1,0 +1,14 @@
+# №1143: MINI GAME в главном меню — наезд камеры на автотрек один раз. Сценарий смоука (tools/smoke.sh): меню, выбор MINI GAME (пункт 3 списка: LOAD, SCRAP, OPTIONS, MINI, NEW, RESUME).
+# Проверка по журналу (tests/menu/minifly1143.py smoke.txt): строк «FEFLYRANGE 880-913» ровно одна, «FEFLY item=3» нет.
+flag menu
+flag bonusopen
+wait 2
+press down
+wait 0.3
+press down
+wait 0.3
+press down
+wait 0.5
+press cross
+wait 6
+end

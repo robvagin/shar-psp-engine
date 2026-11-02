@@ -124,9 +124,10 @@ static void npcRun(int i) {
            name, kind, p.x, p.y, p.z, A.v, A.h * 57.2958f, A.L, ev, disp, inside, deep);
   check("npc", ev >= 1 && disp > 2.f && inside == 0, d);
 #ifdef GAME_NPC_KNOCK
-  for (int f = 0; f < 240; f++) bwStep(&W, 0, 0, 0);
+  int waitF = (int)((TR_PED_DOWN + 1.f + 3.f) * 60.f);   // №: лежание (ps2-twin 7.7) + клип вставания + запас; прежнее (3 с) — 7 с
+  for (int f = 0; f < waitF; f++) bwStep(&W, 0, 0, 0);
   float g = ground(n->pos.x, n->pos.z, n->pos.y - 1.5f);   // опора под ступнями (от +0,5 м вниз: навес над головой — не пол)
-  snprintf(d, sizeof d, "%-10s через 4 с: состояние %d (0 — стоит), над землёй %.2f м, %s", name, n->knock, n->pos.y - g, n->homing ? "идёт на место" : wasWalking ? "идёт по маршруту" : "стоит");
+  snprintf(d, sizeof d, "%-10s через %.0f с: состояние %d (0 — стоит), над землёй %.2f м, %s", name, waitF / 60.f, n->knock, n->pos.y - g, n->homing ? "идёт на место" : wasWalking ? "идёт по маршруту" : "стоит");
   check("getup", n->knock == 0 && fabsf(n->pos.y - g) < .3f, d);
   if (!wasWalking) {   // игрок уехал: машина — на 40 м назад по прямой подхода (стоящая на месте персонажа держала бы его)
     bwPlace(&W, p.x - sinf(A.h) * 40.f, p.y + 1.f, p.z - cosf(A.h) * 40.f, A.h);

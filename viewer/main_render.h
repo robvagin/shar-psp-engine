@@ -303,6 +303,10 @@ static void gloAdd(char src, int a, int b, int c, unsigned tris) {
   if (k == gloN) { if (gloN >= 24) return; gloT[k].src = src; gloT[k].a = a; gloT[k].b = b; gloT[k].c = c; gloT[k].n = gloT[k].tris = 0; gloN++; }
   gloT[k].n++; gloT[k].tris += tris;
 }
+// №1099 (viewer/winspr.h): текстуры-окна уровня (по файлу winspr-l<N>.shr); их куски дальних клеток не рисуются текстурой — дальше ровные прямоугольники дальнего прохода
+static unsigned char *winTex; static unsigned winTexN;
+static int zfBegin(void); static int zfFarPiece(const Piece *d);
+#define WINSPR_SKIP(d) (winTexN && (unsigned)(d)->r.tex < winTexN && winTex[(d)->r.tex] && zfBegin() == 2 && zfFarPiece(d))
 static unsigned dbgAddN, dbgAddTri, dbgAddBig;   // №703 (диагностика): аддитивные куски города, прошедшие NEON_SKIP за кадры с прошлого «flag addstat»
 static int slLightOn, slLightResetReq;   // №658 (viewer/spritelight.h): flag lightspr 1 — авторские световые куски города рисует таблица спрайтов; сброс таблицы при смене уровня
 static int glowBias;   // TEST19 (диагностика мигания света): «flag glowbias N» — добавочный сдвиг глубины N единиц к камере для всех кусков и билбордов со сложением (световые пятна лежат в 8 см над землёй, 16-бит глубина их не различает); 0 — как есть
@@ -793,7 +797,7 @@ static void drawPiece(Piece *d, int far, float tx, float ty, float tz, float c, 
   if (opqFar && d >= pc && d < pc + npc && opqFar[d - pc] && tx == 0.f && ty == 0.f && tz == 0.f) { far = !ggBoxRiskW(d->r.bb); if (far) opqFarUse++; else opqFarNear++; }   // №863: море — крупной версией везде, где GE нарисует её целиком (main_levels.h opq863Apply)
   if ((d->r.flags & F_NEAR) && !(far && (farPlainD > 0.f || (opqFar && d >= pc && d < pc + npc && opqFar[d - pc])) && (d->r.flags & F_FARP))) far = 0;   // правка 508: F_FARP — дальняя версия без нарезки по far_plain
   int cnt = far ? (int)d->r.nf : d->r.ni;
-  if (cnt <= 0 || geOver(GE_HARD) || !pieceOk(d, far) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103: список GE почти полон / битый адрес
+  if (cnt <= 0 || geOver(GE_HARD) || !pieceOk(d, far) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d) || WINSPR_SKIP(d)) return;   // правка 103: список GE почти полон / битый адрес
   if (d->r.flags & F_ADDITIVE) { dbgAddN++; dbgAddTri += (unsigned)cnt / 3; if (cnt > 600) dbgAddBig++; gloAdd('c', d->r.tex, far, d->r.ni > 600, (unsigned)cnt / 3); }   // №933: город со сложением, прошедший NEON_SKIP (вода: ni > 192)
   float k = d->r.sc, ox = d->r.ox, oy = d->r.oy, oz = d->r.oz;
   ScePspFMatrix4 m = {
@@ -1443,7 +1447,7 @@ static void drawPieceM(Piece *d, const ScePspFMatrix4 *m) {   // кусок с �
 #define XQ(i) ((void)0)
 #endif
   RBC(rbcDrawM);
-  if (d->r.ni <= 0 || geOver(GE_HARD) || !pieceOk(d, 0) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d)) return;   // правка 103
+  if (d->r.ni <= 0 || geOver(GE_HARD) || !pieceOk(d, 0) || NEON_SKIP(d) || GLOWOFF1052_SKIP(d) || TREESH_SKIP(d) || WINSPR_SKIP(d)) return;   // правка 103
   if (d->r.flags & F_ADDITIVE) { dbgAddN++; dbgAddTri += (unsigned)d->r.ni / 3; if (d->r.ni > 600) dbgAddBig++; gloAdd((char)('A' + (bbPhase < 0 || bbPhase > 20 ? 0 : bbPhase)), d->r.tex, d->r.owner, 0, (unsigned)d->r.ni / 3);
     if (smkOn && d->r.ni > 600) { static const void *seen_[12]; static int ns_; int k_ = 0; for (; k_ < ns_; k_++) if (seen_[k_] == d->v) break; if (k_ == ns_ && ns_ < 12) { seen_[ns_++] = d->v; char l_[260];
         snprintf(l_, sizeof l_, "GLOWBIG t=%.1f sc=%s site=%d phase=%d tex=%d ni=%d fl=%x own=%d at=%.1f,%.1f,%.1f sc=%.2f eye_d=%.1f\n", smkT, smkScene, gloSite, (int)bbPhase, d->r.tex, d->r.ni, d->r.flags, d->r.owner, m->w.x, m->w.y, m->w.z, matScale((const float *)m), sqrtf((m->w.x - eyeX) * (m->w.x - eyeX) + (m->w.y - eyeY) * (m->w.y - eyeY) + (m->w.z - eyeZ) * (m->w.z - eyeZ))); smkWrite(l_); } } }
@@ -1888,21 +1892,28 @@ static void trDrawPiece(void *u, const TrPiece *p, const void *verts, const floa
 static int policeModelWarmOld=POLICE_MODEL_WARM_OLD;
 typedef struct { char name[16]; unsigned char *blob; const TrModel *M; const TrPiece *pc; const unsigned char *vt; int tex0; unsigned bytes; } McrModel;
 static McrModel mcr[MCR_MAX]; static unsigned char *mcrDir; static unsigned mcrN; static char mcrPath[256];
-static unsigned mcrTexBase; static int mcrTexOk; static McGeo mcrGeo[64];
+// сверка g03-aicars №1115: пакет машин бонус-гонки TEST85 (msncars-b.shr, 10,85 МБ) — 68 моделей, а каталог принимал не больше 64 (h[3] > 64 — пакет отвергался целиком,
+// соперники без рисунка). Каталог в памяти — 20,7 КБ (блоки машин читаются по одной при показе, в кучу идёт не файл, а ≤ MCR_MAX моделей ≤ 0,28 МБ). Предел 80;
+// MCR_CAT80_OLD = 1 — прежние 64
+#ifndef MCR_CAT80_OLD
+#define MCR_CAT80_OLD 0
+#endif
+#define MCR_CAT (MCR_CAT80_OLD ? 64 : 80)
+static unsigned mcrTexBase; static int mcrTexOk; static McGeo mcrGeo[MCR_CAT];
 static unsigned mcrLoads, mcrLoadBytes; static float mcrLoadMs;   // служебное (смоук: строка MCR)
 static void mcrPreDropAll(void);
-static unsigned char mcrBad[64];   // блок модели не прочитался (битый / обрезанный пакет): больше не пробовать до смены уровня
+static unsigned char mcrBad[MCR_CAT];   // блок модели не прочитался (битый / обрезанный пакет): больше не пробовать до смены уровня
 static void mcrDirLoad(void) {   // каталог пакета уровня: имена, TrModel (кузов, колёса), где блок модели
   mcrPreDropAll(); free(mcrDir); mcrDir = 0; mcrN = 0; mcSetGeo(0, 0); memset(mcrBad, 0, sizeof mcrBad);
   levelFile(mcrPath, "msncars-l%d.shr");
   SceUID f = sceIoOpen(mcrPath, PSP_O_RDONLY, 0); if (f < 0) return;
-  unsigned h[8]; if (sceIoRead(f, h, 32) != 32 || memcmp(h, "MCR1", 4) || h[3] > 64) { sceIoClose(f); return; }
+  unsigned h[8]; if (sceIoRead(f, h, 32) != 32 || memcmp(h, "MCR1", 4) || h[3] > MCR_CAT) { sceIoClose(f); return; }
   unsigned n = h[3] * 176;   // каталог; у версии 2 за ним — таблица машин (h[6], по h[7] Б на машину)
   if (h[1] >= 2 && h[6] >= h[4] && h[7] >= 128 && h[7] <= 256) n = h[6] - h[4] + h[3] * h[7];
   mcrDir = malloc(n ? n : 1);
   sceIoLseek32(f, h[4], PSP_SEEK_SET);
   if (!mcrDir || sceIoRead(f, mcrDir, n) != (int)n) { free(mcrDir); mcrDir = 0; sceIoClose(f); return; }
-  sceIoClose(f); mcrN = (unsigned)mcGeoFromPack((const unsigned char *)h, mcrDir, n, mcrGeo, 64);
+  sceIoClose(f); mcrN = (unsigned)mcGeoFromPack((const unsigned char *)h, mcrDir, n, mcrGeo, MCR_CAT);
   mcSetGeo(mcrGeo, (int)mcrN);
 }
 static void mcrDrop(int k) {   // модель k — в кучу, её текстуры — пустые
@@ -2976,6 +2987,7 @@ static int zfUser = !ZF932_OLD; static float zfFov, zfNear;   // zfFov — уг�
 static ScePspFMatrix4 zfPmBase; static int zfCurSave; static unsigned zfFrames, zfTqFar;
 static int zfBegin(void) { return zfUser && !ZF932_OLD && zfFov > 0.f && farPlainD >= 60.f && drawDist + 10.f > farPlainD * 1.3f ? 2 : 1; }
 static int zfFarPiece(const Piece *d) { unsigned ci = d->r.cell; return ci < ncell && boxD2(cl[ci].bb) > farPlainD * farPlainD; }
+#include "winspr.h"   // №1099: окна вдали ровным цветом (нужны zfBegin, zfFarPiece, boxD2, pl, chClassify выше)
 static void zfPassStart(void) {
   ScePspFMatrix4 pm; zfCurSave = jitCur;
   sceGumMatrixMode(GU_PROJECTION); sceGumStoreMatrix(&zfPmBase); sceGumPushMatrix(); sceGumLoadIdentity();
@@ -2985,6 +2997,7 @@ static void zfPassStart(void) {
 }
 static void zfPassEnd(void) {
   dlLost(); resetState();
+  winsprFlush(1, 0);   // №1099: окна дальних клеток — ровными прямоугольниками до очистки глубины, дальней проекцией
   tqPart = 1; tqPartD2 = farPlainD * farPlainD; tqFlush(); tqPart = 0; resetState();   // дальнее полупрозрачное — этой же проекцией, до очистки глубины
   sceGuDepthMask(GU_FALSE); sceGuEnable(GU_DEPTH_TEST); sceGuDepthFunc(GU_GEQUAL); sceGuClearDepth(0); sceGuClear(GU_DEPTH_BUFFER_BIT); sceGuDepthRange(65535, 0);
   zfHold = 0; if (smkOn && (zfFrames % 120) == 1) { char l_[120]; snprintf(l_, sizeof l_, "ZF932 t=%.1f frames=%u far_d=%.0f near=%.2f\n", smkT, zfFrames, farPlainD, farPlainD * ZF932_NEAR_K); smkWrite(l_); }

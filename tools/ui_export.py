@@ -39,6 +39,7 @@ ADAPTATION RULES (the contract; see also the report):
 import json
 import math
 import os
+import re
 import struct
 import sys
 from pathlib import Path
@@ -447,10 +448,21 @@ def all_images():
     return out
 
 
+def _latin(sv):
+    """строка пакета -> байты: английский как раньше (Latin-1), другой язык (LANG_BIBLE, №1111) — коды знаков шрифтов игры (Œ œ, ¿ не кнопка; tools/accents.py)"""
+    import accents
+    if LANG == 'E' or accents.off():
+        return (sv or '').encode('latin-1', errors='replace')
+    return accents.font_bytes(sv or '')
+
+
 def all_fonts():
     out = {}
     for f in ('frontend.p3d', 'ingame.p3d'):
         out.update(project(f).fonts)
+    import accents   # №1095: французский и португальский — знаки с диакритикой (FONT1095_OLD=1 — как было)
+    for _f in out.values():
+        accents.patch_disc(_f)
     # Requested sizes of the engine's pixel face use the same UIP1 font atlas path.
     # With no typography override this extra source is unused; existing packs stay exact.
     import re
@@ -475,6 +487,7 @@ def all_fonts():
             for x in range(width):
                 if row & (128 >> (left + x)): image[y0 + y, x0 + x] = [255, 255, 255, 255]
         glyphs[code] = dict(x=x0, y=y0, w=width, h=10, adv=width + 1, left=0)
+    accents.add_pixel(image, glyphs, 'thick')   # №1095
     out['pix8_8'] = dict(image=Image.fromarray(image, 'RGBA'), glyphs=glyphs, height=10, baseline=8)
     # Правка Роба 500 (10.10: «шрифт дисклеймера в начале игры — мелкий, читабельный, не жирный; добавь опцией в аппку»): экран NOTICE при запуске (viewer/bootscreen.h
     # bootNotice, bootui.h buiTextX) рисуется встроенным шрифтом PSPSDK `msx` 8×8, 1 бит, без утолщения, шаг знака — по чернилам + 1 px, пробел 3 px (buiAdv). Здесь тот же
@@ -495,6 +508,7 @@ def all_fonts():
                 for x in range(width):
                     if row & (128 >> (left + x)): img2[y0 + y, x0 + x] = [255, 255, 255, 255]
             gl2[code] = dict(x=x0, y=y0, w=width, h=10, adv=width + 1, left=0)
+        accents.add_pixel(img2, gl2, 'thin')   # №1095
         out['msx_thin'] = dict(image=Image.fromarray(img2, 'RGBA'), glyphs=gl2, height=10, baseline=8)
     # Два пиксельных шрифта Lauke (CC BY 3.0, 11.10): грани bart_16bit и simpsons_pix, в пакет попадают только при выборе группой (UI_PIXFONTS_OFF=1 — без них)
     import pixel_fonts
@@ -658,6 +672,9 @@ PAUSE_OLD = bool(os.environ.get('PAUSE_OLD'))
 # UI_PAUSE_MIN_ROWS=0 — прежнее (по содержимому)
 PAUSE_MIN_ROWS = int(os.environ.get('UI_PAUSE_MIN_ROWS', '7'))   # 7 — видимые строки паузы свободной езды без служебной RESET CAR (по ним её рамка)
 PAUSE_FIT_PITCH, PAUSE_FIT_PAD_Y, PAUSE_FIT_PAD_X = 26, 28, 40
+# №1151 (Роб: пауза «сжато и тесно»): меню паузы — шаг строк 28 (был 26) и поля сверху/снизу 16 (были 28), доска остаётся на 7 строк той же высоты в экране; строки по центру рамки по высоте.
+# CAMMENU1151_OLD=1 — прежние 26 и 28
+PAUSE_MENU_PITCH, PAUSE_MENU_PAD_Y = (26, 28) if os.environ.get('CAMMENU1151_OLD') == '1' else (int(os.environ.get('PAUSE_MENU_PITCH', '28')), int(os.environ.get('PAUSE_MENU_PAD_Y', '16')))
 BOARD_TOP = 40
 PAUSE_SERVICE_ROWS = {'ResetCar'}
 PAUSE_FAMILY = [('PauseSunday.pag', ()), ('PauseMission.pag', ()), ('PauseOptions.pag', ('Controller',))]   # Controller: menu_export HIDE_ROWS
@@ -1286,7 +1303,7 @@ def pause_layout(items):
         for it in menu:
             it.update(font=PAUSE_FONT, halign='centre', valign='top', wrap=False)   # блок строк по центру (якорь C), буквы — board_fit
         board_fit(out, rows, 'XSmallBoard.pag', PAUSE_K, hidden={i for i, it in enumerate(menu) if it['name'] in PAUSE_SERVICE_ROWS},
-                  pitch=PAUSE_FIT_PITCH, width=pause_board_width(), centre_each=True, min_rows=PAUSE_MIN_ROWS)
+                  pitch=PAUSE_MENU_PITCH, pad_y=PAUSE_MENU_PAD_Y, width=pause_board_width(), centre_each=True, min_rows=PAUSE_MIN_ROWS)
     if acc:                                              # X icon + "Accept": the whole unit into the corner
         rs = [text_extent(it) if it['type'] == T_TEXT else list(it['rect']) for it in acc]
         x1 = max(r[0] + r[2] for r in rs); y1 = max(r[1] + r[3] for r in rs)
@@ -2259,6 +2276,7 @@ def briefing_layout(items):
                         continue
                     if bx_ < x + w and bx_ + bw_ > x:
                         pad = max(pad, (bx_ + bw_ - x) if bx_ + bw_ / 2 < x + w / 2 else (x + w - bx_))
+                if LANG != 'E' and os.environ.get('LANGFIT1111_OLD') != '1' and os.environ.get('LANG1111_OLD') != '1': pad = 0.0   # №1111: у длинного текста другого языка рамку у детали не сужать (иначе узкий столбец из 9 строк)
                 it['rect'] = [x + pad, y, w - 2 * pad, h]
 
 
@@ -2776,7 +2794,7 @@ def wrap_lines(font, s, maxw, wrap):
 def layout_text(font, s, box, halign, valign, wrap):
     """-> list of (code, x, y) glyph origins (ints).  Mirrors uiText() in viewer/ui.c."""
     x, y, w, h = box
-    lines = wrap_lines(font, s, w, wrap)
+    lines = [ln for seg in re.split(r'[\\\n]', s) for ln in wrap_lines(font, seg, w, wrap)]   # №1111: «\» и «\n» — жёсткий перенос, как uiWrap движка (viewer/ui_layout.h); раньше макет рисовал «\» знаком
     lh = font['lh']
     bh = lh * len(lines)
     y0 = y if valign == 'top' else (y + h - bh if valign == 'bottom' else y + (h - bh) // 2)
@@ -3011,7 +3029,160 @@ def adapt(items, icon_defs, mode, assets, fonts):
                     k = clip / d if d > clip else 1.0
                     pts.append([cx + (qx - cx) * k, cy + (qy - cy) * k])
                 t['pts'] = pts
+    if mode == 'psp' and LANG != 'E':
+        lang_fit(out, fonts)
     return out, units
+
+
+# №1111: тексты других языков длиннее английских. Исходник оригинала шрифт строки не сжимает: перенос — по рамке Scrooby (библиотека в исходнике не лежит), а у подсказок PAL код сам
+# вставляет переносы (не больше 35 знаков в строке, жёсткий перенос «\\»). У нас: однострочная надпись, не влезающая в свою рамку, сначала раздвигает рамку до края экрана (поле 6 px; по центру — в обе
+# стороны), потом берётся грань на ступень меньше (step_down: пиксельные грани — целым кратным, ступени дисковых px-граней boulder 18→14→11 и swz721 12→10→8, дисковые растровые — перерисовка
+# в точный меньший размер, не растяжение), не ниже 7 px заглавной. Надпись слева не должна налезать на соседа справа и на любую другую надпись (шаг повторяется до трёх раз).
+# Данные пакета (поле field) и английский не затрагиваются. LANGFIT1111_OLD=1 — без подгонки
+PIX_FACES = ('pix8_8', 'msx_thin', 'bart_16bit', 'simpsons_pix')
+FACE_LADDER = {'boulder_px18': 'boulder_px14', 'boulder_px14': 'boulder_px11', 'swz721_px12': 'swz721_px10', 'swz721_px10': 'swz721_px8',
+               'swz721_px12i': 'swz721_px10i', 'swz721_px10i': 'swz721_px8i'}
+
+
+def step_down(face):
+    """грань на ступень меньше или None. Пиксельные: кратный кегль на единицу меньше (меньше 1 нет); дисковые px: следующая ступень; дисковые растровые: точный размер на 10 % меньше"""
+    if face == 'boulder_16@1':
+        return 'swz721n_10@1'                           # 1:1 грани диска: следующая ступень вниз (Tt2001m__14@1 при меньшей заглавной шире, не подходит)
+    if '@' in face or '^' in face:
+        return None
+    core, plus, trk = face.partition('+'); base, _, mul = core.partition('*')
+    m = float(mul) if mul else 1.0
+    if base in PIX_FACES:
+        k = int(round(m)) - 1
+        return None if k < 1 or abs(m - round(m)) > 1e-6 else ('%s*%d' % (base, k) if k > 1 else base) + plus + trk
+    if base in FACE_LADDER:
+        return FACE_LADDER[base] + ('*' + mul if mul else '') + plus + trk
+    return face_mul(face, .9)
+
+
+def _lines(s):
+    return [ln for ln in re.split(r'[\\\n]', s) if ln] or ['']
+
+
+def text_ink(out, fc):
+    """список (item, x0, x1, y0, y1): где надпись реально рисуется (по самой широкой/высокой из её строк; значение из данных — по прикидке 5 знаков)"""
+    r = []
+    for t in out:
+        if t.get('type') != T_TEXT or 'dst' not in t:
+            continue
+        x, y, w, h = t['dst']; f = fc.get(t['font']); sv = [q for q in (t.get('strings') or []) if q]
+        if sv:
+            lines = max(([ln for seg in _lines(q) for ln in wrap_lines(f, seg, w, t.get('wrap'))] for q in sv), key=lambda L: (len(L), max(text_width(f, ln) for ln in L)))
+            tw = max(text_width(f, ln) for ln in lines); nl = len(lines)
+        else:
+            tw = 5 * f['lh'] * .6; nl = 1
+        if t.get('field', 'NONE') != 'NONE' and sv:
+            tw = max(tw, 5 * f['lh'] * .6)
+        al = t.get('halign', 'left'); x0 = x if al == 'left' else (x + w - tw if al == 'right' else x + (w - tw) / 2)
+        bh = nl * f['lh']; va = t.get('valign', 'top'); y0 = y if va == 'top' else (y + h - bh if va == 'bottom' else y + (h - bh) / 2)
+        r.append((t, x0, x0 + tw, y0, y0 + bh))
+    return r
+
+
+def lang_fit(out, fc):
+    if os.environ.get('LANGFIT1111_OLD') == '1' or os.environ.get('LANG1111_OLD') == '1':
+        return
+    for t in out:
+        if t.get('type') == T_TEXT:
+            t['_f0'] = t['font']
+    def wmax(t, face):
+        f = fc.get(face); return max([text_width(f, ln) for sv in t['strings'] if sv for ln in _lines(sv)] + [0])
+    def shrink(t, lim_w):
+        face = t['font']
+        while True:
+            cand = step_down(face)
+            if not cand or cap_px(cand) < 7:
+                break
+            face = cand
+            if wmax(t, face) <= lim_w + .5:
+                break
+        t['font'] = face
+        if wmax(t, face) > lim_w + .5 and lim_w > 40:    # грань уже самая малая: две строки в ширину lim_w, вторая выше первой (низ надписи остаётся на месте)
+            x, y, w, h = t['dst']; f = fc.get(face); n = max(len([ln for sv in t['strings'] if sv for ln in wrap_lines(f, sv, lim_w, True)]), 1)
+            if n <= 2:
+                t['wrap'] = True; t['valign'] = 'bottom'; t['dst'] = [x, y - f['lh'] * (n - 1), lim_w, h + f['lh'] * (n - 1)]
+    for t in out:
+        if t.get('type') != T_TEXT or not t.get('strings') or 'dst' not in t or t.get('field', 'NONE') != 'NONE' or t.get('wrap'):
+            continue
+        x, y, w, h = t['dst']; ws = wmax(t, t['font'])
+        if ws <= w + .5:
+            continue
+        al = t.get('halign', 'left'); M = 6
+        if al == 'centre':
+            half = min(x + w / 2 - M, DST_W - M - (x + w / 2)); nw = min(ws + 1, 2 * half); nx = x + w / 2 - nw / 2
+        elif al == 'right':
+            nw = min(ws + 1, x + w - M); nx = x + w - nw
+        else:
+            nw = min(ws + 1, DST_W - M - x); nx = x
+        t['dst'] = [nx, y, max(w, nw), h]
+        if ws > nw + .5:
+            shrink(t, nw)
+    for t in out:                                      # причина провала миссии: у английского любая в одну строку, ниже — совет; у другого языка самая длинная одной строкой в рамку, иначе вторая строка ложится на совет
+        if t.get('type') == T_TEXT and t.get('field') == 'MSN_FAIL' and t.get('strings') and 'dst' in t:
+            w_ = t['dst'][2]
+            if wmax(t, t['font']) > w_ + .5:
+                shrink(t, w_)
+    # ряд подписей кнопок на одной строке (letterbox: Accept / Skip / Cancel): если надписи наезжают друг на друга — вся группа берёт грань на ступень меньше, пока не уложится от первого x до края ряда, потом раскладывается подряд
+    cand = [t for t in out if t.get('type') == T_TEXT and t.get('strings') and 'dst' in t and t.get('field', 'NONE') == 'NONE' and not t.get('wrap') and t.get('halign', 'left') == 'left']
+    rows = {}
+    for t in cand:
+        rows.setdefault((round(t['dst'][1] / 4), round(t['dst'][3] / 4)), []).append(t)
+    for grp in rows.values():
+        if len(grp) < 2:
+            continue
+        grp.sort(key=lambda t: t['dst'][0])
+        def ends(g): return [(t['dst'][0], t['dst'][0] + wmax(t, t['font'])) for t in g]
+        e = ends(grp)
+        if all(e[i + 1][0] >= e[i][1] + 4 for i in range(len(e) - 1)):
+            continue
+        right = min(DST_W - 6, max(t['dst'][0] + t['dst'][2] for t in grp)); x = grp[0]['dst'][0]
+        face = grp[0]['font']
+        def need(fc_): return sum(max(text_width(fc.get(fc_), ln) for sv in t['strings'] if sv for ln in _lines(sv)) for t in grp) + 10 * (len(grp) - 1)
+        while need(face) > right - x:
+            nf = step_down(face)
+            if not nf or cap_px(nf) < 7:
+                break
+            face = nf
+        for t in grp:
+            t['font'] = face
+            w_ = wmax(t, face); t['dst'] = [x, t['dst'][1], w_ + 1, t['dst'][3]]; x += w_ + 10
+    for _ in range(3):                                 # налезание на соседей: сначала подпись слева против значения справа, потом любые пары
+        changed = False
+        ink = text_ink(out, fc)
+        for t, x0, x1, y0, y1 in ink:
+            if t.get('field', 'NONE') != 'NONE' or t.get('wrap') or not t.get('strings') or t.get('halign', 'left') != 'left':
+                continue
+            right = [o for o in ink if o[0] is not t and o[1] > x0 + 1 and o[3] < y1 - 1 and o[4] > y0 + 1]
+            if right and x1 > min(o[1] for o in right) - 8 + .5:
+                before = t['font']; shrink(t, min(o[1] for o in right) - 8 - x0); changed |= t['font'] != before
+        ink = text_ink(out, fc)
+        for i, (t, x0, x1, y0, y1) in enumerate(ink):
+            for (o, ox0, ox1, oy0, oy1) in ink[i + 1:]:
+                if min(x1, ox1) - max(x0, ox0) > 1.5 and min(y1, oy1) - max(y0, oy0) > 1.5:
+                    for c in (t, o):
+                        if c.get('field', 'NONE') == 'NONE' and not c.get('wrap') and c.get('strings') and c['font'] == c['font']:
+                            before = c['font']; f = fc.get(c['font']); cand = step_down(before)
+                            if cand and cap_px(cand) >= 7:
+                                c['font'] = cand; changed = True; break
+        if not changed:
+            break
+    grp = {}                                           # столбец подписей (3 и больше с одной гранью и одним левым краем): одна грань на всех — самая малая из получившихся, иначе в списке строки разного размера
+    for t in out:
+        if t.get('type') == T_TEXT and t.get('strings') and 'dst' in t and t.get('field', 'NONE') == 'NONE' and not t.get('wrap') and t.get('halign', 'left') == 'left' and '_f0' in t:
+            grp.setdefault((t['_f0'], round(t['dst'][0])), []).append(t)
+    for g_ in grp.values():
+        if len(g_) >= 3 and any(t['font'] != t['_f0'] for t in g_):
+            best = min((t['font'] for t in g_), key=cap_px)
+            for t in g_:
+                t['font'] = best
+    for t in out:                                      # макет (render) берёт готовую грань из fontinfo: обновить после подгонки
+        if t.get('type') == T_TEXT and 'fontinfo' in t:
+            t['fontinfo'] = fc.get(t['font'])
 
 
 # ------------------------------------------------------------------------------------------
@@ -3822,7 +3993,7 @@ def pack(out=None, spec=None):
     strings, str_index = [], {}
 
     def add_str(sv):
-        b = (sv or '').encode('latin-1', errors='replace')
+        b = _latin(sv)
         if b not in str_index:
             str_index[b] = len(strings); strings.append(b)
         return str_index[b]
@@ -3877,7 +4048,7 @@ def pack(out=None, spec=None):
                 if idxs != list(range(idxs[0], idxs[0] + len(idxs))) if idxs else False:
                     sfirst = len(strings)
                     for sv in t['strings']:
-                        strings.append((sv or '').encode('latin-1', errors='replace'))
+                        strings.append(_latin(sv))
                 else:
                     sfirst = idxs[0] if idxs else 0
                 scount = len(t['strings'])
@@ -3923,7 +4094,7 @@ def pack(out=None, spec=None):
                 scount = 1
                 if t.get('texts'):             # подсказки обучения: строки TUTORIAL_NNN подряд (viewer/ui.c uiDrawTutorial)
                     sfirst = len(strings)
-                    for sv in t['texts']: strings.append((sv or '').encode('latin-1', errors='replace'))
+                    for sv in t['texts']: strings.append(_latin(sv))
                     scount = len(t['texts'])
             if t.get('home'):                  # №623: px — видимый правый край значка дома (px PSP); блок места и круга стоит правее него
                 px = float(t['home_right'])

@@ -155,7 +155,7 @@ enum MsnEventType {
     MSN_EV_LEVEL_OVER_NOW     /* P06-22: SetLevelOver / SetGameOver на СТАРТЕ этапа: index = 1 если SetGameOver; уровень завершается сразу */
 };
 enum MsnFail { MSN_FAIL_NONE = 0, MSN_FAIL_TIMEOUT, MSN_FAIL_OUTOFVEHICLE, MSN_FAIL_DAMAGE, MSN_FAIL_POSITION,
-               MSN_FAIL_RACE, MSN_FAIL_FOLLOWDISTANCE, MSN_FAIL_KEEPBARREL, MSN_FAIL_PARTIME, MSN_FAIL_ABORT, MSN_FAIL_HITNRUN };
+               MSN_FAIL_RACE, MSN_FAIL_FOLLOWDISTANCE, MSN_FAIL_KEEPBARREL, MSN_FAIL_PARTIME, MSN_FAIL_ABORT, MSN_FAIL_HITNRUN, MSN_FAIL_COLLECT /* круг 7: выпавший предмет дальше 200 м от игрока */ };
 
 typedef struct MsnEvent {
     int type;                 /* enum MsnEventType */
@@ -281,6 +281,7 @@ void msn_init(MsnRuntime *rt, const MsnFile *f, const MsnHost *host);
 void msn_level_start(MsnRuntime *rt);
 /* start mission (index in f->missions) from its intro phase (or checkpoint if restore) */
 void msn_start_mission(MsnRuntime *rt, int mission, int restore);
+void msn_enter_mission(MsnRuntime *rt, int mission);   /* круг 7 (P06-5): вход «как после загрузки» — вступление с этапа RESET_TO_HERE */
 /* player talked to a bonus giver in free roam; returns 0 if not allowed now */
 int  msn_start_bonus(MsnRuntime *rt, int mission);
 /* free roam: bonus mission whose giver stands within talk range of the player on foot (for the HUD

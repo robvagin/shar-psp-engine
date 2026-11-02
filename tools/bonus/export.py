@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools')); sys.path.insert(0, str(ROOT / 'tools/bonus'))
 import track as T   # noqa: E402
+import roads as RD   # noqa: E402
 
 VEHICLES = ['apu_v', 'bart_v', 'bbman_v', 'bookb_v', 'burns_v', 'carhom_v', 'cArmor', 'cCola', 'cCurator', 'cDonut', 'cDuff',
             'cFire_v', 'cHears', 'cKlimo', 'cletu_v', 'cLimo', 'cNerd', 'comic_v', 'cPolice', 'cSedan', 'cVan', 'elect_v', 'famil_v',
@@ -246,7 +247,8 @@ def export_shr(n, out):
                 if g > G * 64: raise
                 g *= 2
     PE.grid_quant = gq
-    PE.main(1, str(out), scenes=[f'b0{n}'], coins=False, backdrop_level=BACKDROP.get(n))
+    # сверка g12-data №1109: здесь стоял ПЕРВЫЙ полный прогон PE.main с фоном уровня (backdrop_level), а ниже второй, без фона, затирал результат — фон уровня (небо, горизонт, даль, №473)
+    # терялся у всех трасс, кроме b02/b03 с собственным небом. Теперь один прогон, с фоном; BONUSENV1109_OLD=1 — как было (фон не пишется)
     if TEX_CITY:
         _lv, swaps = city_tex_swaps(n)
         Conv0 = PE.Converter
@@ -287,7 +289,7 @@ def export_shr(n, out):
                     print(f'плотность текселей b0{n} (город уровня {_lv}): подтянуто {len(kk)} текстур'); [print('  ', r_) for r_ in rows]
                 else: print(f'плотность текселей b0{n}: все в пределах {DENS_MIN}x города')
         PE.Converter = DensConv
-    PE.main(1, str(out), scenes=[f'b0{n}'], coins=False)
+    PE.main(1, str(out), scenes=[f'b0{n}'], coins=False, backdrop_level=(None if os.environ.get('BONUSENV1109_OLD') == '1' else BACKDROP.get(n)))
     pvs, wind = ROOT / 'tools/pvs', ROOT / 'tools/wind'
     if not pvs.exists() or (ROOT / 'tools/pvs.c').stat().st_mtime > pvs.stat().st_mtime:
         subprocess.run(['cc', '-O3', '-o', str(pvs), str(ROOT / 'tools/pvs.c'), '-lm'], check=True)
@@ -309,7 +311,7 @@ def route_paths(n, shr):
     paths = []
     for rev_, ws in ((0, fw), (1, rv)):
         order = list(range(1, len(cps))) if not rev_ else list(range(len(cps) - 1, 0, -1))
-        seq = [cps[k] for k in order] + [cps[0]]
+        seq = T.lap_sequence(n, cps, rev_) or [cps[k] for k in order] + [cps[0]]   # круг 7: список оригинала с повторами (b02, b05, b07)
         stops = NV.stop_points(N, seq) if STOPS == 'inside' else [c['pos'] for c in seq]
         via = NV.insert_via(stops, [w['pos'] for w in ws]) if VIA else {}
         pts, tag = NV.loop_path(N, stops, via)
@@ -381,9 +383,15 @@ def bns_bytes(n, bbox, shr):
         r = struct.pack(HZ_FMT, h['kind'], h['arg'], h['rect'], 0, *h['c'], *[x for ax in h['axes'] for x in ax], *h['h'], *h['loc'],
                         h['name'].encode()[:15], obj.encode()[:15])
         out += r + b'\0' * (HZ_LEN - len(r))
+    # №1116 (сверка g03-aicars): дороги трассы — хвост файла: блок TRF1 (tools/bonus/roads.py), размер u32, 'BRD1'. Соперники ведутся по ним
+    # от точки WPR/WPL к следующей, как оригинал. BONUS_ROADS_OLD=1 — хвоста нет (путь ИИ по опоре, nav.py)
+    rd = RD.block(n)
+    if rd:
+        while len(out) % 16: out += b'\0'
+        out += rd + struct.pack('<I4s', len(rd), b'BRD1')
     return bytes(out), dict(path=[len(p[0]) for p in paths],track=n, checkpoints=[c['name'] for c in cps], starts=[s['name'] for s in st],
                             forward=[w['name'] for w in fw], reverse=[w['name'] for w in rv], camera=cam['name'],
-                            pickups=[p['name'] for p in pk], hazards=[h['name'] for h in hz], trap_objects=tobj)
+                            roads=len(rd), pickups=[p['name'] for p in pk], hazards=[h['name'] for h in hz], trap_objects=tobj)
 
 
 def shr_bbox(path):

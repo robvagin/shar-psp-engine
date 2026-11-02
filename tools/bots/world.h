@@ -17,7 +17,9 @@
 #define BW_HAVE_AO 1
 #endif
 
+#ifndef BW_DT   // сверка g01-cars №1126: шаг кадра можно подменить при сборке замерщика (tests/g01cars/streets.c, неровные кадры)
 #define BW_DT (1.f / 60.f)
+#endif
 typedef struct {   // счётчики событий за всё время (для счёта ботов и сводок)
   unsigned propKicks, spChanges, coins, homerEvents, resets, frames, rooms;   // rooms — входов в комнаты
   unsigned trEvents;   // события трафика (удары машин, остовы, сбитые пешеходы, стоящие) -> шкала Hit & Run

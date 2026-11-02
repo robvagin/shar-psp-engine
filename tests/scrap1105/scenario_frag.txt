@@ -1,0 +1,27 @@
+# №1105 память: альбом при тесной куче. flag fragheap N ограничивает наибольший свободный кусок (МБ) перед загрузкой уровня (tests/mem1060); тут — до меню.
+# Ожидание: без падения; либо галерея открылась (журнал SCRAPBOOK1105 gallery), либо "SCRAPBOOK1105 nomem pack=.. rc=-3" и звук «закрыто»; после выхода из альбома меню работает, куча как до входа (MEM / heap free в журнале).
+flag fragheap 0.5
+flag menu
+flag scrapon 1
+wait 6
+press up
+wait 0.5
+press up
+wait 0.5
+press up
+wait 0.5
+press cross
+wait 4
+press cross
+wait 1
+press cross
+wait 3
+shot sf_gallery
+press triangle
+wait 1
+press triangle
+wait 1
+press triangle
+wait 2
+shot sf_menu_after
+end

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,7 +31,8 @@ def run_case(track: int, reverse: bool = False, collide: bool = False) -> tuple[
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    subprocess.run([str(ROOT / "tools/bonus/build_host.sh"), str(EXE)], cwd=ROOT, check=True)
+    # №1147: соперники теперь сталкиваются (удары между ними — tests/g03_1147); этот гейт держит прежнее решение g07b «сквозь друг друга» под AIAI1147_OLD=1
+    subprocess.run([str(ROOT / "tools/bonus/build_host.sh"), str(EXE)], cwd=ROOT, check=True, env=dict(os.environ, EXTRA="-DAIAI1147_OLD=1"))
     for track in range(1, 8):
         for reverse in (False, True):
             rc, report = run_case(track, reverse)

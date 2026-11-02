@@ -1,0 +1,52 @@
+# №1145 / №1149: снимки интерфейса бонус-игры (пауза, HUD гонки, отсчёт 3-2-1-GO, итоги). Сборка с -DBONUS_UNLOCK_OLD=1 (все трассы открыты), SHAR_RELEASE_KEEP_SMOKE=ON.
+# Запуск: SMOKE_MAXT=900 SMOKE_SCN=tests/bonus/ui1145_scenario.txt tools/smoke.sh DIR   (DIR — набор данных с bonus/mini.shr, собранным после №1145)
+# Старое для сравнения: те же данные, mini.shr из BONUSUI1145_OLD=1 и EBOOT с -DBONUSUI1145_OLD=1 -DBONUSCD1149_OLD=1
+flag menu
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+wait 2
+press left
+wait 0.6
+press cross
+wait 4.5
+shot m_menu
+flag bonusgo
+wait 1
+shot g01
+wait 1
+shot g02
+wait 1
+shot g03
+wait 1
+shot g04
+wait 1
+shot g05
+wait 1
+shot g06
+wait 1
+shot g07
+wait 1
+shot g08
+wait 1
+shot g09
+wait 1
+shot g10
+wait 1
+shot g11
+wait 1
+shot g12
+wait 3
+shot race
+press start
+wait 0.6
+shot pause
+press down
+wait 0.4
+shot pause2
+press start
+wait 60
+shot sum
+wait 8
+shot sum2
+end

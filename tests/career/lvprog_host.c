@@ -35,10 +35,12 @@ int main(void) {
   ok = rt(&a, &b); int g1 = svLvGet(&b, 1, &m, &r); uint32_t m1 = m; int g3 = svLvGet(&b, 3, &m, NULL); uint32_t m3 = m; int g4 = svLvGet(&b, 4, NULL, NULL);
   snprintf(d, sizeof d, "старая запись L3: L1 %d (%x), L3 %d (%x), L4 %d — нужно 1 (ffffffff), 2 (5), 0", g1, (unsigned)m1, g3, (unsigned)m3, g4);
   check("old", ok && g1 == 1 && m1 == 0xFFFFFFFFu && g3 == 2 && m3 == 5 && g4 == 0, d);
-  { uint8_t x[SV_BYTES], y[SV_BYTES]; svClear(&a); a.level = a.msnLevel = 2; svWrite(&a, x); svLvPut(&a, 1, 0xff, 0xff); svWrite(&a, y);
-    SaveGame c; int rd = svRead(y, SV_BYTES, &c) == SV_OK, rd2 = svRead(y, SV_BYTES_V2, &c) == SV_OK;
-    snprintf(d, sizeof d, "голова одинакова с полем и без: %d; запись с полем читается %d, её голова (256 Б, прежняя сборка) %d", !memcmp(x, y, SV_BYTES_V2), rd, rd2);
-    check("compat", !memcmp(x, y, SV_BYTES_V2) && rd && rd2, d); }
+  { // №1114 (формат SHV3, старые записи не читаются): запись с полем уровня L1 и без него читается; без поля L1 «пройден, маска неизвестна» (1), с полем — записанная маска (2)
+    uint8_t x[SV_BYTES], y[SV_BYTES]; svClear(&a); a.level = a.msnLevel = 2; svWrite(&a, x); svLvPut(&a, 1, 0xff, 0xff); svWrite(&a, y);
+    SaveGame cx, cy; int rx = svRead(x, SV_BYTES, &cx) == SV_OK, ry = svRead(y, SV_BYTES, &cy) == SV_OK; uint32_t mx, my; svLvGet(&cx, 1, &mx, NULL); svLvGet(&cy, 1, &my, NULL);
+    int gx = svLvGet(&cx, 1, NULL, NULL), gy = svLvGet(&cy, 1, NULL, NULL);
+    snprintf(d, sizeof d, "без поля L1: чтение %d, статус %d (1); с полем: чтение %d, статус %d (2), маска %x (ff)", rx, gx, ry, gy, (unsigned)my);
+    check("compat", rx && ry && gx == 1 && mx == 0xFFFFFFFFu && gy == 2 && my == 0xff, d); }
   svClear(&a); svLvPut(&a, 4, 0xabc, 0x83); svClear(&b); svLvKeep(&b, &a); g = svLvGet(&b, 4, &m, &r);
   snprintf(d, sizeof d, "перенос: L4 %d %x %x (нужно 2 abc 83)", g, (unsigned)m, r);
   check("keep", g == 2 && m == 0xabc && r == 0x83, d);

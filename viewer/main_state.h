@@ -1,6 +1,9 @@
 // SHAR PSP v8: город клетками 40x40 м подгружается по мере езды, PVS, отсечение пирамидой видимости,
 // swizzle текстур, HUD через GE, тест-прогон v2 (кнопка O).
 #include "bisect.h"
+#include "lang.h"   // №1111: язык игры
+#include "menu_rules.h"
+#include "g10b_calc.h"   // сверка g10b-loop круг 6: чистые правила главного цикла (проверяет tests/g10b)
 #include "sverka_shared.h"   // сверка g10b-loop: общие точки окон (svBoom — взрыв машины, svSurfaceAt — поверхность земли)
 #include <pspkernel.h>
 #include <pspsuspend.h>   // исследование 03.10 П3: проба volatile
@@ -374,6 +377,9 @@ static GroundCover groundCover;
 #define O_SKYLAST (1u << 17)  // небо после непрозрачного, с тестом глубины; цвет кадра не чистим
 static int fb16 = 1;          // кадр 5650 + дизеринг (служебный файл fb32 рядом с EBOOT -> 8888, для сравнения)
 #include "jitter.h"   // эксперимент: временное сглаживание полпикселя (по умолчанию выкл., файл jitter)
+#include "cheats.h"   // №1104: коды оригинала (ввод и таблица)
+#include "trippy.h"   // №1104: код Trippy (размытие кадра подмесом прошлого, 80 %)
+#include "cheatcam.h"   // №1104: код Unlock All Cameras (цикл SELECT, угол 92°)
 static int clearChk;          // служебный файл clearchk: кадр чистится пурпурным, P1 считает непокрытые пиксели
 static int pano917Cap; static float pano917Near, pano917Far;   // №917б: служебный кадр бота («flag pano917cap БЛИЗКО ДАЛЬНО»): город только дальше БЛИЗКО м (ближняя плоскость) до ДАЛЬНО м, пурпурный фон, без неба, ленты, интерфейса
 static int noSkyChk;          // замер-тур (03.10, «flag nosky 1»): небо не рисуется — с clearchk щель остаётся пурпурной, а не цветом неба
@@ -404,6 +410,7 @@ typedef struct {
 #define CELL_REG(c) ((c)->pad & 0xFFu)
 static Tex *tex; static unsigned ntex, npc, ncell;
 static Piece *pc; static Cell *cl;
+#include "showtree.h"   // №1119: код Show Tree (красные коробки клеток и треугольник опоры)
 // №840 (Роб 19.10, TEST38: «газон под Гомером при выходе из машины пропадает кусками; пол не должен пропадать никогда»): GE PSP выбрасывает треугольник
 // целиком, если его вершина (после среза по ближней плоскости) уходит за ±2048 px; при ближней плоскости 1,5 м это треугольник с ребром больше ~10 м
 // у камеры (газон, полоса дороги). Куски города с ребром больше GG_BIG_EDGE помечаются при загрузке клетки (Rec.pad[1] = 1 у owner 0; у города он 0),
@@ -539,6 +546,7 @@ static void carExplosionAt(float x, float y, float z) {
 #define WP_STEER_SIGN -1.f   // проверено прогоном: при +1 машина уходит от точки
 #endif
 static float wpX[32], wpZ[32], wpV = 22.f; static int wpN, wpI;   // этап 2: честная коллизия (секция COL1)
+static float rtX1091, rtZ1091; static int rtOn1091;   // №1091 служебно: цель на радаре из сценария
 static int uiReady;   // этап 7: ui.shr загружен -> родной HUD, START = пауза с RESET CAR
 static void palTone(void *pal);   // правка 29: кривая тона палитр (ниже)
 enum { TF_LEVEL = 0, TF_TRAFFIC = 1, TF_MCR = 2, TF_ROOM = 3 };   // правка 144: файлы-источники палитр (toneBlkAdd, toneApplyAll)
@@ -587,6 +595,7 @@ static void onPropKickFx(void *u, unsigned i, const float pos[3], float carV, fl
 #ifndef PROPFX_SV_OLD
 #define PROPFX_SV_OLD 0
 #endif
+  if (!propFxOk(car.p.mass, props.types[props.def[i].type].mass, carV, brk >= 0)) part = 0;   // круг 7: порог импульса 5 × масса и «не разбит»
   if (part >= 3) { int id_ = fxFindInst(part); if (id_ >= 0) fxBurst(id_, pos, NULL); }
   else if (!PROPFX_SV_OLD && part == 2) fxCrashStars(pos[0], pos[1] + .6f, pos[2], 25000.f);
   else if (!PROPFX_SV_OLD && part == 1) { }
@@ -730,6 +739,12 @@ static Game G = {&world, &car, &props, &sprops, &coins, &homer, &haveCol, &haveP
                  &hnrHeat, &hnrCalm, &wasDestroyed, spSt, &spStInit, &cv.lift,
                  {onPropKickFx, spChangeSnd, spFxOut, homerEvFx, afterHomerHud, coinSnd, homerDoor, resetMusic, 0}};
 // гаечный ключ взят (пункт 4, viewer/game.c gameWrenchStep): звук wrench_collect (world.spt), частицы wrench_collect2Shape (art/wrench.p3d)
+// сверка g11b-collect круг 7 (P04 W5): снаряд осы и мир — подвижные предметы и стейтпропы (game.c gameBoltProps) и пешеходы / трафик (traffic.c trafficBoltHit); удар применяется только к ближайшему
+static float waspBoltWorld(const float a[3], const float b[3], const float dir[3], int apply) {
+  float t1 = gameBoltProps(&G, a, b, dir, 0), t2 = haveTraffic ? trafficBoltHit(&traffic, a, b, dir, 0) : 2.f;
+  if (apply) { if (t1 <= 1.f && t1 <= t2) gameBoltProps(&G, a, b, dir, 1); else if (t2 <= 1.f && haveTraffic) trafficBoltHit(&traffic, a, b, dir, 1); }
+  return t1 < t2 ? t1 : t2;
+}
 static void onWrench(void *u, const float pos[3], int repaired) {
   (void)u; (void)repaired; sndPlay("wrench_collect", pos[0], pos[1], pos[2], 1.f); tutEvent(TUT_WRENCH);   // подсказка «ключи чинят машину» (PS2 4:15)
   int s = fxFind("wrench_collect2Shape"); if (s >= 0) { float p[3] = {pos[0], pos[1] + .5f, pos[2]}; fxBurst(s, p, NULL); }
@@ -752,6 +767,7 @@ static void fail(const char *msg) {
 static void sibling(char *out, const char *name) {   // путь к файлу рядом с EBOOT
   if (SHR_REL && shrDevName(name)) { strcpy(out, SHR_OFF_DIR); strncat(out, name, 200); return; }   // релиз (viewer/release.h): служебное недоступно
   strcpy(out, path); char *sl = strrchr(out, '/'); strcpy(sl ? sl + 1 : out, name);
+  if (!LANG1111_OLD && gLangId > 0 && sl) { char dir_[256]; size_t dl_ = (size_t)(sl + 1 - out); memcpy(dir_, out, dl_); dir_[dl_] = 0; langResolve(out, 256, dir_, name); }   // №1111: файл с текстами на выбранном языке (lang/<буква>/), нет — английский
 }
 // Номер уровня (1..7) и файлы уровня рядом с EBOOT (docs/РЕЦЕПТ_УРОВНЯ.md §3.2, §9). Имя с %d — по номеру уровня
 // (interiors-l%d.bin, collect-l%d.shr, zonecam-l%d.shr; миссии level%02d.msn — msn_view.c; газета загрузки LEVEL_IDX).
@@ -782,6 +798,9 @@ static int bonusAvailable(void) {
   if (sceIoGetstat(fn, &st) < 0) return 0;
   sibling(fn, BONUS_CARS); return sceIoGetstat(fn, &st) >= 0;
 }
+#ifndef BONUSENV1109_OLD
+#define BONUSENV1109_OLD 0   // сверка g12-data №1109: 1 — бонус-трассы без кольца-панорамы уровня (прежнее; фон неба — в данных трассы, BONUSENV1109_OLD в tools/bonus/export.py)
+#endif
 static void levelFile(char *out, const char *name) {
   char nm[96], nn[64];
   if (bonusTrack) {
@@ -789,6 +808,7 @@ static void levelFile(char *out, const char *name) {
     else if (!strcmp(name, "msncars-l%d.shr")) snprintf(nm, sizeof nm, "%s", BONUS_CARS);
     else if (!strcmp(name, "audio/")) snprintf(nm,sizeof nm,"%s",BONUS_SOUND_OLD?"audio/":"bonus/audio/");
     else if (!strcmp(name, "ui.shr") || !name[0]) snprintf(nm, sizeof nm, "%s", name);
+    else if (!BONUSENV1109_OLD && !strcmp(name, "pano917.bin")) { if (bonusTrack > 1 && bonusTrack <= 7) snprintf(nm, sizeof nm, "l%d/pano917.bin", bonusTrack); else snprintf(nm, sizeof nm, "pano917.bin"); }   // сверка g12-data №1109: кольцо-панорама уровня, к которому привязана трасса (b0N -> уровень N, tools/bonus/export.py BACKDROP)
     else snprintf(nm, sizeof nm, "bonus/-");
     sibling(out, nm); return;
   }

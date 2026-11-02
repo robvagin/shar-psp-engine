@@ -77,11 +77,26 @@
 #ifndef MSN_BONUSINTRO_OLD
 #define MSN_BONUSINTRO_OLD 0   /* круг 2, g07b P06-1: бонус-персонажи работают весь отрезок вступления (любой этап), без условия «не в помещении» */
 #endif
+#ifndef MSN_WAGERPAY_OLD
+#define MSN_WAGERPAY_OLD 0     /* сверка g07b-msnview круг 6 (P06-3, P07-3): выплата ставки через msnWagerPayFn (= карточка); раньше этот шаг сидел под выключателем повтора бонус-персонажа. 1 — всегда 2 × вход */
+#endif
 #ifndef MSN_BONUSREPEAT_OLD
 #define MSN_BONUSREPEAT_OLD 0  /* круг 2, g07b P06-2: одноразовый бонус только при 7-м аргументе = 1; иначе повтор; пройденный bm1 на новом входе в уровень не создаётся */
 #endif
 #ifndef MSN_FADE_OLD
 #define MSN_FADE_OLD 0         /* круг 2, g07b P06-9: пауза этапа после SetFadeOut = 0,25 + 2,0 с, число скрипта не читается */
+#endif
+#ifndef MSN_RETRYTIME_OLD
+#define MSN_RETRYTIME_OLD 0    /* круг 7, СВЕРКА_ВНЕДРЕНИЕ/g07-missions.md строки 55 и 66 (P06-7, P07-35; сверено с оригиналом): повтор после провала продолжает таймер от остатка НА МОМЕНТ ПРОВАЛА (таймер миссии при перезапуске не сбрасывается): этап с SetStageTime заменяет, с AddStageTime прибавляет, без времени гасит. Было: остаток брался на входе в этап-чекпоинт (cp_remaining). 1 — как было */
+#endif
+#ifndef MSN_DUMPFAR_OLD
+#define MSN_DUMPFAR_OLD 0      /* круг 7, СВЕРКА_ВНЕДРЕНИЕ/g07-missions.md строки 21–22, 44 (P07-10, P07-11, 5.9; сверено с оригиналом): цель dump С ПРИВЯЗКАМИ — выпавший и не подобранный предмет дальше 200 м от игрока = провал (экран «миссия провалена», текст общий). Без привязок («столкновения») правила нет — предметы сами исчезают через 15 с. Было: правила не было. 1 — как было */
+#endif
+#ifndef MSN_DUMPHIT_OLD
+#define MSN_DUMPHIT_OLD 0      /* круг 7, СВЕРКА_ВНЕДРЕНИЕ/g07-missions.md строки 21, 44 (P07-10, 5.9; сверено с оригиналом): dump без привязок — удар по цели роняет предмет, только если предметов больше одного; при ОДНОМ предмете он выпадает, когда цель разбита (через 1 с). Сила удара (импульс не меньше 5000) проверяется в game_msn.c (gameMsnDumpHitStrong). Было: роняли любым ударом и при одном предмете. 1 — как было */
+#endif
+#ifndef MSN_ENTRYRESET_OLD
+#define MSN_ENTRYRESET_OLD 0   /* круг 7, g07b P06-5: вход через загрузку уровня / сохранения / MISSION SELECT начинает вступление сразу с этапа RESET_TO_HERE (не с нулевого); «следующая миссия» и отмена — с нулевого. 1 — прежнее */
 #endif
 #ifndef MSN_CP5_OLD
 #define MSN_CP5_OLD 0          /* круг 2, g07b P06-5: вход через загрузку/сохранение/MISSION SELECT ставит контрольную точку на этап-чекпоинт вступления */
@@ -215,6 +230,7 @@ static int next_story(const MsnRuntime *rt, int after)
 }
 
 static void start_phase(MsnRuntime *rt, int restore);
+static int g_entry;   /* круг 7: идёт вход в миссию «как после загрузки» (msn_enter_mission, msn_start_first, msn_resume_restart) */
 
 void msn_level_start(MsnRuntime *rt)
 {
@@ -241,7 +257,7 @@ void msn_level_start(MsnRuntime *rt)
 void msn_start_first(MsnRuntime *rt)
 {
     int s = next_story(rt, -1);
-    if (s >= 0) msn_start_mission(rt, s, 0);
+    if (s >= 0) { g_entry = 1; msn_start_mission(rt, s, 0); g_entry = 0; }
     else { rt->status = MSN_LEVEL_DONE; ev(rt, MSN_EV_LEVEL_COMPLETE, 0, 0, NULL, NULL); }
 }
 
@@ -520,6 +536,7 @@ void msn_start_mission(MsnRuntime *rt, int mission, int restore)
             const MsnPhase *ph = cur_phase(rt); uint32_t s;
             for (s = 0; s < ph->stage_count; s++) if (F->stages[ph->first_stage + s].flags & MSN_SF_CHECKPOINT) { rt->cp_stage = (int)s; break; }
         }
+        if (!MSN_ENTRYRESET_OLD && g_entry && !g_continuing && rt->cp_stage > 0 && rt->cp_phase == rt->phase) { rt->stage = rt->cp_stage; rt->restoring = 1; restore = 1; }   /* круг 7, P06-5: старт с этапа RESET_TO_HERE */
     }
     start_phase(rt, restore);
 }
@@ -601,7 +618,7 @@ static void mission_done(MsnRuntime *rt)
             for (i = 0; i < st->cmd_count; i++)
                 if (F->cmds[st->cmd_first + i].op == MSN_OP_SETRACEENTERYFEE) {
                     int fee = msn_arg_i(F, &F->cmds[st->cmd_first + i], 0);
-                    coins = (msnWagerPayFn && !MSN_BONUSREPEAT_OLD) ? (float)msnWagerPayFn(fee) : 2.0f * (float)fee;
+                    coins = (msnWagerPayFn && !MSN_WAGERPAY_OLD) ? (float)msnWagerPayFn(fee) : 2.0f * (float)fee;
                 }
         }
         /* P06-4 / P07-4: финиш между пар-временем и пар + 15 с засчитывает миссию, но без выплаты (секунды целые) */
@@ -696,11 +713,12 @@ void msn_retry(MsnRuntime *rt, int from_start)
     const MsnMission *m;
     if (rt->cur < 0) return;
     m = cur_mission(rt);
+    int t_on = rt->timer_on; float t_rem = rt->remaining;   /* таймер на момент провала (круг 7, строки 55, 66) */
     ev(rt, MSN_EV_CLEANUP, 0, 0, NULL, NULL);
     reg_clear_mission(rt);
     rt->timer_on = 0; rt->remaining = 0; rt->cargo = 0; rt->fail = 0; rt->oov_on = 0; rt->iris_closed = 0; rt->suppress_start = 0;
-    if (from_start) { rt->phase = m->intro != MSN_NONE16 ? 0 : 1; rt->stage = 0; rt->cp_phase = rt->phase; rt->cp_stage = 0; }
-    else { rt->phase = rt->cp_phase; rt->stage = rt->cp_stage; rt->timer_on = rt->cp_timer; rt->remaining = rt->cp_remaining; rt->restoring = 1; }
+    if (from_start) { rt->phase = m->intro != MSN_NONE16 ? 0 : 1; rt->stage = 0; rt->cp_phase = rt->phase; rt->cp_stage = 0; if (!MSN_RETRYTIME_OLD) { rt->timer_on = t_on; rt->remaining = t_rem; } }
+    else { rt->phase = rt->cp_phase; rt->stage = rt->cp_stage; rt->timer_on = rt->cp_timer; rt->remaining = rt->cp_remaining; rt->restoring = 1; if (!MSN_RETRYTIME_OLD) { rt->timer_on = t_on; rt->remaining = t_rem; } }
     start_phase(rt, 1);
 }
 
@@ -933,6 +951,11 @@ static int check_conditions(MsnRuntime *rt, const MsnWorld *w, float dt)
     int k;
     /* ставка gr1: UseElapsedTime + SetParTime 195 — опоздал, провал (ставка пропала). MSN_BREAK_PARTIME=1 — красный контроль
        tests/shop (часть race 30.09): без проверки пар-времени опоздавший забирает выигрыш */
+    if (!MSN_DUMPFAR_OLD && st->obj == MSN_OBJ_DUMP && rt->nbind > 0) {
+        int di;
+        for (di = 0; di < rt->nitems; di++)
+            if (rt->released[di] && !rt->done[di] && dist3(w->player, rt->relpos[di]) > 200.0f) return MSN_FAIL_COLLECT;
+    }
     if (MSN_PAR_OLD) {
         if (!MSN_BREAK_PARTIME && rt->timer_on && rt->timer_up && rt->par > 0 && rt->remaining > rt->par && msn_streq(msn_str(F, st->obj_arg), "gamble"))
             return MSN_FAIL_PARTIME;
@@ -1168,7 +1191,8 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
                         }
                     }
                 if (rt->nbind == 0) {
-                    if (rt->hit_vehicle && msn_streq(rt->hit_vehicle, rt->target) && rt->hit_delay <= 0) rt->hit_delay = 1.0f;
+                    if (rt->hit_vehicle && msn_streq(rt->hit_vehicle, rt->target) && rt->hit_delay <= 0 && (MSN_DUMPHIT_OLD || rt->nitems > 1)) rt->hit_delay = 1.0f;
+                    else if (!MSN_DUMPHIT_OLD && rt->nitems == 1 && e.health <= 0.0f && rt->hit_delay <= 0 && !rt->released[0] && !rt->done[0]) rt->hit_delay = 1.0f;   /* один предмет: выпадает при гибели цели */
                     if (rt->hit_delay > 0) {
                         rt->hit_delay -= dt;
                         if (rt->hit_delay <= 0) {
@@ -1337,8 +1361,10 @@ void msn_resume_restart(MsnRuntime *rt, const MsnProgress *p)
         dispatch_range(rt, L->init_first, L->init_count, MSN_AT_LEVEL_INIT);
         dispatch_range(rt, L->rew_first, L->rew_count, MSN_AT_REWARDS);
     }
-    msn_start_mission(rt, p->story, 0);
+    g_entry = 1; msn_start_mission(rt, p->story, 0); g_entry = 0;
 }
+
+void msn_enter_mission(MsnRuntime *rt, int mission) { g_entry = 1; msn_start_mission(rt, mission, 0); g_entry = 0; }   /* круг 7: выбор в MISSION SELECT — как вход после загрузки */
 
 void msn_resume(MsnRuntime *rt, const MsnProgress *p)
 {

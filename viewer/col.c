@@ -434,6 +434,13 @@ static void folList(ColWorld *w) {   // список кустов один ра�
   }
 }
 
+// №1140/1153 (g11, Роб: «невидимая несбиваемая преграда, как прозрачный столб»; L7 H4-9 на месте сбитой будки): в данных у дороги лежат короткие (3,5 м) закопанные цилиндры — водопропускные трубы l*_culvert (радиус 1,13 м, на L7 их 24+),
+// чей верх вровень с землёй или выше на 0,3 м. Правило «горб» брало только длинные (от COL_HUMP_LEN = 8 м) лежачие капсулы, короткие считались предметами-стенами: машина на 8–17 м/с встаёт у торца трубы как у стены (замер L7: удар
+// 17 м/с, остановка в 0 за кадр), хотя ничего не видно. Теперь короткая лежачая капсула, верх которой не выше GHOST_TOP над землёй рядом, — тоже горб (рельеф): колесо её переезжает. GHOSTWALL1153_OLD=1 — как было
+#ifndef GHOSTWALL1153_OLD
+#define GHOSTWALL1153_OLD 0
+#endif
+#define GHOST_TOP .35f   // м: выступ верха над землёй, не выше радиуса колеса (0,35 м) — рельеф, не стена
 static void humpFlags(ColWorld *w) {   // см. humpHere: один раз после сетки; нет памяти — горбов нет (прежнее поведение)
   ColScratch *S = w->scr; uint32_t bits = 0;
   S->humpAt = (uint32_t *)malloc(sizeof(uint32_t) * (w->ncyl ? w->ncyl : 1)); if (!S->humpAt) return;
@@ -446,7 +453,7 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
 #endif
     // короткая капсула — предмет (труба, бревно), не рельеф: остаётся стеной; низкая изгородь (куст) любой длины — переезжается
     // правка 421: изгородь (лежачая листва) — не горб: у оригинала машина в ней встаёт (сверка PS2), «переезжается» было правилом порта
-    if ((C->pad[0] != 1.f || (COL_HEDGE_CAPSULE_SOLID && !COL_HEDGE_PASS_OLD)) && 2.f * C->halfLen * axl < COL_HUMP_LEN) continue;
+    if ((C->pad[0] != 1.f || (COL_HEDGE_CAPSULE_SOLID && !COL_HEDGE_PASS_OLD)) && 2.f * C->halfLen * axl < COL_HUMP_LEN && (GHOSTWALL1153_OLD || C->pad[0] == 1.f)) continue;   // №1140: короткие не-кусты остаются кандидатами (порог ниже)
     S->humpAt[i] = bits; bits += 2u * ((uint32_t)ceilf(2.f * C->halfLen * axl / COL_HUMP_DS) + 1u);
   }
   S->hump = (uint8_t *)calloc(bits / 8 + 1, 1); if (!S->hump) { free(S->humpAt); S->humpAt = 0; return; }
@@ -462,7 +469,7 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
         if (!colGround(w, x, z, top + 1.f, top - 6.f, &g, 0)) continue;
         float e = top - g;
         // куст мягкий: крутизна у земли не важна (правка 71, правило порта: низкую изгородь в оригинале переезжают)
-        if (e <= COL_HUMP && ((C->pad[0] == 1.f && (COL_HEDGE_PASS_OLD || !COL_HEDGE_CAPSULE_SOLID)) || e <= C->r * (1.f - COL_WALK_NY))) { uint32_t bit = S->humpAt[i] + 2u * (uint32_t)k + (uint32_t)side; S->hump[bit >> 3] |= (uint8_t)(1u << (bit & 7)); }
+        if (e <= COL_HUMP && (L >= COL_HUMP_LEN || C->pad[0] == 1.f || e <= GHOST_TOP) && ((C->pad[0] == 1.f && (COL_HEDGE_PASS_OLD || !COL_HEDGE_CAPSULE_SOLID)) || e <= C->r * (1.f - COL_WALK_NY))) { uint32_t bit = S->humpAt[i] + 2u * (uint32_t)k + (uint32_t)side; S->hump[bit >> 3] |= (uint8_t)(1u << (bit & 7)); }
       }
     }
   }
@@ -990,6 +997,7 @@ static int humpHere(const ColScratch *S, const ColCyl *C, uint32_t i, const Q *q
   // капсула под ней, не перед ней. Оригинал (близнец arch.py, 3 м/с) переезжает эту изгородь и бьёт стекло, без сноса вбок
   { float tc = t < 0.f ? 0.f : t > L ? L : t, top = C->c[1] + C->axis[1] * ((tc - L * .5f) / axl) + C->r;
     float thr = C->pad[0] == 1.f ? COL_HUMP : fminf_(COL_HUMP, C->r * (1.f - COL_WALK_NY));
+    if (C->pad[0] != 1.f && L < COL_HUMP_LEN) thr = fminf_(thr, GHOST_TOP);   // №1140: короткая — только низкая
     // ось под кузовом (машина съезжает с изгороди, зад ещё над ней) — высота днища над осью по наклону кузова, иначе центр
     float axx = C->c[0] + ux * (tc - L * .5f), axz = C->c[2] + uz * (tc - L * .5f), ox = axx - cx, oz = axz - cz;
     float lf = ox * q->fx + oz * q->fz, lr = -ox * q->fz + oz * q->fx;

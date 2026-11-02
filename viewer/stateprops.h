@@ -83,6 +83,7 @@ typedef struct {
   float dirC, dirS;
   uint8_t fall; float fallTh, fallW, fallD[2], fallR0[9];   // №975: 1 — столб валится на шарнире у основания (угол, скорость, направление, исходный поворот), 2 — лежит
   float hv[2];                     // №923: горизонтальная скорость машины (до стен кадра) при её ударе по этому предмету; обломок по вызову с задержкой берёт её отсюда
+  uint8_t bushPass;               // №1101: куст-шар — машина вошла на скорости и проходит насквозь (держится, пока касание не кончилось)
   uint8_t hitPend;                 // сверка g11 круг 2 (P18 Д5): вызов монет при выключенном Hit & Run подал предмету ещё одно событие HIT — отправить после вызова
   uint8_t loopOn; float loopA, loopB;   // сверка g11 круг 2 (P15-19): цикл кадров [loopA, loopB) вместо хода клипа (вступление и окончание гэга), spLoop
   uint16_t slN; uint8_t slMix; float slD0, slSum;   // №1000: далёкий экземпляр спит — сколько кадров не шагал, первый dt, все ли dt равны, сумма dt; при пробуждении время догоняется (stateprops.c spNearStep)
@@ -98,6 +99,7 @@ typedef struct {
   const SpState *state; const SpEvent *event; const SpCall *call; const SpCol *col; const SpBill *bill;
   const uint32_t *bqgIdx; const uint32_t *bqgRow; unsigned nbqgRow;   // хвост BQG1 (правка 76): на квад first, n; строки w, h (f32), ARGB
   const SpInst *inst; const uint8_t *dynBreak;
+  SpCol *colOwn; SpType *typeOwn;   // №1137/1154: свои таблицы объёмов (данные + тела кустов без объёма) и типов (firstCol/nCol правятся в копии, данные уровня не трогаем: повторный spInit на том же буфере), принадлежат spFree
   unsigned ntype, ninst, npiece, ndyn;
   const void *vertBase; const unsigned short *idxBase;   // вершины — формат Vert main.c (16 Б), индексы 16-бит
   SpRun *run; void *mem;
@@ -139,6 +141,7 @@ extern int spNear1000;   // №1000: 1 — далёкие качающиеся �
 int spInit(StateProps *sp, const void *section, unsigned size);
 int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);
 void spFree(StateProps *sp);
+int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]);   // круг 7: центр объёма в мире с учётом следования за суставом (тест)
 // кадр: состояния, вызовы, частицы; машина (может быть NULL) — удары и упор в целые пропы; монеты — в coins (может быть NULL)
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt);
 // Contact pass without advancing the shared animation/state clocks.

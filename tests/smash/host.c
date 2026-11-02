@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
   if (colInit(&world, data + co, ce - co) || propsInit(&props, data + po, *(unsigned *)(data + po + 40)) || !props.spr ||
       spInit(&sp, props.spr, props.sprSize)) { printf("нет стейтпропов в %s\n", argv[1]); return 0; }
   const char *only = argc > 2 ? argv[2] : 0;   // необязательно: номер экземпляра (разбор)
-  unsigned ninst = sp.ninst; int nfam = 0, fT = 0, fB = 0, hT = 0, hB = 0, cT = 0, cB = 0, dT = 0, dB = 0, falseB = 0, worstI = -1; float worst = 2.f;
+  unsigned ninst = sp.ninst; int nfam = 0, fT = 0, fB = 0, hT = 0, hB = 0, cT = 0, cB = 0, dT = 0, dB = 0, falseB = 0, nudgeIntact = 0, worstI = -1; float worst = 2.f;
   for (unsigned i = 0; i < ninst; i++) {
     const SpInst *I = &sp.inst[i]; const SpType *T = &sp.type[I->type];
     if (T->kind || T->cls == 2 || !T->nCol || I->tag || !carEvent(&sp, i)) continue;
@@ -90,7 +90,10 @@ int main(int argc, char **argv) {
       for (float gap = ext; gap > .5f; gap -= .25f) {   // ближайшее место у объёма, где машина ещё не касается
         float x = c[0] - fx * (gap + 2.7f), z = c[2] - fz * (gap + 2.7f);
         if (drive(i, x, c[1] + 3.f, z, ang, 0.f, 0.f, 0, .2f, 0) >= 0) continue;
-        if (drive(i, x, c[1] + 3.f, z, ang, 1.f, 0.f, 0, 1.2f, 0) == 1 && fabsf(car.v) <= 1.5f && fabsf(car.vel[1]) <= 1.f) { falseB++;   // скатился под горку или упал с уступа — удар настоящий, не толчок
+        // сверка g11 круг 6 (P16:Д6): у ломающегося стейтпропа порога по силе нет — любое касание машиной ломает; значит толчок 1 м/с, КОТОРЫЙ КОСНУЛСЯ, обязан разбить (nudgeIntact == 0).
+        // Прежнее «ложных от толчка» (разбил = плохо) теперь только справка (falseB), в приговор не входит. SPIMP_SV_OLD=1 (порог импульса и у ломающихся) оставляет часть целыми
+        int r1 = drive(i, x, c[1] + 3.f, z, ang, 1.f, 0.f, 0, 1.2f, 0); if (r1 == 0) nudgeIntact++;
+        if (r1 == 1 && fabsf(car.v) <= 1.5f && fabsf(car.vel[1]) <= 1.f) { falseB++;   // скатился под горку или упал с уступа — удар настоящий, не толчок
           if (getenv("SMASH_V")) printf("  ложный: экз. %u тип %u cls %u масса %.0f сторона %d удар %.2f м/с машина v %.2f vy %.2f\n", i, I->type, T->cls, T->mass, a, sp.lastImpact, car.v, car.vel[1]); }
         break;
       }
@@ -98,9 +101,9 @@ int main(int argc, char **argv) {
     if (only) printf("inst %u type %u cls %u mass %.0f: лоб %d/%d, сверху всего %d/%d\n", i, I->type, T->cls, T->mass, iB, iT, dB, dT);
   }
   float fr = fT ? (float)fB / fT : 1.f, hr = hT ? (float)hB / hT : 1.f, dr = dT ? (float)dB / dT : 1.f;
-  int bad = (hT && hr < .98f) || (fT && fr < .97f) || (dT && dr < .90f) || falseB;
+  int bad = (hT && hr < .98f) || (fT && fr < .97f) || (dT && dr < .90f) || nudgeIntact;
   printf("%s %s: экземпляров %d; cls 4 в центр разбит %d из %d (%.1f %%); cls 4 краем/углом (±0.5–1 м) %d из %d (%.1f %%, худший экземпляр %d: %.0f %%); "
-         "столбы, шары и cls 10 в лоб %d из %d (не судим); сверху %d из %d (%.1f %%); ложных от толчка 1 м/с %d\n", bad ? "FAIL" : "PASS", argv[1], nfam,
-         hB, hT, 100.f * hr, fB, fT, 100.f * fr, worstI, 100.f * (worst > 1.f ? 1.f : worst), cB, cT, dB, dT, 100.f * dr, falseB);
+         "столбы, шары и cls 10 в лоб %d из %d (не судим); сверху %d из %d (%.1f %%); разбито толчком 1 м/с (справка, порога нет) %d; коснулись толчком 1 м/с и целы %d\n", bad ? "FAIL" : "PASS", argv[1], nfam,
+         hB, hT, 100.f * hr, fB, fT, 100.f * fr, worstI, 100.f * (worst > 1.f ? 1.f : worst), cB, cT, dB, dT, 100.f * dr, falseB, nudgeIntact);
   return bad;
 }

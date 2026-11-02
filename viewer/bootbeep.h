@@ -18,6 +18,7 @@
 #ifndef BOOTBEEP_H
 #define BOOTBEEP_H
 #include <math.h>
+#include <stdlib.h>
 
 #define BOOT_BEEP_RATE 44100
 #define BOOT_BEEP_PIT 1193182             // тактовая таймера 8253 в ПК
@@ -78,12 +79,47 @@ static const short bootTuneDurMs[BOOT_TUNE_N] = {120, 120, 140, 420}; // зву�
 #define BOOT_TUNE_REL_MS 260              // спад последней ноты
 #define BOOT_TUNE_TAIL_MS 60              // тишина после партитуры
 static int bootSnd1011Old = BOOTSND1011_OLD;
+// №1094 (Роб 02.11: «на старт поставим не пипиканье, а голос чувака из магазина комиксов… worst video game ever… он и так есть в библиотеке… меньше будет»): вместо четырёх нот спикера
+// на заставке играет реплика продавца комиксов из звуков самой игры. Файл bootvo.bin рядом с EBOOT (tools/bootvo_export.py): 'BVO1', u32 частота, u32 число сэмплов, затем блоки PS-ADPCM
+// по 16 байт, как на диске, без слота банка уровня (2112 КБ). Играет один раз с того же момента, что первая нота (BOOT_TUNE_AT_MS); длиннее хода заставки — доигрывает поверх
+// (заставку не удлиняем: вывод звука идёт своим потоком, ход заставки его не ждёт). Нет файла или файл повреждён — четыре ноты №1011.
+// BOOTVO1094_OLD=1 / файл bootvo1094old рядом с EBOOT (bootVo1094Old) — писк, как было
+#ifndef BOOTVO1094_OLD
+#define BOOTVO1094_OLD 0
+#endif
+#ifndef BOOT_VO_GAIN
+#define BOOT_VO_GAIN 0.7f                 // число наше, не из оригинала: запись голоса звучит ближе к полной шкале, чем писк (−20 дБ); −3 дБ
+#endif
+static int bootVo1094Old = BOOTVO1094_OLD;
+static short *bootVoPcm; static int bootVoN, bootVoRate;   // реплика, распакованная при загрузке файла (моно, частота записи)
+// распаковка файла bootvo.bin: 0 — готово (bootVoPcm, bootVoN, bootVoRate), иначе файл не годится. Блок: байт 0 = фильтр << 4 | сдвиг, байт 1 = флаги, 28 четырёхбитных отсчётов
+static int bootVoLoad(const unsigned char *d, int len) {
+  static const short F0[5] = {0, 60, 115, 98, 122}, F1[5] = {0, 0, -52, -55, -60};
+  if (len < 12 || d[0] != 'B' || d[1] != 'V' || d[2] != 'O' || d[3] != '1') return -1;
+  unsigned rate = d[4] | d[5] << 8 | d[6] << 16 | (unsigned)d[7] << 24, ns = d[8] | d[9] << 8 | d[10] << 16 | (unsigned)d[11] << 24;
+  int nb = (len - 12) / 16;
+  if (rate < 8000 || rate > 48000 || ns == 0 || ns > 200000 || (int)(ns / 28) > nb || ns % 28) return -2;
+  short *pcm = (short *)malloc(ns * sizeof(short)); if (!pcm) return -3;
+  int s1 = 0, s2 = 0; unsigned k = 0;
+  for (unsigned b = 0; b < ns / 28; b++) {
+    const unsigned char *q = d + 12 + b * 16; int sh = q[0] & 15, f = q[0] >> 4, fl = q[1] & 7; if (f > 4) f = 0;
+    for (int n = 0; n < 28; n++) {
+      int nib = (n & 1) ? q[2 + (n >> 1)] >> 4 : q[2 + (n >> 1)] & 15; if (nib >= 8) nib -= 16;
+      int smp = 0;
+      if (fl < 7) { int pr = s1 * F0[f] + s2 * F1[f]; pr = pr < 0 ? -((-pr) / 64) : pr / 64; smp = ((nib << 12) >> sh) + pr; }
+      pcm[k++] = (short)(smp > 32767 ? 32767 : smp < -32768 ? -32768 : smp);
+      s2 = s1; s1 = smp;
+    }
+  }
+  free(bootVoPcm); bootVoPcm = pcm; bootVoN = (int)ns; bootVoRate = (int)rate; return 0;
+}
 // маска голосов (для замеров по отдельности в tests/bootsnd)
 enum { BOOT_SND_M_CLICK = 1, BOOT_SND_M_FAN = 2, BOOT_SND_M_BLADE = 4, BOOT_SND_M_BEEP = 8, BOOT_SND_M_ALL = 15 };
 
 typedef struct {
   int i, n, mask, beepAt, stopAt;     // номер сэмпла, длина, голоса, начало бипа, остановка (-1 — нет)
   int tune;                           // №1011: 1 — четыре ноты темы вместо щелчка, кулера и бипа POST
+  int vo;                             // №1094: 1 — реплика продавца комиксов вместо нот (bootVoPcm)
   float fanGain, bladeGain;           // громкость шума кулера и тона лопастей
   float phBlade, phBeep, lp1, lp2, b1, b2, prevNoise;
   unsigned rng;
@@ -100,6 +136,8 @@ static void bootSndInit(BootSnd *s, int variant) {
   s->tune = !bootSnd1011Old;
   if (s->tune) { s->beepAt = BOOT_BEEP_RATE / 1000 * BOOT_TUNE_AT_MS;
     s->n = s->beepAt + BOOT_BEEP_RATE / 1000 * (bootTuneOnMs[BOOT_TUNE_N - 1] + bootTuneDurMs[BOOT_TUNE_N - 1] + BOOT_TUNE_TAIL_MS); }
+  s->vo = !bootVo1094Old && s->tune && bootVoPcm && bootVoN > 0;
+  if (s->vo) s->n = s->beepAt + (int)((long long)bootVoN * BOOT_BEEP_RATE / bootVoRate) + BOOT_BEEP_RATE / 1000 * BOOT_TUNE_TAIL_MS;
 }
 // №1011: огибающая ноты партитуры в сэмпле ib от начала первой ноты (0 — тишина); края 4 мс, у последней — спад BOOT_TUNE_REL_MS (квадрат)
 static float bootTuneEnv(int ib) {
@@ -130,6 +168,20 @@ static int bootSndFill(BootSnd *s, short *out, int n) {
     int i = s->i; float v = 0.f;
     if (i >= s->n || (s->stopAt >= 0 && i >= s->stopAt + BOOT_SND_CHUNK)) { out[j] = 0; continue; }
     made++;
+    if (s->vo) {   // №1094: реплика (линейная выборка с частоты записи на 44,1 кГц), последние 20 мс — спад
+      int j2 = i - s->beepAt;
+      if (j2 >= 0) {
+        long long pos = (long long)j2 * bootVoRate; int i0 = (int)(pos / BOOT_BEEP_RATE); float fr = (float)(pos % BOOT_BEEP_RATE) / BOOT_BEEP_RATE;
+        if (i0 < bootVoN) {
+          float a0 = bootVoPcm[i0], a1 = i0 + 1 < bootVoN ? bootVoPcm[i0 + 1] : 0.f; v = (a0 + (a1 - a0) * fr) * BOOT_VO_GAIN;
+          int leftIn = (int)(((long long)(bootVoN - i0) * BOOT_BEEP_RATE) / bootVoRate), fade = BOOT_BEEP_RATE / 50;
+          if (leftIn < fade) v *= (float)leftIn / fade;
+        }
+      }
+      if (s->stopAt >= 0) v *= 1.f - (float)(i - s->stopAt) / BOOT_SND_CHUNK;
+      int q = (int)v; if (q > 32767) q = 32767; if (q < -32768) q = -32768;
+      out[j] = (short)q; continue;
+    }
     if (s->tune) {   // №1011: только ноты спикера — без щелчка и кулера
       float env = i >= s->beepAt ? bootTuneEnv(i - s->beepAt) : 0.f, sq = 0.f;
       if (env > 0.f) { s->phBeep += BOOT_TUNE_HZ / BOOT_BEEP_RATE; if (s->phBeep >= 1.f) s->phBeep -= 1.f; sq = (s->phBeep < .5f ? 1.f : -1.f) * env; } else s->phBeep = 0.f;

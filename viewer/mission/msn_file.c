@@ -228,7 +228,7 @@ const char *const msn_objective_name[MSN_OBJ_COUNT] = { "none", "goto", "getin",
 const char *const msn_cond_name[MSN_COND_COUNT] = { "none", "timeout", "outofvehicle", "damage", "position", "race",
     "followdistance", "keepbarrel" };
 const char *const msn_fail_name[] = { "none", "timeout", "outofvehicle", "damage", "position", "race",
-    "followdistance", "keepbarrel", "partime", "abort", "hitnrun" };
+    "followdistance", "keepbarrel", "partime", "abort", "hitnrun", "collect" };
 
 /* ------------------------------------------------------------------ texts (TEXTS section, sorted by key) */
 const char *msn_text(const MsnFile *f, const char *key)

@@ -14,7 +14,7 @@
 чекпойнтов, кроме двух (тестовая, в меню её нет). Вывод по форме, не по коду — вопрос В-строкой в knowledge/questions.tsv.
 
 Координаты как у движка: метры, z отзеркален (как tools/missions/p3dlocs.py), курс движка h = π − угол файла (level_sweep)."""
-import math, struct, sys
+import math, os, struct, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +64,29 @@ def checkpoints(L):
     """чекпойнты круга по порядку данных (Event 2 с номером > 0): финиш — номер 1"""
     cps = [l for l in L if l['type'] == 0 and len(l['data']) >= 2 and l['data'][0] == EV_CHECK and l['data'][1] > 0 and l['trig']]
     return sorted(cps, key=lambda l: l['data'][1])
+
+
+# Круг 7 (g07b P17-16): порядок прохода чекпойнтов задан в оригинале списками номеров локаторов (в данных у чекпойнта Event 2 — номер; финиш — номер 1, он последний).
+# У b02 и b07 номер 3 стоит дважды (трасса проходит перекрёсток два раза), у b05 номера 7 и 3 дважды; остальные идут по возрастанию. Обратный ход — тот же круг наоборот
+# (без финиша в начале, финиш снова последним). Те же списки в viewer/bonus.c (brLapList), совпадение проверяет tests/g07b_sverka7/lap_order_check.py.
+# BONUS_LAP_OLD=1 — прежний порядок «по возрастанию номеров, без повторов»
+LAP_FWD = {1: [2, 3, 4, 5, 6, 7, 8, 1], 2: [2, 3, 4, 5, 6, 3, 8, 9, 1], 3: [2, 3, 4, 5, 6, 7, 1], 4: [2, 3, 4, 5, 6, 7, 1],
+           5: [2, 3, 4, 5, 6, 7, 8, 9, 10, 7, 3, 11, 1], 6: [2, 3, 4, 5, 6, 7, 1], 7: [2, 3, 4, 5, 6, 3, 8, 9, 1]}
+
+
+def lap_numbers(n, reverse=False):
+    f = LAP_FWD.get(n)
+    if not f: return None
+    return list(reversed(f[:-1])) + [f[-1]] if reverse else list(f)
+
+
+def lap_sequence(n, cps, reverse=False):
+    """чекпойнты круга по порядку списка оригинала (с повторами), финиш последним; None — списка нет или номера в данных не те (тогда прежний порядок)"""
+    if os.environ.get('BONUS_LAP_OLD') == '1' or os.environ.get('BONUS_SEQ_OLD') == '1': return None   # сведение 1109: оба выключателя окон g07b и g03
+    nums = lap_numbers(n, reverse)
+    by = {c['data'][1]: c for c in cps}
+    if not nums or any(k not in by for k in nums) or set(nums) != set(by): return None
+    return [by[k] for k in nums]
 
 
 def starts(L):

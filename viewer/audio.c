@@ -201,9 +201,25 @@ static const unsigned char *DATA;
 static SapTrack *T; static int ntrack; static AFile mfd;
 // Frontend NIS bank has stable storage: loading it never reallocates live T.
 #define EXTRA_TRACK_BASE 0x4000
-#define EXTRA_TRACK_MAX 16
+#define EXTRA_TRACK_MAX 48   // №1104: 12 реплик меню + 31 реплика титров (код Play Credits Dialog), было 16
 static SapTrack ET[EXTRA_TRACK_MAX];static volatile int netrack;
 static AFile emfd=AF_NONE;static char extraPath[256];static char musicPath[256];
+// №1111 (языки): озвучка диалогов на языке копии игры лежит отдельным файлом dialog_<fr|ge|sp>.sap рядом с music.sap (tools/sound_export.py --lang). Дорожки английского пакета
+// с переводом получают строку из него (метка 0x80 в flags: читать из этого файла); нет файла или перевода — английская дорожка. LANGVO1111_OLD=1 — язык озвучки не применяется
+#ifndef LANGVO1111_OLD
+#define LANGVO1111_OLD 0
+#endif
+#define TRK_LANG 0x80
+static AFile lfd = AF_NONE; static char langPath[256]; static int langSel, langTracks;
+void audioSetLanguage(int lang) { langSel = lang >= 0 && lang <= 3 ? lang : 0; }
+int audioLanguageTracks(void) { return langTracks; }
+int audioLangAvail(const char *dir, int lang) {   // №1111: в папке пакета есть файл озвучки этого языка (число дорожек в нём больше нуля)
+  static const char *const LF[4] = {0, "%sdialog_fr.sap", "%sdialog_ge.sap", "%sdialog_sp.sap"};
+  if (lang < 1 || lang > 3 || !dir) return 0;
+  char p[256]; snprintf(p, sizeof p, LF[lang], dir); AFile f = afOpen(p); if (!AF_OK(f)) return 0;
+  unsigned char h[64]; int ok = afRead(f, 0, h, 64) == 64 && !memcmp(h, "SAPL", 4) && *(unsigned *)(h + 8) > 0; afClose(f); return ok;
+}
+   // сколько дорожек сейчас с озвучкой языка (для журнала)
 static const SapTrack *trackRow(int t) {
  if(t>=0&&t<ntrack)return T+t;
  return t>=EXTRA_TRACK_BASE&&t<EXTRA_TRACK_BASE+netrack?ET+(t-EXTRA_TRACK_BASE):NULL;
@@ -266,6 +282,21 @@ static unsigned trackEnd(int t) { const SapTrack *r=trackRow(t);return (r->flags
 // tests/me/run.py «Мак, микшер», -DMIX_JOB_COPY=3 — модель несогласованного кэша (ME видит только сброшенное, главный после ответа видит
 // свежим только сброшенное) бит в бит с прямым счётом + счётчики «on» у ME ≠ у главного и «запись мимо сброса» = 0; красные ME_WB_RED.
 // ME_WB_OLD=1 — прежний путь целиком (сборка); файл mewbold рядом с EBOOT — прежний сброс целиком в этой же сборке (тур A/B)
+// №1100 (Роб 02.11: «разгрузить процессор через ME»): рукопожатие звука с ME стоит главному ~410 мкс на буфер (pre 81, svc 190, post 139 в туре TEST82). На Маке счёт самого mixPre
+// и mixPost занимает 0,3 и 1,2 мкс (×5,8 — единицы мкс на PSP): цену задают не вычисления, а число байт, которые главный трогает и сбрасывает из кэша, и вызовы ядра.
+// Первое, что режется без риска: окно кольца потока в задании. Копировалось всё лежащее в кольце до MIX_SWIN = 2048 Б на каждый звучащий поток (до 5 потоков), а буфер потребляет
+// не больше ~900 Б (512 кадров при 48 кГц и шаге 1,09 → 560 сэмплов, плюс упреждение распаковки MIX_WIN = 224 → 784 сэмпла = 28 блоков по 32 Б = 896 Б). Теперь окно не больше
+// SWIN_NEED = 1024 Б: вдвое меньше memcpy, строк кэша в сбросе и слов в mixJobIn. Страховка: поток, у которого окна не хватило (underrun) три раза, возвращает полное окно
+// для всех потоков (handMiss), включается/выключается «flag mehand 0/1» и файлом mehandold. MEHAND1100_OLD=1 — как было (2048)
+#ifndef MEHAND1100_OLD
+#define MEHAND1100_OLD 0
+#endif
+#ifndef SWIN_NEED
+#define SWIN_NEED 1024
+#endif
+static int meHand = !MEHAND1100_OLD; static unsigned handMiss, handWinB, handWinMax;
+void audioMeHand(int on) { meHand = on != 0 && !MEHAND1100_OLD; handMiss = 0; }
+int audioMeHandOn(void) { return meHand; }
 #include <stddef.h>
 #ifndef ME_WB_OLD
 #define ME_WB_OLD 0
@@ -312,24 +343,44 @@ static void dspReset(MixVoice *d) {
 #ifndef SV_STOPFADE_OLD
 #define SV_STOPFADE_OLD 0   // круг 5 (g08, P10-25): 1 — остановка голоса обрывом за один буфер, как было
 #endif
+#ifndef SV_STOPFADE7_OLD
+#define SV_STOPFADE7_OLD 0   // круг 7: оригинал гасит остановленный голос ровно за 0,1 с (шаг 11,61 мс / 100 мс = 0,1161 за буфер); 1 — 0,12 за буфер (≈ 97 мс)
+#endif
+// №1144 (пауза бонус-игры): пакет бонус-игры без таблицы режимов (MODE), поэтому sndPause там ничего не делал и музыка в паузе играла. В оригинале пауза (набор «Pause» все шины в 0 за 750 мс + событие
+// паузы композиции, которое останавливает музыку и по снятию продолжает с того же места). Здесь: общий множитель всех голосов pauseLvl уходит в 0 за 750 мс и возвращается; пока он 0, голоса потоков
+// (музыка, фон, речь) стоят на месте (шаг 0) — после паузы музыка продолжается с того же места. Включает sound.c sndPause, когда в пакете нет таблицы режимов. BONUSPAUSEMUS1144_OLD=1 — как было
+#ifndef BONUSPAUSEMUS1144_OLD
+#define BONUSPAUSEMUS1144_OLD 0
+#endif
+static volatile int pauseReq; static float pauseLvl = 1.f;
+void audioPauseAll(int on) { pauseReq = on != 0 && !BONUSPAUSEMUS1144_OLD; }
+float audioPauseLevel(void) { return pauseLvl; }
 static int gFadeL[NVOICE], gFadeR[NVOICE];   // уровень голоса в прошлом буфере (затухание остановки)
 static void gains(const Voice *v, const MixVoice *d, float extra, int *tgl, int *tgr, unsigned *tstep) {
   float g = unity ? 1.f : clampf(v->vol, 0, 1) * v->trim * busVol[v->bus] * userVol[v->bus] * extra, pan = unity ? 0 : clampf(v->pan, -1, 1);
+  if (v->bus != AUDIO_BUS_UI) g *= pauseLvl;   // №1144 (звуки меню паузы на своей шине идут, как в уровне)
+  const float g0 = clampf(g, 0, 1);   // круг 7: уровень голоса до остановки — от него считается шаг затухания
   if (v->stopReq) g = 0;
   g = clampf(g, 0, 1);
   float l = pan > 0 ? 1 - pan : 1, r = pan < 0 ? 1 + pan : 1;
   *tgl = (int)(g * l * 32768.f); *tgr = (int)(g * r * 32768.f);
 #if !SV_STOPFADE_OLD
-  { // круг 5 (g08, P10-25): остановка голоса (гудок, сирена, шины, мотор) — затухание на несколько кадров (≈ 93 мс), а не обрыв за один буфер; новый голос начинает с целевого уровня
+  { // круг 5 (g08, P10-25): остановка голоса (гудок, сирена, шины, мотор) — затухание на несколько кадров (≈ 93 мс), а не обрыв за один буфер; новый голос начинает с целевого уровня.
+    // Круг 7: в оригинале затухание ровно 1/10 с (шаг 0,1161 за буфер 11,61 мс); число 0,12 было нашим приближением
     long k = (long)(v - voices);
     if (k >= 0 && k < NVOICE) {
-      if (v->stopReq) { int st = (int)(0.12f * 32768.f); *tgl = gFadeL[k] > st ? gFadeL[k] - st : 0; *tgr = gFadeR[k] > st ? gFadeR[k] - st : 0; }
+      if (v->stopReq) {
+        int stl, str_;   // круг 7: оригинал убавляет множитель голоса от 1 до 0 за 0,1 с, то есть любой голос гаснет за те же 100 мс; шаг — доля 0,1161 от его уровня до остановки (по каналам)
+        if (SV_STOPFADE7_OLD) stl = str_ = (int)(0.12f * 32768.f);
+        else { stl = (int)(0.1161f * g0 * l * 32768.f); str_ = (int)(0.1161f * g0 * r * 32768.f); if (stl < 1) stl = 1; if (str_ < 1) str_ = 1; }
+        *tgl = gFadeL[k] > stl ? gFadeL[k] - stl : 0; *tgr = gFadeR[k] > str_ ? gFadeR[k] - str_ : 0; }
       gFadeL[k] = *tgl; gFadeR[k] = *tgr;
     }
   }
 #endif
   float p = unity ? 65536.f : d->rate * clampf(v->pitch, 0.05f, 4.f) * (65536.f / RATE);
   *tstep = (unsigned)(p + 0.5f);
+  if (pauseLvl <= 0.f && v->st) *tstep = 0;   // №1144: в паузе потоки стоят на месте (после паузы продолжение с того же места)
 }
 
 static void streamControl(Stream *st, Voice *v, MixVoice *d) {
@@ -363,6 +414,8 @@ static void streamControl(Stream *st, Voice *v, MixVoice *d) {
 }
 
 static void mixPre(MixJob *j) {
+  { const float goal = pauseReq ? 0.f : 1.f, st_ = (float)FRAMES / ((float)RATE * 0.75f);   // №1144: 750 мс, как у набора «Pause» диска
+    pauseLvl = pauseLvl < goal ? (goal - pauseLvl < st_ ? goal : pauseLvl + st_) : (pauseLvl - goal < st_ ? goal : pauseLvl - st_); }
   j->listener[0]=spatialQ(lx);j->listener[1]=spatialQ(ly);j->listener[2]=spatialQ(lz);
   j->right[0]=(int)(clampf(lrx,-1.f,1.f)*32767.f);j->right[1]=(int)(clampf(lrz,-1.f,1.f)*32767.f);
   for (int s = 0; s < NSTREAM; s++) streamControl(&streams[s], &voices[NVOICE + s], &j->v[NVOICE + s]);
@@ -412,6 +465,8 @@ static void mixPre(MixJob *j) {
     }
     w->nseg = n;
     unsigned have = (wr - st->rd) & ~31u; if (have > MIX_SWIN) have = MIX_SWIN;
+    if (meHand && have > SWIN_NEED) have = SWIN_NEED;   // №1100: больше, чем буфер может съесть, в задание не кладём
+    handWinB += have; if (have > handWinMax) handWinMax = have;
     unsigned at = st->rd & st->mask, first = st->mask + 1 - at; if (first > have) first = have;
     memcpy(w->win, st->ring + at, first); if (have > first) memcpy(w->win + first, st->ring, have - first);
     w->len = have;
@@ -430,7 +485,7 @@ static void mixPost(MixJob *j, short *out) {
 #else
     if (!onMem[k]) continue;                // правка 410 К1: молчащие голоса не читаем (их строк нет в сбросе)
 #endif
-    if (v->st) { if (d->underrun && !d->finished) underruns++; v->vol = v->st->vol; v->pan = v->st->pan; continue; }
+    if (v->st) { if (d->underrun && !d->finished) { underruns++; if (meHand && j->w[v->st - streams].len < SWIN_NEED && ++handMiss >= 3) { meHand = 0; } } v->vol = v->st->vol; v->pan = v->st->pan; continue; }   // №1100: окно кончилось раньше кольца три раза — полное окно
     if ((v->stopReq && d->gl == 0 && d->gr == 0) || (d->finished && d->bufLen <= 1)) { BARRIER(); v->state = V_FREE; }
   }
   for (int s = 0; s < NSTREAM; s++) {
@@ -615,12 +670,13 @@ static void streamFill(Stream *st) {
     bytes &= ~31u;
     if (!bytes) return;
     unsigned t0 = nowUs();
-    int got = afRead(st->pTrack>=EXTRA_TRACK_BASE?emfd:mfd, trackRow(st->pTrack)->off + st->pBlk * 32, st->ring + w, (int)bytes);
+    const AFile fdr = st->pTrack >= EXTRA_TRACK_BASE ? emfd : (trackRow(st->pTrack)->flags & TRK_LANG) ? lfd : mfd;   // №1111
+    int got = afRead(fdr, trackRow(st->pTrack)->off + st->pBlk * 32, st->ring + w, (int)bytes);
     int ms = (int)((nowUs() - t0) / 1000); if (ms > ioMaxMs) ioMaxMs = ms;
     if (got != (int)bytes) {
 #if !RESUME_AUDIO_OLD
-      if (!resumeAudioOld && (pwrSleeping || pwrResumeReq || got < 0 || !AF_OK(st->pTrack>=EXTRA_TRACK_BASE?emfd:mfd))) {
-        if (got < 0 || !AF_OK(st->pTrack>=EXTRA_TRACK_BASE?emfd:mfd)) {
+      if (!resumeAudioOld && (pwrSleeping || pwrResumeReq || got < 0 || !AF_OK(fdr))) {
+        if (got < 0 || !AF_OK(fdr)) {
           pwrResumeReq = 1;
           pwrResumeIo = 1;
         }
@@ -644,6 +700,17 @@ static void checkPwrResumeIo(void) {
       for (int r = 0; r < 50 && !quit && !pwrSleeping; r++) {
         mfd = afOpen(musicPath);
         if (AF_OK(mfd)) break;
+#ifndef AUDIO_HOST
+        sceKernelDelayThread(40000);
+#endif
+      }
+    }
+    if (langPath[0]) {   // №1111: файл озвучки языка
+      if (AF_OK(lfd)) afClose(lfd);
+      lfd = AF_NONE;
+      for (int r = 0; r < 50 && !quit && !pwrSleeping; r++) {
+        lfd = afOpen(langPath);
+        if (AF_OK(lfd)) break;
 #ifndef AUDIO_HOST
         sceKernelDelayThread(40000);
 #endif
@@ -787,7 +854,7 @@ int audioMeState(char *out, int n) {      // для строки AUDV и ящи�
 //   (К1): wb — сброс кэша, svc — meSvcSubmit (kuKernelCall), col — ожидание ответа, pre/post — mixPre/mixPost, мкс на буфер; wbl — строк
 //   кэша в сбросе на буфер (целиком 684), wbr — вызовов сброса на буфер, full — сбросов целиком за секунду
 typedef struct { unsigned late, sil, su, cpu, kick, full, wbUs, svcUs, colUs, preUs, postUs, wbl, wbr, buf; int restMin; } AudQ;
-static AudQ aq, aqLast; static unsigned aqLateTot, aqSilTot, aqBufTot, aqLateEvery;
+static AudQ aq, aqLast; static unsigned aqLateTot, aqSilTot, aqBufTot, aqLateEvery; static unsigned aqHandWin;
 int audioQualityLine(char *out, int n) {  // правка 410: строка AUDQ за прошлую секунду (main.c, tools/tour_report.py)
   const AudQ *q = &aqLast; float k = q->kick ? (float)q->kick : 1.f, b = q->buf ? (float)q->buf : 1.f;
   return snprintf(out, n, "late=%u/%u sil=%u/%u rest_min=%d su=%u wmax_us=%.0f buf=%u cpu=%u kick=%u wb_us=%.0f svc_us=%.0f col_us=%.0f "
@@ -795,6 +862,15 @@ int audioQualityLine(char *out, int n) {  // правка 410: строка AUDQ
                   q->late, aqLateTot, q->sil, aqSilTot, q->restMin, q->su, statUsMax, q->buf, q->cpu, q->kick, q->wbUs / k, q->svcUs / k,
                   q->colUs / k, q->preUs / k, q->postUs / k, q->wbl / k, q->wbr / k, q->full, wbOld || ME_WB_OLD);
   (void)b;
+}
+// №1100: строка AUDH раз в секунду (main_loop.h рядом с AUDQ): главный на рукопожатие с ME за буфер, мкс (сброс кэша wb + отдача svc + mixPre + mixPost), буферов на главном
+// из-за отказа/занятости ME (cpu), байт окон потоков за буфер (win, наибольшее winmax), счётчик нехватки окна (miss), включён ли режим (mehand). Для сравнения «mehand 0/1» в туре
+int audioHandLine(char *out, int n) {
+  const AudQ *q = &aqLast; float k = q->kick ? (float)q->kick : 1.f, b = q->buf ? (float)q->buf : 1.f;
+  static unsigned wb0, wm0; (void)wb0; (void)wm0;
+  return snprintf(out, n, "mehand=%d hand_us=%.0f (wb %.0f svc %.0f pre %.0f post %.0f) col_us=%.0f cpu=%u/%u kick=%u win_b=%.0f miss=%u me=%s", meHand,
+                  (q->wbUs + q->svcUs + q->preUs + q->postUs) / k, q->wbUs / k, q->svcUs / k, q->preUs / k, q->postUs / k, q->colUs / k, q->cpu, q->buf, q->kick,
+                  (float)aqHandWin / b, handMiss, meState == 1 ? "on" : meState == 2 ? meWhy : "-");
 }
 // ME-доля, вариант «адаптивный помощник» (слово Роба 492, 10.10: «основной процессор тянет всё сам; ME подключается только в тяжёлые моменты»).
 // Флаг-файл mepeak включает ворота mePeakGate: служба ME поднята (meaudio/mefx), но звук и частицы идут на ME только пока mePeak == 1. Включение —
@@ -946,6 +1022,7 @@ static int mixThread(SceSize a, void *b) {
       meJobsLast = meSecJobs; meWaitLast = meSecWait; meSecJobs = meSecWait = 0;
       dspLast = dspCnt ? (float)dspAcc / dspCnt : 0; dspAcc = dspCnt = 0;
       { static int su0; int su = underruns; aq.su = (unsigned)(su - su0); su0 = su; }
+      aqHandWin = handWinB; handWinB = 0;   // №1100
       aqLast = aq; memset(&aq, 0, sizeof aq); aq.restMin = -1;   // правка 410: секунда AUDQ
     }
   }
@@ -1018,6 +1095,7 @@ void audioTestPwrEvent(int flags) { mePwrCb(0, flags, NULL); }
 void audioTestSimulateFdInvalidate(void) {
   if (AF_OK(mfd)) { afClose(mfd); mfd = AF_NONE; }
   if (AF_OK(emfd)) { afClose(emfd); emfd = AF_NONE; }
+  if (AF_OK(lfd)) { afClose(lfd); lfd = AF_NONE; }
 }
 #endif
 
@@ -1087,6 +1165,28 @@ int audioInit(const char *dir) {
         }
       }
     }
+    if (haveMusic && !LANGVO1111_OLD && langSel > 0) {   // №1111: озвучка языка поверх английских дорожек
+      static const char *const LF[4] = {0, "%sdialog_fr.sap", "%sdialog_ge.sap", "%sdialog_sp.sap"};
+      snprintf(langPath, sizeof langPath, LF[langSel], dir); langTracks = 0;
+      AFile f = afOpen(langPath); unsigned char lh[64]; int ok = 0;
+      if (AF_OK(f) && afRead(f, 0, lh, 64) == 64 && !memcmp(lh, "SAPL", 4)) {
+        unsigned ver = *(unsigned *)(lh + 4), n = *(unsigned *)(lh + 8), io = *(unsigned *)(lh + 12), ro = *(unsigned *)(lh + 16), size = afSize(f);
+        if (ver == 1 && n <= (unsigned)ntrack && (uint64_t)ro + (uint64_t)n * 64u <= size && io == 64) {
+          unsigned short *ix = amalloc(sizeof(unsigned short) * (n ? n : 1)); SapTrack *rw = amalloc(sizeof(SapTrack) * (n ? n : 1));
+          if (ix && rw && afRead(f, io, ix, (int)(2 * n)) == (int)(2 * n) && afRead(f, ro, rw, (int)(64 * n)) == (int)(64 * n)) {
+            for (unsigned q = 0; q < n; q++) {   // строка берётся, только если имя совпало с английской дорожкой, строка целая и данные внутри файла
+              const SapTrack *r = rw + q; if (ix[q] >= (unsigned)ntrack) continue;
+              if (strncmp(r->name, T[ix[q]].name, 28) || r->ch != 2 || !r->rate || r->flags || r->bus != 2 || !r->nblk || (uint64_t)r->nsamp != (uint64_t)r->nblk * 28u) continue;
+              if (r->off < ro + n * 64u || (r->off & 2047) || (uint64_t)r->off + (uint64_t)r->nblk * 32u > size) continue;
+              T[ix[q]] = *r; T[ix[q]].flags |= TRK_LANG; langTracks++;
+            }
+            ok = 1;
+          }
+          free(ix); free(rw);
+        }
+      }
+      if (ok && langTracks) lfd = f; else { if (AF_OK(f)) afClose(f); langPath[0] = 0; langTracks = 0; }
+    }
     if (!haveMusic) snprintf(err, sizeof err, "music.sap invalid: effects only");
   } else snprintf(err, sizeof err, "music.sap not found: effects only");
 #ifndef AUDIO_HOST
@@ -1119,8 +1219,10 @@ void audioShutdown(void) {
 #endif
   if (AF_OK(mfd)) afClose(mfd);
   if (AF_OK(emfd)) afClose(emfd);emfd=AF_NONE;netrack=0;extraPath[0]=0;
+  if (AF_OK(lfd)) afClose(lfd);lfd=AF_NONE;langPath[0]=0;langTracks=0;
   mfd = AF_NONE;
   musicPath[0] = 0;
+  pauseReq = 0; pauseLvl = 1.f;   // №1144
   memset(voices, 0, sizeof voices); memset(J, 0, sizeof *J); memset(strmSi, 0, sizeof strmSi);
   memset(onMem, 0, sizeof onMem); memset(vFl, 0, sizeof vFl); wbAll = 1;   // правка 410 К1: задание стёрто главным
   haveMusic = 0;
@@ -1131,6 +1233,7 @@ void audioShutdown(void) {
   for (int s = 0; s < NSTREAM; s++) free(streams[s].ring);
   memset(streams, 0, sizeof streams);
   free(T); T = 0; ntrack = 0;
+  if (AF_OK(lfd)) afClose(lfd); lfd = AF_NONE; langPath[0] = 0; langTracks = 0;   // №1111
   if (bank != slot) free(bank);   // №1069: постоянное место банка остаётся на следующий уровень
   bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0;
 }
@@ -1317,15 +1420,23 @@ int audioMusicState(char *out, int n) {
 }
 
 
-typedef struct { float skid, life; int air, spin, parked, valid; } EngEx;   // сверка g08-sound: состояние машины игрока для модели мотора
+typedef struct { float skid, life, burn; int air, spin, parked, valid; } EngEx;   // сверка g08-sound: состояние машины игрока для модели мотора
 static EngEx engEx;
 #ifndef ENGINE_SV_OLD
 #define ENGINE_SV_OLD 0
 #endif
 // skid01 — уровень заноса/буксования (skidSoundLevel), spinInPlace — буксование с места, air — все колёса вне земли, parked — игрок вышел
 // (после конца анимации выхода: только холостой клип), life01 — остаток жизни машины 0..1. Раз в кадр до sndEngine (sound.c: sndCarState)
+// круг 7 (g08, P10-11, сверка с оригиналом): занос — два случая. Уровень «бернаута» больше нуля (полный газ на малой скорости, ручник): высота = 0,5 + (1,3 − 0,5) · уровень
+// (пределы по умолчанию, в car_tune.spt диска их нет); иначе скольжение: от 0,5 · предел оборотов до 0,9 · предел по газу. Раньше случай выбирался по «стоит на месте и газ > 0,3»
+// и уровнем служила сила шин. SV_BURNPITCH_OLD=1 — прежнее
+#ifndef SV_BURNPITCH_OLD
+#define SV_BURNPITCH_OLD 0
+#endif
+static float engBurnLevel;
+void audioEngineBurn(float level01) { engBurnLevel = level01 > 0.f ? (level01 > 1.f ? 1.f : level01) : 0.f; }
 void audioEngineEx(float skid01, int spinInPlace, int air, int parked, float life01) {
-  engEx.skid = skid01; engEx.spin = spinInPlace; engEx.air = air; engEx.parked = parked; engEx.life = life01; engEx.valid = 1;
+  engEx.burn = engBurnLevel; engEx.skid = skid01; engEx.spin = spinInPlace; engEx.air = air; engEx.parked = parked; engEx.life = life01; engEx.valid = 1;
 }
 #ifdef AUDIO_HOST
 unsigned audioClockUs(void) { return (unsigned)(framesOut * (1000000.0 / RATE)); }   // в тестах на Маке время идёт по выданным кадрам
@@ -1395,7 +1506,8 @@ static void engineStepSv(Engine *e, const SabCar *c, float kmh, float topKmh, fl
       target = c->revLo + (c->revHi - c->revLo) * u; e->pitch = target; e->gear = -1; e->coast = 0; break; }   // P10-29: сразу
     case EM_AIR: { float lo = 0.5f * L; target = lo + clampf(thr, 0, 1) * (L - lo); rate = (L - lo) / 0.5f; e->gear = 0; e->coast = 0; break; }   // P10-10 (круг 3, проверка): 0,5·предел .. предел оборотов, отклик 500 мс на весь размах
     case EM_SKID:
-      target = x->spin ? 0.5f + clampf(x->skid, 0, 1) * 0.8f : 0.5f * L + clampf(thr, 0, 1) * 0.4f * L;   // P10-11
+      if (SV_BURNPITCH_OLD) target = x->spin ? 0.5f + clampf(x->skid, 0, 1) * 0.8f : 0.5f * L + clampf(thr, 0, 1) * 0.4f * L;   // P10-11 (до круга 7)
+      else target = x->burn > 0.f ? 0.5f + (1.3f - 0.5f) * x->burn : 0.5f * L + (0.9f * L - 0.5f * L) * clampf(thr, 0, 1);   // круг 7: бернаут 0,5..1,3 по уровню; скольжение 0,5..0,9 предела по газу
       rate = 0.5f; e->gear = 0; e->coast = 0; break;
     case EM_PARK: case EM_IDLE: target = c->idlePitch; e->gear = 0; e->coast = 0; break;
     default: {

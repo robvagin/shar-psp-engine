@@ -37,6 +37,9 @@
 #ifndef SV_DAMVIS_OLD
 #define SV_DAMVIS_OLD 0
 #endif
+#ifndef SV_STOPLIGHT2_OLD
+#define SV_STOPLIGHT2_OLD 0
+#endif
 #ifndef SV_STOPLIGHT_OLD
 #define SV_STOPLIGHT_OLD 0
 #endif
@@ -243,6 +246,8 @@ void carVisUpdate(CarVis *v, const Car *c, const CarInput *in, float dt) {
     if (c->v > .15f) br = fminf(br, 1.f - ratio);
     v->brake = br > 0.f; v->reverse = in && in->brake > 0.f && c->v < -0.5f;
   }
+  // круг 7, P01-25: у машины игрока при общем уроне > 0,6 стоп-сигналы больше не показываются (в оригинале на этом пороге выставляется запрет стоп-сигналов; багажник отдельно с 0,3 — места удара у нас нет). -DSV_STOPLIGHT2_OLD=1
+  if (!SV_STOPLIGHT2_OLD && (c->huskDrive || c->svPlayer) && c->damage > 0.6f) v->brake = 0;
 }
 
 int carVisVariantOn(const Car *c, int variant) { return carBoomed(c) ? variant == 1 : variant == 0; }   // правка 199: остов — со взрыва

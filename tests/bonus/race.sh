@@ -6,6 +6,7 @@
 #   --break-cp     объёмы чекпойнтов подняты на 1 км — круги не засчитываются          -> (1)
 #   --nopath       водитель едет прямо к остановкам (без пути по опоре трассы)          -> (2) на b01
 #   --nogoal       водитель считает точки сам (пропуск чекпойнта = лишний круг)          -> (2) хотя бы на одной трассе
+#   --oldroads     №1116: соперники по плотному пути порта, а не по дорогам трассы (BONUS_ROADS_OLD)  -> (2)
 # Журнал: build/gates/bonus/race_<время>.txt
 cd "$(dirname "$0")/../.."
 B=build/bonus; mkdir -p build/gates/bonus; LOG=build/gates/bonus/race_$(date +%Y%m%d-%H%M%S).txt
@@ -14,7 +15,7 @@ for f in b01 b02 b03 b04 b05 b06 b07; do [ -f $B/$f.shr ] && [ -f $B/$f.bns ] ||
 # 09.10 (часть «подборы, ловушки, огонь, DEATH»): этот гейт меряет водителя ИИ и правила гонки — без подборов, DEATH и ловушек
 # (--noeffects): пороги (195 с на 3 круга, ≤ 3 возвратов на круг) подобраны до эффектов, нитро и DEATH трасс меняют ход гонки
 # (b05 по ходу: с эффектами первый финиш 197 с). Эффекты — tests/bonus/pickups.sh; RACE_FX=1 — этот же гейт с эффектами (разбор)
-FX=--noeffects; [ "${RACE_FX:-0}" = 1 ] && FX=
+FX="--noeffects --noncollide --ai4"; [ "${RACE_FX:-0}" = 1 ] && FX="--noncollide --ai4"   # №1147: этот гейт меряет водителя и правила гонки без ударов между соперниками (как до правки); удары и пересечения — tests/g03_1147
 run() { $B/bin/race_host $B/b0$1.shr $B/b0$1.bns $B/msncars-b.shr "${@:2}" $FX; }
 check1() {   # каждая трасса и ход: хоть одна машина доехала
   local bad=0
@@ -35,6 +36,7 @@ echo "== красные" | tee -a "$LOG"
 check1 --break-cp > /dev/null && { echo "красный --break-cp: НЕ пойман"; fail=1; } || echo "красный --break-cp: пойман (1)"
 check2 --nopath > /dev/null && { echo "красный --nopath: НЕ пойман"; fail=1; } || echo "красный --nopath: пойман (2)"
 check2 --nogoal > /dev/null && { echo "красный --nogoal: НЕ пойман"; fail=1; } || echo "красный --nogoal: пойман (2)"
+check2 --oldroads > /dev/null && { echo "красный --oldroads: НЕ пойман"; fail=1; } || echo "красный --oldroads: пойман (2)"
 echo "== зелёный" | tee -a "$LOG"
 check1 || fail=1
 check2 || fail=1

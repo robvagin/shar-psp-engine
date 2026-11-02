@@ -82,6 +82,8 @@ void gameCarLimits(const Game *g, CarInput *in);
 void gameExitAssist(Game *g, CarInput *in);   // правка 168: заказанный выход — тормоз, потом выход            // остов стоит, пешком водителя нет
 void gameCarStep(Game *g, const CarInput *in, float dt);    // carUpdate
 void gameAfterCar(Game *g, const GamePad *p, float dt);     // Гомер и его удары, пропы, стейтпропы, монеты
+// сверка g11b-collect круг 7: снаряд осы и подвижные предметы / стейтпропы (game.c gameBoltProps), по отрезку a -> b: доля пути до первого (больше 1 — нет); apply = 1 — толчок силой 400
+float gameBoltProps(Game *g, const float a[3], const float b[3], const float dir[3], int apply);
 void gameRespawn(Game *g, float ex, float ez, float dt, int (*seen)(void *, float, float, float, float), void *u);   // возврат вне вида
 void gameHnr(Game *g, float dt);                            // спад шкалы Hit & Run (SetHitAndRunDecay L1 3.0 ед./с на шкале 100)
 extern int gameHnrChasePauseOld;                           // №723: 1 — в погоне пауза спада 3 с как до правки
@@ -138,6 +140,13 @@ void gameCarHealthNote(Game *g, const char *name, float frac);   // запомн
 float gameCarHealthGet(const Game *g, const char *name);           // доля или -1, если машины в таблице нет
 void gameCarHealthApply(Game *g, const char *name, Car *c);        // поставить урон машине по доле (frac<=0 — остов)
 void gameCarSummon(Game *g, const char *name, Car *c);             // будка: остов чинится (плату берёт phone_view.c), побитая целая приезжает побитой
+// №1104 (коды оригинала, viewer/cheats.h): ввод в OPTIONS главного меню и паузы (L+R зажаты, четыре нажатия ✕ ○ □ △), таблица включённых
+int  gameCheatsFrame(unsigned held, unsigned hit, int allStory, int *id);   // кадр ввода; -> 1 успех (звук cheat_success), 2 ошибка (cheat_fail), 0 ничего
+int  gameCheatsActive(void);    // L и R зажаты — кнопки меню не принимаются
+int  gameCheatsPending(void);   // следующее нажатие закроет четвёрку (тогда считать allStory)
+void gameCheatsReset(void);     // выход в главное меню из игры — коды сбрасываются
+void gameCheatsSet(unsigned mask);
+int  gameCheatOn(int id);       // включён ли код (номера CH_* в cheats.h)
 void gameCarHealthClear(Game *g);                                  // новая игра: таблица пуста
 int  gameCarHealthDump(const Game *g, uint16_t *hash, float *frac);   // для записи игры: -> сколько машин (до 8)
 void gameCarHealthLoad(Game *g, int n, const uint16_t *hash, const float *frac);   // из записи игры

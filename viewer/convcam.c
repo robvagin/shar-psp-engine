@@ -35,6 +35,9 @@
 #ifndef CONV_SIDE_SV_OLD
 #define CONV_SIDE_SV_OLD 0
 #endif
+#ifndef CONV_CHILD_SV_OLD
+#define CONV_CHILD_SV_OLD 0   // круг 7 (СВЕРКА_КАМЕРА 4.5, P15-17): 1 — камера и цель на 0,4 м ниже, если снимаемый ниже 1,2 м (рост модели), как в TEST84
+#endif
 #define SV_CHILD_HEAD 1.2f   // голова ниже этого — ребёнок (Лиза; в данных диска метки ребёнка нет, как у порта по росту модели)
 
 static const char *const names[] = {"", "npc_far", "npc_near", "pc_far", "pc_near"};
@@ -76,7 +79,7 @@ static void poseSv(const ConvScene *s, int shot, int side, float eye[3], float l
   float D = near ? 6.2f : 5.0f, th = (near ? 1.40f : .55f) * (onPc ? 1.f : -1.f), hE = near ? 2.20f : 2.11f, hT = near ? 1.25f : 1.03f, hf = near ? .49f : 1.0f;
   float shift = near ? (onPc ? 1.06f : -1.06f) : 0.f, mx = (s->pc[0] + s->npc[0]) * .5f, my = (s->pc[1] + s->npc[1]) * .5f, mz = (s->pc[2] + s->npc[2]) * .5f;
   // ребёнок в кадре (снимаемый герой): камера и цель на 0,4 м ниже (g06-camera:38)
-  float head = onPc ? (s->pcHead > .05f ? s->pcHead : FACE_DEF) : (s->npcHead > .05f ? s->npcHead : FACE_DEF), low = head < SV_CHILD_HEAD ? .4f : 0.f;
+  float head = onPc ? (s->pcHead > .05f ? s->pcHead : FACE_DEF) : (s->npcHead > .05f ? s->npcHead : FACE_DEF), low = CONV_CHILD_SV_OLD && head < SV_CHILD_HEAD ? .4f : 0.f;   // круг 7: в оригинале отметка «ребёнок» из команды миссии до камеры не доходит (команда связана не с тем объектом), в данных диска её нет — камера не опускается никогда
   eye[0] = mx + D * (ax * sinf(th) + vx * cosf(th)); eye[2] = mz + D * (az * sinf(th) + vz * cosf(th)); eye[1] = my + hE - low;
   look[0] = mx + ax * shift; look[2] = mz + az * shift; look[1] = my + hT - low;
   *fovY = 2.f * atanf(tanf(hf * .5f) * 9.f / 16.f) * (180.f / 3.14159265f);

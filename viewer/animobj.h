@@ -24,7 +24,7 @@ typedef struct { uint8_t kind, pad; uint16_t obj; uint32_t col; uint16_t joint, 
 // круг 5 (g11): objnames.shr (tools/objnames_export.py): имена объектов ANM1, события-триггеры (голуби) и сустав объёмов типов SPR1
 typedef struct { char name[24]; uint16_t nfr; uint8_t action, nvol; uint16_t ntypes, pad; } AoName;   // 32 Б
 typedef struct { uint32_t event, rect; float c[3], h[3], ax[9]; uint32_t pad[3]; } AoEvTrig;          // 80 Б
-typedef struct { float f; float delay; uint8_t playing, inTrig, pad[2]; } AoRun;   // pad[0] — объёмы поставлены; pad[1] — подъёмник: 0 не проверен, 1 да, 2 нет (DUFF_LIFT)   // delay: задержка нажатия до начала клипа (правка 462)
+typedef struct { float f; float delay; uint8_t playing, inTrig, pad[2]; uint8_t once; } AoRun;   // once — PlayOnce уже сработал (круг 6: inTrig каждый кадр пересчитывается по объёму, для признака «навсегда» не годится); pad[0] — объёмы поставлены; pad[1] — подъёмник: 0 не проверен, 1 да, 2 нет (DUFF_LIFT)   // delay: задержка нажатия до начала клипа (правка 462)
 #define AO_MAXOBJ 64
 #define AO_NEAR 90.f            // живые объёмы переставляются, пока игрок ближе этого (дальше машина за кадр не доедет)
 
@@ -75,8 +75,13 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
 #ifndef ANIMHOLD_SV_OLD
 #define ANIMHOLD_SV_OLD 0
 #endif
+// №1102 (Роб 02.11 на вопрос сверки: «лифты по треугольнику под нажатие, чтобы было как в оригинале»): ответ — ТОЛЬКО по △, правка 519 уступает: платформа Duff и платформы АЭС сами при наступании не едут,
+// подсказка △ («Use») появляется в объёме выключателя у платформы (aoWantsAction). LIFTTRI1102_OLD=1 — автозапуск при наступании, как правка 519 (ANIMAUTO_SV_OLD по умолчанию равен ему)
+#ifndef LIFTTRI1102_OLD
+#define LIFTTRI1102_OLD 0
+#endif
 #ifndef ANIMAUTO_SV_OLD
-#define ANIMAUTO_SV_OLD 1
+#define ANIMAUTO_SV_OLD LIFTTRI1102_OLD
 #endif
 #define LIFT_SMALL_RISE 3.0f    // м: подъёмники малого хода (Duff 1,06 м) растягиваем; лифты на 8 и 13 м едут как в клипе
 #define LIFT_KMAX 3.0f

@@ -54,6 +54,9 @@ EV_LIGHT = 65   # событие локатора «смена света»
 def mirror(v): return (v[0], v[1], -v[2])
 
 
+LOC_MAT = {}   # (файл, номер локатора) -> 16 float матрицы локатора (строки; перенос в строке 3)
+
+
 def locators(level):
     """-> [(файл, номер, имя, вид, слова данных, [объёмы (имя, kind, c, h, ax)], позиция)] — Locator2 0x3000005 всех файлов уровня (без комнат)"""
     out = []
@@ -77,6 +80,7 @@ def locators(level):
                     axes.append(tuple(a / ln_ for a in ax)); sc.append(half[r] * ln_)
                 vols.append((vn, 1 if rect else 0, mirror(m[12:15]), tuple(sc), axes))
             pos = mirror(struct.unpack_from('<3f', c.data, p + 8 + ln * 4))
+            LOC_MAT[(f.stem, n)] = next((struct.unpack_from('<16f', k.data, 0) for k in c.children if k.id == 0x300000C and len(k.data) >= 64), None)   # круг 7: матрица самого локатора (оси диска, z не отзеркален)
             out.append((f.stem, n, name, kind, words, vols, pos)); n += 1
     return out
 
@@ -121,7 +125,11 @@ def actions(locs):
         strs = [x.decode('latin1') for x in struct.pack(f'<{len(w)}I', *w).split(b'\0') if x]
         if len(strs) < 3 or strs[2] not in ACT_CODES: continue
         for vn, k, c, h, ax in vols[:1]:
-            recs.append(volrec(name, strs[0], (pos[0], pos[1], pos[2], float(ACT_CODES[strs[2]])), k, c, h, ax, li, ACT_CODES[strs[2]]))
+            # круг 7 (P18-12): у Teleport слот loc_i несёт КУРС игрока после переброса, f32 радианы в осях движка (forward = (sin h, cos h)): ось X матрицы самого
+            # локатора (оригинал: единичный вектор (1,0,0) через матрицу без переноса, курс по его x и z); z отзеркален. SVDATA_TPHEAD_OLD=1 — слот хранит номер локатора, как было
+            m_ = LOC_MAT.get((fn, _n)); hd_ = math.atan2(m_[0], -m_[2]) if m_ else 0.0
+            slot = li if os.environ.get('SVDATA_TPHEAD_OLD') == '1' else struct.unpack('<I', struct.pack('<f', hd_))[0]
+            recs.append(volrec(name, strs[0], (pos[0], pos[1], pos[2], float(ACT_CODES[strs[2]])), k, c, h, ax, slot, ACT_CODES[strs[2]]))
     return recs
 
 

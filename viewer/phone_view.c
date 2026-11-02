@@ -54,6 +54,20 @@ enum { PV_IN = 0, PV_IDLE, PV_OUT, PV_DONE };
 #ifndef PHONE_SWAP_DIP_OLD
 #define PHONE_SWAP_DIP_OLD 0
 #endif
+// №1133 (Роб 02.11: «в телефонной будке не надо затемнять экран каждый раз, когда меняется машина, медленно, и машина стала дольше грузиться; просто переключаться
+// машинами без затемнения»; затемнение смены (M2:32) — из оригинала, но Роб хочет без него в любом случае): все картинки машин уже лежат в странице phone.shr в памяти
+// (читается при открытии будки), смена — это смена номера кадра картинки, ничего не грузится; поэтому машина меняется в тот же кадр, что нажатие, без затемнения,
+// а серия нажатий (в том числе зажатые ◄ ► L R) листает по одной машине за повтор. Пока нет затемнения, «машина ещё меняется» не бывает, выбор и «назад» не ждут.
+// BOOTHFADE1133_OLD=1 — прежнее: затемнение 0,5 + 0,5 с на каждую смену (PHONE_SWAP_DIP_OLD=1 — ещё прежнее, без затемнения, как до M2:32)
+#ifndef BOOTHFADE1133_OLD
+#define BOOTHFADE1133_OLD 0
+#endif
+// №1133 (Роб: «голубое пятно-свечение за машиной — убрать, векторные лучи оставить»): пятно — картинка Spotlight страницы (pbglow, мягкая, ×1,6), в пакете она с тегом WASPS
+// (PV_T_SPOT, tools/shop_export.py TAG_SPOT, стоит с №557 — пакет не менялся) и теперь не показывается никогда; BOOTHGLOW1133_OLD=1 — показывается, как было (кроме 3D-остова). Лучи (uiScrRays) не тронуты
+#ifndef BOOTHGLOW1133_OLD
+#define BOOTHGLOW1133_OLD 0
+#endif
+#define PV_DIP (!PHONE_SWAP_DIP_OLD && BOOTHFADE1133_OLD)   // затемнение смены включено (иначе машина меняется сразу)
 static float swA; static int swPend, swUp;   // swA — затемнение смены 0…0,85; swPend — накопленный сдвиг на машин; swUp — идёт затемнение (иначе открытие)
 // M2:33: ремонт разбитой машины всегда разрешён, цена списывается из банка, но не ниже нуля. PHONE_REPAIR_ALLOW_OLD=1 — нехватка монет = отказ
 #ifndef PHONE_REPAIR_ALLOW_OLD
@@ -127,8 +141,10 @@ static void topOf(const Shop *s) {   // №682: старший открытый 
   pvTop = pvReached > s->level ? pvReached : s->level;
   if (s->coins) for (int L = 1; L <= 7; L++) if (s->coins->owned[L] && L > pvTop) pvTop = L;
 }
+int phoneCheatAll;   // №1104: код Vehicles (cheats.h) — в будке доступны все машины-награды; ставит main_loop.h
 static int owned(Shop *s, int k) {   // машина уровня — как у лавки (своя, куплена, выиграна); с другого уровня — закрыта (А) / по Coins.owned (Б)
   if (k < 0 || k >= n) return 0;
+  if (phoneCheatAll && (shopFind(s, pvName[k]) >= 0 || pvIdx[k] >= 0)) return 1;   // №1104: код Vehicles — все машины-награды (данные которых есть) открыты
   if (shopFind(s, pvName[k]) < 0) return ownedOther(s, k);
   topOf(s);
   if (!PHONE_UNLOCK_OLD && pvLvl[k] >= 1 && pvLvl[k] < pvTop) return 1;   // №682: машина пройденного уровня (награда этого же уровня тоже)
@@ -206,7 +222,7 @@ int phoneViewTick(Shop *s, float dt) {
   t += dt < PV_DT_MAX ? dt : PV_DT_MAX; raysT += dt < PV_DT_MAX ? dt : PV_DT_MAX;
   if (phase == PV_IN && t >= PV_DARK_HOLD + PV_LIGHT_IN) { phase = PV_IDLE; t = 0.f; }
   if (phase == PV_OUT && t >= PV_LIGHT_OUT) { phase = PV_DONE; return PHONEV_EV_CLOSE; }
-  if (!PHONE_SWAP_DIP_OLD && phase == PV_IDLE) {
+  if (PV_DIP && phase == PV_IDLE) {
     float st = (dt < PV_DT_MAX ? dt : PV_DT_MAX) * PV_DARK_A / .5f;
     if (swUp) { swA += st; if (swA >= PV_DARK_A) { swA = PV_DARK_A; if (swPend && nOrd > 1) { cur = ((cur + swPend) % nOrd + nOrd) % nOrd; int r = rowOf(cur); logf_("swap %d name=%s", cur, pvName[r]); } swPend = 0; swUp = 0; } }
     else if (swA > 0.f) { swA -= st; if (swA < 0.f) swA = 0.f; }
@@ -227,7 +243,7 @@ void phoneViewInput(Shop *s, unsigned hit) {
     float a = coverAlpha(); snd(sBack); phase = PV_OUT; t = PV_LIGHT_OUT * (a > PV_DARK_A ? 1.f : a / PV_DARK_A); return;
   }
   if (!on || phase != PV_IDLE) return;
-  if (!PHONE_SWAP_DIP_OLD && swPend && !(hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))) return;   // машина ещё меняется — выбор и «назад» ждут
+  if (PV_DIP && swPend && !(hit & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))) return;   // машина ещё меняется — выбор и «назад» ждут
   if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) {
     snd(sBack); phase = PV_OUT;
     t = PHONE_LIGHT_SV_OLD ? 0.f : (swA > 0.f ? PV_LIGHT_OUT * swA / PV_DARK_A : 0.f);   // закрытие из середины затемнения продолжается с текущей точки (Д11)
@@ -235,7 +251,7 @@ void phoneViewInput(Shop *s, unsigned hit) {
   }
   // №1038 (Роб 26.10: «в меню паузы Mission Select уровни переключаются L/R, то же в выборе машины в будке, дополнительно к прежнему»): L — предыдущая машина, R — следующая, как ◄ и ►: тот же звук, смена и порядок. BOOTHLR1038_OLD=1 / файл boothlr1038old / «flag boothlr1038 0» — только ◄ ►
   int d = (hit & (PSP_CTRL_RIGHT | (boothLR1038Old ? 0u : PSP_CTRL_RTRIGGER))) ? 1 : (hit & (PSP_CTRL_LEFT | (boothLR1038Old ? 0u : PSP_CTRL_LTRIGGER))) ? -1 : 0;
-  if (d && nOrd > 1 && !PHONE_SWAP_DIP_OLD) { swPend += d; swUp = 1; snd(sScroll); logf_("sel-dip pend=%d", swPend); d = 0; }   // M2:32: меняется в самой тёмной точке (phoneViewTick)
+  if (d && nOrd > 1 && PV_DIP) { swPend += d; swUp = 1; snd(sScroll); logf_("sel-dip pend=%d", swPend); d = 0; }   // M2:32: меняется в самой тёмной точке (phoneViewTick)
   if (d && nOrd > 1) { cur = (cur + d + nOrd) % nOrd; int r = rowOf(cur); snd(sScroll);
                        logf_("sel %d name=%s owned=%d lvl=%d now=%d stats=%d accept=%d", cur, pvName[r], owned(s, r), pvLvl[r], isNow(s, r),
                              boothShowStats(owned(s, r)), boothShowAccept(owned(s, r))); }
@@ -334,7 +350,7 @@ void phoneViewDraw2D(Shop *s) {
   uiScrSetRow(PV_ROW_DMG, dmgPct); uiScrShow(0, PV_T_DAMAGE, isNow(s, r));   // правка 104: «Damaged: N %» — запись PS2 37:54
   { int dmgPic = !PHONE_DAMAGED_PIC_OLD && isNow(s, r) && dmgPct >= PHONE_DMG_PIC_MIN;   // правка 470: картинка повреждённой / целой
     int huskR[4], husk3 = dmgPic && phoneViewHusk(huskR);   // №557: остов рисует 3D-проход, плоскую картинку прячем
-    uiScrShow(0, PV_T_PIC_OK, !dmgPic); uiScrShow(0, PV_T_PIC_DMG, dmgPic && !husk3); uiScrShow(0, PV_T_SPOT, !husk3); }
+    uiScrShow(0, PV_T_PIC_OK, !dmgPic); uiScrShow(0, PV_T_PIC_DMG, dmgPic && !husk3); uiScrShow(0, PV_T_SPOT, BOOTHGLOW1133_OLD && !husk3); }   // №1133: пятно-свечение убрано
   { int rep = !PHONE_REPAIR_TEXT_OLD && needsRepair(s, r) && phase == PV_IDLE, enough = shopCoins(s) >= PHONE_REPAIR_COST;   // №535: цена починки — строка пакета (группа phone_repair)
     uiScrShow(0, PV_T_REPAIR_OK, rep && enough); uiScrShow(0, PV_T_REPAIR_NO, rep && !enough); }
 #ifndef BOOTH_RAYS_VEC_OLD

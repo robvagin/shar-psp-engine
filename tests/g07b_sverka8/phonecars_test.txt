@@ -1,0 +1,5 @@
+famil_v 1 3 3 3 3 0 defaultcar
+elect_v 1 4 3 3 4 1 streetrace
+pickup_v 1 2 4 3 3 2 bonusmission
+plowk_v 1 3 2 4 4 3 forsale
+dunebuggy 1 3 3 3 3 4 forsale

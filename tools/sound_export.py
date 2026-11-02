@@ -70,6 +70,7 @@ SFX = [
     'monkey_collect', 'nuclear_waste_collect', 'pigeon_takeoff', 'gull_takeoff',
     'phonebusy', 'cheat_success', 'cheat_fail', 'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger', 'continue', 'cancel',
     'trapdoor', 'platform_01', 'platform_02', 'aplatform6', 'duff_truck', 'plantdoor', 'elevator', 'gag_library', 'hit_switch_quick',
+    'robo_arm',   # круг 6 (g08, проверка проводки): g11 в круге 5 подключил звуки подвижных объектов по имени (objnames.shr), рука-робот L3 и L6 играет robo_arm
 ]
 
 # ---------------------------------------------------------------- music (l<N>_music.rms -> роли движка)
@@ -711,6 +712,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--level', type=int, default=1)
     ap.add_argument('--out', default=str(ROOT / 'build' / 'audio'))
+    ap.add_argument('--lang', choices=['fr', 'ge', 'sp'], default=None, help='№1111: вместо пакета — dialog_<язык>.sap (озвучка диалогов, разговоров миссий и гэгов уровня на языке копии игры; дорожки по номерам английского music.sap)')
     ap.add_argument('--car', default=None, help='машина игрока (по умолчанию — InitLevelPlayerVehicle уровня: famil_v, honor_v, …)')
     a = ap.parse_args()
     lv = a.level
@@ -770,6 +772,11 @@ def main():
     rooms_amb = [] if ROOM_AMB_OFF else room_ambience(lv, amap)
     for room, tr, f, ev in rooms_amb:
         if tr not in [t for t, _ in amb]: amb.append((tr, f))
+    # круг 6 (g08, P09:17, Д9, P09:22): комната вне списка и миссии «дом» играют атмосферу room_small_01 (sound.c sndRoom, sndMissionAmbience) на ЛЮБОМ уровне, а таблица комнат
+    # даёт её только уровням, где есть комната дома (L1, L4, L7): на L2, L3, L5, L6 дорожки не было и комната молчала. HOUSEAMB_SV_OLD=1 — как было
+    if not ROOM_AMB_OFF and os.environ.get('HOUSEAMB_SV_OLD') != '1':
+        hm = next((m for m in amap.values() if m['file'] and os.path.exists(m['file']) and re.sub(r'[^a-z]', '', re.sub(r'^L\d_', '', m['event']).lower()) == 'house'), None)
+        if hm and hm['track'] not in [t for t, _ in amb]: amb.append((hm['track'], hm['file']))
 
     # positional loops: locators kind 1 -> positionalsettings.spt
     pos_tracks, emits = [], []
@@ -923,13 +930,36 @@ def main():
     # клип только своего уровня; monkey_collect — L2, nuclear_waste_collect и traffic_coffin — L7. SND4_FULL=1 — весь список как в круге 3
     if os.environ.get('SND4_FULL') != '1':
         drop = {'trapdoor', 'platform_01', 'platform_02', 'aplatform6', 'duff_truck', 'plantdoor', 'elevator', 'gag_library', 'hit_switch_quick',
-                'pigeon_takeoff', 'gull_takeoff'}
+                'pigeon_takeoff', 'gull_takeoff', 'robo_arm'}
+        # круг 6 (g08, проверка проводки): g11 подключил звуки подвижных объектов (animobj.c, objnames.shr), поэтому клипы возвращаются на уровни, где такие
+        # объекты есть (список снят с objnames.shr каждого уровня): L1 и L4 — платформы, люк, дверь, грузовик (L4 ещё библиотека), L2 — лифт, L3 и L6 — рука-робот,
+        # L5 — кран (platform_02) и лифт, L7 — грузовик. Взлёт голубей (триггер flyingpidgeon) есть на L2 и L5; триггера чаек нет нигде — gull_takeoff не выгружается.
+        # ANIMOBJ_DROP_OLD=1 — как в круге 4 (клипы объектов не выгружаются)
+        if os.environ.get('ANIMOBJ_DROP_OLD') != '1':
+            # резидентно остаются короткие (люк, платформы, дверь); длинные (лифт 160 КБ, грузовик 91, рука-робот 140, библиотека 59, aplatform6 38, взлёт голубей 20) не влезают
+            # в банк 2112 КБ на L2/L4/L5, поэтому идут позиционным потоком из music.sap (дорожка anim_<клип>, sound.c sndAnimObj) на тех уровнях, где объект есть
+            keep = {1: {'trapdoor', 'platform_01', 'platform_02', 'plantdoor'}, 4: {'trapdoor', 'platform_01', 'platform_02', 'plantdoor'}, 5: {'platform_02'}}.get(lv, set())
+            drop -= keep
+            animStreams = {1: ['aplatform6', 'duff_truck'], 2: ['elevator', 'pigeon_takeoff'], 3: ['robo_arm'], 4: ['aplatform6', 'duff_truck', 'gag_library'],
+                           5: ['elevator', 'pigeon_takeoff'], 6: ['robo_arm'], 7: ['duff_truck']}.get(lv, [])
+            for n in animStreams:
+                clip = res.get(n)
+                path = AE.game_path(clip['files'][0]) if clip and clip['files'] else None
+                if path and ('anim_' + n) not in [t for t, _ in pos_tracks]: pos_tracks.append(('anim_' + n, path))
         drop |= {'level_%d_pickup_sfx' % k for k in range(1, 7) if k != lv}
         if lv != 2: drop.add('monkey_collect')
         if lv != 7: drop |= {'nuclear_waste_collect', 'traffic_coffin'}
-        # не вызываются игрой, пока нет событий интерфейса (UI_EV_STING g09a, uiSfxPlayNamed) — вернутся потоком music.sap, когда события подключат; wasp_charged_idle: g11b
-        # при отсутствии клипа играет wasp_idle на этой стадии (того же размера)
-        drop |= {'phonebusy', 'cheat_success', 'cheat_fail', 'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger', 'continue', 'cancel', 'wasp_charged_idle'}
+        # не вызываются игрой: телефон занят, чит-звуки, «continue» и «cancel» меню (событий нет); wasp_charged_idle: g11b при отсутствии клипа играет wasp_idle (того же размера)
+        drop |= {'continue', 'cancel', 'wasp_charged_idle'}
+        # ps2-twin P05:25 (g07b-msnview): «занято» у будки при выключенных будках (миссия с принудительной машиной) играет △ у будки (main_actbooth.h) — клип 14 КБ остаётся в банке уровня
+        # (запас слота у самого тесного L2 38 976 Б). PHONEBUSY_OLD=1 — как было (клип убран)
+        if os.environ.get('PHONEBUSY_OLD') == '1': drop.add('phonebusy')
+        # №1104 (коды оригинала, g10-flow): cheat_success / cheat_fail играют при вводе кода в OPTIONS паузы — остаются в банке уровня (~10 КБ). CHEATS_SND1104_OLD=1 — как было (убраны)
+        if os.environ.get('CHEATS_SND1104_OLD') == '1': drop |= {'cheat_success', 'cheat_fail'}
+        # круг 6 (g08, проверка проводки): g09a влил событие UI_EV_STING (ui.c: образец после остановки ползунка Sound), поэтому четыре образца громкости
+        # (music/sfx/car/dialog_stinger, вместе 29 КБ) снова в банке. STING_DROP_OLD=1 — как в круге 4 (образцов нет)
+        if os.environ.get('STING_DROP_OLD') == '1': drop |= {'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger'}
+        else: drop -= {'car_stinger', 'dialog_stinger', 'music_stinger', 'sfx_stinger'}
         sfx = [n for n in sfx if n not in drop]
     for o in objs:
         if o[5] not in sfx:
@@ -997,6 +1027,24 @@ def main():
 
     # the resource order is decided inside build_pack; run it twice (cheap) so OBJS carries the final indices
     overlays = car_stream_overlays(list(dict.fromkeys([a.car, *traffic_cars])), res, AE.load_scripts()[1])
+    if a.lang:   # №1111: язык озвучки — только файл поверх music.sap (дорожки английского пакета; нет перевода у реплики — остаётся английская)
+        lidx = AE.lang_index(a.lang)
+        if not lidx:   # на диске нет озвучки этого языка — набор без файла (tools/ship_data.sh: необязательный)
+            print('НЕОБЯЗАТЕЛЬНО: пропуск — на диске нет озвучки языка %s' % a.lang); return
+        resL = AE.load_scripts(lang=a.lang)[0]
+        gagSpot = {}
+        for n in gag_names:
+            r_ = resL.get(n); ps_ = [AE.game_path(f) for f in (r_['files'] if r_ else [])]; ps_ = [q for q in ps_ if q]
+            for k_, q in enumerate(ps_): gagSpot[n.lower()[:15] if k_ == 0 else f"{n.lower()[:15]}~{k_}"] = q
+        items, kept = [], 0
+        for tn, p_ in dialog:
+            loc = gagSpot.get(tn) or lidx.get(os.path.relpath(p_, GAME).replace('\\', '/').lower())
+            if loc and tn in track_index and os.path.realpath(loc) != os.path.realpath(p_): items.append((track_index[tn], tn, loc))
+            else: kept += 1
+        os.makedirs(a.out, exist_ok=True)
+        size = AE.build_lang_overlay(os.path.join(a.out, 'dialog_%s.sap' % a.lang), sorted(items))
+        print('level %d lang %s: на языке %d дорожек диалогов из %d (остаются английскими %d), dialog_%s.sap %.1f МБ' % (lv, a.lang, len(items), len(dialog), kept, a.lang, size / 1048576))
+        return
     rep = AE.build_pack(a.out, a.car, sfx, music, amb, dialog, ext=ext_blob([]), quiet=True, pos_sel=pos_tracks, extra_cars=traffic_cars, car_sel=overlays)
     rep = AE.build_pack(a.out, a.car, sfx, music, amb, dialog, ext=ext_blob(rep['resources']), pos_sel=pos_tracks, extra_cars=traffic_cars, car_sel=overlays)
 

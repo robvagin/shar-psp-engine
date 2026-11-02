@@ -1,0 +1,34 @@
+# №1105: SCRAP BOOK целиком. Сценарий для tools/smoke.sh (flag menu): главное меню -> SCRAP BOOK -> OPEN BOOK -> уровни L/R -> раздел «карточки» -> назад -> GAME STATS.
+# Ожидание (по сохранению «все карточки собраны», flag scrapon 1): в журнале строки SCRAPBOOK1105 open, на снимках: sb_book — две строки OPEN BOOK / GAME STATS (наклейки Красти нет),
+# sb_contents_l1 / l2 — планка LEVEL 1 / LEVEL 2 и четыре раздела со счётчиками «n / N», sb_stats — девять строк и «Game Complete».
+flag menu
+flag scrapon 1
+wait 6
+press up
+wait 0.5
+press up
+wait 0.5
+press up
+wait 0.5
+press cross
+wait 4
+shot sb_book
+press cross
+wait 1
+shot sb_contents_l1
+press r
+wait 1
+shot sb_contents_l2
+press down
+wait 0.5
+shot sb_contents_cards
+press triangle
+wait 1
+press down
+wait 0.5
+press cross
+wait 1
+shot sb_stats
+press triangle
+wait 1
+end

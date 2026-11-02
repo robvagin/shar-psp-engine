@@ -1,0 +1,20 @@
+# №1097: пульс выбранного пункта YES / NO на экране провала миссии. Нужен эмулятор (tools/smoke.sh); проверка — failpulse_check.py по smoke.txt.
+# Сценарий: меню -> уровень -> flag msnfail (экран «Retry Mission?»), YES пульсирует 2 с, вниз — NO пульсирует 2 с.
+flag uimenutrace 1
+flag menu
+wait 2
+press cross
+wait 20
+flag msnfail
+wait 0.5
+shot fail_yes_a
+wait 0.15
+shot fail_yes_b
+wait 2
+press down
+wait 0.5
+shot fail_no_a
+wait 0.15
+shot fail_no_b
+wait 2
+end

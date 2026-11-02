@@ -1,0 +1,42 @@
+### №1100 (g08-sound): A/B рукопожатия звука с ME — «flag mehand 1» (окно колец потоков в задании 1024 Б) и «flag mehand 0» (2048 Б, как было). Одинаковый маршрут: автопилот 40 с от одной точки.
+### Сравнение: строки AUDH в smoke.txt за каждую секунду сцены — hand_us (мкс главного на рукопожатие за буфер: сброс кэша + отдача + mixPre + mixPost), win_b (байт окон за буфер), cpu (буферов на главном
+### из-за отказа ME), miss (нехватка окна), me=on/off:…; плюс AUDQ (late, wmax_us). Порядок половин чередуется между уровнями (гасит «вторая половина всегда другая»). Если me=- (ME нет), сравнивать нечего:
+### флаг-файл meaudio обязателен, как в туре TEST82. Выключатель в сборке: -DMEHAND1100_OLD=1, файл mehandold рядом с EBOOT.
+### Куда: L1 — блок после стартовой сцены F_L1 (игрок в машине на старте уровня); L5 — рядом с F_AB_CF0/F_AB_CF1 (проспект с трафиком, точка F_AVE_L5), после golevel 5.
+### Прогрев 3 с после goto; каждую половину считают по строкам AUDH, где sc= её сцена, кроме первых 3 с.
+scene F_MEHAND_L1_ON
+flag mehand 1
+flag stop
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+shot mehand_l1_on
+flag stop
+scene F_MEHAND_L1_OFF
+flag mehand 0
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+shot mehand_l1_off
+flag stop
+flag mehand 1
+### L5: порядок обратный (сначала 0, потом 1). Вставить после «flag golevel 5» и стартовой сцены F_GO2_L5
+scene F_MEHAND_L5_OFF
+flag mehand 0
+flag stop
+goto -157 -494 4.712
+wait 3
+flag drive 40
+wait 41
+shot mehand_l5_off
+flag stop
+scene F_MEHAND_L5_ON
+flag mehand 1
+goto -157 -494 4.712
+wait 3
+flag drive 40
+wait 41
+shot mehand_l5_on
+flag stop

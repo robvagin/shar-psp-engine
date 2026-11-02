@@ -111,8 +111,29 @@ static void msaCacheDrop(const unsigned char *b, unsigned size) {
 }
 static void drop(int i) { const unsigned char *b_ = ent[i].b; unsigned sz_ = b_ ? rows[ent[i].row].size : 0;
   if (ent[i].b) { geDeferFree(ent[i].b); bytesUsed -= rows[ent[i].row].size; } ent[i].b = 0; msaCacheDrop(b_, sz_); }
+// №1156 (TEST84 на PSP: STALL под интерфейсом, последним действием стояло «art=» картинки брифинга): никакое чтение под интерфейсом не ждёт вечно. Чтение в полёте старше
+// MSNART_READ_MS (3 с) бросается: буфер не освобождается (его всё ещё может писать ядро — теряем его намеренно), дескриптор не закрывается, файл открывается заново, картинка брифинга
+// получает свой один повтор, дальше — «брифинг без картинки» (№512). Отказ памяти при чтении: сначала просим клетки (msnartRoom), потом сбрасываем кэш записей миссий и пробуем один раз.
+// MSNARTSTALL1156_OLD=1 — как TEST84 (вечное ожидание в waitBusy)
+#ifndef MSNARTSTALL1156_OLD
+#define MSNARTSTALL1156_OLD 0
+#endif
+#define MSNART_READ_MS 3000u
+static unsigned busyT0; unsigned msnartAbandoned;   // начало чтения в полёте, мкс; сколько чтений брошено (служебный счётчик)
+static void abandonBusy(void) {   // чтение не кончилось за MSNART_READ_MS: бросить буфер и файл, открыть заново
+  bbOp("art!", busyRow >= 0 ? rows[busyRow].path : "-", 0); msnartAbandoned++;
+  if (isPic(busyRow) && busyRow < (int)sizeof retried && !retried[busyRow] && nq < MAXQ) { retried[busyRow] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = busyRow; qlev[0] = busyLev; nq++; }
+  else if (isPic(busyRow)) msnartLostPics++;
+  busyBuf = 0; busyRow = -1;   // буфер и старый дескриптор — в утечку: их может ещё писать ядро
+  afd = sceIoOpen(file, PSP_O_RDONLY, 0);
+}
 static void waitBusy(void) {   // дождаться чтения в полёте (буфер нельзя освобождать, пока его пишет ядро)
   if (busyRow < 0) return;
+  if (!MSNARTSTALL1156_OLD) {
+    unsigned t0 = sceKernelGetSystemTimeLow(); SceInt64 r;
+    while (sceIoPollAsync(afd, &r) == 1) { if ((unsigned)(sceKernelGetSystemTimeLow() - t0) > MSNART_READ_MS * 1000u) { abandonBusy(); return; } sceKernelDelayThread(1000); }
+    free(busyBuf); busyBuf = 0; busyRow = -1; return;
+  }
   SceInt64 r; sceIoWaitAsync(afd, &r); free(busyBuf); busyBuf = 0; busyRow = -1;
 }
 void msnartReset(void) { waitBusy(); nq = 0; memset(retried, 0, sizeof retried); for (int i = 0; i < MAXE; i++) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
@@ -149,7 +170,10 @@ void msnartPump(void) {
   if (afd < 0) return;
   if (busyRow >= 0) {
     SceInt64 res = 0;
-    if (sceIoPollAsync(afd, &res) == 1) return;                  // ещё читается
+    if (sceIoPollAsync(afd, &res) == 1) {   // ещё читается
+      if (!MSNARTSTALL1156_OLD && (unsigned)(sceKernelGetSystemTimeLow() - busyT0) > MSNART_READ_MS * 1000u) abandonBusy();   // №1156
+      return;
+    }
     int slot = -1; for (int i = 0; i < MAXE; i++) if (!ent[i].b) { slot = i; break; }
     if (slot < 0 && !MSNART_PIC_OLD && res == (SceInt64)rows[busyRow].size) {   // нет ячейки: вытеснить запись миссии (не уровня, не картинку брифинга)
       for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && !isPic(ent[i].row)) { bbOp("art-", rows[ent[i].row].path, 0); drop(i); slot = i; break; }
@@ -174,9 +198,11 @@ void msnartPump(void) {
     bbOp("art+", rows[r].path, 0);   // правка 103: самописец — что читается с карты
     busyBuf = memalign(16, rows[r].size);
     if (!busyBuf && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(rows[r].size)) busyBuf = memalign(16, rows[r].size);
+    if (!busyBuf && !MSNARTSTALL1156_OLD) { int dropped_ = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) { drop(i); dropped_++; }   // №1156: отказ памяти — кэш записей миссий долой и один повтор
+      if (dropped_) { bbOp("art~", rows[r].path, 0); busyBuf = memalign(16, rows[r].size); } }
     if (!busyBuf) { if (!MSNART_PIC_OLD && isPic(r)) { if (r < (int)sizeof retried && !retried[r] && nq < MAXQ) { retried[r] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = r; qlev[0] = lev; nq++; } else msnartLostPics++; } return; }
     if (sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET) < 0 || sceIoReadAsync(afd, busyBuf, rows[r].size) < 0) { free(busyBuf); busyBuf = 0; if (!MSNART_PIC_OLD && isPic(r)) msnartLostPics++; return; }
-    busyRow = r; busyLev = lev;
+    busyRow = r; busyLev = lev; busyT0 = sceKernelGetSystemTimeLow();
   }
 }
 static const MsaImg *findImg(const char *name, const unsigned char **base) {

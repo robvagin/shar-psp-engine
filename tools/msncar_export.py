@@ -113,6 +113,9 @@ def main():
     # стояла твёрдой и невидимой. Список — из того же файла, что читает движок (вторая копия правды не нужна)
     for lv, nm in world_cars():
         if lv == a.level and nm not in names: names.append(nm)
+    # №1104 (код Red Brick): при включённом коде «свободная» машина уровня подменяется машиной redbrick (модель art/cars/redbrick.p3d, ходовые scripts/cars/redbrick.con — свои, с диска).
+    # Блок лежит в пакете каждого уровня и читается с карты памяти по требованию, только когда код включён и машина ставится (в ОЗУ каталог). REDBRICK_PACK_OLD=1 — без неё
+    if os.environ.get('REDBRICK_PACK_OLD') != '1' and 'redbrick' not in [x.lower() for x in names]: names.append('redbrick')
     extra = [x for x in extra if x.lower() not in [y.lower() for y in names]]; names += extra; n_extra = len(extra)
     pack(a.level, names, out)
     # предохранитель кучи PSP (минимум свободной 13 МБ, tools/build2-series): пакет больше SHR_MSNCARS_MAX_MB (по умолчанию 7) — лишние чужие машины

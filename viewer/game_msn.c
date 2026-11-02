@@ -7,6 +7,7 @@
 #endif
 #include <strings.h>
 #include <math.h>
+#include "phonebusy.h"
 #include "game_msn.h"
 #include "race_onroad.h"
 
@@ -74,6 +75,9 @@
 #ifndef GAME_C3_GIVEN_OLD
 #define GAME_C3_GIVEN_OLD 0    // круг 3, строка 41: правило выданной машины — при завершении миссии (без подмены на свою)
 #endif
+#ifndef HNR_IMMUNE_OLD
+#define HNR_IMMUNE_OLD 0      // круг 7 (g10-flow, P03-30): 1 — взрыв цели destroy / dump двигает шкалу, как было
+#endif
 #ifndef GAME_C2_DMG_OLD
 #define GAME_C2_DMG_OLD 0      // круг 2, СВЕРКА_МАШИНЫ:7.2, P07 Д6: цель «разбить» получает урон только от машины игрока; follow/dump — цель неуязвима; dump с несколькими — и машина игрока
 #endif
@@ -109,6 +113,11 @@ extern int mvWagerPay(int fee);   // вид (msn_view.c); в ботах вида
 #endif
 int gameMsnCarHide;   // круг 5, P06-15: 1 — машина игрока не рисуется (диалог бонус-миссии); читает main_loop.h
 int gameMsnBoothBlocked(const GameMsn *m) { return !GAME_C5_OLD && (m->rt.status == MSN_FAILED || m->arrested); }   // круг 5, P05-25: △ у будки игнорируется при проваленной миссии и аресте
+// g07b-msnview, ps2-twin P05:25: будки выключены, пока идёт миссия с принудительной машиной (phonebusy.h); PHONEBUSY_OLD=1 — всегда включены
+int gameMsnBoothsOff(const GameMsn *m) {
+  const MsnRuntime *rt = &m->rt;
+  return rt->cur >= 0 && pbMissionOff(rt->cur, (m->f.missions[rt->cur].flags & MSN_MF_FORCEDCAR) != 0, rt->status == MSN_RUNNING || rt->status == MSN_COUNTDOWN || rt->status == MSN_BETWEEN);
+}
 void (*gameMsnSafeHook)(int active);   // P06-13: модуль полиции ставит функцию — «безопасная зона: погоню остановить (1) / продолжить (0)»; NULL — запасной путь: шкала гасится
 static const char *(*skinNameFn)(void);   // P06-8: имя надетого костюма, как в замке этапа (ставит main)
 void gameMsnSetSkinNameFn(const char *(*fn)(void)) { skinNameFn = fn; }
@@ -278,6 +287,10 @@ void gameMsnHnrPoliceFar(GameMsn *m, float px, float pz, float R) {
   for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i];
     if (c->on && !strcasecmp(c->name, m->hnr.car) && hypotf(c->car.x - px, c->car.z - pz) > R) memset(c, 0, sizeof *c); }
 }
+// сверка g09b-menu круг 7 (P03 Д2): снять одну машину погони по номеру в списке машин миссии
+void gameMsnHnrPoliceDrop(GameMsn *m, int i) {
+  if (i >= 0 && i < m->cars.n && m->cars.c[i].on && !strcasecmp(m->cars.c[i].name, m->hnr.car)) memset(&m->cars.c[i], 0, sizeof m->cars.c[i]);
+}
 void gameMsnHnrPoliceHold(GameMsn *m) {
   for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (c->on && !strcasecmp(c->name, m->hnr.car)) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; } }
 }
@@ -304,9 +317,32 @@ void gameMsnHnrPoliceHold(GameMsn *m) {
 #define POLICE_SP_DMIN (POLICE_SPAWN_BEHIND_OLD || !POLICE_SPAWN100_OLD ? 90.f : 60.f)
 #define POLICE_SP_DMAX (POLICE_SPAWN_BEHIND_OLD || !POLICE_SPAWN100_OLD ? 105.f : 80.f)
 int gamePoliceDmgOld;   // правка 280: служебное — полный урон полицейской (прежнее)
+// сверка g09b-menu круг 7 (P03-07): на время разговора и перехода в помещение машины погони уходят из мира и стоят «в запасе» (в оригинале они остаются в счёте погони и возвращаются на то же место);
+// у нас — запоминаем позу и урон, убираем, потом ставим обратно в ту же точку. HNRSUSP_OLD=1 — как было (убрать совсем и поставить заново в 100 м)
+#ifndef HNRSUSP_OLD
+#define HNRSUSP_OLD 0
+#endif
+static struct { int n; float p[8][3], h[8], dmg[8]; int preset; float pp[3], ph; } polSaved;
+void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n);
+int gameMsnHnrPoliceSuspend(GameMsn *m) {
+  polSaved.n = 0;
+  for (int i = 0; i < m->cars.n && polSaved.n < 8; i++) { McCar *c = &m->cars.c[i];
+    if (c->on && !strcasecmp(c->name, m->hnr.car)) { int k = polSaved.n++; polSaved.p[k][0] = c->car.x; polSaved.p[k][1] = c->car.y; polSaved.p[k][2] = c->car.z; polSaved.h[k] = c->car.h; polSaved.dmg[k] = c->car.damage; memset(c, 0, sizeof *c); } }
+  return polSaved.n;
+}
+void gameMsnHnrPoliceResume(GameMsn *m) {
+  int n = polSaved.n; float P[8][3], H[8], D[8]; memcpy(P, polSaved.p, sizeof P); memcpy(H, polSaved.h, sizeof H); memcpy(D, polSaved.dmg, sizeof D); polSaved.n = 0;
+  for (int k = 0; k < n; k++) {
+    polSaved.preset = 1; memcpy(polSaved.pp, P[k], sizeof polSaved.pp); polSaved.ph = H[k];
+    gameMsnPolice(m, 1, m->hnr.car, m->hnr.con, 1);
+    polSaved.preset = 0;
+    for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i];
+      if (c->on && !strcasecmp(c->name, m->hnr.car) && fabsf(c->car.x - P[k][0]) < .5f && fabsf(c->car.z - P[k][2]) < .5f) { c->car.damage = D[k]; break; } }
+  }
+}
 void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n) {
   Game *g = m->g; if (!*g->pHaveCol) return;
-  if (!on) { do { mcRemove(&m->cars, car); } while(!HNR_POOL_C3_OLD && mcFind(&m->cars, car)); return; }
+  if (!on) { do { mcRemove(&m->cars, car); } while(!HNR_POOL_C3_OLD && mcFind(&m->cars, car)); polSaved.n = 0; return; }   // круг 7: снятие погони забывает и отложенные машины
   // правка 121: как в данных погони (pursuit.ts pursuitSpawns: точки дорог на окружности 100 м вокруг игрока, не ближе 8 м к другой
   // машине) — точка полосы в 100 м (90–105), сначала сзади, дальше по кругу через 22.5°; курс по полосе в сторону игрока.
   // Раньше — точка в 100 м сзади как есть: во дворе или на крыше, полицейская застревала в 70 м и не доезжала (эмулятор 30.09)
@@ -318,6 +354,7 @@ void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n) 
   float goal[3] = {px, foot ? g->pHomer->y : g->pCar->y, pz};
   for (int k = 0; k < n; k++) {
     float p[3], h = ph, bp[3], bh = 0.f, bestLen = 1e30f; int got = 0, plans = 0;
+    if (polSaved.preset) { memcpy(p, polSaved.pp, sizeof p); h = polSaved.ph; got = 1; }   // круг 7: возврат на прежнее место
     for (int a = 0; a < 16 && !got; a++) {
       float ang = ph + POLICE_SP_BASE + (a & 1 ? 1.f : -1.f) * (float)((a + 1) / 2) * .39269908f, lh;
       if (!trafficLaneSpot(roadsT, px + sinf(ang) * POLICE_SP_D, pz + cosf(ang) * POLICE_SP_D, 20.f, p, &lh)) continue;
@@ -437,11 +474,10 @@ void gameMsnWorldCarsReset(void) { nwcar = 0; }
 // сверка g10b-loop круг 5 (P03-20): «свободная машина» уходит с выгрузкой своей зоны — игрок дальше WORLD_CAR_FAR_R (200 м) от её места, — и уходит, когда миссия ставит
 // свою машину ближе WORLD_CAR_MISSION_R (10 м) от этого места; возвращается, когда игрок снова ближе (запас 20 м) и рядом нет машины миссии. Взятая игроком (on == 0) не трогается.
 // WCAR_ZONE_OLD=1 — стоит весь уровень (прежнее)
-#ifndef WCAR_ZONE_OLD
-#define WCAR_ZONE_OLD 0
-#endif
+#include "g10b_calc.h"   // WCAR_ZONE_OLD, WCAR_STEP_COST_OLD, правило ухода/возврата
 void gameMsnWorldCarsStep(GameMsn *m, float px, float pz) {
   if (WCAR_ZONE_OLD) return;
+  static int tick; if (!g10bEvery(&tick, 10)) return;   // круг 6 (цена): раз в 10 кадров
   static unsigned char away[WORLD_CARS];
   for (int i = 0; i < nwcar; i++) {
     if (!wcar[i].on) { away[i] = 0; continue; }
@@ -451,9 +487,10 @@ void gameMsnWorldCarsStep(GameMsn *m, float px, float pz) {
       const McCar *c = &m->cars.c[k]; if (!c->on || !strcasecmp(c->name, wcar[i].name)) continue;
       float ex = c->car.x - wcar[i].p[0], ez = c->car.z - wcar[i].p[2]; if (ex * ex + ez * ez < WORLD_CAR_MISSION_R * WORLD_CAR_MISSION_R) mis = 1;
     }
-    if (!away[i]) {
-      if (d2 > WORLD_CAR_FAR_R * WORLD_CAR_FAR_R || mis) { if (mcFind(&m->cars, wcar[i].name)) mcRemove(&m->cars, wcar[i].name); away[i] = 1; }
-    } else if (d2 < (WORLD_CAR_FAR_R - 20.f) * (WORLD_CAR_FAR_R - 20.f) && !mis) { away[i] = 0; worldCarsSpawn(m); }
+    int na = g10bWorldCarAway(away[i], d2, mis, WORLD_CAR_FAR_R);
+    if (na && !away[i]) { if (mcFind(&m->cars, wcar[i].name)) mcRemove(&m->cars, wcar[i].name); }
+    else if (!na && away[i]) worldCarsSpawn(m);
+    away[i] = (unsigned char)na;
   }
 }
 int gameMsnWorldCarNear(GameMsn *m, float x, float z, float r, float out[4]) {
@@ -663,8 +700,13 @@ static void trafficClear(void *u, float r) {
 #ifndef HNR_HIT_MODEL_C3_OLD
 #define HNR_HIT_MODEL_C3_OLD 0
 #endif
+#ifndef MSN_DUMPHIT_OLD
+#define MSN_DUMPHIT_OLD 0      // круг 7, g07 строки 21, 44 (P07-10, 5.9; сверено с оригиналом): удар по цели dump роняет предмет, только если сила удара не меньше 0,05 от максимальной, то есть импульс не меньше 5000 (у нас нормированный импульс машин = импульс / 100000, car.c hitImp). Было: любой удар быстрее 1 м/с. 1 — как было
+#endif
+#define DUMPHIT_J 5000.f
+int gameMsnDumpHitStrong(float J) { return MSN_DUMPHIT_OLD || J >= DUMPHIT_J; }
 static void carHit(void *u, const char *name) {   // dump: таран -> предмет
-  GameMsn *m = u; msn_notify(&m->rt, MSN_IN_HIT_VEHICLE, name, 0);
+  GameMsn *m = u; if (gameMsnDumpHitStrong(m->g->pCar->hitImp)) msn_notify(&m->rt, MSN_IN_HIT_VEHICLE, name, 0);
   if (m->rt.target && !strcasecmp(name, m->rt.target)) m->hitTgtT = 0.5f;   // круг 2: удар игрока по цели — урон цели в ближайшие 0,5 с засчитывается
   // правка 121: удар по полицейской — нарушение Hit & Run, как в данных погони (pursuit.ts: удар 5, разбита 25 — один раз)
   McCar *c = (McCar *)mcFind(&m->cars, name);
@@ -810,9 +852,9 @@ static int segHitsBox(float ax, float az, float bx, float bz, float hw, float hl
   }
   return t0 < t1;
 }
-static int npcAroundCar(const Game *g, const GameNpc *n, float *gx, float *gz) {
-  if (!GAME_NPC_CAR_AVOID || !*g->pHaveCol || !g->pCar) return 0;
-  const Car *c = g->pCar; if (fabsf(c->y - n->pos.y) > 2.5f) return 0;   // другой этаж / комната под городом
+static int npcAroundCarOf(const Game *g, const Car *c, const GameNpc *n, float *gx, float *gz) {   // сверка g02-traffic: обход угла кузова любой машины (было — только машины игрока)
+  if (!GAME_NPC_CAR_AVOID || !*g->pHaveCol || !c) return 0;
+  if (fabsf(c->y - n->pos.y) > 2.5f) return 0;   // другой этаж / комната под городом
   float fx = sinf(c->h), fz = cosf(c->h), rx = fz, rz = -fx;
   float cx = c->x + fx * c->p.bodyOfs, cz = c->z + fz * c->p.bodyOfs;
   float mg = GAME_NPC_RADIUS + .2f, hw = c->p.halfW + mg, hl = c->p.halfL + mg;
@@ -843,6 +885,7 @@ static int npcAroundCar(const Game *g, const GameNpc *n, float *gx, float *gz) {
   *gx = cx + rx * qx + fx * qz; *gz = cz + rz * qx + fz * qz;
   return 1;
 }
+static int npcAroundCar(const Game *g, const GameNpc *n, float *gx, float *gz) { return npcAroundCarOf(g, g->pCar, n, gx, gz); }
 // №510 (Роб: «Милхаус находит на Барта, стоит и дёргается; у NPC нет логики обходить людей»): путь перекрыт игроком или другим персонажем —
 // не стоять в упор с походкой на месте, а обойти сбоку: шаг по направлению, повёрнутому на 50° и 90° в сторону, где свободно (сторона держится
 // AVOID_HOLD с — не прыгает кадр от кадра), без обрыва под ногами; нельзя ни туда, ни туда — стоит (клип покоя). Поворот корпуса плавный.
@@ -895,6 +938,12 @@ static int npcSidestep(GameNpc *n, const Game *g, float ux, float uz, float s, f
 #define NPC_PC_WAIT_OLD 0
 #endif
 #define NPC_PC_WAIT_T 2.f      // №831: с — стоит перед игроком у своей точки, потом точка пройдена
+// сверка g07 (Дирижёр 02.11, «маршруты по кругу»): в оригинале маршрут ЛЮБОГО персонажа (и персонажа задания тоже) замкнут: дошёл до последней точки — идёт к первой,
+// и так по кругу, пока не остановят (разговор, удар, игрок на пути). Одиночная точка — стоит. У нас персонаж задания шёл один проход (правка 831: «не кружит
+// вокруг игрока, не смотрит на него» — это остаётся: игрок на пути, персонаж стоит лицом по пути). MSNLOOP1113_OLD=1 — персонаж задания один проход, как было
+#ifndef MSNLOOP1113_OLD
+#define MSNLOOP1113_OLD 0
+#endif
 #ifndef NPC_PATROL_OLD
 #define NPC_PATROL_OLD 0
 #endif
@@ -908,6 +957,8 @@ static int npcSpotTaken(const GameNpc *n, const Game *g, float x, float z) {
 }
 // шаг к точке t, лицом по ходу; Гомер на пути — ждёт; 1 — дошёл (правка 240: общий для маршрута и возврата на место после удара);
 // −1 — В85: собеседник остановился перед Гомером (stop > 0)
+#define NPC_CAR_WAIT 3.f   // с стоит после касания машины (оригинал: 3,0 с до возврата к пути)
+#define NPC_CAR_FREE 8.f   // с обходит по углам кузова после этого (число наше)
 static int npcWalkTo(GameNpc *n, const Game *g, MsnVec3 t, float dt, float stop) {
   float dx = t.x - n->pos.x, dy = t.y - n->pos.y, dz = t.z - n->pos.z, d = sqrtf(dx * dx + dz * dz), s = GAME_NPC_WALK * dt, dT = d;
   if (d <= s || d < 1e-3f) { if (npcStopsAtHomer(n, g, t.x, t.z, stop)) return -1;
@@ -923,10 +974,21 @@ static int npcWalkTo(GameNpc *n, const Game *g, MsnVec3 t, float dt, float stop)
     else if (dT < n->avoidBest - NPC_ORBIT_GAIN) { n->avoidBest = dT; n->avoidStall = 0.f; }
     else if ((n->avoidStall += dt) > NPC_ORBIT_T) n->avoidGive = 1;
   }
-  { float gx = t.x, gz = t.z;   // правка 217: машина на пути — к углу кузова
-    if (npcAroundCar(g, n, &gx, &gz)) { dx = gx - n->pos.x; dz = gz - n->pos.z; d = sqrtf(dx * dx + dz * dz); if (d < 1e-3f) return 0; if (s > d) s = d; } }
+  { float gx = t.x, gz = t.z; int around = 0;   // правка 217: машина на пути — к углу кузова
+    if (!PEDCAR_ALL_OLD && roadsT && n->carFree > 0.f) {   // сверка g02-traffic: коснулся чужой машины (трафик, стоящая, миссии) и отстоял 3,0 с — обходит её по углам кузова
+      n->carFree -= dt; if (trafficSolidCarAt(roadsT, n->pos.x, n->pos.z, n->pos.y, GAME_NPC_RADIUS + 1.5f, NULL)) n->carFree = NPC_CAR_FREE;   // пока рядом чужая машина — обход не кончается (иначе у самого борта встал бы ещё на 3 с)
+      const Car *cs[6]; int nc = trafficCarsSolid(roadsT, n->pos.x, n->pos.z, 12.f, cs, 6);
+      for (int k = 0; k < nc; k++) if (npcAroundCarOf(g, cs[k], n, &gx, &gz)) { around = 1; break; } }
+    if (npcAroundCar(g, n, &gx, &gz)) around = 1;
+    if (around) { dx = gx - n->pos.x; dz = gz - n->pos.z; d = sqrtf(dx * dx + dz * dz); if (d < 1e-3f) return 0; if (s > d) s = d; } }
   float nx = n->pos.x + dx / d * s, nz = n->pos.z + dz / d * s, h0_ = n->h;
   n->h = atan2f(dx, dz);
+  if (!PEDCAR_ALL_OLD && roadsT && n->carFree <= 0.f) {   // сверка g02-traffic (слой персонаж ↔ машина): в оригинале любая машина толкает физика, касание = стоит 3,0 с и идёт дальше; здесь шаг, входящий в кузов чужой машины, не делается
+    if (trafficSolidCarAt(roadsT, nx, nz, n->pos.y, GAME_NPC_RADIUS + .35f, NULL)) {   // запас 0,35 м: остановка снаружи полосы обхода кузова (npcAroundCarOf: радиус + 0,2), иначе от угла не выйти
+      n->h = h0_; n->blocked = 1;
+      if ((n->carWaitT += dt) >= NPC_CAR_WAIT) { n->carWaitT = 0.f; n->carFree = NPC_CAR_FREE; }
+      return 0; }
+    n->carWaitT = 0.f; }
   if (npcStopsAtHomer(n, g, nx, nz, stop)) return -1;
   // №831 (Роб 18.10, после TEST35: «Милхаус всё равно ходит вокруг меня по моей оси и смотрит ровно в центр — как зомби, жутко; поставь
   // обычное поведение NPC»): игрок на пути — персонаж НЕ обходит его (обход вокруг игрока смотрелся кружением со взглядом на игрока),
@@ -963,6 +1025,34 @@ int gameTalkCarOld;   // правка 305: служебное — машина �
 int gameShopFirstOld;   // правка 306: служебное — лавка перехватывает △ у собеседника этапа (прежнее)
 int gameBoss967Old = BOSS967_OLD;
 int gameSellerAtLoc;   // правка 288: служебное — место разговора продавца на локаторе, как было
+// сверка g07 №1098 (Роб 02.11: «Фринк на уровне 2 упирается в машину и не может её обойти; в оригинале обходит»). Оригинал (сверено, круг 7): персонаж миссии
+// идёт по прямым отрезкам между точками, обхода машин по точке нет; коснулась машина — стоит 3,0 с, потом идёт дальше (3,0 с «стоит» совпадает с нашим
+// NPC_STALL_T); отсутствие обхода физика кузова смягчает скольжением вдоль борта, а сорванного с пути (дальше 1 м) возвращают на отрезок: сразу, если его не
+// видно ни одной камере, иначе он сам идёт к пути. У нас обход угла кузова (правка 217) только для машины игрока и только когда точка вне кузова; точка ПОД
+// кузовом или Фринк вплотную к кузову оставляли его на месте навсегда. ПРАВИЛО ПОРТА (в оригинале однозначного «перескока» нет): простоял у машины NPC_STALL_T с
+// без продвижения к точке — точка пройдена (идёт к следующей; последняя — маршрут окончен). MSNWALK1098_OLD=1 — как было
+#ifndef MSNWALK1098_OLD
+#define MSNWALK1098_OLD 0
+#endif
+// сверка g07 №1113 (Роб 02.11: «Фринк и пешие у машины как в оригинале»): пропуск точки через 3 с — выдумка порта, в оригинале его нет: после касания стоит 3,0 с и
+// идёт дальше по своему пути, машину огибает физика (слой персонаж-машина g02: касание = стоит 3,0 с, затем обход по углам кузова). Теперь правило 1098 выключено;
+// MSNWALK1113_OLD=1 — вернуть пропуск точки через 3 с (поведение №1098)
+#ifndef MSNWALK1113_OLD
+#define MSNWALK1113_OLD 0
+#endif
+#define NPC_STALL_T 3.0f
+#define NPC_REACH_R 0.5f   // м: «дошёл до точки маршрута» (число оригинала)
+static int npcLoops(const GameNpc *n) { return !NPC_PATROL_OLD && n->nwp >= 2 && (n->kind != MSN_NPC_MISSION || !MSNLOOP1113_OLD); }   // маршрут замкнут в круг
+static int npcNearCar(const GameNpc *n, const Game *g, float r) {   // персонаж в r м от кузова машины игрока или машины миссии
+  const Car *cs[1 + MC_MAX]; int nc = 0;
+  if (*g->pHaveCol && g->pCar) cs[nc++] = g->pCar;
+  if (npcCtx) for (int i = 0; i < npcCtx->cars.n; i++) if (npcCtx->cars.c[i].on) cs[nc++] = &npcCtx->cars.c[i].car;
+  for (int k = 0; k < nc; k++) { const Car *c = cs[k]; if (fabsf(c->y - n->pos.y) > 2.5f) continue;
+    float fx = sinf(c->h), fz = cosf(c->h), rx = fz, rz = -fx, cx = c->x + fx * c->p.bodyOfs, cz = c->z + fz * c->p.bodyOfs;
+    float ax = (n->pos.x - cx) * rx + (n->pos.z - cz) * rz, az = (n->pos.x - cx) * fx + (n->pos.z - cz) * fz;
+    if (fabsf(ax) < c->p.halfW + r && fabsf(az) < c->p.halfL + r) return 1; }
+  return 0;
+}
 static void npcStep(GameNpc *n, const Game *g, float dt, float stop) {   // шаг к следующей точке маршрута (stop — В85, только маршрут)
   if (n->knock) return;   // правка 240: сбит — летит, лежит, встаёт (npcKnock)
   if (n->homing) {        // правка 240: встал — назад, где стоял (новая точка маршрута от сценария — важнее)
@@ -977,11 +1067,22 @@ static void npcStep(GameNpc *n, const Game *g, float dt, float stop) {   // ша
   }
   if (!n->walking) return;
   if (n->iwp >= n->nwp) { n->walking = 0; return; }
-  int r = npcWalkTo(n, g, n->wp[n->iwp], dt, stop);
+  int r;
+  // №1113: оригинал считает точку маршрута пройденной, когда персонаж ближе 0,5 м к ней (по земле); у нас было «в пределах шага» (≈1,5 см), и точка у самого борта
+  // или под кузовом не бралась никогда. Промежуточные точки — по 0,5 м всегда; последняя (маршрут окончен, место разговора) — по 0,5 м только у машины, иначе точно
+  { const MsnVec3 w = n->wp[n->iwp]; int last = n->iwp + 1 >= n->nwp && !npcLoops(n);
+    if (!MSNWALK1113_OLD && hypotf(w.x - n->pos.x, w.z - n->pos.z) < NPC_REACH_R && (!last || npcNearCar(n, g, GAME_NPC_RADIUS + .6f))) r = 1;
+    else r = npcWalkTo(n, g, n->wp[n->iwp], dt, stop); }
+  if (!MSNWALK1098_OLD && MSNWALK1113_OLD && r == 0) {   // №1113: только при MSNWALK1113_OLD=1; у машины без продвижения к точке NPC_STALL_T с — точка пройдена (правило порта, см. выше)
+    float dT = hypotf(n->wp[n->iwp].x - n->pos.x, n->wp[n->iwp].z - n->pos.z);
+    if (!npcNearCar(n, g, GAME_NPC_RADIUS + .6f)) { n->carStallT = 0.f; n->carStallD = dT; }
+    else if (dT < n->carStallD - .2f || n->carStallD <= 0.f) { n->carStallD = dT; n->carStallT = 0.f; }
+    else if ((n->carStallT += dt) >= NPC_STALL_T) { n->carStallT = 0.f; n->carStallD = 0.f; r = 1; }
+  } else if (r > 0) { n->carStallT = 0.f; n->carStallD = 0.f; }
   // №831 (Роб 18.10: «сделаем как в оригинале — чтобы он просто ходил по своему месту, как ему назначено»): фоновые персонажи и продавцы
   // (AddAmbientNPCWaypoint, AddBonusMissionNPCWaypoint, AddPurchaseCarNPCWaypoint — не персонажи задания) ходят по своим точкам по кругу,
   // постоянно; персонаж задания (AddObjectiveNPCWaypoint) — один проход, как было. NPC_PATROL_OLD=1 — один проход у всех, как TEST35
-  if (r > 0) { n->iwp++; if (n->iwp >= n->nwp) { if (!NPC_PATROL_OLD && n->kind != MSN_NPC_MISSION && n->nwp >= 2) n->iwp = 0; else n->walking = 0; } }
+  if (r > 0) { n->iwp++; if (n->iwp >= n->nwp) { if (npcLoops(n)) n->iwp = 0; else n->walking = 0; } }
   // В85: остановился перед Гомером — маршрут окончен, ждёт разговора на месте. ПРАВИЛО ПОРТА: PS2 записан только в покое (10 с без
   // ввода, Гомер рядом — Мардж на месте) и после карточки (140 кадров без движения); пойдёт ли она дальше, если Гомер отойдёт, — не
   // записано (в атласе m0d у Мардж нет колонок, снимков между кадрами 10 и 103 нет)
@@ -1277,7 +1378,7 @@ static void talkBegin(GameMsn *m, const char *a, const char *b) {   // MSN_EV_DI
     m->preTalk.on = n != 0; m->preTalk.hCar = startedInCar; snprintf(m->preTalk.npc, sizeof m->preTalk.npc, "%s", n ? nn : "");
     m->preTalk.hp.x = H0->x; m->preTalk.hp.y = H0->y; m->preTalk.hp.z = H0->z; m->preTalk.hh = H0->h;
     if (n) { m->preTalk.np = n->pos; m->preTalk.nh = n->h; } }
-  if (n) { n->pos = N; n->walking = 0; n->iwp = n->nwp; n->h = atan2f(P.x - N.x, P.z - N.z); }   // маршрут окончен, лицом к игроку
+  if (n) { n->pos = N; n->walking = 0; n->iwp = n->nwp; n->h = atan2f(P.x - N.x, P.z - N.z); t->baseN = N; t->shifted = 0; }   // маршрут окончен, лицом к игроку
   homerPlace(H, hw, P.x, P.y, P.z, atan2f(N.x - P.x, N.z - P.z));                                  // игрок лицом к собеседнику
   // машина — на своё место разговора (если не там), если это место у разговора: третий аргумент SetDialoguePositions на диске
   // либо рядом (7–40 м: m0/m1/m2/m3/m6 sd, финиши гонок), либо за 290–800 м (level1_carstart у бонус-миссий на другом конце
@@ -1291,6 +1392,16 @@ static void talkBegin(GameMsn *m, const char *a, const char *b) {   // MSN_EV_DI
     if (dx * dx + dz * dz > 1.f) putCar(g, &t->car);
   }
   t->dist = hypotf(H->x - N.x, H->z - N.z); t->on = 1; t->starts++;
+#ifndef GAME_C7_TALKHIDE_OLD
+#define GAME_C7_TALKHIDE_OLD 0   // круг 7 (сверено с оригиналом), g07 строка 16 (P06-15) и обычные разговоры с местами: машина игрока в 7 м от места любого из героев прячется на время разговора (3D, квадрат расстояния меньше 49), трафик в 50 м вокруг места первого героя вычищается; после разговора машина видна. Было: только в диалоге бонус-миссии (там 100 м, без изменений). 1 — как было
+#endif
+  if (!GAME_C5_OLD && !GAME_C7_TALKHIDE_OLD && t->hasPos && !(m->rt.cur >= 0 && (m->f.missions[m->rt.cur].flags & MSN_MF_BONUS))) {   // обычный разговор с местами (круг 7)
+    float d1 = sqrtf((g->pCar->x - P.x) * (g->pCar->x - P.x) + (g->pCar->y - P.y) * (g->pCar->y - P.y) + (g->pCar->z - P.z) * (g->pCar->z - P.z));
+    float d2 = sqrtf((g->pCar->x - N.x) * (g->pCar->x - N.x) + (g->pCar->y - N.y) * (g->pCar->y - N.y) + (g->pCar->z - N.z) * (g->pCar->z - N.z));
+    if (d1 < 7.f || d2 < 7.f) { gameMsnCarHide = 1; m->carHidden = 1; }
+    { MsnVec3 C1 = t->pcFirst ? P : N;
+      if (roadsT && roadsT->hd) for (int i = 0; i < TR_MAXCAR; i++) { if (roadsT->car[i].mode == TRM_OFF) continue; float cx = roadsT->car[i].car.x - C1.x, cz = roadsT->car[i].car.z - C1.z; if (cx * cx + cz * cz < 50.f * 50.f) roadsT->car[i].mode = TRM_OFF; } }
+  }
   if (!GAME_C5_OLD && t->hasPos && m->rt.cur >= 0 && (m->f.missions[m->rt.cur].flags & MSN_MF_BONUS)) {
     // круг 5, P06-15: диалог бонус-миссии — машина игрока ближе 7 м к местам героев прячется на время диалога; трафик в 100 м вокруг Гомера вычищается; после диалога всё возвращается
     float d1 = hypotf(g->pCar->x - P.x, g->pCar->z - P.z), d2 = hypotf(g->pCar->x - N.x, g->pCar->z - N.z);
@@ -1298,7 +1409,20 @@ static void talkBegin(GameMsn *m, const char *a, const char *b) {   // MSN_EV_DI
     if (roadsT && roadsT->hd) for (int i = 0; i < TR_MAXCAR; i++) { if (roadsT->car[i].mode == TRM_OFF) continue; float cx = roadsT->car[i].car.x - P.x, cz = roadsT->car[i].car.z - P.z; if (cx * cx + cz * cz < 100.f * 100.f) roadsT->car[i].mode = TRM_OFF; }
   }
 }
+#ifndef GAME_C7_NPCBACK_OLD
+#define GAME_C7_NPCBACK_OLD 0   // круг 7, СВЕРКА_ВНЕДРЕНИЕ/g07-missions.md строка 37 (КАМЕРА 4.3; сверено с оригиналом): на плане pc_near (крупный план игрока) собеседник отодвигается на 1,8 м назад по оси от игрока и на 0,21 м вбок; у остальных планов сдвига нет. Боковые 0,21 м не делаю (сторона зависит от зеркала мира, на глаз не видно). Камера считает по месту без сдвига. Было: собеседник стоял на месте на всех планах. 1 — как было
+#endif
+#define NPC_BACK_M 1.8f
+void gameMsnTalkNpcBack(GameMsn *m, int on) {
+  GameTalk *t = &m->talk; if (GAME_C7_NPCBACK_OLD || !t->on || !t->npc[0] || !*m->g->pHaveHomer) return;
+  GameNpc *n = npcFind(m, t->npc); if (!n || n->knock) return;
+  if (!!on == t->shifted) return;
+  const Homer *H = m->g->pHomer; float ax = t->baseN.x - H->x, az = t->baseN.z - H->z, d = hypotf(ax, az); if (d < 1e-3f) return;
+  n->pos.x = t->baseN.x + (on ? ax / d * NPC_BACK_M : 0.f); n->pos.z = t->baseN.z + (on ? az / d * NPC_BACK_M : 0.f); t->shifted = !!on;
+}
+const float *gameMsnTalkNpcBase(const GameMsn *m) { return (!GAME_C7_NPCBACK_OLD && m->talk.on && m->talk.shifted) ? &m->talk.baseN.x : 0; }
 static void talkEnd(GameMsn *m) {
+  if (m->talk.shifted) { GameNpc *n0 = npcFind(m, m->talk.npc); if (n0) { n0->pos.x = m->talk.baseN.x; n0->pos.z = m->talk.baseN.z; } m->talk.shifted = 0; }
   if (!GAME_TALKRET_OLD && m->talk.on && !m->talk.noReturn && (m->talk.hasPos || GAME_C3_GIVEN_OLD) && m->preTalk.on) {   // круг 3: только если для разговора заданы места
     // P07-14 / P06-16: по концу разговора Гомер и собеседник возвращаются на места, где стояли до него (они были не в машине — preTalk пишется только пешком);
     // в 14 разговорах (SetDialoguePositions 4-й аргумент 1) остаются на местах разговора
@@ -1404,10 +1528,14 @@ static void c2Event(GameMsn *m, const MsnEvent *e) {
   }
 #ifdef __PSP__
   if (!GAME_C2_SOUND_OLD) {
-    if (e->type == MSN_EV_MISSION_START && e->name && e->name[0] == 'm' && e->name[1] >= '0' && e->name[1] <= '9' && m->f.hdr)
+    static int sv8Mis = -1;   // сверка g08 круг 6: номер текущей миссии (для звука подбора: L2 m6 — свой клип)
+    if (e->type == MSN_EV_MISSION_START && e->name && e->name[0] == 'm' && e->name[1] >= '0' && e->name[1] <= '9' && m->f.hdr) {
+      sv8Mis = e->name[1] - '0';
       sndMissionAmbience((int)m->f.hdr->level, e->name[1] - '0', *g->pHaveHomer && gameOnFoot(g));   // g08 P09:22: атмосфера старта миссии
-    if (e->type == MSN_EV_COLLECT && m->f.hdr && m->f.hdr->level >= 1 && m->f.hdr->level <= 6) {   // g08 P09:23: звук подбора цели «собрать»
-      char nm[40]; snprintf(nm, sizeof nm, "level_%d_pickup_sfx", (int)m->f.hdr->level); int id = sndId(nm); if (id >= 0) sndPlay2D(id, 1.f);
+    }
+    if (e->type == MSN_EV_COLLECT && m->f.hdr && m->f.hdr->level >= 1 && m->f.hdr->level <= 7) {   // g08 P09:23: звук подбора цели «собрать»
+      // круг 6 (g08, P09:23): клип подбора по уровню и миссии — sound.c sndPickupClip (SV_PICKUP_OLD=1 — прежнее: общий клип уровня L1-L6, L7 молчит)
+      const char *nm = sndPickupClip((int)m->f.hdr->level, sv8Mis); int id = *nm ? sndId(nm) : -1; if (id >= 0) sndPlay2D(id, 1.f);
     }
     if (e->type == MSN_EV_STAGE_COMPLETE && rt->st && rt->obj == MSN_OBJ_GOTO && !(rt->st->flags & MSN_SF_GOTODIALOGOFF)) sndSay(SND_SAY_ARRIVE, 0);   // g08 P07:33: цель достигнута (шанс 20 % внутри)
     if (e->type == MSN_EV_MISSION_COMPLETE && e->index == 2) { const char *tr; sndMusicEvent("Win_3Street_Races", &tr); }   // g08 P09:Д4: все три уличные гонки
@@ -1434,6 +1562,7 @@ static void onEvent(void *u, const MsnEvent *e) {   // окно подготов
   }
   c2Event(GM, e);
   if (e->type == MSN_EV_MISSION_COMPLETE) GM->missionDone = 1; else if (e->type == MSN_EV_MISSION_START) GM->missionDone = 0;
+  if (e->type == MSN_EV_MISSION_START) { GM->missionClock = 0.f; gameMsnRecord(GM, 0); } else if (e->type == MSN_EV_MISSION_COMPLETE) gameMsnRecord(GM, 1);   // №1114: попытка и лучшее время
   if (e->type == MSN_EV_CLEANUP || e->type == MSN_EV_MISSION_FAILED || e->type == MSN_EV_STAGE_COMPLETE) talkEnd(GM);
   if (!GAME_HIDECHAR_OLD && e->type == MSN_EV_STAGE_COMPLETE && GM->hideName[0]) { npcRemove(GM, GM->hideName); GM->hideName[0] = 0; }   // P06-21: на выходе из этапа персонаж убирается
   if (!GAME_HIDECHAR_OLD && (e->type == MSN_EV_CLEANUP || e->type == MSN_EV_MISSION_START)) { GM->hideName[0] = 0; GM->hudHidden = 0; }
@@ -1764,7 +1893,27 @@ static void ufoBeam(GameMsn *m, const MsnWorld *w, float dt) {
 unsigned (*gameMsnClockUs)(void);   // служебное: часы микросекунд (main_loop.h, только в смоуке); NULL — подфазы не считаются
 #define NOWUS_() (gameMsnClockUs ? gameMsnClockUs() : 0u)
 float gameMsnPartMs[5];   // служебное: подфазы gameMsnTick (мс, сумма с прошлого сброса): 0 NPC, 1 доля гонки, 2 машины миссии, 3 этап (msn_game_tick, гонка, камера), 4 всё
+// №1114: слот записи о миссии (savegame.h SV_MREC_N) и вызовы хука
+void (*gameMsnRecordHook)(int level, int slot, int kind, int sec);
+#ifndef SAVEV3_1114_OLD
+#define SAVEV3_1114_OLD 0
+#endif
+int gameMsnBestSlot(const GameMsn *m, int cur) {
+  if (cur < 0 || (unsigned)cur >= m->f.nmissions) return -1;
+  unsigned fl = m->f.missions[cur].flags;
+  if (fl & MSN_MF_GAMBLE) return 12;
+  if (fl & MSN_MF_BONUSMISSION) return 11;
+  if (fl & MSN_MF_STREETRACE) { int k = 0; for (int i = 0; i < cur; i++) if (m->f.missions[i].flags & MSN_MF_STREETRACE) k++; return 8 + (k < 2 ? k : 2); }
+  if (fl & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION | MSN_MF_LEVELOVER | MSN_MF_GAMEOVER)) return -1;
+  return cur < 8 ? cur : -1;
+}
+void gameMsnRecord(GameMsn *m, int kind) {
+  if (SAVEV3_1114_OLD || !gameMsnRecordHook || !m->f.hdr) return;
+  int slot = gameMsnBestSlot(m, m->rt.cur), lv = (int)m->f.hdr->level; if (slot < 0 || lv < 1 || lv > 7) return;
+  gameMsnRecordHook(lv, slot, kind, kind ? (int)m->missionClock : 0);
+}
 void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
+  if (!SAVEV3_1114_OLD && m->rt.status == MSN_RUNNING && m->rt.phase == 1 && !m->rt.paused && dt > 0.f) m->missionClock += dt;   // №1114: время основной части миссии
   unsigned pt0_ = NOWUS_(), pt1_ = pt0_, pt2_ = pt0_, pt3_ = pt0_;
   if (m->talk.on && (m->rt.status != MSN_RUNNING || m->rt.obj != MSN_OBJ_DIALOGUE)) talkEnd(m);
   if (m->talk.on && m->talk.npc[0] && *m->g->pHaveHomer) {   // собеседник смотрит на игрока весь разговор
@@ -1793,6 +1942,11 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
       if (m->dmgHoldOn && pc_->damage > m->dmgHold) { pc_->damage = m->dmgHold; if (pc_->damage < 1.f) pc_->destroyed = 0; }
       m->dmgHold = pc_->damage; m->dmgHoldOn = 1;
     } else m->dmgHoldOn = 0;
+  }
+  if (!HOMER_ROCKOUT_OLD && *m->g->pHaveHomer) {   // сверка g04-homer, AllowRockOut (P06:Д5): у идущего этапа есть команда «кайф» — Гомер за рулём после 3 с играет ndr_in_car_victory_small
+    const MsnRuntime *rk_ = &m->rt; const MsnStage *sk_ = rk_->st; int on_ = 0;
+    if (sk_ && rk_->status == MSN_RUNNING) for (uint32_t i_ = 0; i_ < sk_->cmd_count; i_++) if (m->f.cmds[sk_->cmd_first + i_].op == MSN_OP_ALLOWROCKOUT) { on_ = 1; break; }
+    homerRockOut(m->g->pHomer, on_);
   }
   if (!GAME_C2_CAMGOAL_OLD && *m->g->pHaveHomer) {   // круг 2, g04 P08-Д1: этап «дойти» с рисуемым предметом — камера пешком притягивается к нему
     const MsnRuntime *r_ = &m->rt; const MsnLoc *l_ = (r_->status == MSN_RUNNING && r_->obj == MSN_OBJ_GOTO && r_->c_dest && w.on_foot && *msn_arg_s(&m->f, r_->c_dest, 1)) ? msn_arg_loc(&m->f, r_->c_dest, 0) : 0;
@@ -1841,6 +1995,9 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
       dmgT_ = (McCar *)mcFind(&m->cars, rr_->target); if (dmgT_) dmgB_ = dmgT_->car.damage;
     }
     if (m->hitTgtT > 0.f) m->hitTgtT -= dt;
+    if (!HNR_IMMUNE_OLD) for (int i_ = 0; i_ < m->cars.n; i_++) {   // круг 7 (g10-flow, P03-30; против оригинала): взрыв машины-цели destroy или dump без привязанных предметов (бамперные машины) не двигает шкалу Hit & Run и не даёт монет
+      Car *k_ = &m->cars.c[i_].car; int imm_ = rr_->status == MSN_RUNNING && rr_->target && (rr_->obj == MSN_OBJ_DESTROY || (rr_->obj == MSN_OBJ_DUMP && rr_->nbind == 0)) && !strcasecmp(m->cars.c[i_].name, rr_->target);
+      if (imm_ && k_->svKind == 2) k_->svKind = 5; else if (!imm_ && k_->svKind == 5) k_->svKind = 2; }
     mcUpdate(&m->cars, &e, dt, carHit, m);
     if (dmgT_ && dmgT_->car.damage > dmgB_) {   // круг 2 (g01 7.2, g07b Д6): цель «разбить» страдает только от машины игрока (окно 0,5 с после её удара); у follow и dump с несколькими предметами цель неуязвима
       int keep = rr_->obj == MSN_OBJ_FOLLOW || (rr_->obj == MSN_OBJ_DUMP && rr_->nitems > 1) || (rr_->obj == MSN_OBJ_DESTROY && m->hitTgtT <= 0.f);

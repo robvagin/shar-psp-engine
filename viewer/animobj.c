@@ -167,6 +167,9 @@ static int standsOnLift(const AnimObjs *a, const ColWorld *w, unsigned k, const 
   }
   return 0;
 }
+#ifndef PLAYONCE_LEAVE_OLD
+#define PLAYONCE_LEAVE_OLD 0   // круг 6 (P05:18): 1 — прежняя запись признака в inTrig (затиралась каждый кадр, △ у PlayOnce не срабатывало)
+#endif
 #ifndef AO_PLAYONCE_OLD
 #define AO_PLAYONCE_OLD 0
 #endif
@@ -196,7 +199,7 @@ int aoNamesAdopt(AnimObjs *a, StateProps *sp, const void *buf, unsigned size) {
 #ifndef BIRDS_SV_OLD
 #define BIRDS_SV_OLD 0
 #endif
-#define BIRDS_REARM 150.f
+#define BIRDS_REARM 150.f   // м; число наше, не из оригинала (там стая возвращается при перезагрузке зоны): расстояние заменяет зону
 static void birdsStep(AnimObjs *a, StateProps *sp, const float feet[3], int onFoot, float dt) {
   if (BIRDS_SV_OLD || a->bA < 0 || a->bB < 0 || !a->nevt) return;
   const AoEvTrig *e = &a->evt[0]; AoObj t; memset(&t, 0, sizeof t);
@@ -255,8 +258,11 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
         break;
       case AO_PLAYONCE:   // круг 5 (g07b, P05-18): первое △ играет клип один раз вперёд и навсегда снимает триггер (inTrig = уже сработал). AO_PLAYONCE_OLD=1 — не обрабатывается (как до круга)
         if (AO_PLAYONCE_OLD) break;
-        if ((int)k == press && !r->inTrig && !r->playing) { r->playing = 1; r->f = 0.f; r->inTrig = 1; a->plays++; }
-        if (onFoot && in && !r->inTrig && !r->playing && a->want < 0) a->want = (int)k;
+        if (PLAYONCE_LEAVE_OLD) { if ((int)k == press && !r->inTrig && !r->playing) { r->playing = 1; r->f = 0.f; r->inTrig = 1; a->plays++; } if (onFoot && in && !r->inTrig && !r->playing && a->want < 0) a->want = (int)k; }   // круг 5: признак в inTrig, который каждый кадр затирается объёмом — △ не срабатывало вовсе
+        else {
+          if ((int)k == press && !r->once && !r->playing) { r->playing = 1; r->f = 0.f; r->once = 1; a->plays++; }   // круг 6: «сработал навсегда» — отдельный признак
+          if (onFoot && in && !r->once && !r->playing && a->want < 0) a->want = (int)k;
+        }
         if (r->playing) { r->f += dt * fps; if (r->f >= last) { r->f = last; r->playing = 0; } }
         break;
       case AO_AUTOPLAY:   // вход в объём: клип один раз (ветка качается, платформа-лифт АЭС)
@@ -286,7 +292,7 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
     if (a->nm && a->sound && !a->nosnd[k] && o->nInst) {
       int go = (!wasPlay && r->playing) || (o->action == AO_AUTODOOR && in && !wasIn);
       const SpRun *s0 = &sp->run[o->firstInst]; float dxs = s0->x - px, dzs = s0->z - pz;
-      if (o->action == AO_NONE && o->nfr > 1 && s0->alive && dxs * dxs + dzs * dzs < 60.f * 60.f) { if ((a->sndT[k] -= dt) <= 0.f) { go = 1; a->sndT[k] = (float)o->nfr / (o->fps > 0.f ? o->fps : 30.f); } }
+      if (o->action == AO_NONE && o->nfr > 1 && s0->alive && dxs * dxs + dzs * dzs < 60.f * 60.f /* 60 м — число наше, не из оригинала */) { if ((a->sndT[k] -= dt) <= 0.f) { go = 1; a->sndT[k] = (float)o->nfr / (o->fps > 0.f ? o->fps : 30.f); } }
       if (go && !a->sound(a->soundUser, a->nm[k].name, s0->x, s0->y, s0->z)) a->nosnd[k] = 1;
     }
     if (o->action != AO_NONE && o->action != AO_DOORBELL)
@@ -306,7 +312,7 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
 int aoSwitchRing(const AnimObjs *a, unsigned k, float c[3], float *r) {
   if (AO_SWITCH_OLD || !a->obj || k >= a->nobj) return 0;
   const AoObj *o = &a->obj[k];
-  if ((o->action != AO_PLAYANIM && o->action != AO_TOGGLE && !(o->action == AO_PLAYONCE && !AO_PLAYONCE_OLD && !a->run[k].inTrig)) || !o->trig) return 0;
+  if ((o->action != AO_PLAYANIM && o->action != AO_TOGGLE && !(o->action == AO_PLAYONCE && !AO_PLAYONCE_OLD && (PLAYONCE_LEAVE_OLD ? !a->run[k].inTrig : !a->run[k].once))) || !o->trig) return 0;
   c[0] = o->c[0]; c[2] = o->c[2];
   if (o->trig == 1) { c[1] = o->c[1]; *r = o->h[0] > 0.6f ? o->h[0] : 0.6f; }   // сфера: центр и радиус
   else { c[1] = o->c[1] - o->h[1]; *r = fmaxf(o->h[0], o->h[2]) > 0.6f ? fmaxf(o->h[0], o->h[2]) : 0.6f; }   // ящик: основание

@@ -1,0 +1,3 @@
+# путь клипа продавца комиксов относительно hit-and-run-web/source/game (№1094); пусто — заставка с нотами
+# p_hitbyc_cbg_01 = «Worst video game ever!» (найден распознаванием речи дирижёром, 02.11.2026)
+cbg/p_hitbyc_cbg_01.rsd

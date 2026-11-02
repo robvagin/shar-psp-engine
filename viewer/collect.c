@@ -5,6 +5,7 @@
 #include "collect.h"
 #include "bolt_math.h"
 #include "ticket.h"
+#include "sverka_shared.h"   // круг 7: svBoltWorld — снаряд осы и мир
 static int gmDirty = 1;   // №637: таблица экземпляр->гэг (collectGagOf) строится заново после collectInit/collectFree
 
 _Static_assert(sizeof(CollCard) == 32, "CollCard 32");
@@ -55,6 +56,18 @@ enum { WS_APPEAR = 0, WS_FLY = 1, WS_CHARGE = 2, WS_CHARGED = 3, WS_FIRE = 4, WS
 #endif
 #ifndef WASP_BOLT_HIT_OLD
 #define WASP_BOLT_HIT_OLD 0    // W5, Д10: стена проверяется один раз на 25 м при выстреле, взрыв на 1,75 м за поверхностью; прыгающего игрока снаряд пропускает; другую осу убивает; удар током без отлёта
+#endif
+#ifndef GAG_CAR15_OLD
+#define GAG_CAR15_OLD 0        // круг 7: триггер-гэг касанием: из машины запас 1,5 м (оригинал, как у карточки). 1 — без запаса
+#endif
+#ifndef CARD_CAR15_OLD
+#define CARD_CAR15_OLD 0       // круг 7 (P05:9): из машины карточка берётся, когда сфера 1,5 м вокруг машины касается её сферы (оригинал); круг 2 убрал запас совсем — ошибка. 1 — без запаса
+#endif
+#ifndef WASPBOLTWORLD_OLD
+#define WASPBOLTWORLD_OLD 0    // круг 7 (P04 W5): снаряд бьёт и подвижные предметы, пешеходов, трафик (крюк svBoltWorld). 1 — только игрока и ос, как было
+#endif
+#ifndef WASP_BOLT_BEHIND75_OLD
+#define WASP_BOLT_BEHIND75_OLD 0   // круг 7 (P04 Д10): точка взрыва у стены 0,75 м за поверхностью (оригинал), было 1,75. 1 — прежнее
 #endif
 #ifndef WASP_SHIELD_OLD
 #define WASP_SHIELD_OLD 0      // W7: щит ломается первым сильным ударом (было: вторым), порог машины 0,85 м/с (было: 2 м/с)
@@ -253,13 +266,19 @@ void collectSetProgress(Collect *c, int level, unsigned cards, uint32_t wasps, u
 }
 
 // ---------------------------------------------------------------- карточки
+// Все осы в наблюдении (ATTRACTION) переходят в агрессию: в оригинале событие «подобрана вещь» (карточка, ключ, еда, нитро) снимает у наблюдающей осы исключительность
+// поведения наблюдения, дальше работает атака; расстояние до осы не проверяется (круг 7, P04 Д12 теперь по оригиналу: ключ тоже). Звонит cardsStep и game.c при подборе ключа
+void collectWatchersAggro(Collect *c) {
+  CollState *s = &c->st;
+  for (unsigned q = 0; q < c->nwasp; q++) if (s->waspSt[q] == 1 && !s->waspAggr[q]) { s->waspAggr[q] = 1; s->waspLastFly[q] = -1e9f; }
+}
 static void cardsStep(Collect *c, const CollPlayer *p, const Car *car) {
   CollState *s = &c->st;
   if (p->room >= 0) return;
   for (unsigned i = 0; i < c->ncard; i++) {
     if (s->cardGot[i]) continue;
     const CollCard *k = &c->card[i];
-    float dx = p->x - k->x, dy = p->y + .9f - k->y, dz = p->z - k->z, r = k->r + (CARD_EXACT_OLD ? (p->onFoot ? CARD_REACH_FOOT : CARD_REACH_CAR) : 0.f);   // центр игрока: ступни + 0.9 м
+    float dx = p->x - k->x, dy = p->y + .9f - k->y, dz = p->z - k->z, r = k->r + (CARD_EXACT_OLD ? (p->onFoot ? CARD_REACH_FOOT : CARD_REACH_CAR) : (!p->onFoot && !CARD_CAR15_OLD ? 1.5f : 0.f));   // центр игрока: ступни + 0.9 м; круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы карточки (как в оригинале: сфера 1,5 м), пешком — точка строго внутри
     int in = dx * dx + dy * dy + dz * dz <= r * r;
     if (!in && !CARD_EXACT_OLD && !p->onFoot && car && car->p.halfL > .1f) {   // круг 2, P05:9: из машины ещё четыре угла кузова — два задних нижних и два передних верхних (полуразмеры из Car)
       float fx = sinf(car->h), fz = cosf(car->h), rx = fz, rz = -fx, hl = car->p.halfL, hw = car->p.halfW > .1f ? car->p.halfW : 1.f;
@@ -271,7 +290,7 @@ static void cardsStep(Collect *c, const CollPlayer *p, const Car *car) {
     }
     if (!in) continue;
     s->cardGot[i] = 1; hide(c, k->inst);
-    if (!WASP_CARD_AGGR_OLD) for (unsigned q = 0; q < c->nwasp; q++) if (s->waspSt[q] == 1 && !s->waspAggr[q]) { s->waspAggr[q] = 1; s->waspLastFly[q] = -1e9f; }   // P04 Д12: на любом расстоянии
+    if (!WASP_CARD_AGGR_OLD) collectWatchersAggro(c);   // P04 Д12: на любом расстоянии
     unsigned lv = k->id / 10, n = k->id % 10;
     if (lv > 0 && lv < COLL_LEVELS && n >= 1 && n <= 8) s->cards[lv] |= (uint8_t)(1u << (n - 1));
     push(c, CE_CARD, (int)i, k->x, k->y, k->z);
@@ -357,9 +376,13 @@ static void boltsStep(Collect *c,const CollPlayer *p,Homer *h,const ColWorld *wo
     }
     float at=hit<=wall && hit<=1 ? hit : wall;
     if(hw>=0 && hwT<at) at=hwT;
+    int whit=0; float dv[3]={c->st.boltV[k][0],c->st.boltV[k][1],c->st.boltV[k][2]}, dvl=sqrtf(dv[0]*dv[0]+dv[1]*dv[1]+dv[2]*dv[2]);   // круг 7: подвижные предметы, пешеходы, трафик — по крюку мира
+    if(!WASPBOLTWORLD_OLD && !WASP_BOLT_HIT_OLD && svBoltWorld && dvl>1e-6f) { dv[0]/=dvl; dv[1]/=dvl; dv[2]/=dvl;
+      float wt=svBoltWorld(a,b,dv,0); if(wt<=1.f && wt<at) { at=wt; whit=1; } }
     r->x+=c->st.boltV[k][0]*dt*at;r->y+=c->st.boltV[k][1]*dt*at;r->z+=c->st.boltV[k][2]*dt*at;
     c->st.boltRun[k]+=travel*at;
-    if(hw>=0 && hwT<=hit && hwT<=wall) {
+    if(whit) { svBoltWorld(a,b,dv,1); boltImpact(c,k,2,p,h,coins); }   // круг 7: взрыв у объекта мира, удар применён хозяином мира
+    else if(hw>=0 && hwT<=hit && hwT<=wall) {
       spEvent(&c->sp,c->wasp[hw].inst,SP_EV_DESTROYED); boltImpact(c,k,2,p,h,coins);
     }
     else if(hit<=wall && hit<=1) boltImpact(c,k,1,p,h,coins);
@@ -392,7 +415,7 @@ static void boltFire(Collect *c,unsigned owner,const CollPlayer *p,const ColWorl
     c->st.boltRun[k]=0.f;c->st.boltEnd[k]=0.f;
     if(!WASP_BOLT_HIT_OLD && world) {   // Д10: стена один раз на 25 м вперёд; взрыв на 1,75 м за поверхностью
       float a[3]={r->x,r->y,r->z},b[3]={a[0]+aim[0]/len*25.f,a[1]+aim[1]/len*25.f,a[2]+aim[2]/len*25.f};
-      float f=colRayFrac(world,a,b,0); if(f<1.f) c->st.boltEnd[k]=f*25.f+1.75f;
+      float f=colRayFrac(world,a,b,0); if(f<1.f) c->st.boltEnd[k]=f*25.f+(WASP_BOLT_BEHIND75_OLD?1.75f:.75f);   // круг 7: у оригинала снаряд встаёт на 0,75 м за точкой пересечения по ходу полёта (было 1,75)
     }
     c->st.boltOn[k]=1;c->st.boltOwner[k]=owner;c->st.boltT[k]=0;c->st.boltFired++;return;
   }
@@ -529,6 +552,14 @@ static void waspsStepOld(Collect *c, const CollPlayer *p, Homer *homer, const Ca
 #ifndef WASP_SV_OLD
 #define WASP_SV_OLD 0   // 1 — весь шаг ос как в TEST81 (waspsStepOld)
 #endif
+// круг 7 (сверка с оригиналом, поведение AttackBehaviour): (а) пока идёт любой гэг (событие начала гэга — до конца), оса в агрессии ничего нового не делает: не стартует перелёт, не заряжается и не стреляет
+// (уже начатый перелёт и выстрел доигрываются); (б) заряженная оса, до игрока которой дальше дальности атаки, летит в позицию атаки сразу, не дожидаясь интервала. WASP_GAGPAUSE_OLD=1 / WASP_RANGEFLY_OLD=1 — как было
+#ifndef WASP_GAGPAUSE_OLD
+#define WASP_GAGPAUSE_OLD 0
+#endif
+#ifndef WASP_RANGEFLY_OLD
+#define WASP_RANGEFLY_OLD 0
+#endif
 #define WASP_HFOV_HALF .70f   // 8.1: «оса в кадре» — полуугол по горизонтали от курса камеры, рад (кадр 16:9, ≈77° у машины; запас)
 static float urand(CollState *s) { return (float)(rnd(s) & 0xFFFFu) * (1.f / 65536.f); }
 static int groundUnder(const ColWorld *world, float x, float y, float z, float *g) { return world && colGround(world, x, z, y + 2.f, y - 30.f, g, 0); }
@@ -599,6 +630,7 @@ static void waspsStepSv(Collect *c, const CollPlayer *p, Homer *homer, const Car
   }
   const float jump = s->pJump;
   const float ty = p->y - jump + 1.2f;   // 8.5: цель по высоте — игрок +1,2 м без высоты прыжка
+  int gagBusy = 0; if (!WASP_GAGPAUSE_OLD) for (unsigned g_ = 0; g_ < c->ngag; g_++) if (s->gagSt[g_] == 1) { gagBusy = 1; break; }   // круг 7: идёт гэг — агрессия ждёт
   for (unsigned i = 0; i < c->nwasp; i++) {
     if (s->waspSt[i] != 1) continue;
     const CollWasp *w = &c->wasp[i]; SpRun *r = &c->sp.run[w->inst];
@@ -641,7 +673,7 @@ static void waspsStepSv(Collect *c, const CollPlayer *p, Homer *homer, const Car
     // агрессия: заряд сразу (W10); перелёты, уход и выстрел (W8, W9, Д7, 8.2–8.4)
     if (s->waspAggr[i] && !WASP_AGGR_OLD) {
       if (s->waspFly[i]) waspFlightStep(c, i, dt);
-      else if (r->state != WS_FIRE) {
+      else if (r->state != WS_FIRE && !gagBusy) {
         const float *ev = c->level > 0 && c->level < COLL_LEVELS ? WASP_EVADE[c->level] : WASP_EVADE[0];
         int hasEv = !WASP_EVADE_OLD && !st && ev[1] > 0.f;
         float ndx = r->x - p->x, ndz = r->z - p->z, nd = sqrtf(ndx * ndx + ndz * ndz);
@@ -654,10 +686,13 @@ static void waspsStepSv(Collect *c, const CollPlayer *p, Homer *homer, const Car
           else if (s->wclock - s->waspLastFly[i] >= w->atkEvade) {   // Д7: интервал от конца прошлого перелёта; первый — сразу
             float cy = homer ? homer->camYaw : atan2f(-dx, -dz), ang = cy + (urand(s) * 2.f - 1.f) * .7f, half = w->atkRange * .5f;
             waspFlightStart(c, i, 1, p->x + sinf(ang) * half, p->y - jump + 1.2f + 1.5f + urand(s) * .5f, p->z + cosf(ang) * half, world);   // 8.2: впереди игрока по взгляду камеры на половине дальности
+          } else if (!WASP_RANGEFLY_OLD && r->state == WS_CHARGED && d3 >= w->atkRange && p->onFoot) {   // круг 7: заряжена, но игрок дальше дальности атаки — в позицию атаки сразу, без интервала
+            float cy = homer ? homer->camYaw : atan2f(-dx, -dz), ang = cy + (urand(s) * 2.f - 1.f) * .7f, half = w->atkRange * .5f;
+            waspFlightStart(c, i, 1, p->x + sinf(ang) * half, p->y - jump + 1.2f + 1.5f + urand(s) * .5f, p->z + cosf(ang) * half, world);
           }
         }
       }
-      if (r->state == WS_FLY) { spEnter(&c->sp, w->inst, WS_CHARGE); push(c, CE_WASP_CHARGE, (int)i, r->x, r->y, r->z); }   // W10: заряд сразу, как включена атака, без условий дальности и без игрока пешком
+      if (r->state == WS_FLY && !gagBusy) { spEnter(&c->sp, w->inst, WS_CHARGE); push(c, CE_WASP_CHARGE, (int)i, r->x, r->y, r->z); }   // W10: заряд сразу, как включена атака, без условий дальности и без игрока пешком
     }
     float off = fabsf(angDiff(atan2f(dx, dz), s->waspYaw[i])) * 57.29578f;
     int inArc, inRange;
@@ -673,7 +708,7 @@ static void waspsStepSv(Collect *c, const CollPlayer *p, Homer *homer, const Car
       if (WASP_AGGR_OLD) {
         if (p->onFoot && d3 <= w->atkRange * 1.2f) { spEnter(&c->sp, w->inst, WS_FIRE); s->waspShot[i] = 0; }
         else spEnter(&c->sp, w->inst, WS_FLY);
-      } else if (s->waspAggr[i] && !s->waspFly[i] && p->onFoot && inRange && inArc) { spEnter(&c->sp, w->inst, WS_FIRE); s->waspShot[i] = 0; }   // выстрел — только при условиях W4; иначе остаётся заряженной
+      } else if (s->waspAggr[i] && !s->waspFly[i] && !gagBusy && p->onFoot && inRange && inArc) { spEnter(&c->sp, w->inst, WS_FIRE); s->waspShot[i] = 0; }   // выстрел — только при условиях W4; иначе остаётся заряженной
     } else if (r->state == WS_FIRE && !s->waspShot[i]) {
       const SpType *T = &c->sp.type[c->sp.inst[w->inst].type]; const SpState *S = &c->sp.state[T->firstState + r->state];
       float at = 1.f;
@@ -779,11 +814,24 @@ static void gagCoins(Collect *c, unsigned g, Coins *coins, const ColWorld *world
   coins->dropAuto = autoPrev;
 }
 
+// круг 7 (P15:Д2 и P15-19, сверка с оригиналом): GagSetIntro n — пока гэг ждёт, его первые n кадров идут по кругу; запуск выходит из круга и клип идёт дальше с того же места круга.
+// GagSetOutro n — когда клип дошёл до последних n кадров, они крутятся по кругу НАВСЕГДА: проигрыватель никогда не «кончается», значит нет конца гэга (событие, повторный запуск) и нет монет,
+// у которых задержка «после конца» (−1): в данных так у плавящегося мороженого L1 и L4 (outro 60, intro 1) и флага L3 и L6 (80 и 80). Найденным гэг засчитывается при запуске, как и было.
+// GAG_INTRO_OLD / GAG_OUTRO_OLD = 1 — как было (без кругов, конец по длительности)
+#ifndef GAG_INTRO_OLD
+#define GAG_INTRO_OLD 0
+#endif
+#ifndef GAG_OUTRO_OLD
+#define GAG_OUTRO_OLD 0
+#endif
 static void gagStart(Collect *c, unsigned g) {
   CollState *s = &c->st; const CollGag *G = &c->gag[g];
   if(!TICKET_CONTENT_C3_OLD && G->pad){push(c,CE_TICKET,(int)g,G->x,G->y,G->z);return;}
   s->gagSt[g] = 1; s->gagT[g] = 0.f; s->gagRuns++;
+  float tIntro_ = 0.f; int intro_ = !GAG_INTRO_OLD && G->inst >= 0 && G->intro > 0.f;
+  if (intro_) { const SpType *T_ = &c->sp.type[c->sp.inst[G->inst].type]; float fps_ = T_->fps ? (float)T_->fps : 30.f; tIntro_ = fmodf(c->sp.run[G->inst].t * fps_, G->intro) / fps_; spLoop(&c->sp, (unsigned)G->inst, 0.f, 0.f); }
   if (G->inst >= 0) spEnter(&c->sp, (unsigned)G->inst, 1);
+  if (intro_) c->sp.run[G->inst].t = tIntro_;
   push(c, CE_GAG_START, (int)g, G->x, G->y, G->z);
   if (!s->gagFound[g] && G->coins) {   // засчитывается один раз
     s->gagFound[g] = 1;
@@ -816,17 +864,22 @@ static void gagsStep(Collect *c, const CollPlayer *p, Coins *coins, const ColWor
   int act = p->action ? actionGag(c, p) : -1;
   for (unsigned g = 0; g < c->ngag; g++) {
     const CollGag *G = &c->gag[g];
+    if (!GAG_INTRO_OLD && G->intro > 0.f && G->inst >= 0 && s->gagSt[g] == 0 && !c->sp.run[G->inst].loopOn) spLoop(&c->sp, (unsigned)G->inst, 0.f, G->intro);   // круг 7: ждущий гэг крутит вступление
     if (s->gagSt[g] == 1) {   // играет: конец по длительности данных (сцена SPR1 сама уходит в «сыграл»/«ждёт»)
       s->gagT[g] += dt;
+      int outro_ = !GAG_OUTRO_OLD && G->outro > 0.f && G->inst >= 0;   // круг 7: окончание по кругу навсегда — ни конца, ни монет «после конца»
+      if (outro_) { const SpType *T_ = &c->sp.type[c->sp.inst[G->inst].type]; float fps_ = T_->fps ? (float)T_->fps : 30.f, n_ = (float)(T_->frames & 0xFFFFu);
+        if (n_ > G->outro && s->gagT[g] * fps_ > n_ - G->outro && !c->sp.run[G->inst].loopOn) spLoop(&c->sp, (unsigned)G->inst, n_ - G->outro, n_); }
       float cd = G->coinDelay < 0.f ? G->len : G->coinDelay;
-      if (!s->gagCoin[g] && s->gagFound[g] && G->coins && s->gagT[g] >= cd) { s->gagCoin[g] = 1; gagCoins(c, g, coins, world); }
-      if (G->cycle != COLL_CYCLE && s->gagT[g] >= G->len && (GAG_SOUNDWAIT_OLD || s->gagHold != (int)g + 1)) {   // P16-14: пока идёт звук гэга — «играет»
+      if (!s->gagCoin[g] && s->gagFound[g] && G->coins && s->gagT[g] >= cd && !(outro_ && G->coinDelay < 0.f)) { s->gagCoin[g] = 1; gagCoins(c, g, coins, world); }
+      if (!outro_ && G->cycle != COLL_CYCLE && s->gagT[g] >= G->len && (GAG_SOUNDWAIT_OLD || s->gagHold != (int)g + 1)) {   // P16-14: пока идёт звук гэга — «играет»
         s->gagSt[g] = G->cycle == COLL_SINGLE ? 2 : 0;
         push(c, CE_GAG_END, (int)g, G->x, G->y, G->z);
       }
     }
     if (!gagHere(c, g, p)) { s->gagIn[g] = 0; continue; }
     int in = gagInside(G, p->x, p->y, p->z);
+    if (!in && !p->onFoot && !GAG_CAR15_OLD && G->trig == COLL_TOUCH) { float e_ = G->tr + 1.5f, dx_ = p->x - G->tx, dy_ = p->y - G->ty, dz_ = p->z - G->tz; in = dx_ * dx_ + dy_ * dy_ + dz_ * dz_ <= e_ * e_; }   // круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы триггера (как в оригинале: сфера 1,5 м); пешком — точка
     if (G->trig == COLL_TOUCH) {
       int fresh = in && !s->gagIn[g];
       if (in && s->gagIn[g] == 2 && hypotf(p->x - gagEntX, p->z - gagEntZ) > GAG_ENTRY_MOVE) fresh = 1;   // №873: вошёл в комнату уже в сфере — сработает с первого шага

@@ -131,6 +131,7 @@ const char *collectError(int code);
 void collectNewGame(Collect *c);                      // новая игра: прогресс и мир уровня с нуля
 int  collectRoomId(const char *interior);             // имя комнаты скриптов -> номер (как tools/interior_export.py), NULL/нет -> -1
 // кадр после Гомера/машины/монет (viewer/game.c gameAfterCar): осы, карточки, гэги, SPR1 пакета. homer/car/world/coins — NULL можно
+void collectWatchersAggro(Collect *c);   // круг 7: подобрана вещь — осы в наблюдении переходят в агрессию (карточка, ключ)
 void collectStep(Collect *c, const CollPlayer *p, Homer *homer, Car *car, const ColWorld *world, Coins *coins, float dt);
 void collectGagPlay(Collect *c, unsigned g);   // №869 служебно: запустить гэг g (как триггер)
 void collectFootKick(Collect *c, const Homer *homer);

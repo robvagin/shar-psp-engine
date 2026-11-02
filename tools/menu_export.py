@@ -38,10 +38,17 @@ import ui_export as U  # noqa: E402
 # доска пунктов как OPTIONS: CAMERA / GAME / PICTURE / CARTOON), строки — на подстраницах 3..6 (доска и строки прежней SETTINGS, шрифт Bart).
 # Движок (viewer/main_save.h) узнаёт раздел по числу экранов пакета (7). SETTINGS_PAGES_OLD=1 — прежняя одна страница на 9 строк
 SETTINGS_PAGES = os.environ.get('SETTINGS_PAGES_OLD') != '1'
-SUBPAGES = ['pausecamera', 'pausegame', 'pausepicture', 'pausecartoon'] if SETTINGS_PAGES else []
+# №1151: раздел CAMERA паузы — страница настроек камеры (машина: высота, дальность, наклон, угол обзора; пешком: высота, дальность; «по умолчанию»), переход на неё — строка «Adjust Camera»
+# внизу страницы CAMERA, как Cartoon на PICTURE. CAMMENU1151_OLD=1 — прежняя страница CAMERA с Height / Distance, без новой страницы
+CAMMENU1151_OLD = os.environ.get('CAMMENU1151_OLD') == '1'
+SUBPAGES = ['pausecamera', 'pausegame', 'pausepicture', 'pausecartoon'] + ([] if CAMMENU1151_OLD else ['pausecamadj']) if SETTINGS_PAGES else []
 PACKS = {'menu': ['options', 'sound'] + ([] if os.environ.get('MENU_OLD') else ['viewcredits', 'viewmovies']),
          'pmenu': ['pauseoptions', 'pausesound', 'pausesettings'] + SUBPAGES,
-         'pextra': ['viewcards', 'missionselect']}   # экраны паузы 29.09: VIEW CARDS (PauseViewCards.scr), MISSION SELECT
+         'pextra': ['viewcards', 'missionselect'],
+         # №1105: SCRAP BOOK главного меню целиком (ScrapBook / ScrapBookContents / ScrapBookStats / галереи миссий, костюмов, машин, карточек); SCRAPBOOK1105_OLD=1 — пакета нет
+         **({} if os.environ.get('SCRAPBOOK1105_OLD') == '1' else {'scrap': ['scrapbook', 'scrapcontents', 'scrapstats'],
+            # галереи миссий, костюмов, машин уровня LEVEL (env, как pextra): картинки уровня внутри пакета, грузится на время галереи (lN/scrapgal.shr)
+            'scrapgal': ['missiongallery', 'skingallery', 'vehiclegallery']})}   # экраны паузы 29.09: VIEW CARDS (PauseViewCards.scr), MISSION SELECT
                                                      # (MissionSelect.scr) — раскладки tools/ui_export.py viewcards_layout / missionselect_layout
 BG = ('ingamel%d.p3d' % U.LEVEL, 'PauseBgd.pag')
 PAGES = {
@@ -65,13 +72,22 @@ for _sc in SUBPAGES:
     PAGES[_sc] = list(PAGES['pausesettings'])
 if SETTINGS_PAGES:
     PAGES['pausesettings'] = list(PAGES['pauseoptions'])
+_FE = lambda *n: [('frontend.p3d', x) for x in n]
+PAGES.update({'scrapbook': _FE('TVFrame.pag', 'ScrapBook.pag', 'Back.pag', 'Accept.pag'),
+              'scrapcontents': _FE('TVFrame.pag', 'LevelBar.pag', 'ScrapBookContents.pag', 'Back.pag', 'Accept.pag'),
+              'scrapstats': _FE('TVFrame.pag', 'ScrapBookStats.pag', 'Back.pag'),
+              'missiongallery': _FE('TVFrame.pag', 'MissionGallery.pag', 'LevelBar.pag', 'Back.pag', 'Accept.pag'),
+              'skingallery': _FE('TVFrame.pag', 'SkinGallery.pag', 'LevelBar.pag', 'Back.pag', 'Accept.pag'),
+              'vehiclegallery': _FE('TVFrame.pag', 'VehicleGallery.pag', 'LevelBar.pag', 'Back.pag', 'Accept.pag'),
+              'cardgallery': _FE('TVFrame.pag', 'LevelBar.pag', 'CardGallery.pag', 'ViewCard.pag', 'HighResCard.pag', 'Back.pag', 'Accept.pag')})
 PAGES['viewcards'] = U.SCREEN_PAGES['viewcards']; PAGES['missionselect'] = U.SCREEN_PAGES['missionselect']
-MENU_PAGES = {'Options.pag', 'Sound.pag', 'PauseOptions.pag', 'PauseSettings.pag', 'ViewMovies.pag'}
+MENU_PAGES = {'Options.pag', 'Sound.pag', 'PauseOptions.pag', 'PauseSettings.pag', 'ViewMovies.pag', 'ScrapBook.pag'}
 HIDE_ROWS = {'Display', 'DisplayMode', 'Controller', 'SurroundSound', 'Vibration'}
 MENU_TOP = os.environ.get('MENU_TOP') == '1'   # красный: OPTIONS главного меню прижаты к верху, как до 03.10
 MAX_ROWS = 12
 TAGS = {sc: {'ALWAYS'} for sc in PAGES}
 TAGS['viewcards'] = {'ALWAYS', 'SKIP'}
+for _g in ('missiongallery', 'skingallery', 'vehiclegallery'): TAGS[_g] = {'ALWAYS', 'SKIP', 'PRESS_START'}   # №1105: сетка видна, просмотр (STREETRACE) скрыт
 TAGS['viewcredits'] = {'ALWAYS', 'SKIP', 'STREETRACE'}   # в коде — по проходам (uiScrDrawCredits)   # сетка карточек видна сразу (UI_T_VC_GRID); крупная карточка — STREETRACE (UI_T_VC_ZOOM)
 
 
@@ -212,6 +228,18 @@ CAMCFG996_OLD = os.environ.get('CAMCFG996_OLD') == '1'
 CARSHADOW1003_OLD = os.environ.get('CARSHADOW1003_OLD') == '1'
 # №1064 (Роб 28.10: «текстуру бордюра поставить родную и иметь возможность это настроить в настройках»): строка Curbs на странице PICTURE после Draw Distance (Original / Tinted). CURB1064_OLD=1 — страница PICTURE как в TEST76
 CURB1064_OLD = os.environ.get('CURB1064_OLD') == '1'
+# №1151: подписи порта (их нет в текстовой библиотеке диска) на языке игры; нет перевода — английская (LANG_BIBLE: E F G S)
+_PT = {'F': {'Car Height': 'Hauteur voiture', 'Car Distance': 'Distance voiture', 'Car Tilt': 'Inclinaison voiture', 'Car View': 'Champ voiture', 'Foot Height': 'Hauteur à pied', 'Foot Distance': 'Distance à pied',
+             'Adjust Camera': 'Régler la caméra', 'Reset to Default': 'Par défaut', 'Low': 'Bas', 'Lower': 'Plus bas', 'Normal': 'Normal', 'Higher': 'Plus haut', 'High': 'Haut', 'Near': 'Près', 'Nearer': 'Plus près',
+             'Farther': 'Plus loin', 'Far': 'Loin', 'Narrow': 'Étroit', 'Narrower': 'Plus étroit', 'Wider': 'Plus large', 'Wide': 'Large'},
+       'G': {'Car Height': 'Höhe Auto', 'Car Distance': 'Abstand Auto', 'Car Tilt': 'Neigung Auto', 'Car View': 'Sichtfeld Auto', 'Foot Height': 'Höhe zu Fuß', 'Foot Distance': 'Abstand zu Fuß',
+             'Adjust Camera': 'Kamera einstellen', 'Reset to Default': 'Standard', 'Low': 'Tief', 'Lower': 'Tiefer', 'Normal': 'Normal', 'Higher': 'Höher', 'High': 'Hoch', 'Near': 'Nah', 'Nearer': 'Näher',
+             'Farther': 'Weiter', 'Far': 'Fern', 'Narrow': 'Eng', 'Narrower': 'Enger', 'Wider': 'Weiter', 'Wide': 'Weit'},
+       'S': {'Car Height': 'Altura coche', 'Car Distance': 'Distancia coche', 'Car Tilt': 'Inclinación coche', 'Car View': 'Campo coche', 'Foot Height': 'Altura a pie', 'Foot Distance': 'Distancia a pie',
+             'Adjust Camera': 'Ajustar cámara', 'Reset to Default': 'Por defecto', 'Low': 'Baja', 'Lower': 'Más baja', 'Normal': 'Normal', 'Higher': 'Más alta', 'High': 'Alta', 'Near': 'Cerca', 'Nearer': 'Más cerca',
+             'Farther': 'Más lejos', 'Far': 'Lejos', 'Narrow': 'Estrecho', 'Narrower': 'Más estrecho', 'Wider': 'Más ancho', 'Wide': 'Ancho'}}
+def PT(s):
+    return _PT.get(U.LANG, {}).get(s, s)
 NEW_ROWS = {
     'Contrast': ('Contrast', ['%.2f' % (0.5 + 0.1 * i) for i in range(16)]),
     'LineWidth': ('Line Width', [str(i) for i in range(11)]),
@@ -222,9 +250,17 @@ NEW_ROWS = {
     'DrawDist': ('Draw Distance', ['150 M', '200 M', '250 M']),   # №795: viewer/main_save.h cfgSlot "DRAW"
     **({} if CURB1064_OLD else {'CurbStyle': ('Curbs', ['Original', 'Tinted'])}),   # №1064: viewer/main_save.h cfgSlot "CURB" — бордюр: Original — родной, Tinted — подкраска №987 (TEST76)
     'OldTV': ('Old TV', ['Off'] + ['%d%%' % (10 * i) for i in range(1, 11)]),   # №800/№830: сила «старого телевизора» (viewer/main_save.h cfgSlot "OLD", viewer/oldtv.h)
-    **({} if CAMCFG996_OLD else {
+    **({} if CAMCFG996_OLD or not CAMMENU1151_OLD else {
         'CamHeight': ('Height', ['Low', 'Lower', 'Normal', 'Higher', 'High']),      # №996: viewer/main_save.h cfgSlot "HEIGHT" — высота камеры (машина и пешком), середина — как было
         'CamDist': ('Distance', ['Near', 'Nearer', 'Normal', 'Farther', 'Far']),    # №996: cfgSlot "DISTANCE" — дальность камеры
+    }),
+    **({} if CAMMENU1151_OLD or CAMCFG996_OLD else {   # №1151: viewer/main_save.h cfgSlot "CAR HEIGHT" … "FOOT DISTANCE"; значения 0..4, середина — как было
+        'CarHeight': (PT('Car Height'), [PT(v) for v in ['Low', 'Lower', 'Normal', 'Higher', 'High']]),
+        'CarDist': (PT('Car Distance'), [PT(v) for v in ['Near', 'Nearer', 'Normal', 'Farther', 'Far']]),
+        'CarTilt': (PT('Car Tilt'), ['-10', '-5', '0', '+5', '+10']),
+        'CarFov': (PT('Car View'), [PT(v) for v in ['Narrow', 'Narrower', 'Normal', 'Wider', 'Wide']]),
+        'FootHeight': (PT('Foot Height'), [PT(v) for v in ['Low', 'Lower', 'Normal', 'Higher', 'High']]),
+        'FootDist': (PT('Foot Distance'), [PT(v) for v in ['Near', 'Nearer', 'Normal', 'Farther', 'Far']]),
     }),
     **({} if CARSHADOW1003_OLD else {'CarShadows': ('Car Shadows', ['Off', 'On'])}),   # №1003: viewer/main_save.h cfgSlot "CAR SHADOW" — тени машин, по умолчанию Off
 }
@@ -247,7 +283,8 @@ OPT_ROWS = ([('Picture', 'PICTURE')] if OPT_PICTURE_FIRST else []) + [('Sound', 
            + ([] if OPT_PICTURE_FIRST else [('Picture', 'PICTURE')])
 _LINK_ROW = [] if CARTOON_PAGE_OLD or MENU_FLAT_OLD else ['CartoonLink']
 PAGE_ROWS = {
-    'pausecamera': ['Camera', 'JumpCamera', 'InvertCamControl'] + ([] if CAMCFG996_OLD else ['CamHeight', 'CamDist']),
+    'pausecamera': ['Camera', 'JumpCamera', 'InvertCamControl'] + ([] if CAMCFG996_OLD else ['CamHeight', 'CamDist'] if CAMMENU1151_OLD else ['CamAdjLink']),
+    'pausecamadj': ['CarHeight', 'CarDist', 'CarTilt', 'CarFov', 'FootHeight', 'FootDist', 'CamReset'],
     'pausegame': ['IntersectNavSystem', 'Radar', 'Tutorial'],
     'pausepicture': (_LINK_ROW if CARTOON_FIRST else []) + (['Textures'] if os.environ.get('TEXTURES_ROW_OLD') != '1' else []) + ['Colour', 'Contrast', 'TreeShadows'] + ([] if CARSHADOW1003_OLD else ['CarShadows'])
                     + ([] if os.environ.get('DRAWDIST_ROW_OLD') == '1' else ['DrawDist']) + ([] if CURB1064_OLD else ['CurbStyle'])
@@ -314,13 +351,13 @@ def hub_rows(its, rows_=None):
     return out
 
 
-def link_chevron(its):
+def link_chevron(its, key='CartoonLink'):
     """№891: «>» справа у строки-перехода Cartoon — по центру места правой стрелки строки Colour (там у настроек стоит ►), та же строка и высота, что у подписи"""
     import copy
-    lab = next(it for it in its if it['type'] == U.T_TEXT and it['name'] == 'CartoonLink')
+    lab = next(it for it in its if it['type'] == U.T_TEXT and it['name'] == key)
     ra = next(it for it in its if it['page'] == 'PauseSettings.pag' and it['name'] == 'Colour_RArrow')
     c = copy.deepcopy(lab)
-    c['name'] = 'CartoonLink_Chev'; c['strings'] = ['>']
+    c['name'] = key + '_Chev'; c['strings'] = ['>']
     cx = ra['rect'][0] + ra['rect'][2] / 2
     cy = lab['rect'][1] + lab['rect'][3] / 2; hh = 24 / U.S   # грань boulder_16 1:1 (строка 19 px): жирнее и крупнее Bart подписей, «>» читается; по центру строки подписи
     c['rect'] = [cx - 20, cy - hh / 2, 40, hh]
@@ -328,8 +365,143 @@ def link_chevron(its):
     return c
 
 
+# №1105: поля экранов SCRAP BOOK (значения ставит viewer/main_save.h scrapUi*): «сделано/всего» — пары STAT_* (frac: поле и следующее за ним), уровень на планке — LEVEL,
+# ролики — пара ROW10/ROW11, процент игры — STAT_PCT (десятые), нажатые L/R на планке — MS_LARROW / MS_RARROW (0 серый, 1 красный)
+SCRAP_FRAC = {'StoryMissions_Unlocked': 'STAT_SM', 'BonusMissions_Unlocked': 'STAT_BM', 'StreetRaces_Unlocked': 'STAT_SR', 'Cards_Unlocked': 'STAT_CARDS',
+              'Clothing_Unlocked': 'STAT_SKINS', 'Vehicles_Unlocked': 'STAT_CARS', 'Wasps_Unlocked': 'STAT_WASPS', 'Gags_Unlocked': 'STAT_GAGS', 'Movies_Unlocked': 'ROW10',
+              'CharacterClothing_Unlocked': 'STAT_SKINS', 'CollectorCards_Unlocked': 'STAT_CARDS'}
+SCRAP_ROW = {'StoryMissions': 0, 'CharacterClothing': 1, 'Vehicles': 2, 'CollectorCards': 3}   # разделы книги: порядок и номер пункта (сетка 3 + 1)
+
+
+def scrap_items(sc, its):
+    out = []
+    for it in its:
+        nm, pg = it['name'], it['page']
+        if sc == 'scrapbook' and nm == 'KrustySticker':
+            it['tag'] = 'SKIP'                       # наклейка Красти: видна при 100 % игры (код: uiScrShow метка SKIP)
+        if sc == 'scrapcontents' and pg == 'ScrapBookContents.pag':
+            if nm == 'Dummy': continue
+            if it['type'] == U.T_TEXT and nm in SCRAP_ROW: it.update(menu=SCRAP_ROW[nm], sel=0)
+            elif it['type'] == U.T_IMG and nm in SCRAP_ROW and len(it.get('frames') or []) >= 7: it['field'] = 'LEVEL'   # картинка раздела — кадр уровня
+        if sc == 'scrapcontents' and nm in ('LTriggerBgd', 'RTriggerBgd') and it['type'] == U.T_IMG: it['field'] = 'MS_LARROW' if nm[0] == 'L' else 'MS_RARROW'
+        if nm in SCRAP_FRAC and it['type'] == U.T_TEXT and sc in ('scrapcontents', 'scrapstats'):
+            it.update(field=SCRAP_FRAC[nm], fmt='frac', strings=['10/10'])
+        if nm == 'GameComplete_Value' and sc == 'scrapstats': it.update(field='STAT_PCT', fmt='pct', strings=['100.0 %'])
+        out.append(it)
+    return out
+
+
+
+# ---- №1105 этап 2: галереи SCRAP BOOK (MissionGallery / SkinGallery / VehicleGallery) для уровня LEVEL --------------------------------------------------
+# Раскладка — как у оригинала (640x480, единицы Scrooby): картинки слотов — спрайты страницы, которые код оригинала подменяет реальными (миссии 263x207 в масштабе 0,4 вокруг центра слота;
+# костюмы 119x230 и машины 179x132 — как есть), закрытые слоты показывают картинку-заглушку страницы (замок, силуэт). Просмотр: выбранная картинка уходит в точку просмотра (миссия 180,120
+# в натуральную величину; костюм 250,130 в 1,5 раза; машина 250,140 вдвое; точка — левый верх), подпись — тексты страницы. Полёт 250 мс и затухание остальных у PSP мгновенные.
+# Поля (ставит viewer/main_scrap.h): ROW0..ROW7 — кадр слота (0 закрыт / 1 картинка), ROW8 — выбранный слот (картинка просмотра), ROW9 — строка подписи (номер слота).
+# Метки: SKIP — сетка и планка уровня (видны, пока просмотра нет), STREETRACE — просмотр, PRESS_START — подсказка Accept.
+_GALC = {}
+GAL = {'missiongallery': ('MissionGallery.pag', 'Mission', 8, 'ViewMission'), 'skingallery': ('SkinGallery.pag', 'Skin', 3, 'ViewSkin'), 'vehiclegallery': ('VehicleGallery.pag', 'Vehicle', 6, 'ViewVehicle')}
+GAL_DIR = U.WEB / 'source/game/art/frontend/dynaload/images'
+SI_LOCK = ['si_homer', 'si_bart', 'si_lisa', 'si_marge', 'si_apu', 'si_bart', 'si_homer']   # заглушка слота костюма по уровню (кадры спрайта Skin* страницы)
+
+
+def gal_rewards(level, car):
+    """награды уровня из таблицы viewer/scrapdata_tab.h (BindReward по порядку): машины все шесть, костюмы — три на продажу (у продавца «interior»)"""
+    import re
+    txt = (U.ROOT / 'viewer/scrapdata_tab.h').read_text()
+    rows = [l for l in txt.splitlines() if l.strip().startswith('{{') and 'L%d:' % level in l]
+    names = re.findall(r'\{(\d), (\d), "([^"]+)"\}', rows[0])
+    out = [(n, int(q)) for c, q, n in names if (c == '1') == car and (car or int(q) == 3)]
+    return out
+
+
+def gal_walk(n, path=()):
+    if isinstance(n, list):
+        for x in n: yield from gal_walk(x, path)
+        return
+    if n['kind'] in ('layer', 'group'):
+        for c in n['children']: yield from gal_walk(c, path + (n['name'],))
+    else: yield path, n
+
+
+def gallery_items(sc, level):
+    page, stem, count, viewlayer = GAL[sc]
+    prj = U.project('frontend.p3d'); imgs = prj.images
+    base, _ = U.build_items(sc)
+    keep = [it for it in base if it['page'] in ('TVFrame.pag', 'Back.pag', 'Accept.pag', 'LevelBar.pag')]
+    for it in keep:
+        if it['page'] == 'LevelBar.pag': it['tag'] = 'SKIP'
+        if it['page'] == 'Accept.pag': it['tag'] = 'PRESS_START'
+        if it['name'] in ('LTriggerBgd', 'RTriggerBgd') and it['type'] == U.T_IMG: it['field'] = 'MS_LARROW' if it['name'][0] == 'L' else 'MS_RARROW'
+    tmpl = next(it for it in base if it['type'] == U.T_IMG and it['page'] == 'LevelBar.pag')
+    unit = (page, 'Foreground/Menu')
+    def img(name, rect, frames, tag, field='NONE', menu=-1, selonly=False):
+        it = dict(tmpl, name=name, page=page, path='Foreground/Menu', tag=tag, unit=unit, forced='C', field=field, fmt='none', menu=menu, rect=[float(v) for v in rect], frames=frames,
+                  color=[255, 255, 255, 255], jx='centre', jy='centre')
+        if selonly: it['selonly'] = True
+        return it
+    def reg(key, im): imgs[key] = im; return key
+    raw = {n['name']: n for _, n in gal_walk(prj.pages[page])}
+    resimg = lambda r: prj.res_images.get(r, r)
+    out = []
+    def ydn(y, h): return 480.0 - y - h
+    if sc == 'missiongallery':
+        lock = resimg(raw['Mission0']['images'][0]); frame = imgs[resimg(raw['MissionFrame']['images'][0])].rotate(90, expand=True)
+        ims = []
+        for i in range(count):
+            f = GAL_DIR / 'scrapbook' / ('mis%02d_%02d.p3d' % (level, i + 1))
+            import load_export as LX
+            ims.append(next(iter(LX.sprite_images(f).values())) if f.exists() else None)
+        centres = []
+        for i in range(count):
+            r = raw['Mission%d' % i]; centres.append((r['x'] + r['w'] / 2, ydn(r['y'], r['h']) + r['h'] / 2))
+        fr = reg('gal_msnframe', frame)
+        for i, (cx, cy) in enumerate(centres):
+            out.append(img('Mission%d' % i, [cx - 56, cy - 56, 112, 112], [lock, reg('gal_mis%d' % i, ims[i]) if ims[i] is not None else lock], 'SKIP', field='ROW%d' % i))
+        for i, (cx, cy) in enumerate(centres):
+            out.append(img('MissionFrame%d' % i, [cx - 54, cy - 42, 108, 84], [fr], 'SKIP', menu=i, selonly=True))
+        out.append(img('MissionView', [180, 120, 263, 207], [reg('gal_misv%d' % i, ims[i]) if ims[i] is not None else lock for i in range(count)], 'STREETRACE', field='ROW8'))
+    else:
+        car = sc == 'vehiclegallery'; names = [n for n, q in gal_rewards(level, car)]
+        names = names[:count]
+        cur = resimg(raw['VehicleCursor' if car else 'SkinCursor']['images'][0])
+        locks = [resimg('si_car')] * count if car else [resimg(SI_LOCK[level - 1])] * count
+        ims = []
+        for n in names:
+            f = GAL_DIR / ('cars2d' if car else 'skins2d') / (n + '.p3d')
+            import load_export as LX
+            ims.append(next(iter(LX.sprite_images(f).values())) if f.exists() else None)
+        slots = [(raw['%s%d' % (stem, i)]['x'], ydn(raw['%s%d' % (stem, i)]['y'], raw['%s%d' % (stem, i)]['h']), raw['%s%d' % (stem, i)]['w'], raw['%s%d' % (stem, i)]['h']) for i in range(count)]
+        c0 = raw['VehicleCursor' if car else 'SkinCursor']
+        for i, (x, y, w, h) in enumerate(slots):   # курсор под выбранным слотом: смещение от слота — как у слота 0 в странице
+            c = (x - (raw['Vehicle0']['x'] - c0['x'] if car else raw['Skin0']['x'] - c0['x']), y + (ydn(c0['y'], c0['h']) - slots[0][1]))
+            out.append(img('Cursor%d' % i, [c[0], c[1], c0['w'], c0['h']], [cur], 'SKIP', menu=i, selonly=True))
+        for i, (x, y, w, h) in enumerate(slots):
+            out.append(img('%s%d' % (stem, i), [x, y, w, h], [locks[i], reg('gal_%s%d' % (stem.lower(), i), ims[i]) if i < len(ims) and ims[i] is not None else locks[i]], 'SKIP', field='ROW%d' % i))
+        vx, vy, k = (250, 140, 2.0) if car else (250, 130, 1.5)
+        vw, vh = (179 * k, 132 * k) if car else (119 * k, 230 * k)
+        out.append(img(stem + 'View', [vx, vy, vw, vh], [reg('gal_%sv%d' % (stem.lower(), i), ims[i]) if i < len(ims) and ims[i] is not None else locks[i] for i in range(count)], 'STREETRACE', field='ROW8'))
+    # подписи просмотра: тексты страницы (шрифт, цвет, место — из данных)
+    B = U._BIBLE or U.load_bible(U.LANG)
+    def text(nm, strings, tag):
+        e = raw[nm]; face = prj.res_fonts.get(e['font'], e['font'])
+        return dict(base[0] if False else tmpl, name=nm, page=page, path=viewlayer, tag=tag, unit=unit, forced='C', type=U.T_TEXT, rect=[e['x'], ydn(e['y'], e['h']), e['w'], e['h']], color=e['color'], font=face,
+                    halign=e['jx'], valign=e['jy'], strings=strings, sel=0, shadow=e['shadow'] if e['shadow']['on'] else None, wrap=False, field='ROW9', fmt='select', menu=-1, frames=None)
+    if sc == 'missiongallery':
+        st = [s['text'] or '' for s in raw['MissionTitle']['strings']][(level - 1) * 8:level * 8]
+        out.append(text('MissionTitle', st, 'STREETRACE')); out.append(text('MissionNum', [s['text'] or '' for s in raw['MissionNum']['strings']], 'STREETRACE'))
+    else:
+        nm = 'VehicleName' if sc == 'vehiclegallery' else 'SkinName'
+        st = [(B(n.upper()) or n) for n, q in gal_rewards(level, sc == 'vehiclegallery')][:count]
+        out.append(text(nm, st, 'STREETRACE'))
+    for it in out:
+        if it['type'] == U.T_TEXT: it.pop('frames', None)
+    return keep + out
+
+
 def items(sc, assets):
     its, _ = U.build_items(sc)
+    if sc in GAL: return [dict(i) for i in _GALC[sc]]   # собраны в export() до сборки атласа: картинки уровня должны быть в словаре проекта заранее
+    if sc.startswith('scrap'): its = scrap_items(sc, its)
     settings_rows = sc == 'pausesettings' and not SETTINGS_PAGES or sc in SUBPAGES   # страница(ы) со строками значений
     if settings_rows and COLOUR_ROW:
         colour_row(its)
@@ -340,11 +512,12 @@ def items(sc, assets):
     if sc in SUBPAGES:
         for key, (label, values) in NEW_ROWS.items():
             copy_row(its, 'Colour', key, label, values)
-        if 'CartoonLink' in PAGE_ROWS[sc]:   # №783: переход на страницу CARTOON — только подпись строки (без значения, стрелок и ползунка)
-            copy_row(its, 'Colour', 'CartoonLink', 'Cartoon', [''])
-            its = [it for it in its if row_key(it) != 'CartoonLink' or (it['type'] == U.T_TEXT and it['name'] == 'CartoonLink')]
-            if LINK_CHEV:
-                its.append(link_chevron(its))
+        for lk, lab, chev in (('CartoonLink', 'Cartoon', True), ('CamAdjLink', PT('Adjust Camera'), True), ('CamReset', PT('Reset to Default'), False)):
+            if lk in PAGE_ROWS[sc]:   # №783: переход на страницу CARTOON — только подпись строки (без значения, стрелок и ползунка); №1151: «Adjust Camera» и «Reset to Default» — так же
+                copy_row(its, 'Colour', lk, lab, [''])
+                its = [it for it in its if row_key(it) != lk or (it['type'] == U.T_TEXT and it['name'] == lk)]
+                if LINK_CHEV and chev:
+                    its.append(link_chevron(its, lk))
         its = page_rows(its, PAGE_ROWS[sc])
     if sc == 'pausesettings' and SETTINGS_PAGES:
         its = hub_rows(its)
@@ -467,13 +640,87 @@ def credits(its):
 # SOUND и SETTINGS (BigBoard) — строки из данных (подпись, значение, стрелки, ползунок) одним блоком по центру, шаг ровный:
 # у SOUND — из данных (37 px), у SETTINGS — PAUSE_SETTINGS_PITCH (в данных 40 источника = 22,7 px: 22/23 вперемешку)
 PAUSE_TITLES = {'pauseoptions': 'OPTIONS', 'pausesound': 'SOUND', 'pausesettings': 'SETTINGS',
-                'pausecamera': 'CAMERA', 'pausegame': 'GAME', 'pausepicture': 'PICTURE', 'pausecartoon': 'CARTOON'}   # №777: заголовки подстраниц
+                'pausecamera': 'CAMERA', 'pausegame': 'GAME', 'pausepicture': 'PICTURE', 'pausecartoon': 'CARTOON', 'pausecamadj': 'CAMERA'}   # №777: заголовки подстраниц
 HINT_IN_PAD = 8          # px PSP: подписи кнопок внутри доски VIEW MOVIES — от края заливки (правка 163)
 PAUSE_SETTINGS_PITCH = 24
 # Аудит 16.10 (Sonnet-Аудит-Типографики, v9): с 8-й строкой Cartoon доска по содержимому при шаге 24 выше экрана (40 + 8 x 24 + поля > 272): рамка уезжала
 # (верх 88 вместо 44, низ за кадром). Шаг при 8 строках 22 (PAUSE_PITCH): низ рамки в экране, верх на месте TEST26. SETTINGS8_FRAME_OLD=1 — прежний шаг 24
 PAUSE_SETTINGS_PITCH8 = 22
 PAUSE_SETTINGS_PITCH9 = 20   # Роб 17.10: 9-я строка Tree Shadows — шаг 20, доска в экране (40 + 9 x 20 + поля)
+
+
+# №1121 (Роб, TEST84 на PSP: «Скреббуку шрифт Bart vs the Space Mutants»): весь раздел SCRAP BOOK — наш пиксельный bart_16bit, как остальные меню (типографика: tools/ui_typo.py, build/ui_typo.json).
+# Роли по аналогии с паузой и настройками: пункты OPEN BOOK / GAME STATS, заголовок GAME STATS и планка LEVEL N — bart_16bit*2 (16 px, кратный кегль, как пункты главного меню);
+# подписи разделов, счётчики, строки Game Stats, подписи галерей — bart_16bit@1 (8 px, как строки SETTINGS и ms_rows); подсказки Accept / Back — группа hints_menu типографики
+# (bart_16bit@1, угол экрана, как в OPTIONS и паузе). Пиксельные шрифты: кегль кратный, межбуквенный 0, обводки нет (грань bart_16bit так и собрана).
+# OPEN BOOK / GAME STATS — по центру свободного места на обложке альбома: обложка (3D-гостиная, кадр 350 таймлайна, превью tools/frontend3d_export.py --preview --frame 350) — золотая рамка
+# внутри x 98..386 и до y 241, герб «Hit & Run» занимает верх до y 136; свободное место x 98..386, y 136..241 — центр (242, 188.5) px экрана PSP; пара строк (шаг 28 px) центруется по буквам.
+# SCRAPFONT1121_OLD=1 — прежние шрифты и места
+SCRAPFONT1121_OLD = os.environ.get('SCRAPFONT1121_OLD') == '1'
+SCRAP_SCREENS = {'scrapbook', 'scrapcontents', 'scrapstats', 'missiongallery', 'skingallery', 'vehiclegallery'}
+SCRAP_FREE_CX, SCRAP_FREE_CY, SCRAP_PAIR_PITCH, SCRAP_PAIR_PITCH_T = 242.0, 188.5, 28.0, 24.0
+SCRAPTITLE1134_OLD = os.environ.get('SCRAPTITLE1134_OLD') == '1'
+
+
+def scrap_fonts(sc, its):
+    # №1134 (уточнение Роба): толстые заголовки страниц (OPEN BOOK / GAME STATS на обложке, LEVEL N, GAME STATS, MISSION N в просмотре) остаются прежним толстым шрифтом (boulder_24 данных);
+    # нашим bart_16bit — только мелкие подписи: разделы, счётчики, строки статистики, названия миссий / костюмов / машин в просмотре. SCRAPTITLE1134_OLD=1 — заголовки bart_16bit*2, как в №1121
+    big = ('OpenBook', 'GameStats', 'Level', 'MissionNum')
+    for it in its:
+        if it['type'] != U.T_TEXT or it['page'] in ('Accept.pag', 'Back.pag', 'TVFrame.pag'): continue
+        nm = it['name']
+        if nm in big and not SCRAPTITLE1134_OLD: continue   # заголовок: прежний шрифт и место
+        face = 'bart_16bit*2' if nm in big else 'bart_16bit@1'
+        lh = U.FontCache('psp').get(face)['lh'] / U.S
+        sample = [t for t in (it.get('strings') or []) if t] or ['0AEgp']
+        ink = [U.glyph_ink(face, t) for t in sample]
+        ic = (min(i[2] for i in ink) + max(i[3] for i in ink)) / 2          # середина букв по высоте строки, px
+        x, y, w, h = it['rect']
+        cy = (y + h / 2) * U.S                                              # прежняя середина строки, px
+        it.update(font=face, halign='centre', valign='top', wrap=False, rect=[x, (cy - ic) / U.S, w, lh / U.S])
+    if SCRAPTITLE1134_OLD:
+        # планка LEVEL N в 16 px: стрелки L / R отодвигаются от неё наружу на 12 px, чтобы не касаться букв
+        for it in its:
+            if it['name'] in ('LTrigger', 'LTriggerBgd', 'RTrigger', 'RTriggerBgd') and it['type'] == U.T_IMG:
+                d = 12 / U.S * (-1 if it['name'][0] == 'L' else 1); it['rect'] = [it['rect'][0] + d] + list(it['rect'][1:])
+    if sc == 'scrapbook':
+        pair = sorted((it for it in its if it['type'] == U.T_TEXT and it['name'] in ('OpenBook', 'GameStats')), key=lambda t: t['name'] != 'OpenBook')
+        pitch = SCRAP_PAIR_PITCH if SCRAPTITLE1134_OLD else SCRAP_PAIR_PITCH_T
+        for k, it in enumerate(pair):
+            face = it['font']; lh = U.FontCache('psp').get(face)['lh'] / U.S
+            sample = [t for t in (it.get('strings') or []) if t] or ['OPEN BOOK']
+            ink = [U.glyph_ink(face, t) for t in sample]; ic = (min(i[2] for i in ink) + max(i[3] for i in ink)) / 2
+            cy = SCRAP_FREE_CY + (k - .5) * pitch
+            w = it['rect'][2]
+            it['rect'] = [320 + (SCRAP_FREE_CX - 240) / U.S - w / 2, (cy - ic) / U.S, w, lh / U.S]
+
+
+# №1121, правило Роба (подпись никогда не под картинкой и не поверх неё): оглавление — подпись CARDS и счётчик справа от картинки карточек (под ней места нет: низ окна ТВ), центр x 318 px,
+# строки на y 212 и 225; просмотр костюма и машины — подпись одной строкой под картинкой, центр x 250 px (не под кнопками Accept / Back справа), по буквам на y 236 (окно ТВ кончается около 241);
+# картинка костюма (119x230, в 1,5 раза) поднята на 40 px: у всех 21 костюма семи уровней низ рисунка 265..267 px (замер по картинкам диска), после подъёма 225..227, выше подписи на 5 px и больше.
+# У машин низ рисунка 195..226 px, подписи (232..240) ниже при любом уровне; проверка tests/scrap1105/caps1121.py по всем уровням. SCRAPCAPS1121_OLD=1 — подписи на прежних местах
+SCRAPCAPS1121_OLD = os.environ.get('SCRAPCAPS1121_OLD') == '1'
+SCRAP_CAP_X, SCRAP_CAP_Y, SCRAP_SKIN_LIFT = 250.0, 236.0, 40.0
+SCRAP_CARDS_X, SCRAP_CARDS_Y = 318.0, (212.0, 225.0)
+
+
+def scrap_place(it, cx_px, cy_px):
+    """текст it так, чтобы середина букв по высоте была на cy_px, середина по ширине на cx_px (единицы Scrooby, якорь C)"""
+    face = it['font']; lh = U.FontCache('psp').get(face)['lh'] / U.S
+    sample = [t for t in (it.get('strings') or []) if t] or ['0AEgp']
+    ink = [U.glyph_ink(face, t) for t in sample]; ic = (min(i[2] for i in ink) + max(i[3] for i in ink)) / 2
+    w = it['rect'][2]; it['rect'] = [320 + (cx_px - 240) / U.S - w / 2, (cy_px - ic) / U.S, w, lh / U.S]
+
+
+def scrap_captions(sc, its):
+    if sc == 'scrapcontents':
+        for it in its:
+            if it['type'] == U.T_TEXT and it['name'] == 'CollectorCards': scrap_place(it, SCRAP_CARDS_X, SCRAP_CARDS_Y[0])
+            elif it['type'] == U.T_TEXT and it['name'] in ('CollectorCards_Unlocked', 'CardCollection_Unlocked'): scrap_place(it, SCRAP_CARDS_X, SCRAP_CARDS_Y[1])
+    if sc in ('skingallery', 'vehiclegallery'):
+        for it in its:
+            if it['type'] == U.T_TEXT and it['name'] in ('SkinName', 'VehicleName'): scrap_place(it, SCRAP_CAP_X, SCRAP_CAP_Y)
+            elif it['name'] == 'SkinView' and it['type'] == U.T_IMG: it['rect'] = [it['rect'][0], it['rect'][1] - SCRAP_SKIN_LIFT / U.S] + list(it['rect'][2:])
 
 
 def pause_fit(sc, its, assets):
@@ -491,8 +738,8 @@ def pause_fit(sc, its, assets):
                     it.update(font=U.PAUSE_FONT, halign='centre', valign='top', wrap=False)
         # №807 (Роб 18.10: «отступы сверху и снизу одинаковые, строки свободнее»): пункты OPTIONS (SOUND / CAMERA / GAME / PICTURE) — шаг 30 px вместо 26
         # (просвет между заглавными 20 px), поля сверху и снизу равные (board_fit). OPTIONS_PITCH_OLD=1 — шаг паузы 26
-        pitch_ = U.PAUSE_FIT_PITCH + (4 if sc == 'pauseoptions' and SETTINGS_PAGES and not MENU_FLAT_OLD and os.environ.get('OPTIONS_PITCH_OLD') != '1' else 0)
-        fb = U.board_fit(its, rws, 'XSmallBoard.pag', U.PAUSE_K, pitch=pitch_, width=U.pause_board_width(), centre_each=True,
+        pitch_ = U.PAUSE_MENU_PITCH + (4 if sc == 'pauseoptions' and SETTINGS_PAGES and not MENU_FLAT_OLD and os.environ.get('OPTIONS_PITCH_OLD') != '1' else 0)
+        fb = U.board_fit(its, rws, 'XSmallBoard.pag', U.PAUSE_K, pitch=pitch_, pad_y=U.PAUSE_MENU_PAD_Y, width=U.pause_board_width(), centre_each=True,
                           images=assets.images)
     else:
         if sc == 'pausesound':   # подписи ползунков (boulder_16 данных: заглавная ~6 px на PSP, мельче всего семейства) — грань пунктов паузы
@@ -509,6 +756,7 @@ def pause_fit(sc, its, assets):
                 for it in r:
                     if it['type'] == U.T_TEXT and not it['name'].endswith('_Chev'):   # №891: «>» перехода — своя грань (link_chevron)
                         it.update(font='bart_16bit@1')
+                        if U.LANG != 'E' and os.environ.get('LANGFIT1111_OLD') != '1': it['wrap'] = False   # №1111: длинная подпись не переносится на вторую строку (налезала на соседнюю): lang_fit подгоняет ширину
         # правка 163: SOUND — колонка, как OPTIONS: та же постоянная ширина доски, что у семейства паузы (рамка при переходе
         # OPTIONS -> SOUND не прыгает); SETTINGS (две колонки) — по содержимому, поля со всех сторон PAUSE_FIT_PAD_Y: правый край
         # доски левее подсказки «△ Back» в углу (подсказка крупнее, правка 163)
@@ -549,8 +797,13 @@ def fe_items(sc, its):
                 it['rect'] = [it['rect'][0], top] + list(it['rect'][2:])
 
 
+ROWS = {}   # №1111: подписи строк меню готовых экранов (MENU_ROWS_OUT=файл — писать их в json; tools/lang_rowkeys.py сводит английские и языковые)
+
+
 def build(sc, assets, fonts):
     its = U.build_items(sc)[0] if sc in ('viewcards', 'missionselect') else items(sc, assets)   # готовая раскладка ui_export
+    if sc in SCRAP_SCREENS and not SCRAPFONT1121_OLD: scrap_fonts(sc, its)   # №1121
+    if sc in SCRAP_SCREENS and not SCRAPFONT1121_OLD and not SCRAPCAPS1121_OLD: scrap_captions(sc, its)   # №1121: подписи не под картинкой и не поверх неё
     fe_items(sc, its)
     if sc in PAUSE_TITLES and not U.PAUSE_OLD:
         its = pause_fit(sc, its, assets)
@@ -578,6 +831,9 @@ def build(sc, assets, fonts):
             for i, t in enumerate(rows): t['dst'] = [t['dst'][0], y0 + i * step] + list(t['dst'][2:])
     if sc == 'missionselect':
         dl = U.missionselect_psp(dl, fonts)   # правка 348: шаг строк, полоса выбора во всю доску, LEVEL N по центру планки
+    for t in dl:
+        if t.get('type') == U.T_TEXT and t.get('menu', -1) >= 0 and t.get('strings'):
+            ROWS.setdefault(sc, {}).setdefault(str(t['menu']), t['strings'][0])   # первая подпись строки — её читает uiScrRowLabel
     return dl
 
 
@@ -591,9 +847,13 @@ def group_of(key):
 def export(name, out=None, mocks=True):
     for sc in PACKS[name]:
         U.SCREEN_PAGES[sc] = PAGES[sc]
+    if name == 'scrapgal':
+        for sc in PACKS[name]: _GALC[sc] = gallery_items(sc, U.LEVEL)
     spec = dict(screens=PACKS[name], build=build, tags=TAGS, group=group_of, radar=False, groups=('tv', 'ui'),
                 layout='layout_planted.json' if os.environ.get('MENU_OLD') else 'layout_%s.json' % name)
     res = U.pack(out or (U.ROOT / 'build' / ('%s.shr' % name)), spec)
+    if os.environ.get('MENU_ROWS_OUT'):
+        import json; Path(os.environ['MENU_ROWS_OUT']).parent.mkdir(parents=True, exist_ok=True); Path(os.environ['MENU_ROWS_OUT']).write_text(json.dumps(ROWS, ensure_ascii=False), encoding='utf-8')
     print('%s.shr: %d B (%.1f KB), экраны %s; текстуры %s' % (name, res['size'], res['size'] / 1024, ', '.join(PACKS[name]),
           ', '.join('%s %dx%d/%d' % (t['name'], t['w'], t['h'], t['rows']) for t in res['tex'])))
     if mocks:
@@ -605,7 +865,13 @@ def export(name, out=None, mocks=True):
             for r in range(MAX_ROWS):
                 st['ROW%d' % r] = 700 if any(t['type'] == U.T_BAR and t['field'] == 'ROW%d' % r for t in dl) else 1
             bg = (40, 44, 90, 255) if name == 'menu' else (0, 0, 0, 255)
-            img = U.render(dl, U.DST_W, U.DST_H, st, res['qbitmaps'], Image.new('RGBA', (U.DST_W, U.DST_H), bg), None, 0)
+            bgi = Image.open(os.environ['MOCK_BG']).convert('RGBA').resize((U.DST_W, U.DST_H)) if os.environ.get('MOCK_BG') and name.startswith('scrap') else None   # №1121: подложка макета — кадр обложки альбома (только для листа снимков)
+            sel0 = 0
+            if sc in GAL:   # №1105: макеты галереи — сетка (слот 3 закрыт, выбран слот 1) и просмотр слота 1 (поля: ROW0..7 кадр слота, ROW8 — слот просмотра, ROW9 — подпись)
+                st.update({'ROW%d' % r: 1 for r in range(8)}); st['ROW3'] = 0; st['ROW8'] = 1; st['ROW9'] = 1; sel0 = 1
+                v = dict(st, show={'ALWAYS', 'STREETRACE', 'PRESS_START'})
+                U.render(dl, U.DST_W, U.DST_H, v, res['qbitmaps'], bgi.copy() if bgi else Image.new('RGBA', (U.DST_W, U.DST_H), bg), None, 1).save(U.OUTDIR / ('menu_%s_view.png' % sc))
+            img = U.render(dl, U.DST_W, U.DST_H, st, res['qbitmaps'], bgi.copy() if bgi else Image.new('RGBA', (U.DST_W, U.DST_H), bg), None, sel0)
             p = U.OUTDIR / ('menu_%s.png' % sc); img.save(p)
             print('  макет', p.relative_to(U.ROOT), 'строк', max([t['menu'] for t in dl if t['menu'] >= 0] + [-1]) + 1)
     return res

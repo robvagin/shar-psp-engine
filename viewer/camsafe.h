@@ -21,7 +21,7 @@ extern float colSegUp;   // col.c: добавка к верху высоких �
 #define CS_GEOM_SKIP .8f    // луч опора -> глаз: первые .8 м сетка не смотрит (над крышей машины); лучи ближней плоскости — с 0
 #define CS_NEAR_K .8f       // ближняя плоскость — эта доля свободного места перед глазом (запас на промежутки между лучами)
 
-typedef struct { float x, z, fx, fz, hw, hl, y, gx, gz, lo, hi; int own; } CsBox;   // own — своя машина за рулём (от неё камера не уворачивается); own = 2 — стейтпроп: только для ближней плоскости (маска 32), глаз от него не уворачивается
+typedef struct { float x, z, fx, fz, hw, hl, y, gx, gz, lo, hi; int own; } CsBox;   // own — своя машина за рулём (от неё камера не уворачивается); own = 2 — стейтпроп: только для ближней плоскости (маска 32), глаз от него не уворачивается; own = 3 (№1127) — движущаяся чужая машина: как 2, но глаз в самой коробке (без запаса) негоден; csSkipMoving = 1 — такие коробки не видны вовсе (проверки глаза)
 //   // кузов: как CarBox (пол Y = y + gx·dx + gz·dz, слой lo..hi)
 typedef struct { float x, z, r, y0, y1; } CsCyl;                              // человек: вертикальный цилиндр
 typedef struct {
@@ -34,6 +34,7 @@ typedef struct {
 } CsScene;
 
 // доля пути a -> b до первого препятствия: мир (bodies & 1), все тела (bodies & 2), чужие тела без своей машины за рулём (bodies & 4); тело, в котором начинается путь, не мешает
+extern int csSkipMoving;   // №1127: 1 — движущиеся чужие машины (own = 3) не в счёт (правило глаза: положение камеры от них не меняется); 0 — ближняя плоскость их видит
 extern int camNfStillOld; extern unsigned csNfStillHit;   // №984б: стоим — прошлый ответ csNearFree
 extern int camRayBoxOld; extern unsigned csFiltBoxIn, csFiltBoxAll, csFiltCylIn, csFiltCylAll;   // №984: отсев тел шаром лучей (побитно тот же ответ)
 extern int camRaysOld, camRaysVerify; extern unsigned csRaysMismatch;   // CAMPERF: пакетные лучи ближней плоскости (camsafe.c); verify — считает расхождения с лучами по одному

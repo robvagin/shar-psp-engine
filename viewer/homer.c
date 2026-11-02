@@ -172,6 +172,8 @@ static void sampleLoco(Homer *H, SkinXf *out) {
   }
 }
 
+// круг 7+: основной «покой» водителя — руки на руле или кайф (после 3 с в машине при команде этапа AllowRockOut)
+static int baseCarClip(const Homer *H) { return (!HOMER_ROCKOUT_OLD && H->rockOn && H->cCarVic[0] >= 0) ? H->cCarVic[0] : H->cInCar; }
 static int isDrvClip(const Homer *H, int c) {
   return c >= 0 && (c == H->cDrvTurn[0] || c == H->cDrvTurn[1] || c == H->cDrvGas || c == H->cDrvBrake || c == H->cDrvCrash || (c >= 0 && c == H->cDrvBack));
 }
@@ -184,8 +186,8 @@ void homerDriveInput(Homer *H, float steer, float gas, float brake, float speed,
 // всегда, поверх жеста. Без входа (боты) — только покой
 static void driverGestures(Homer *H, float dt) {
   if (H->cDrvTurn[0] < 0) return;
-  int gest = H->clip != H->cInCar;
-  if (gest && clipDone(H)) { playClip(H, H->cInCar, 1, .2f, 0.f); gest = 0; H->gKind = 0; }
+  int gest = H->clip != baseCarClip(H);
+  if (gest && clipDone(H)) { playClip(H, baseCarClip(H), 1, .2f, 0.f); gest = 0; H->gKind = 0; }
   if (!HOMER_GESTURE_OLD) {
     // сверка g04-homer P02-29 / P05-Д2: жест выбирается только в покое (идущий не прерывается, и удар его не прерывает). Порядок: руль (стик > 0,5 и скорость > 5 км/ч),
     // задний ход, газ (ускорение > 8 м/с² и скорость < 20 км/ч), торможение (замедление > 10 м/с² и скорость > 50 км/ч), последним удар (замедление > 25 м/с² вперёд;
@@ -249,7 +251,7 @@ static void seatBob(Homer *H) {
 }
 void homerPose(Homer *H) {
   const SkinModel *m = H->m; int nj = (int)m->h->nJoints, root = (int)m->h->rootJoint;
-  int drv = !DRIVER_POSE_OLD && H->rootMode && H->car.ok && H->clip >= 0 && (H->clip == H->cInCar || isDrvClip(H, H->clip)) &&
+  int drv = !DRIVER_POSE_OLD && H->rootMode && H->car.ok && H->clip >= 0 && (H->clip == H->cInCar || H->clip == baseCarClip(H) || isDrvClip(H, H->clip)) &&
             !(H->fade < H->fadeLen && H->fadeLen > 0.f) && H->jawOpen == 0.f && H->pitch == 0.f;
   if (drv && H->drvPoseValid && (++H->drvPoseTick & 1)) {   // промежуточный кадр: палитра по скорости двух последних полных поз
     for (int j = 0; j < nj; j++) {
@@ -265,7 +267,7 @@ void homerPose(Homer *H) {
   else {
     skinSample(m, H->clip, H->clipT, H->xf);
     if (H->rootMode) {
-      if (H->clip == H->cInCar || isDrvClip(H, H->clip)) memcpy(H->xf[root].t, H->seatRoot, 12);   // в машине: поза сиденья водителя (и жесты ndr)
+      if (H->clip == H->cInCar || H->clip == baseCarClip(H) || isDrvClip(H, H->clip)) memcpy(H->xf[root].t, H->seatRoot, 12);   // в машине: поза сиденья водителя (и жесты ndr)
       else skinRootMotion(m, H->clip, H->clipT, H->xf[root].t);
     }
   }
@@ -327,6 +329,10 @@ static void pcPrefix(const SkinModel *m) {
 #endif
 }
 const char *homerClipPrefix(void) { return pcPre; }
+const char *homerCharName(void) {
+  if (HOMER_MOUTHNAME_OLD) return "homer";
+  return !strcmp(pcPre, "brt_") ? "bart" : !strcmp(pcPre, "lsa_") ? "lisa" : !strcmp(pcPre, "mrg_") ? "marge" : !strcmp(pcPre, "apu_") ? "apu" : "homer";
+}
 
 int homerInit(Homer *H, const SkinModel *m) {
   memset(H, 0, sizeof *H);
@@ -764,7 +770,7 @@ static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
     if (H->airCap <= 0.f) { float s0 = sqrtf(H->vx * H->vx + H->vz * H->vz); H->airRun = dashing; H->airCap = fmaxf(dashing ? HOMER_RUN : HOMER_AIR_SPEED, s0) - (dashing ? 4.f : 0.f); }   // отрыв не через doJump (отлёт, сход): запомнить сейчас
     float dsp = sqv * (H->airRun ? HOMER_RUN : HOMER_AIR_SPEED);
     if (mag > 0.f && !killed && dsp > 0.f) {
-      float a = .078f * dsp * (dt * 30.f);
+      float a = .078f * dsp * (dt * HOMER_AIR_TICK_HZ);
       H->vx += sinf(dir) * a; H->vz += cosf(dir) * a;
     }
     if (!H->bouncing) {
@@ -801,7 +807,9 @@ static void steer(Homer *H, const HomerInput *in, float dt, int allowMove) {
       // сверка g04-homer P02-4 / ГОМЕР 1.2, 2.4: лицо догоняет стик по экспоненте — темп 10 в секунду на ходьбе, 2 на беге, 4 в воздухе
       // (63 % угла за 0,1 / 0,5 / 0,25 с). HOMER_TURN_EXP_OLD=1 — линейно 720°/с
       float rate = !H->grounded ? 4.f : ((dashing && !HOMER_RUN_FACE_OLD) ? 2.f : 10.f);
-      H->h = wrapPi(H->h + d * (1.f - expf(-rate * dt)));
+      // круг 7 (сверено): в оригинале доля = темп × dt за кадр (линейно); при тике 30 Гц это эффективный темп −30·ln(1 − темп/30): ходьба 12,2, воздух 4,3, бег 2,07
+      float fr = HOMER_TURNTICK_OLD ? 1.f - expf(-rate * dt) : 1.f - powf(1.f - rate / HOMER_AIR_TICK_HZ, dt * HOMER_AIR_TICK_HZ);
+      H->h = wrapPi(H->h + d * fr);
     }
   }
 }
@@ -883,7 +891,7 @@ int homerEnterCar(Homer *H, const HomerCar *car, const HomerCarCb *cb) {
   if (!homerCanEnter(H, car)) return 0;
   H->car = *car; if (cb) H->cb = *cb; else memset(&H->cb, 0, sizeof H->cb);
   setAnchor(H, 0.f);
-  H->state = HS_TO_DOOR; H->st = 0.f; H->phase = 0; H->waitCar = 0.f; H->doorT = 0.f; H->doorBudget = 0.f; H->celKind = 0; H->surfSt = 0;
+  H->state = HS_TO_DOOR; H->st = 0.f; H->phase = 0; H->doorT = 0.f; H->doorBudget = 0.f; H->celKind = 0; H->surfSt = 0;
   return 1;
 }
 
@@ -895,7 +903,7 @@ static void startSeq(Homer *H, int state, int clip) {
 
 void homerSetInCar(Homer *H, const HomerCar *car) {
   H->car = *car; setAnchor(H, 1.f);
-  H->state = HS_IN_CAR; H->rootMode = 1; H->door = 0.f; H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0; H->bobInit = 0; H->bobOff = 0.f; H->gKind = 0;
+  H->state = HS_IN_CAR; H->rootMode = 1; H->door = 0.f; H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0; H->bobInit = 0; H->bobOff = 0.f; H->gKind = 0; H->inCarT = 0.f; H->rockOn = 0;
   H->clip = H->cInCar; H->clipLoop = 1; H->clipT = 0.f; H->clipRate = 1.f; H->fade = H->fadeLen = 0.f;
 }
 
@@ -923,7 +931,7 @@ int homerCelebrate(Homer *H, int big) {
   const char *nm = big ? "victory_large" : "victory_small";
   if (H->state == HS_IN_CAR) {
     int c = H->cCarVic[big ? 1 : 0];   // круг 5: in_car_victory_*_driver -> ndr_in_car_victory_* (клип водителя ndr)
-    if (c < 0 || H->clip != H->cInCar) return 0;
+    if (c < 0 || (H->clip != H->cInCar && H->clip != baseCarClip(H))) return 0;
     playClip(H, c, 0, .15f, 0.f); return 1;
   }
   if (H->state != HS_FOOT || !H->grounded || H->launchWait > 0.f) return 0;
@@ -1152,6 +1160,13 @@ static int carHitsHomer(Homer *H, const HomerCar *c) {
   H->state = HS_HURT; H->st = 0.f; H->phase = 0; H->ejPh = 0; H->pitch = 0.f; H->speed = 0.f;
   playClip(H, H->cFlail, 0, .05f, 0.f); H->carHits++;
   return 1;
+}
+// круг 6 (цена на PSP, урок №1086): дешёвый отсев до homerCarFrom — машина дальше (полудлина + полуширина + радиус + 1 м) или медленнее 1 м/с никого не собьёт
+int homerCarWorth(const Homer *H, const Car *c) {
+  if (HOMER_HITCULL_OLD) return 1;
+  if (!c || fabsf(c->v) <= 1.f || fabsf(c->y - H->y) > 3.f) return 0;
+  float r = c->p.halfL + c->p.halfW + HOMER_RADIUS + 1.f, dx = H->x - c->x, dz = H->z - c->z;
+  return dx * dx + dz * dz <= r * r;
 }
 // сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (погоня, цель) сбивает пешего, если вызывающий (traffic.c / car.c) передаёт её сюда с hostile = 1. 1 — сбит
 int homerKnockedByCar(Homer *H, const HomerCar *c) {
@@ -1472,7 +1487,7 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       setDoor(H, 1.f - smooth01((t - .03f) / (clipLen(H, H->cCloseIn) - .08f)));
       if (clipDone(H)) {
         setDoor(H, 0.f);
-        H->state = HS_IN_CAR; playClip(H, H->cInCar, 1, .1f, 0.f);
+        H->state = HS_IN_CAR; H->inCarT = 0.f; H->rockOn = 0; playClip(H, H->cInCar, 1, .1f, 0.f);
         pushEv(H, HOMER_EV_IN_CAR, H->x, H->y, H->z, 0, 0, 0);
         if (H->cb.done) H->cb.done(H->cb.user, 1);
       }
@@ -1494,6 +1509,10 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       H->bobPrevY = H->car.y; H->bobPrevVy = vy_; H->bobInit = 1;
       if (fabsf(ac_) > 1.f) H->bobOff = clampf(H->bobOff + clampf(-.003f * ac_, -2.f * dt, 2.f * dt), -.11f, .11f);
       else H->bobOff = H->bobOff > 0.f ? fmaxf(0.f, H->bobOff - dt) : fminf(0.f, H->bobOff + dt);
+    }
+    if (!HOMER_ROCKOUT_OLD) {   // круг 7+: ровно один раз, когда время в машине переходит 3 с: если у этапа команда AllowRockOut, покой водителя — кайф до конца поездки
+      float t0_ = H->inCarT; H->inCarT += dt;
+      if (t0_ < 3.f && H->inCarT >= 3.f && H->rockOut && H->cCarVic[0] >= 0) { H->rockOn = 1; if (H->clip == H->cInCar) playClip(H, H->cCarVic[0], 1, .2f, 0.f); }
     }
     setAnchor(H, 1.f); driverGestures(H, dt);
     float F[16]; anchorFrame(H, F); float pp[3]; xform(F, H->seatRoot[0], 0.f, H->seatRoot[2], pp);

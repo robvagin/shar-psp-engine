@@ -148,6 +148,13 @@ def road_network(level):
     return junc, roads
 
 
+def ped_closed(P):
+    """сверка g12-data круг 6 (P17-28): путь пешеходов замкнут, если первая и последняя точки совпали по КАЖДОЙ оси в пределах 0,001 м (было: расстояние < 0,01 м).
+    На диске (605 путей, 7 уровней) решение не меняется ни у одного. PED_CLOSE_OLD=1 — как было"""
+    if os.environ.get('PED_CLOSE_OLD') == '1': return bool(np.linalg.norm(P[0] - P[-1]) < .01)
+    return bool(np.all(np.abs(P[0] - P[-1]) <= 0.001))
+
+
 def ped_paths_zones(level):
     root = read(GAME / f'art/l{level}_terra.p3d')
     paths = []
@@ -155,7 +162,7 @@ def ped_paths_zones(level):
         if c.id != 0x300000B: continue
         n, = struct.unpack_from('<I', c.data); P = np.frombuffer(c.data, '<f4', n * 3, 4).reshape(-1, 3).astype(np.float64).copy()
         P[:, 2] *= -1
-        if np.linalg.norm(P[0] - P[-1]) < .01: P = P[:-1]          # замкнутая: последняя = первая
+        if ped_closed(P): P = P[:-1]          # замкнутая: последняя = первая
         paths.append(P)
     zones = []
     for c in walk(root):

@@ -21,6 +21,7 @@
 #include "main_collect.h"
 #include "main_frontend.h"
 #include "main_save.h"
+#include "main_scrap.h"   // №1105: SCRAP BOOK целиком
 #include "dal877.h"   // №877: таблица дали бота-репортёра
 #include "drip770.h"   // №770: капли из труб — векторным столбом света
 #include "main_levels.h"

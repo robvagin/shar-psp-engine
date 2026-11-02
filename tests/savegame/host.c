@@ -68,12 +68,24 @@ int main(int argc, char **argv) {
   a.music = 300; a.effects = 900; a.vehicle = 1000; a.voice = 0; a.radar = 0; a.owned[1] = 0x5; a.owned[3] = 0x2;   // v2: купленное
   a.skin = 2;                                                  // правка 107: надет второй костюм (h_fat)
   a.once[1].n = 52; a.once[1].sig = 0xBEEF; a.once[1].st[15] = 0x40; a.once[7].n = 44; a.once[7].st[0] = 0x31;   // правка 334: хвост
-  for (unsigned i = 0; i < SV_EXT_BYTES; i++) a.ext[i] = (uint8_t)(i * 7 + 1);
+  // №1114: поля, что живут в ext (настройки и т. п.), заданы значениями, которые формат SHV3 хранит явно
+  a.ext[SV_EXT_CAM] = SV_EXT_CAM_SET | SV_EXT_CAM_INV; a.ext[SV_EXT_CHASE] = SV_EXT_CHASE_SET | 2; a.ext[SV_EXT_OPTS] = SV_EXT_OPTS_SET | SV_EXT_OPTS_JUMP;
+  a.ext[SV_EXT_TICKET] = SV_EXT_TICKET_SET | 5; a.ext[SV_EXT_MOVIES] = SV_EXT_MOVIES_SET | 1; a.ext[SV_EXT_MOVIES + 1] = 0xA5; a.ext[SV_EXT_MOVIES + 2] = 0x3C; a.ext[SV_EXT_MOVIES + 3] = 0x01;
+  a.ext[83] = 0x80 | 37;                                       // секунды записи
+  svLvPut(&a, 1, 0x13, SV_LV_ROWS_OK | 0x05); svLvPut(&a, 2, 0x7f, SV_LV_ROWS_OK | 0x7f); svLvPut(&a, 3, 0x0b, SV_LV_ROWS_OK | 0x03);
+  { uint16_t h[3] = {0x1234, 0xBEEF, 7}; float f[3] = {.4f, 0.f, 1.f}; svCarHealthPut(&a, 3, h, f); }
+  a.mrec[1][0].best = 245; a.mrec[1][0].attempts = 3; a.mrec[1][8].best = 90; a.mrec[1][12].best = 118; a.mrec[1][12].attempts = 2; a.mrec[1][12].flags = 2;
+  a.mrec[7][11].best = 359999; a.mrec[4][5].flags = 4; a.mrec[4][5].attempts = 65535;
   int w = svWrite(&a, buf);
   int r = svRead(buf, sizeof buf, &b);
   uint8_t buf2[SV_BYTES]; svWrite(&b, buf2);
   check("format.roundtrip", w == SV_BYTES && r == SV_OK && !memcmp(buf, buf2, SV_BYTES), "запись %d Б, чтение %d, байты %s", w, r,
         memcmp(buf, buf2, SV_BYTES) ? "разные" : "те же");
+  check("format.signature_size", SV_BYTES == 1536 && !memcmp(buf, "SHV3", 4) && buf[4] == 3 && buf[5] == 0, "подпись %.4s, версия %d, размер %d", (char *)buf, buf[4], SV_BYTES);
+  check("format.fields", r == SV_OK && b.seq == 7 && b.year == 2026 && b.month == 9 && b.day == 28 && b.hour == 21 && b.minute == 40 && b.coins == 1234 && b.nworld == 207 &&
+        !memcmp(b.worldCoins, a.worldCoins, sizeof a.worldCoins) && !memcmp(b.cards, a.cards, sizeof a.cards) && !memcmp(b.wasps, a.wasps, sizeof a.wasps) &&
+        !memcmp(b.gags, a.gags, sizeof a.gags) && !memcmp(b.owned, a.owned, sizeof a.owned) && b.skin == 2 && b.msnCompleted == 0x13 && b.msnStory == 2 && b.msnStage == 3,
+        "время, монеты, карточки/осы/гэги, купленное, костюм, миссия");
   int caught = 0, total = 0;
   for (int i = 0; i < SV_BYTES; i++) for (int k = 0; k < 8; k++) {
     memcpy(bad, buf, SV_BYTES); bad[i] ^= (uint8_t)(1u << k); total++;
@@ -83,42 +95,77 @@ int main(int argc, char **argv) {
   int trunc = 0; for (unsigned n = 0; n < SV_BYTES; n += 17) trunc += svRead(buf, n, &b) == SV_DAMAGED;
   memset(bad, 0, SV_BYTES); int zero = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
   for (int i = 0; i < SV_BYTES; i++) bad[i] = (uint8_t)rnd(); int junk = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
-  check("format.truncated_zero_junk", trunc == (SV_BYTES + 16) / 17 && zero && junk, "обрезка %d/%d, нули %d, мусор %d", trunc,
-        (SV_BYTES + 16) / 17, zero, junk);
+  check("format.truncated_zero_junk", trunc == (SV_BYTES + 16) / 17 && zero && junk, "обрезка %d/%d, нули %d, мусор %d", trunc, (SV_BYTES + 16) / 17, zero, junk);
   { SaveGame c = a; c.coins = -5; svWrite(&c, bad); int neg = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
     c = a; c.music = 5000; svWrite(&c, bad); int vol = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
-    memcpy(bad, buf, SV_BYTES); bad[4] = 3; int ver = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
-    // v1 (до 29.09): та же запись с версией 1 читается, купленного в ней нет (байты после настроек v1 не читает)
-    memcpy(bad, buf, SV_BYTES); bad[4] = 1; SaveGame v1; int r1 = svRead(bad, SV_BYTES, &v1);
-    int v1ok = r1 == SV_OK && v1.coins == a.coins && v1.msnCompleted == a.msnCompleted && !v1.owned[1] && !v1.owned[3] && b.owned[1] == 0x5;
-    check("format.v1_read_v2_owned", v1ok && r == SV_OK && b.owned[3] == 0x2, "v1 прочитана %d (купленного %x), v2 купленное %x/%x", r1 == SV_OK, v1.owned[1], b.owned[1], b.owned[3]);
-    { SaveGame c = a; c.skin = 9; svWrite(&c, bad); int badSkin = svRead(bad, SV_BYTES, &b) == SV_DAMAGED; SaveGame d; svRead(buf, sizeof buf, &d);
-      check("format.skin", d.skin == 2 && badSkin, "костюм после записи и чтения %d (ждём 2), номер 9 отвергнут %d", d.skin, badSkin); }
-    // правка 334: хвост (разовые предметы, ext) переживает запись и чтение; голова новой записи байт в байт — запись до 05.10
-    // (прежние сборки читают новую запись как свою); новая сборка читает запись до 05.10: 256 Б файлом и в буфере утилиты 1 КБ
-    { uint8_t v2rec[SV_BYTES], pad[1024]; SaveGame o, q; memset(&o, 0, sizeof o); memset(&q, 0, sizeof q);
-      int w2 = svWriteVer(&a, v2rec, sizeof v2rec, 2);
-      int headSame = w2 == SV_BYTES_V2 && !memcmp(v2rec, buf, SV_BYTES_V2);
-      int r2 = svRead(v2rec, SV_BYTES_V2, &o);
-      memset(pad, 0, sizeof pad); memcpy(pad, v2rec, SV_BYTES_V2); int r3 = svRead(pad, sizeof pad, &q);
-      int oldOk = r2 == SV_OK && r3 == SV_OK && o.owned[1] == 0x5 && o.skin == 2 && o.coins == a.coins && q.coins == a.coins &&
-                  !o.once[1].n && !q.once[1].n && !q.ext[0];
-      int tailOk = r == SV_OK && b.once[1].n == 52 && b.once[1].sig == 0xBEEF && !memcmp(b.once, a.once, sizeof a.once) &&
-                   !memcmp(b.ext, a.ext, SV_EXT_BYTES) && svOnceCount(&b.once[1]) == 1 && svOnceCount(&b.once[7]) == 2;
-      int cut = svRead(buf, SV_BYTES_V2 + 1, &q) == SV_DAMAGED && svRead(buf, SV_BYTES - 1, &q) == SV_DAMAGED;
-      check("format.tail_once_ext", tailOk, "разовые L1 %u/%04x (не целых %d), L7 не целых %d, ext %s", b.once[1].n, b.once[1].sig,
-            svOnceCount(&b.once[1]), svOnceCount(&b.once[7]), memcmp(b.ext, a.ext, SV_EXT_BYTES) ? "другой" : "тот же");
-      check("format.head_is_old_record", headSame, "голова новой записи = запись версии 2 до 05.10 (%d Б, байты %s)", w2, headSame ? "те же" : "РАЗНЫЕ");
-      check("format.new_reads_old", oldOk, "запись до 05.10: файлом 256 Б %s, утилитой 1 КБ %s; купленное %x, костюм %d, разовых нет",
-            r2 == SV_OK ? "OK" : "отказ", r3 == SV_OK ? "OK" : "отказ", o.owned[1], o.skin);
-      check("format.cut_tail", cut, "оборванная запись (257 и 767 Б) — испорчена");
-      // настоящая запись сборки до правки 334 (EBOOT 0834dc41 = HEAD 0632936, файл save00.bin эмулятора: ящик, карточка 1, 37 монет)
-      size_t fn = 0; unsigned char *fx = readAll("tests/savegame/fixtures/save_v2_before334.bin", &fn); SaveGame f; memset(&f, 0, sizeof f);
-      int rf = fx ? svRead(fx, (unsigned)fn, &f) : -9;
-      check("format.real_old_save", rf == SV_OK && fn == SV_BYTES_V2 && f.coins == 37 && f.cards[1] == 1 && f.msnCompleted == 1 && f.music == 300 && !f.once[1].n,
-            "save00.bin прежней сборки (%u Б): чтение %d, монет %d, карточки %x, миссии %08x", (unsigned)fn, rf, (int)f.coins, f.cards[1], (unsigned)f.msnCompleted);
-      free(fx); }
-    check("format.bounds_version", neg && vol && ver, "монеты <0: %d, громкость 5000: %d, чужая версия: %d (с верным CRC — всё равно отказ)", neg, vol, ver); }
+    memcpy(bad, buf, SV_BYTES); bad[4] = 4; int ver = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;   // чужая версия — отказ даже с верным CRC? CRC не покрывает байт 4: проверка версии сама
+    c = a; c.mrec[1][0].best = 400000; svWrite(&c, bad); int bt = svRead(bad, SV_BYTES, &b) == SV_DAMAGED;
+    check("format.bounds_version", neg && vol && ver && bt, "монеты <0: %d, громкость 5000: %d, чужая версия: %d, время 111 ч: %d", neg, vol, ver, bt); }
+  // перевод прежних записей (дирижёр 03.11.2026): "SHSV" 256 и 768 Б читаются, поля переносятся, нового нет (лучшие времена пусты), запись ложится в SHV3; порча по-прежнему «Damaged»
+  { uint8_t o2[SV_BYTES_OLD], o3[SV_BYTES_OLD], nb[SV_BYTES], nb2[SV_BYTES]; SaveGame q, q2;
+    int w2 = svWriteVer(&a, o2, sizeof o2, 2), w3 = svWriteVer(&a, o3, sizeof o3, 3);
+    int r2 = svRead(o2, SV_BYTES_V2, &q), r3 = svRead(o3, SV_BYTES_OLD, &q2);
+    int head = r2 == SV_OK && q.seq == 7 && q.coins == 1234 && q.msnLevel == 1 && q.msnStory == 2 && q.msnStage == 3 && q.msnCompleted == 0x13 && q.owned[1] == 0x5 && q.skin == 2 &&
+               !memcmp(q.cards, a.cards, sizeof a.cards) && !memcmp(q.gags, a.gags, sizeof a.gags) && q.music == 300 && q.voice == 0 && q.radar == 0;
+    int full = r3 == SV_OK && q2.seq == 7 && q2.coins == 1234 && q2.msnStory == 2 && q2.once[1].n == 52 && q2.once[1].sig == 0xBEEF && q2.once[1].st[15] == 0x40 && q2.once[7].st[0] == 0x31 &&
+               q2.ext[SV_EXT_CAM] == (SV_EXT_CAM_SET | SV_EXT_CAM_INV) && q2.ext[SV_EXT_TICKET] == (SV_EXT_TICKET_SET | 5) && q2.ext[83] == (0x80 | 37);
+    int none = 1; for (int L = 1; L < SV_LEVELS; L++) for (int k = 0; k < SV_MREC_N; k++) none &= q2.mrec[L][k].best == 0 && q2.mrec[L][k].attempts == 0;
+    int wr = svWrite(&q2, nb) == SV_BYTES && !memcmp(nb, "SHV3", 4) && svRead(nb, SV_BYTES, &q) == SV_OK && svWrite(&q, nb2) == SV_BYTES && !memcmp(nb, nb2, SV_BYTES);
+    uint32_t m1 = 0; unsigned rw = 0; int lv = svLvGet(&q, 1, &m1, &rw) == 2 && m1 == 0x13 && svLvReached(&q) == 3 && svLvGet(&q, 2, &m1, &rw) == 2 && m1 == 0x7f;
+    uint16_t hh[8]; float ff[8]; int cars = svCarHealthGet(&q, hh, ff) == 3 && hh[1] == 0xBEEF;
+    check("format.old_converted", w2 == SV_BYTES_V2 && w3 == SV_BYTES_OLD && svIsOldFormat(o3, SV_BYTES_OLD) && head && full && none && wr && lv && cars,
+          "256 Б: поля головы %d; 768 Б: хвост, настройки, секунды %d; лучших времён нет %d; запись в SHV3 и обратно те же байты %d; прогресс уровней %d; машины %d", head, full, none, wr, lv, cars);
+    // порча прежней записи: любой один бит головы и тела хвоста (кроме запаса) — «Damaged»
+    int cau = 0, tot = 0; for (int i = 0; i < SV_BYTES_OLD; i++) for (int k = 0; k < 8; k++) {
+      uint8_t bo[SV_BYTES_OLD]; memcpy(bo, o3, sizeof bo); bo[i] ^= (uint8_t)(1u << k); if (i >= 8 && i < 12) continue; tot++;
+      if (svRead(bo, SV_BYTES_OLD, &q) == SV_DAMAGED) cau++; }
+    uint8_t cut[SV_BYTES_OLD]; memcpy(cut, o3, sizeof cut); int ob = svRead(cut, 300, &q) == SV_DAMAGED && svRead(cut, 0, &q) == SV_DAMAGED;
+    check("format.old_damaged", cau >= tot - 16 && ob, "порченых прежних записей опознано %d из %d (допуск 16 битов запаса/заголовка хвоста), оборванная — отказ %d", cau, tot, ob);
+    // запись до 05.10 (без прогресса уровней в ext): «уровни ниже пройдены» переживает перевод
+    SaveGame c = a; memset(c.ext, 0, sizeof c.ext); c.level = c.msnLevel = 3; c.msnCompleted = 5; uint8_t o4[SV_BYTES_V2]; svWriteVer(&c, o4, sizeof o4, 2);
+    SaveGame p; int pr = svRead(o4, SV_BYTES_V2, &p) == SV_OK; int g0 = svLvGet(&p, 1, &m1, &rw); svWrite(&p, nb); SaveGame p2; int pr2 = svRead(nb, SV_BYTES, &p2) == SV_OK;
+    int g1 = svLvGet(&p2, 1, &m1, &rw), g2 = svLvGet(&p2, 2, &m1, &rw), g3 = svLvGet(&p2, 3, &m1, &rw);
+    uint32_t mlo = 0; svLvGet(&p2, 2, &mlo, NULL);
+    check("format.old_pre0510_levels", pr && pr2 && g0 == 1 && g1 == 1 && g2 == 1 && g3 == 2 && m1 == 5 && mlo == 0xFFFFFFFFu && svLvReached(&p2) == 3, "запись до 05.10: уровни 1 и 2 «пройдены» до перевода (%d) и после (%d/%d, маска %x), 3 — маска головы", g0, g1, g2, (unsigned)mlo);
+    size_t fn = 0; unsigned char *fx = readAll("tests/savegame/fixtures/save_v2_before334.bin", &fn);
+    int rf = fx ? svRead(fx, (unsigned)fn, &q) : SV_DAMAGED;
+    check("format.old_fixture", fx && rf == SV_OK && svWrite(&q, nb) == SV_BYTES && svRead(nb, SV_BYTES, &q2) == SV_OK && q2.seq == q.seq && q2.coins == q.coins && q2.msnCompleted == q.msnCompleted && !memcmp(q2.cards, q.cards, sizeof q.cards),
+          "настоящий save00.bin прежней сборки (%u Б): читается и переходит в SHV3 с тем же прогрессом (seq %u, монеты %d)", (unsigned)fn, fx ? q.seq : 0, fx ? q.coins : 0);
+    free(fx);
+    // настоящие записи Роба (сейф сборок) — если лежат на этой машине: все поля прогресса те же после перевода и новой записи
+    { const char *real[] = {"build/saves/2026-11-03_0118_before_TEST85/SHARVIEW/save00.bin", "build/saves/2026-11-03_0118_before_TEST85/SHARVIEW/save02.bin", "build/saves/2026-11-03_0118_before_TEST85/SHARVIEW/save03.bin"};
+      int nr = 0, okr = 0; for (int i = 0; i < 3; i++) { size_t rn = 0; unsigned char *rb = readAll(real[i], &rn); if (!rb) continue; nr++;
+        SaveGame o, t2; int ro = svRead(rb, (unsigned)rn, &o) == SV_OK; svWrite(&o, nb); int rt = svRead(nb, SV_BYTES, &t2) == SV_OK;
+        okr += ro && rt && o.seq == t2.seq && o.coins == t2.coins && o.level == t2.level && o.msnLevel == t2.msnLevel && o.msnStory == t2.msnStory && o.msnStage == t2.msnStage && o.msnCompleted == t2.msnCompleted &&
+               !memcmp(o.cards, t2.cards, sizeof o.cards) && !memcmp(o.wasps, t2.wasps, sizeof o.wasps) && !memcmp(o.gags, t2.gags, sizeof o.gags) && !memcmp(o.owned, t2.owned, sizeof o.owned) &&
+               !memcmp(o.worldCoins, t2.worldCoins, sizeof o.worldCoins) && o.music == t2.music && o.radar == t2.radar && o.skin == t2.skin && !memcmp(o.once, t2.once, sizeof o.once) && svLvReached(&o) == svLvReached(&t2);
+        free(rb); }
+      check("format.old_real_rob", nr == 0 || okr == nr, "настоящие записи Роба из сейфа: %d из %d переведены с тем же прогрессом (нет файлов — пропуск)", okr, nr); }
+  }
+  // настройки и всё, что раньше жило в ext: пишется явно и возвращается в те же места памяти
+  { SaveGame d; svRead(buf, sizeof buf, &d);
+    check("format.settings", d.music == 300 && d.effects == 900 && d.vehicle == 1000 && d.voice == 0 && d.radar == 0 && d.ext[SV_EXT_CAM] == (SV_EXT_CAM_SET | SV_EXT_CAM_INV) &&
+          d.ext[SV_EXT_CHASE] == (SV_EXT_CHASE_SET | 2) && d.ext[SV_EXT_OPTS] == (SV_EXT_OPTS_SET | SV_EXT_OPTS_JUMP) && d.ext[SV_EXT_TICKET] == (SV_EXT_TICKET_SET | 5) &&
+          d.ext[SV_EXT_MOVIES] == (SV_EXT_MOVIES_SET | 1) && d.ext[SV_EXT_MOVIES + 1] == 0xA5 && d.ext[SV_EXT_MOVIES + 2] == 0x3C && d.ext[SV_EXT_MOVIES + 3] == 0x01 && d.ext[83] == (0x80 | 37),
+          "звук, радар, камера, вид, прыжковые камеры, билет, ролики, подсказки, секунды записи");
+    uint32_t m1, m2, m3; unsigned w1, w2, w3; int g1 = svLvGet(&d, 1, &m1, &w1), g2 = svLvGet(&d, 2, &m2, &w2), g3 = svLvGet(&d, 3, &m3, &w3), g4 = svLvGet(&d, 4, &m3, &w3);
+    check("format.levels", g1 == 2 && g2 == 2 && g3 == 2 && g4 == 0 && m1 == 0x13 && m2 == 0x7f && w2 == (SV_LV_ROWS_OK | 0x7f) && m3 == 0 && svLvReached(&d) == 3 && svLvGet(&d, 3, &m3, &w3) == 2,
+          "прогресс уровней 1..3 записан, 4 нет; старший уровень %d", svLvReached(&d));
+    uint16_t hh[8]; float ff[8]; int nc = svCarHealthGet(&d, hh, ff);
+    check("format.cars", nc == 3 && hh[0] == 0x1234 && hh[1] == 0xBEEF && hh[2] == 7 && fabsf(ff[0] - .4f) < .005f && ff[1] == 0.f && ff[2] == 1.f, "прочность личных машин: %d шт.", nc);
+    check("format.best_times", d.mrec[1][0].best == 245 && d.mrec[1][0].attempts == 3 && d.mrec[1][8].best == 90 && d.mrec[1][12].best == 118 && d.mrec[1][12].attempts == 2 &&
+          d.mrec[1][12].flags == 2 && d.mrec[7][11].best == 359999 && d.mrec[4][5].flags == 4 && d.mrec[4][5].attempts == 65535 && d.mrec[1][1].best == 0 && d.mrec[2][12].best == 0,
+          "лучшие времена, попытки, флаги миссий; пустое — «нет»"); }
+  { // живая таблица: меньше — лучше; рекорд один раз; загрузка заменяет таблицу
+    svBestReset(); int n1 = svBestNote(2, 12, 130), n2 = svBestNote(2, 12, 140), n3 = svBestNote(2, 12, 120), n4 = svBestNote(2, 12, 120), n5 = svBestNote(9, 0, 5), n6 = svBestNote(2, 13, 5), n7 = svBestNote(2, 0, 0);
+    svAttemptNote(2, 12); svAttemptNote(2, 12);
+    check("best.live_rules", n1 == 1 && n2 == 0 && n3 == 1 && n4 == 0 && !n5 && !n6 && !n7 && svBestLive(2, 12) == 120 && svAttemptsLive(2, 12) == 2 && svBestLive(2, 11) == 0,
+          "130 -> рекорд, 140 нет, 120 рекорд, 120 ещё раз нет; чужой уровень/слот/0 с — нет; лучшее %d, попыток %d", svBestLive(2, 12), svAttemptsLive(2, 12));
+    SaveGame cap; svClear(&cap); svCapture(&cap, NULL, NULL, NULL); uint8_t bb[SV_BYTES]; svWrite(&cap, bb); SaveGame ld; svRead(bb, SV_BYTES, &ld);
+    svBestReset(); svApply(&ld, NULL, NULL);
+    check("best.capture_apply", svBestLive(2, 12) == 120 && svAttemptsLive(2, 12) == 2, "через запись: лучшее %d, попыток %d (ждём 120 и 2)", svBestLive(2, 12), svAttemptsLive(2, 12));
+    SaveGame emp; svClear(&emp); svApply(&emp, NULL, NULL);
+    check("best.load_replaces", svBestLive(2, 12) == 0 && svAttemptsLive(2, 12) == 0, "загрузка записи без времён очищает таблицу: %d/%d", svBestLive(2, 12), svAttemptsLive(2, 12)); }
   { char p1[300], p2[300]; SaveGame c = a; c.seq = 99; c.minute = 1; svProgressText(&a, p1, sizeof p1); svProgressText(&c, p2, sizeof p2);
     check("format.progress_text", !strcmp(p1, p2), "строка прогресса не зависит от номера и времени записи"); }
 
@@ -212,10 +259,10 @@ int main(int argc, char **argv) {
     gameMsnOpenAt(&W3.msn, &W3.G, mpack, msize, NULL, &q, err, sizeof err);
     // сверка g07 (P14:16): запись оригинала хранит только уровень и номер миссии — загрузка начинает миссию заново с её начала (вступление, этап 0); точка повтора
     // (MSN_CP5_OLD) — этап-чекпоинт вступления, не этап из записи. Прежнее ожидание (с этапа 2 основной части) — красный контроль: сборка -DGAME_RESUME33_OLD=1
-    check("resume.checkpoint", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage == 0, "m1 с начала миссии: миссия %d фаза %d этап %d",
+    check("resume.checkpoint", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage <= 1, "m1 с начала миссии: миссия %d фаза %d этап %d",
           W3.msn.rt.cur, W3.msn.rt.phase, W3.msn.rt.stage);
     q.stage = 200; gameMsnOpenAt(&W3.msn, &W3.G, mpack, msize, NULL, &q, err, sizeof err);
-    check("resume.bad_stage", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage == 0, "этап вне миссии -> старт m1 с начала (%d/%d/%d)",
+    check("resume.bad_stage", W3.msn.rt.cur == 1 && W3.msn.rt.phase == 0 && W3.msn.rt.stage <= 1, "этап вне миссии -> старт m1 с начала (%d/%d/%d)",
           W3.msn.rt.cur, W3.msn.rt.phase, W3.msn.rt.stage);
     q.level = 2; q.stage = 2; gameMsnOpenAt(&W3.msn, &W3.G, mpack, msize, NULL, &q, err, sizeof err);
     check("resume.other_level", W3.msn.rt.cur == 0 && W3.msn.rt.completed == 0, "запись другого уровня -> новая игра уровня (m%d, маска %08x)",

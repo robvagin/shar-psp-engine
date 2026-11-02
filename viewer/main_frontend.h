@@ -2,6 +2,7 @@
 #define GEVB_GSHADE_OLD 0   // -DGEVB_GSHADE_OLD=1 — тень Гомера на земле в список GE, как раньше
 #endif
 #include "load_fuse_io.h"
+#include "menu_rules.h"   // сверка g09b-menu круг 6: числа и условия меню без железа (проверяет tests/sverka_g09b)
 // ---------- 12а: заставка → главное меню → загрузка уровня 1 → игра; QUIT GAME в паузе → снова меню ----------
 // Уровень (резидентная часть, текстуры, коллизия, секции пропов) читается один раз на заставке и живёт до выхода.
 // Город вокруг спавна грузится после меню со шкалой (cellsRing), при выходе в меню выгружается (cellsDropAll), а
@@ -205,7 +206,7 @@ static void scrShot(const char *name, const char *packName, int screen, const ch
 #endif
 // сверка g10b-loop, 5.13: у оригинала экран загрузки снимается, когда загружено всё, минимального времени нет. Газета влетает LOAD_SPIN_S, огню запас 0,2 с дойти
 // до динамита; ждать «всё готово» (прогрев клеток, персонажи, машины миссии) loadEnd продолжает ниже. LOAD_NOMIN_OLD=1 — минимум 2,0 с
-#define LOAD_MIN_S (LOAD_MIN_OLD ? 3.5f : LOAD_NOMIN_OLD ? 2.0f : LOAD_SPIN_S + .2f)
+#define LOAD_MIN_S g10bLoadMinS(LOAD_SPIN_S, LOAD_MIN_OLD)
 #define LOAD_RES_SHARE 500   // доля фитиля на чтение резидентной части уровня при первой загрузке (дальше — клетки города)
 static unsigned ldT0; static int ldOn, ldShown, ldBase, ldFast, ldLag, ldAudio;   // ldAudio: звук уровня ждёт конца загрузки (newGame)
 static void levelAudioStart(void);
@@ -236,14 +237,15 @@ static int tutSvc;   // служебный запуск: подсказки Ба
 #ifndef TUTGIVER_OLD
 #define TUTGIVER_OLD 0
 #endif
-#define TUT_GIVER_M (TUTGIVER_OLD ? 20.f : 5.f)
 #define TUT_BOOM_S 2.f     // подсказка «машина взорвана» после взрыва (запись PS2: взрыв 33:33, подсказка 33:36 — Гомер уже упал)
 static float ldSec(void) { return (sceKernelGetSystemTimeLow() - ldT0) * 1e-6f; }
 // №663 (закон 7, гейт по кадру): «flag newsshot 1» — служебные снимки изнутри экрана загрузки на часах газеты 1,0 и 2,0 с (news_1s, news_2s), только в smkOn: у игрока ноль цены.
 // Путь «ирис без газеты» (START_NEWS_OLD=1, красный контроль) снимает те же имена на чёрном экране: newsShotIris
 static int newsShotOn, newsShotK; static const float newsShotT[2] = {1.0f, 2.0f}; static const char *const newsShotN[2] = {"news_1s", "news_2s"};
+// №1123 (служебно, только smkOn): «flag newsshot 2» — снимки влёта газеты на долях времени 0, 10, 50, 90 % (news_p0, news_p10, news_p50, news_p90) прямо из кадров влёта
+static const float newsPctT[4] = {0.f, 0.1f * LOAD_SPIN_S, 0.5f * LOAD_SPIN_S, 0.9f * LOAD_SPIN_S}; static const char *const newsPctN[4] = {"news_p0", "news_p10", "news_p50", "news_p90"};
 static void newsShotTick(void) {
-  if (!smkOn || !newsShotOn || newsShotK >= 2 || ldSec() < newsShotT[newsShotK]) return;
+  if (!smkOn || !newsShotOn || newsShotOn == 2 || newsShotK >= 2 || ldSec() < newsShotT[newsShotK]) return;
   scrShot(newsShotN[newsShotK], "load", UI_LOAD_LEVEL, "-"); newsShotK++;
 }
 static void newsShotIris(void) { if (!smkOn || !newsShotOn) return; while (newsShotK < 2) { scrShot(newsShotN[newsShotK], "iris", UI_LOAD_LEVEL, "-"); newsShotK++; } }
@@ -349,6 +351,7 @@ static void loadBegin(void **fbp) {   // Loading.scr открыт: газета 
     newsFly(t / LOAD_SPIN_S); feStingerPoll();
     if (ldLag) sceKernelDelayThread(120000);
     scrFrame(ldScr1060, 0, 1, fbp); n++;
+    if (smkOn && newsShotOn == 2 && newsShotK < 4 && t >= newsPctT[newsShotK]) { scrShot(newsPctN[newsShotK], "load", UI_LOAD_LEVEL, "-"); newsShotK++; }   // №1123: доли влёта
     unsigned now = sceKernelGetSystemTimeLow(); float g = (now - prev) * 1e-3f; prev = now; if (g > gap) gap = g;
   }
   if (ldScr1060 == UI_LOAD_LEVEL) uiScrNews(0.f, 1.f, 1.f);
@@ -513,7 +516,7 @@ static void feStingerFade(const char *ev, float fade, float waitMs) {
   int t[4], n = 0; char nm[40];
   for (int k = 0; k < 4; k++) { if (k) snprintf(nm, sizeof nm, "%s~%d", ev, k); else snprintf(nm, sizeof nm, "%s", ev);
                                 int id = audioTrack(nm); if (id < 0) break; t[n++] = id; }
-  int id = n ? t[rand() % n] : -1;
+  int id = n ? t[sndVariantPick(n, sceKernelGetSystemTimeLow())] : -1;   // №1128: выбор по часам (NEWSMUS1128_OLD=1 — rand() % n)
   int cur = audioStreamTrack(AUDIO_ST_MUSIC); unsigned now = sceKernelGetSystemTimeLow();
   if (smkOn && feStTrack >= 0 && cur == feStTrack && (now - feStT0) * 1e-6f < audioTrackSeconds(feStTrack) - 0.05f) {
     char s[112]; snprintf(s, sizeof s, "FESTCUT cut=%s at=%.2f len=%.2f by=%s t=%.1f\n", audioTrackName(feStTrack), (now - feStT0) * 1e-6f,
@@ -540,7 +543,7 @@ static float feNewsMusicLeft(void) {   // №665: сколько ещё игра
 #define NEWS_RESUME_OLD 0
 #endif
 static void feNewsResume(void) {
-  if (NEWS_RESUME_OLD || loadSilent || strncmp(feStName, "newspaper_spin", 14)) return;
+  if (NEWS_RESUME_OLD || loadSilent || (strncmp(feStName, "newspaper_spin", 14) && (NEWSMUS1128_OLD || strncmp(feStName, "loading_screen", 14)))) return;   // №1128: стингер смены уровня теперь loading_screen — тоже продолжается на звуке нового уровня
   float at = (sceKernelGetSystemTimeLow() - feStT0) * 1e-6f; if (at < 0.f || at > feStLen - .25f) return;
   int id = audioTrack(feStName); if (id < 0) return;
   audioMusicFrom(id, 0.f, at); feStTrack = id;   // feStT0 прежнее: «сколько осталось» (№665) считается от настоящего начала
@@ -610,7 +613,7 @@ static int menuNewAsk(int loaded, int sel, void **fbp) {   // -> 1: ответ N
   } while (r == SVM_R_NONE);
   if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "NEWASK answer=%s t=%.1f\n", r == SVM_R_YES ? "yes" : "no", smkT); smkWrite(s_); }
   if (r != SVM_R_YES) return 1;
-  cfg.radar = 1; cfg.tutSeen = 0; cfg.movies = 0; cfgSave();
+  mrNewGameDefaults(&cfg.radar, &cfg.tutSeen, &cfg.movies, &cfg.jumpCam); cfgSave();   // круг 7 (P14 Д2): у оригинала сбрасываются и камеры у машины (Jump Cameras On)
   return 0;
 }
 // ---- сверка g09b-menu (02.11.2026): перелёты камеры меню по кадрам данных вне таблицы «главный вид → предмет». M3 №1: из OPTIONS в подэкраны камера гостиной летит (SOUND, титры, список
@@ -641,9 +644,8 @@ static int menuFlyRange(int a, int b, int sel, void **fbp) {   // -> 1, если
 }
 static void optFlyScr(int from, int to, int sel, void **fbp) {   // OPTIONS: экран from -> to (0 главный, 1 SOUND, 2 титры, 3 ролики); камера летит в данные подэкрана и обратно
   if (OPTFLY_OLD) return;
-  static const short go[4][2] = {{0, 0}, {660, 690}, {600, 630}, {914, 944}}, back[4][2] = {{0, 0}, {690, 720}, {630, 660}, {944, 974}};
-  if (from == 0 && to >= 1 && to <= 3) menuFlyRange(go[to][0], go[to][1], sel, fbp);
-  else if (to == 0 && from >= 1 && from <= 3) { menuFlyRange(back[from][0], back[from][1], sel, fbp); feHome(); }
+  int a, b;   // круг 6: диапазоны кадров в menu_rules.h (mrOptFly)
+  if (mrOptFly(from, to, &a, &b)) { menuFlyRange(a, b, sel, fbp); if (to == 0) feHome(); }
 }
 static void optFlyMovie(int back, int sel, void **fbp) {   // просмотр ролика из списка: вход 975–1005 / возврат 1005–1035
   if (OPTFLY_OLD) return;
@@ -783,7 +785,6 @@ static int zoneCamOn; static float zoneNear = 1e9f;   // правка 40: кам
 #ifndef LBSLIDE_OLD
 #define LBSLIDE_OLD 0
 #endif
-#define LB_SLIDE (LBSLIDE_OLD ? .25f : .5f)
 static float lbOpen; static int lbPrompt, lbLogPrompt = -1;
 static int radarLog; static float radarLogT;   // служебное (flag radarlog): итог кадра радара в smoke.txt
 #ifndef TUTPAUSE_OLD
@@ -803,10 +804,12 @@ static int jackOff;   // отрицательный контроль правк�
 #ifndef TRIGGER_EXACT_OLD
 #define TRIGGER_EXACT_OLD 0
 #endif
+#include "phonebusy.h"
+static PbArm pbArm = {-1, 0};   // ps2-twin P05:25: в объёме какой будки игрок и вошёл ли он при включённых будках
 static int phoneNear(void) {
   if (!haveHomer || !haveCol || !onFoot() || inRoom()) return -1;
-  for (unsigned k = 0; k < world.nphone; k++) { const ColWrench *P = &world.phone[k]; float dx = homer.x - P->p[0], dz = homer.z - P->p[2], r = P->r + (TRIGGER_EXACT_OLD ? 1.f : 0.f);   // сверка g09b-menu (P05-9): пешком — одна точка внутри объёма локатора, запаса 1 м нет. TRIGGER_EXACT_OLD=1 — запас радиус + 1 м
-    if (dx * dx + dz * dz < r * r) return (int)k; }
+  for (unsigned k = 0; k < world.nphone; k++) { const ColWrench *P = &world.phone[k]; float dx = homer.x - P->p[0], dy = homer.y - P->p[1], dz = homer.z - P->p[2], r = P->r + (TRIGGER_EXACT_OLD ? 1.f : 0.f);   // сверка g09b-menu (P05-9): пешком — одна точка внутри объёма локатора, запаса 1 м нет. TRIGGER_EXACT_OLD=1 — запас радиус + 1 м
+    if (mrSphereIn(dx, dy, dz, r)) return (int)k; }   // круг 7 (P05-9): шар по трём осям, строго внутри (TRIG3D_OLD=1 — только по земле)
   return -1;
 }
 // Правка Роба 117 (30.09: «машина вызывается вдоль проезжей части… поперёк приезжает… чтобы стояла на парковочном месте»): вызванная
@@ -828,13 +831,11 @@ static int phoneNear(void) {
 // (кадры 460–720). Порт: выход — плавно за CAM_OUT_S; посадка — к камере машины по экспоненте CAM_IN_TAU в осях машины
 // (машина может сразу уехать — начало перехода едет с ней, камера не растягивается)
 // сверка g09b-menu (СВЕРКА_КАМЕРА 3.1, 3.2; 02.11.2026): у оригинала и посадка, и выход доходят до 95 % пути за 0,45 с (скорость растёт от 0,02 до 1 за кадр; переход кончается,
-// когда камера дошла). Было: выход 0,9 с сглаженно (95 % за 0,74 с), посадка экспонента 1,5 с (95 % за 4,5 с, по записи PS2 v23 — «постоянная 3,8 с»). Теперь: выход — сглаживание за 0,55 с
-// (95 % за 0,45 с), посадка — экспонента 0,15 с (95 % за 0,45 с). Спорно: запись PS2 против исходника — по слову Роба правда исходник. CAMBLEND_OLD=1 — прежние числа
+// когда камера дошла). Было: выход 0,9 с сглаженно (95 % за 0,74 с), посадка экспонента 1,5 с (95 % за 4,5 с, по записи PS2 v23 — «постоянная 3,8 с»). Теперь (круг 7): и выход, и посадка — S-кривая за 0,50 с
+// (подобрана по пересчёту перехода оригинала: половина пути за 0,26 с, 95 % за 0,44 с; тест tests/sverka_g09b «форма по пересчёту»). Спорно: запись PS2 против исходника — по слову Роба правда исходник. CAMBLEND_OLD=1 — прежние числа
 #ifndef CAMBLEND_OLD
 #define CAMBLEND_OLD 0
 #endif
-#define CAM_OUT_S (CAMBLEND_OLD ? .9f : .55f)
-#define CAM_IN_TAU (CAMBLEND_OLD ? 1.5f : .55f)   // круг 3: у нового — длительность S-кривой (main_loop.h), 95 % за 0,45 с; у прежнего — постоянная экспоненты
 #define PHONE_CAM_BACK .6f
 #define PHONE_ANIM_OUT .35f
 #define PHONE_ANIM_WAIT .27f   // оригинал: первый кадр облёта стоит ~0,27 с (экран будки гаснет), потом облёт в темпе 30 к/с
@@ -1476,7 +1477,7 @@ static void homerShadow(const ColWorld *w) {
   // сверка g09b-menu (P02-43, 02.11.2026): у оригинала размер тени падает до 0,5 к вершине прыжка (1,9 м над землёй), яркость умножается на тот же масштаб; в интерьере вдвое слабее.
   // Форма по суставам рук и ног оригинала (ближе 15 м) — наш круг/овал остаётся (вид наш). SHADOWJUMP_OLD=1 — размер от высоты не зависит
   float sk_ = 1.f;
-  if (!SHADOWJUMP_OLD) { float hh_ = fmaxf(0.f, homer.y - gy); sk_ = 1.f - .5f * fminf(1.f, hh_ / 1.9f); fade = sk_ * (1.f - fminf(1.f, fmaxf(0.f, (hh_ - 1.9f) / 6.1f))); if (inRoom()) fade *= .5f; if (fade <= 0.f) return; }
+  if (!SHADOWJUMP_OLD) { float hh_ = fmaxf(0.f, homer.y - gy); sk_ = SHADOWLIN_OLD ? 1.f - .5f * fminf(1.f, hh_ / 1.9f) : mrShadowScale(hh_); fade = SHADOWLIN_OLD ? sk_ * (1.f - fminf(1.f, fmaxf(0.f, (hh_ - 1.9f) / 6.1f))) : sk_; /* круг 7: масштаб и яркость = 1 − 0,5·h/1,9 без остановки на вершине прыжка (на 3,8 м — ноль) */ if (inRoom()) fade *= .5f; if (fade <= 0.f) return; }
   // TEST25 (№605, Роб на TEST23 «под ним тень прыгает»; у лавки на краю тротуара земля под Гомером перескакивает между бордюром и дорогой, а вершины круга берут высоту каждая по своей
   // точке): высота центра сглаживается (перескок до 0,5 м — плавно за ~4 кадра, больше — сразу), вершины не выше/ниже центра больше чем на 0,12 м (круг лежит плашмя, не ломается
   // уступом), подъём над землёй 0,06 вместо 0,04. HOMER_SHADOW_SMOOTH_OLD=1 — прежнее
@@ -1528,7 +1529,6 @@ static int hnrMusic, hnrActive; static float hnrMsgT, hnrCatchT, hnrSpawnT, hnrI
 #ifndef HNRONE_OLD
 #define HNRONE_OLD 0   // сверка g09b-menu круг 5 (P03-08): 1 — группа машин погони ставится и снимается целиком, как было
 #endif
-#define HNR_PASS_S .7f   // проход постановки погони: раз в 0,7 с
 // оракул PS2 30.09 (knowledge/facts/ps2-hnr-police): полицейская появляется через 0.72–0.76 с после начала погони; к стоящему игроку
 // издалека не едет (аудит 09.10, msncar.c POLICE_STAND_OLD: в чистых записях PS2 93,7–118 м), дальше 110 м — заново в 100 м; после ареста по концу таймера (1,48 с, №430) машину игрока
 // ставит в ближайшую точку дороги (6–16 м, трасса b3_bust)
@@ -1645,15 +1645,15 @@ static void hnrPursuit(float dt) {
   }
   if (!HNRMSN_OLD) {   // сверка g09b-menu (P03-Д7): старт миссии и её победа сбрасывают шкалу и помечают погоню на удаление; проигрыш не сбрасывает
     static int inM_ = -1, failSeen_; int fsel_ = 0, im_ = mvInMission(), fs_ = mvFailedScreen(&fsel_);
-    { static int fsPrev_; if (fsPrev_ && !fs_ && im_) { if (!MSNREPAIR_OLD) svCarRepair("retry");
+    { static int fsPrev_; if (mrHnrRetry(fsPrev_, fs_, im_)) { if (!MSNREPAIR_OLD) svCarRepair("retry");
         zoneReloadWorld("retry");   // круг 5 (P12-03)
-        if (!HNRMSN3_OLD) { hnrHeat = hnrCalm = 0.f; G.hnrLatched = 0; hnrActive = 0; mvPolice(0); hnrMusicOff(); } }   // круг 3: повтор миссии после провала — событие старта заново, шкала в 0
+        if (mrHnrRetryReset()) { hnrHeat = hnrCalm = 0.f; G.hnrLatched = 0; hnrActive = 0; mvPolice(0); hnrMusicOff(); } }   // круг 3: повтор миссии после провала — событие старта заново, шкала в 0
       fsPrev_ = fs_; }   // P06-18 (б), 5.8: повтор миссии с чекпоинта чинит машину игрока
     if (fs_) failSeen_ = 1;
     if (inM_ >= 0 && im_ != inM_) {
-      int win_ = !im_ && !failSeen_ && !(!HNRMSN3_OLD && hnrAbortMsn);   // круг 3: отмена миссии из паузы победой не считается
+      int win_ = mrHnrMsnEvent(inM_, im_, failSeen_, hnrAbortMsn) == 2;   // круг 3: отмена миссии из паузы победой не считается
       if (!im_) hnrAbortMsn = 0;
-      if (!MSNREPAIR_OLD && im_ && oldCarOn && (car.destroyed || car.damage > 0.f)) svCarRepair("start");   // P06-18 (а): старт миссии, машина разбита и это машина трафика
+      if (!MSNREPAIR_OLD && im_ && mrRepairOnStart(car.destroyed, car.damage, oldCarOn)) svCarRepair("start");   // круг 7: у оригинала только разбитая, просто помятая остаётся; MSNREPAIR2_OLD=1 — прежнее   // P06-18 (а): старт миссии, машина разбита и это машина трафика
       if (im_ || win_) { hnrHeat = hnrCalm = 0.f; G.hnrLatched = 0; hnrActive = 0; mvPolice(0); hnrMusicOff();
                          if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR msnreset %s t=%.1f\n", im_ ? "start" : "win", smkT); smkWrite(s_); } }
       if (im_) failSeen_ = 0;
@@ -1661,7 +1661,7 @@ static void hnrPursuit(float dt) {
     inM_ = im_;
   }
   if (hnrMsgT > 0.f) hnrMsgT -= dt;
-  if (hnrShowHold > 0.f) hnrShowHold -= dt; else if (hnrShow > 0.f) hnrShow = fmaxf(0.f, hnrShow - .03f * dt);   // хвост показа после ареста
+  mrHnrShowStep(&hnrShow, &hnrShowHold, dt);   // хвост показа после ареста
   if (hnrBlinkT >= 0.f && uiReady) {   // правка 193: мигание «Hit & Run!» как у оригинала
     hnrBlinkT += dt; float u = hnrBlinkT - HNR_BLINK_T0;
     if (!HNRTXT_OLD) {   // M2 №4: непрерывно вход + удержание + уход, без вспышек
@@ -1706,7 +1706,7 @@ static void hnrPursuit(float dt) {
       static float farT_;
       int moved_ = 0;
       if (gameHnrSpawnDue(&hnrSpawnT, dt)) { hnrSpawnT = HNR_PASS_S; if (chasers < mvPoliceLimit()) { mvPoliceAdd(); moved_ = 1; } }
-      if ((farT_ += dt) >= .5f) { farT_ = 0.f; if (chasers) { mvPoliceFar(px, pz, HNR_REMOVE_R); moved_ = 1; } }
+      if ((farT_ += dt) >= HNR_FAR_S) { farT_ = 0.f; if (chasers) { mvPoliceFar(px, pz, HNR_REMOVE_R); moved_ = 1; } }
       if (moved_) { chasers = 0; best = 1e9f;
         for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
           const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; }
@@ -1719,15 +1719,28 @@ static void hnrPursuit(float dt) {
         const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; }
       if (smkOn) { char s[96]; snprintf(s, sizeof s, "HNR police t=%.1f cars=%d police=%d near=%.0f\n", smkT, m->n, chasers, chasers ? best : -1.f); smkWrite(s); }
     }
-  } else if (!G.hnrLatched && chasers && !bustPolice && (HNREND_OLD || (hnrHeat <= 0.f && best > HNR_REMOVE_R))) { mvPolice(0); chasers = 0; best = 1e9f; }   // защёлка отпущена — полиция уезжает (после ареста стоит, №627); сверка g09b-menu (P03-Д2): стоящие остаются и гонятся, пока шкала не 0 и они не дальше 110 м
+  } else if (!G.hnrLatched && chasers && !bustPolice && (HNREND_OLD || (hnrHeat <= 0.f && (!HNRMARK_OLD || best > HNR_REMOVE_R)))) {
+    if (HNREND_OLD || HNRMARK_OLD) { mvPolice(0); chasers = 0; best = 1e9f; }
+    else {   // сверка g09b-menu круг 7 (P03 Д2): помеченные (шкала 0) снимаются по одной — дальше 110 м (проход раз в 0,5 с) и те, что игрок не видит дольше 5 с подряд
+      static float outT_[32], farT2_; int dropped_ = 0;
+      if ((farT2_ += dt) >= HNR_FAR_S) { farT2_ = 0.f; mvPoliceFar(px, pz, HNR_REMOVE_R); dropped_ = 1; }
+      for (int i = 0; i < m->n && i < 32; i++) {
+        if (!(m->c[i].on && mvIsPolice(m->c[i].name))) { outT_[i] = 0.f; continue; }
+        const Car *k = &m->c[i].car; float bx_[6] = {k->x - 2.f, k->y, k->z - 2.f, k->x + 2.f, k->y + 2.f, k->z + 2.f};
+        if (mrHnrOutStep(&outT_[i], visBox(bx_, 0.f, 0.f, 0.f), dt)) { mvPoliceDrop(i); outT_[i] = 0.f; dropped_ = 1; }
+      }
+      if (dropped_) { chasers = 0; best = 1e9f;
+        for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
+          const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; } }
+    } }   // защёлка отпущена — полиция уезжает (после ареста стоит, №627); сверка g09b-menu (P03-Д2): стоящие остаются и гонятся, пока шкала не 0 и они не дальше 110 м
   if (!HNRNEWAI_OLD) {   // P10-22: слежение за первой не отмеченной машиной погони
     static unsigned done_; int first = -1;
     if (!chasers || (!HNRNEWAI3_OLD && onFoot())) done_ = 0;   // круг 3: слежение только пока игрок в машине, при выходе снимается
     else if (m) { for (int i = 0; i < m->n && i < 32; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && !(done_ >> i & 1u)) { first = i; break; }
       if (first >= 0) { const Car *k = &m->c[first].car; if (hypotf(k->x - px, k->z - pz) < HNR_NEWAI_R) { done_ |= 1u << first; if (hnrActive || G.hnrLatched) sndSay(SND_SAY_NEWAI, 0); } } }
   }
-  { static int hid_; if (!HNRTALK_OLD && G.hnrRoom && !hid_ && chasers && m) { mvPolice(0); chasers = 0; best = 1e9f; hid_ = 1; if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR hide t=%.1f\n", smkT); smkWrite(s_); } }   // P03-07
-    if (!G.hnrRoom) hid_ = 0; }
+  { static int hid_; if (!HNRTALK_OLD && G.hnrRoom && !hid_ && chasers && m) { if (!mrHnrSuspKeep()) mvPolice(0); else mvPoliceSuspend(); chasers = 0; best = 1e9f; hid_ = 1; if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR hide t=%.1f\n", smkT); smkWrite(s_); } }   // P03-07
+    if (!G.hnrRoom) { if (hid_ && mrHnrSuspKeep()) mvPoliceResume(); hid_ = 0; } }   // круг 7: конец разговора — машины на прежние места
   if (chasers) hnrActive = 1;
   if (hnrActive && !chasers && !G.hnrLatched) {   // ушёл от полиции
     hnrActive = 0; if (HNRMUSDELAY_OLD) hnrMusicOff();   // сверка g09b-menu круг 2: без задержки только в старом режиме
@@ -1743,7 +1756,7 @@ static void hnrPursuit(float dt) {
   if (caught || hnrForceBust) {   // арест (hnrForceBust — служебный flag hnrbust)
     hnrForceBust = 0;
     // №627: шкала после штрафа 5 и спадает до 0 за ~3 с (PS2, кадр 1700: 0): пауза 1,3 с + 5 ед. при спаде 3/с (1,7 с). BUSTED_PS2_OLD=1 — сразу 0
-    if (!HNRSHOW_OLD) { hnrHeat = 0.f; hnrCalm = 0.f; hnrShow = BUSTED_PS2_OLD ? 0.f : .05f; hnrShowHold = 1.3f; }   // круг 5 (P03-10): значение 0, индикатор доигрывает запись PS2
+    if (!HNRSHOW_OLD) { hnrHeat = 0.f; hnrCalm = 0.f; hnrShow = BUSTED_PS2_OLD ? 0.f : HNR_SHOW_LEVEL; hnrShowHold = HNR_SHOW_HOLD_S; }   // круг 5 (P03-10): значение 0, индикатор доигрывает запись PS2
     else { hnrHeat = BUSTED_PS2_OLD ? 0.f : .05f; hnrCalm = BUSTED_PS2_OLD ? 3.f : 3.f - 1.3f; } G.hnrLatched = hnrActive = 0; hnrCatchT = 0.f; G.hnrBusted = gameHnrBustTime();
     if (BUSTED_PS2_OLD) mvPolice(0); else { mvPoliceHold(); bustPolice = 1; }   // оракул PS2 30.09 (ps2-hnr-police): на аресте машина не останавливается — катится без газа 1.48 с заморозки ввода (№430); №627: полицейская стоит до конца таймера
     if (haveCoins) coins.collected = coins.collected > HNR_FINE ? coins.collected - HNR_FINE : 0;
@@ -1765,14 +1778,13 @@ static void hnrPursuit(float dt) {
 #ifndef JACKSPEED_OLD
 #define JACKSPEED_OLD 0
 #endif
-#define JACK_V_MAX 4.5f
 static int jackNear(int *park) {
   if (!haveTraffic || !haveHomer || !haveCol || !onFoot() || inRoom() || jackOff) return -1;
   float d; int i = trafficNearest(&traffic, homer.x, homer.z, JACK_R, park, &d); if (i < 0) d = 1e9f;
   if (oldCarOn) { float dO = sqrtf((oldCar.x - homer.x) * (oldCar.x - homer.x) + (oldCar.z - homer.z) * (oldCar.z - homer.z)) - oldCar.p.halfW;
     if (dO < JACK_R && dO < d) { d = dO; i = -2; } }   // своя оставленная машина — назад в неё
   if (i == -1) return -1;
-  if (!JACKSPEED_OLD && i >= 0) { const Car *tk = trafficCarAt(&traffic, i, *park); if (tk && fabsf(tk->v) > JACK_V_MAX) return -1; }   // сверка g09b-menu (P03-06): дверь открыта, только если скорость машины не больше 4,5 м/с
+  if (!JACKSPEED_OLD && i >= 0) { const Car *tk = trafficCarAt(&traffic, i, *park); if (tk && mrJackBlocked(tk->v)) return -1; }   // сверка g09b-menu (P03-06): дверь открыта, только если скорость машины не больше 4,5 м/с
   float dOwn = sqrtf((car.x - homer.x) * (car.x - homer.x) + (car.z - homer.z) * (car.z - homer.z)) - car.p.halfW;
   if (!CAR_HUSK_OLD && car.destroyed && !carBoomed(&car)) dOwn = 1e9f;   // правка 355: в горящую (до взрыва) не сесть — угону не мешает
   return dOwn <= d ? -1 : i;
@@ -1999,6 +2011,7 @@ static void camSafeEye(float cp[3], const float lk[3], float fovy, float dt) {
   float P[3] = {camPivot[0], camPivot[1], camPivot[2]}, ed[3] = {cp[0], cp[1], cp[2]}, tanV = tanf(fovy * (GU_PI / 360.f)), tanH = tanV * ASPECT;
   csSfOn = 0;
   camSafeScene(ed, 14.f); memcpy(csSceneE, ed, 12); csSceneOk = 1;
+  csSkipMoving = !CAMCARS1127_OLD;   // №1127: правило глаза не видит движущиеся чужие машины (их видит только ближняя плоскость кадра, camSafeFrame); снимается в конце
 #if CAMERA_SUBJECT_HANDOFF_OLD
   if ((csOfsOn || csPrevOn) && (fabsf(ed[0] - csLastEd[0]) > 8.f || fabsf(ed[1] - csLastEd[1]) > 8.f || fabsf(ed[2] - csLastEd[2]) > 8.f ||
                                 fabsf(P[0] - csPrevP[0]) > 4.f || fabsf(P[1] - csPrevP[1]) > 4.f || fabsf(P[2] - csPrevP[2]) > 4.f)) csOfsOn = csPrevOn = 0;
@@ -2105,6 +2118,7 @@ static void camSafeEye(float cp[3], const float lk[3], float fovy, float dt) {
     if (jd_ > CAM_JUMP_M) { camJumpN++; if (jd_ > camJumpMax) camJumpMax = jd_; if (smkOn && camLogOn) { char s_[200]; snprintf(s_, sizeof s_, "CAMJUMP t=%.3f d=%.2f P=%.2f,%.2f,%.2f prev=%.2f,%.2f,%.2f e=%.2f,%.2f,%.2f pick=%d glide=%d\n", smkT, jd_, P[0], P[1], P[2], csPrev[0], csPrev[1], csPrev[2], e[0], e[1], e[2], csWhyPick, csWhyGlide); smkWrite(s_); } } }
   if (!camCrossOld) csGeomBlocked = csRayFrac(&csScene, P, e, 8) >= .999f ? 0 : csGeomBlocked + 1;
   CPT(4); memcpy(csOfs, o, 12); csOfsOn = o[0] * o[0] + o[1] * o[1] + o[2] * o[2] > 1e-6f;
+  csSkipMoving = 0;
   memcpy(cp, e, 12); memcpy(csPrev, e, 12); memcpy(csPrevP, P, 12); for (int i = 0; i < 3; i++) csPrevRel[i] = e[i] - P[i]; csPrevCar=camPivotCar;csPrevOn = 1;
 }
 // Правка 331: кадр камеры игры — ближняя плоскость по свободному месту перед глазом (csNearFree) и замер «камера внутри» (flag camin)
@@ -2140,20 +2154,22 @@ static float camEyeStep(const float e[3], const float p[3], const float oldE[3],
 }
 static float nfE[3], nfF[3], nfV = -1.f; static int nfAge = 99;   // кэш ближней плоскости (сброс — levelUnload)
 static float csDbgNv = -1.f; static int csDbgHit, csDbgSame, nearLog;   // служебное «flag nearlog 1»: строка CAMNEAR каждые 0,1 с (№727)
-static void camSafeFrame(int inR, int fly, float fovy, float ex, float ey, float ez, float fx, float fy, float fz) {
+static float csCarNearPrev; static int csCarNearOn;   // №1127: ближняя плоскость у движущихся машин (camCarNearStep)
+static void camSafeFrame(int inR, int fly, float fovy, float ex, float ey, float ez, float fx, float fy, float fz, float dt) {
   csDbgNv = -1.f;
   int follow = camFollow && !inR && !fly && haveCol;
   float e[3] = {ex, ey, ez}, f[3] = {fx, fy, fz}, tanV = tanf(fovy * (GU_PI / 360.f)), tanH = tanV * ASPECT;
   camSafeNearV = NEAR_Z;
   if (follow && (!camSafeOld || (smkOn && camInOn)) && !(csSceneOk && fabsf(csSceneE[0] - ex) + fabsf(csSceneE[1] - ey) + fabsf(csSceneE[2] - ez) < 2.f)) camSafeScene(e, 12.f);
   csSceneOk = 0;
-  if (follow && !camSafeOld) { unsigned t0_ = sceKernelGetSystemTimeLow(); int same = csNfTan == tanV && fabsf(csNfE[0] - ex) + fabsf(csNfE[1] - ey) + fabsf(csNfE[2] - ez) < 1e-3f &&
+  if (follow && !camSafeOld) { unsigned t0_ = sceKernelGetSystemTimeLow(); int movN_ = !CAMCARS1127_OLD && csMovingN > 0;   /* №1127: ответ правила глаза посчитан без движущихся машин — с ними пересчёт */
+    int same = !movN_ && csNfTan == tanV && fabsf(csNfE[0] - ex) + fabsf(csNfE[1] - ey) + fabsf(csNfE[2] - ez) < 1e-3f &&
       fabsf(csNfF[0] - fx) + fabsf(csNfF[1] - fy) + fabsf(csNfF[2] - fz) < 1e-3f;   // глаз и взгляд те же, что проверило правило глаза
     // TEST24 (цена, Роб №639): впереди было совсем свободно (NEAR_Z), глаз и взгляд почти не сдвинулись — ответ прошлых кадров, пересчёт раз в 4-й кадр. CAM_NEAR_CACHE_OLD=1 / flag camnearcacheold 1 — каждый кадр
-    int sameS = !same && csSfOn && csSfTan == tanV && fabsf(csSfE[0] - ex) + fabsf(csSfE[1] - ey) + fabsf(csSfE[2] - ez) < 1e-3f &&
+    int sameS = !same && !movN_ && csSfOn && csSfTan == tanV && fabsf(csSfE[0] - ex) + fabsf(csSfE[1] - ey) + fabsf(csSfE[2] - ez) < 1e-3f &&
       fabsf(csSfF[0] - fx) + fabsf(csSfF[1] - fy) + fabsf(csSfF[2] - fz) < 1e-3f;   // №924: глаз кадра — промежуточный глаз перелёта, его глубину уже посчитал csSoftOk
     csSfOn = 0;
-    int hit_ = !camNearCacheOld && !same && !sameS && nfV >= NEAR_Z - 1e-3f && nfAge < 3 && fabsf(nfE[0] - ex) + fabsf(nfE[1] - ey) + fabsf(nfE[2] - ez) < .5f &&
+    int hit_ = !movN_ && !camNearCacheOld && !same && !sameS && nfV >= NEAR_Z - 1e-3f && nfAge < 3 && fabsf(nfE[0] - ex) + fabsf(nfE[1] - ey) + fabsf(nfE[2] - ez) < .5f &&
                fabsf(nfF[0] - fx) + fabsf(nfF[1] - fy) + fabsf(nfF[2] - fz) < .08f;
     float nv_ = same ? csNfV : sameS ? csSfV : hit_ ? nfV : csNearFree(&csScene, e, f, tanV, tanH, NEAR_Z);
     if (hit_) nfAge++; else { nfAge = 0; nfV = nv_; memcpy(nfE, e, 12); memcpy(nfF, f, 12); }
@@ -2162,7 +2178,15 @@ static void camSafeFrame(int inR, int fly, float fovy, float ex, float ey, float
     camSafeUs += sceKernelGetSystemTimeLow() - t0_;
     // TEST22 (№640, диагональные куски на миг): ближняя плоскость прыгала между кадрами (0,25 ↔ 1,5). Сужается сразу (безопасность), расширяется не быстрее CS_NEAR_RISE за кадр.
     // CAM_NEAR_SMOOTH_OLD=1 / flag camnearsmoothold 1 — как было
-    if (!camNearSmoothOld) { if (camSafeNearV > csNearPrev && csNearPrevOk) camSafeNearV = fminf(camSafeNearV, csNearPrev + CS_NEAR_RISE); csNearPrev = camSafeNearV; csNearPrevOk = 1; } }
+    if (!camNearSmoothOld) { if (camSafeNearV > csNearPrev && csNearPrevOk) camSafeNearV = fminf(camSafeNearV, csNearPrev + CS_NEAR_RISE); csNearPrev = camSafeNearV; csNearPrevOk = 1; }
+    // №1127: рядом проезжает машина — плоскость сужается не рывком (camCarNearStep), в том числе пока отпускается после неё; без движущихся машин рядом правило прежнее
+    if (!CAMCARS1127_OLD) {
+      if (csMovingN > 0) csCarNearOn = 1;
+      if (csCarNearOn && csNearPrevOk && dt > 0.f) {
+        float want_ = camSafeNearV; camSafeNearV = camCarNearStep(csCarNearPrev, want_, dt, CS_NEAR_MIN);
+        if (csMovingN == 0 && camSafeNearV <= want_ + 1e-3f) csCarNearOn = 0;
+        csNearPrev = camSafeNearV; }
+      csCarNearPrev = camSafeNearV; } }
   else csNearPrevOk = 0;
   // №721 (Роб 17.10: «вижу внутренности своей машины», арест BUSTED): у камер из данных ближняя плоскость стояла на 1,5 м всегда — кузов и стены рядом
   // с такой камерой срезались. Плоскость — по свободному месту, как у камеры игры; глаз не двигаем (его ставит игра). flag camneardataold 1 — как было
@@ -2254,8 +2278,7 @@ static void msncamLoad(void) {   // камеры уровня gameLevel: у 2–
 #define CAMIN1041_OLD 0
 #endif
 #define CAMIN1041_FAR 30.f
-// сверка g09b-menu (СВЕРКА_КАМЕРА 3.4): конец наезда — у оригинала быстрый переход (95 % за 0,32 с; лимит 3 с); сглаживание за 0,39 с даёт те же 0,32 с до 95 %. CAMBLEND_OLD=1 — 0,7 с
-#define CAMIN1041_BLEND (CAMBLEND_OLD ? .7f : .39f)
+// сверка g09b-menu (СВЕРКА_КАМЕРА 3.4): конец наезда — у оригинала быстрый переход (95 % за 0,32 с; лимит 3 с); сглаживание за 0,37 с даёт те же 0,32 с до 95 % (круг 6: было 0,39, 95 % за 0,337 с — тест tests/sverka_g09b). CAMBLEND_OLD=1 — 0,7 с
 static int camIn1041 = !CAMIN1041_OLD;
 static int camBusy1047(void) { return camIn1041 && (mcPlay != 0 || lbOpen > 0.f); }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
 static void msncamPlay(const MsnCam *c) {
@@ -2295,7 +2318,7 @@ static void levelAudioStart(void) {
 #include "worldcars.h"
 static void worldCarsPlace(void) {
   for (unsigned i = 0; i < sizeof WORLD_CAR_LIST / sizeof WORLD_CAR_LIST[0]; i++)
-    if (WORLD_CAR_LIST[i].level == gameLevel) mvWorldCar(WORLD_CAR_LIST[i].name, WORLD_CAR_LIST[i].p, mcCarHeading(WORLD_CAR_LIST[i].h));
+    if (WORLD_CAR_LIST[i].level == gameLevel) mvWorldCar(!CHEATS1104_OLD && gameCheatOn(CH_REDBRICK) ? "redbrick" : WORLD_CAR_LIST[i].name, WORLD_CAR_LIST[i].p, mcCarHeading(WORLD_CAR_LIST[i].h));   // №1104: код Red Brick — свободная машина уровня заменена кирпичом (при следующей постановке)
 }
 // правка 334: разовые предметы с монетами (stateprops.h spOnce) всех уровней этой игры — из загруженной записи; текущий уровень
 // снимается с sprops при записи (saveCapture). NEW GAME — пусто
@@ -2454,7 +2477,7 @@ static void feLoadShown(int screen, const char *packName, void **fbp) {   // в�
 #define DEMO30_OLD 0      // сверка g09b-menu (M3 №10, P17-2): ролик demo на титульном после 30 с без нажатий (оригинал); 1 — прежнее значение (FE_DEMO_PS2_OLD: 20 с, по умолчанию выключено)
 #endif
 #if !DEMO30_OLD
-#define DEMO_IDLE_S 30.f   // сверка g09b-menu (M3 №10, P17-2): Splash ждёт 30 с без нажатия и включает ролик demo (счёт после показа обнуляется)
+#define DEMO_IDLE_S MR_DEMO_IDLE_S   // круг 6: 30 с в menu_rules.h; сверка g09b-menu (M3 №10, P17-2): Splash ждёт 30 с без нажатия и включает ролик demo (счёт после показа обнуляется)
 #elif FE_DEMO_PS2_OLD
 #define DEMO_IDLE_S 20.f
 #else
@@ -2536,7 +2559,7 @@ static int demoMovie(void **fbp, unsigned *key, unsigned *pressAt, unsigned *pre
     // правка Роба 153: демо — без рамки-телевизора (ролик как есть: 4:3 на всю высоту, фон по бокам из того же кадра, без
     // чёрной каймы — tools/movie_export.py CLIP_LAYOUT/CLIP_CROP); «flag demotv» — прежняя рамка (контроль)
     sceGuStart(GU_DIRECT, list); if (demoTv) movieDrawTv(m); else movieDraw(m);   // boot.shr открыт титульным — надпись «- DEMO -»
-    if (!demoNoLabel && uiScrReady() && (DEMOBLINK_OLD || ((int)((t - t0) * 1e-6f / .25f) & 1) == 1)) { uiScrDraw(UI_BOOT_DEMO, 0, (t - t0) * 1e-6f, 0); resetState(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0); }
+    if (!demoNoLabel && uiScrReady() && mrDemoShown((t - t0) * 1e-6f)) { uiScrDraw(UI_BOOT_DEMO, 0, (t - t0) * 1e-6f, 0); resetState(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0); }
     sceGuFinish(); sceGuSync(0, 0);
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
@@ -2585,8 +2608,8 @@ static void titleIdle(float idle, void **fbp) {
     SmokeCmd sc; while (smokeNext(dt, &sc)) idleFlag(&sc);
     if (hit && deaf) { deaf = 0; hit = 0; }   // отрицательный контроль: первое нажатие теряется
     if (hit && (!coldTitleWait || FE_COLD_FLOW_OLD || (hit & PSP_CTRL_START))) { key = hit; presses = smkPressN - n0; break; }
-    if (DEMOIDLE_HELD_OLD && pad.Buttons) tTitle = t;   // зажатая кнопка — не простой (круг 3: у оригинала счёт от входа на титульный и кнопками не сбрасывается — только показом ролика)
-    if (demoIdleS > 0.f && (t - tTitle) * 1e-6f >= demoIdleS) {
+    if (mrIdleReset(pad.Buttons != 0)) tTitle = t;   // зажатая кнопка — не простой (круг 3: у оригинала счёт от входа на титульный и кнопками не сбрасывается — только показом ролика)
+    if (mrDemoIdleDue((t - tTitle) * 1e-6f, demoIdleS)) {
       unsigned k, at, pr; demos++;
       if (demoMovie(fbp, &k, &at, &pr)) { key = k; firstAt = at; firstN = at != 0; presses = pr; fromDemo = 1; break; }
       scrT0 = sceKernelGetSystemTimeLow(); scrFrame(UI_BOOT_SPLASH, 0, 1, fbp);   // доигран — снова титульный

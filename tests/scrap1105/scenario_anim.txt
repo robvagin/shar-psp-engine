@@ -1,0 +1,43 @@
+# №1117: переходы альбома SCRAP BOOK и полёт картинки в галерее. Сценарий для tools/smoke.sh (эмулятор, не запускала): снимки в середине переходов.
+# Ожидание: sa_in_a (0,15 с после OPEN BOOK) — обложка гаснет; sa_in_b (0,45 с) — оглавление проявляется, камера слегка сдвинута (кадры 810–830); sa_in_c (1,5 с) — оглавление целиком.
+# sa_fly_a / sa_fly_b — картинка миссии на пути из слота в место просмотра (0,08 и 0,16 с), сетка гаснет; sa_fly_c — просмотр целиком; sa_back_a — выход из оглавления (830–850), обложка проявляется.
+flag menu
+flag scrapon 1
+wait 6
+press up
+wait 0.5
+press up
+wait 0.5
+press up
+wait 0.5
+press cross
+wait 4
+press cross
+wait 0.15
+shot sa_in_a
+wait 0.3
+shot sa_in_b
+wait 1.2
+shot sa_in_c
+press down
+wait 0.3
+press cross
+wait 1.5
+press cross
+wait 0.08
+shot sa_fly_a
+wait 0.08
+shot sa_fly_b
+wait 1
+shot sa_fly_c
+press triangle
+wait 0.5
+press triangle
+wait 1.5
+press triangle
+wait 0.45
+shot sa_back_a
+wait 1.5
+press triangle
+wait 2
+end

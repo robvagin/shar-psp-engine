@@ -1,0 +1,32 @@
+# №1131: капли кислоты АЭС L1, до и после. Запуск: tools/ppsspp_run.sh с этим сценарием на сборке tour (viewer/build_svtour); снимки before_*, after_*.
+# Места (из drip770.bin уровня 1): столб «deathgoop» у проезда D5-8 в (−349,3; 3,3; −250,8), 7,9 × 15,2 м; труба АЭС в (−322,6; 3,8; −283,8); труба в (−267,0; −2,1; −304,7).
+# Позиции глаза подобраны по данным, точную посадку камеры у стены проверить по первому снимку и сдвинуть (cam X Y Z dx dy dz).
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene H_L1
+flag golevel 1
+wait 40
+flag player
+flag service 1
+foot -340.0 -250.8 1.5708
+wait 3
+flag acid1131old 1
+cam -338.0 4.5 -250.8 -1 0.15 0
+wait 1.2
+shot before_stream
+cam -331.0 3.0 -283.8 -1 0.2 0
+wait 1.2
+shot before_pipe
+flag acid1131old 0
+cam -338.0 4.5 -250.8 -1 0.15 0
+wait 1.2
+shot after_stream
+wait 0.5
+shot after_stream2
+cam -331.0 3.0 -283.8 -1 0.2 0
+wait 1.2
+shot after_pipe
+cam off
+end

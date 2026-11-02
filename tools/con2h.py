@@ -65,7 +65,9 @@ FIELDS = [
 ORIG_DEFAULTS = {'mass': 1000.0, 'gasScale': 4.0, 'brakeScale': 3.0, 'topSpeedKmh': 220.0, 'maxWheelTurnDeg': 35.0, 'hsSteeringDrop': 0.0,
                  'tireGrip': 4.0, 'normalSteering': 110.0, 'slipSteering': 35.0, 'eBrakeEffect': 0.5, 'slipSteeringNoEBrake': 50.0,
                  'slipEffectNoEBrake': 0.1, 'suspensionLimit': 0.4, 'springK': 0.5, 'damperC': 0.2, 'hitPoints': 2.0, 'burnoutRange': 0.3,
-                 'donutTorque': 10.0, 'weebleOffset': -1.0}
+                 'donutTorque': 10.0, 'weebleOffset': -1.0, 'slipGasScale': 4.0, 'hsGasScale': 2.0}   # круг 7, P01-21: SlipGasScale 4, HighSpeedGasScale 2 (а не GasScale машины); CON2H_DEFAULTS2_OLD=1 — как было
+if os.environ.get('CON2H_DEFAULTS2_OLD') == '1':
+    ORIG_DEFAULTS.pop('slipGasScale'); ORIG_DEFAULTS.pop('hsGasScale')
 if os.environ.get('CON2H_DEFAULTS_OLD') != '1':
     FIELDS = [(c, f, ORIG_DEFAULTS.get(f, d), doc) for (c, f, d, doc) in FIELDS]
 

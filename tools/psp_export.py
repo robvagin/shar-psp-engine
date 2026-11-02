@@ -2876,6 +2876,8 @@ def main(level, out_path=None, scenes=None, coins=True, backdrop_level=None):
             o, n = meta['collision']; coll.append(np.frombuffer(raw, '<f4', n, o).reshape(-1, 3, 3))
             if reg_of(scene) >= 0: col_by[scene.lower()] = coll[-1]
         for ext in ('json', 'bin'): (OUT / f'{TN(f"psp_{scene}")}.{ext}').unlink()
+    # сверка g12-data №1109: у трассы со своим небом (b02, b03: объекты неба в её файле) фон уровня не добавляется — два неба друг на друге (позднее перекрывало бы своё). BONUS_BACKDROP_OWN_OLD=1 — добавлять всегда
+    if bd_path and sky and os.environ.get('BONUS_BACKDROP_OWN_OLD') != '1': print(f'фон уровня {backdrop_level} не добавлен: у трассы своё небо ({len(sky)} примитивов)', flush=True); bd_path = None
     if bd_path:
         roots_bd = export_scene(conv, bd_path, TN('psp_backdrop'))
         meta = json.loads((OUT / (TN('psp_backdrop') + '.json')).read_text()); raw = (OUT / (TN('psp_backdrop') + '.bin')).read_bytes()

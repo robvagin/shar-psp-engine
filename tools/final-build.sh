@@ -130,8 +130,8 @@ pack() {
   for f in "$WORK"/bonus/b0*.shr "$WORK"/bonus/b0*.bns "$WORK"/bonus/b0*.texsrc.json "$WORK"/bonus/msncars-b.shr; do [ -f "$f" ] && cp "$f" "$PKG/bonus/"; done
   [ -d "$WORK/bonus/audio" ] && { mkdir -p "$PKG/bonus/audio"; cp "$WORK/bonus/audio/sfx.sab" "$WORK/bonus/audio/music.sap" "$PKG/bonus/audio/"; }
   [ -f "$WORK/load.shr" ] && cp "$WORK/load.shr" "$PKG/load.shr"
-  for f in ui.shr menu.shr pmenu.shr pextra.shr fsave.shr psave.shr shop.shr; do [ -f "$WORK/$f" ] && cp "$WORK/$f" "$PKG/$f"; done
-  for L in 2 3 4 5 6 7; do for f in ui.shr pmenu.shr pextra.shr psave.shr shop.shr; do [ -f "$WORK/l$L/$f" ] && cp "$WORK/l$L/$f" "$PKG/l$L/$f"; done; done
+  for f in ui.shr menu.shr scrap.shr pmenu.shr pextra.shr scrapgal.shr fsave.shr psave.shr shop.shr; do [ -f "$WORK/$f" ] && cp "$WORK/$f" "$PKG/$f"; done
+  for L in 2 3 4 5 6 7; do for f in ui.shr pmenu.shr pextra.shr scrapgal.shr psave.shr shop.shr; do [ -f "$WORK/l$L/$f" ] && cp "$WORK/l$L/$f" "$PKG/l$L/$f"; done; done
   [ -f "$WORK/bonusui/mini.shr" ] && { mkdir -p "$PKG/bonus"; cp "$WORK/bonusui/mini.shr" "$PKG/bonus/mini.shr"; }
   # шрифты Patrick H. Lauke (CC BY 3.0, 11.10): если пакет интерфейса использует хоть один (рядом с пакетом <пакет>.fonts, tools/pixel_fonts.py) — страница «FONT CREDITS» после
   # дисклеймера (viewer/bootscreen.h читает fontcredit.txt) и файлы лицензий рядом с EBOOT; не использует — ни страницы, ни файлов

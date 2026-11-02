@@ -24,7 +24,9 @@
 #include "stateprops.h"
 #include "animobj.h"
 
-static BonusRace B;
+int mcDbgRoad(int r, int *checked, int *bad, int *ledge);
+#define OVL_DEPTH .75f   // №1147: «пересечение кузовов» — глубина перекрытия в плане больше 0,75 м (мельче — контакт, который столкновение разводит за кадры); одна на крыше другой (car.c STACK_DY 0,5 высоты) — не пересечение
+static BonusRace B; static Traffic RT; static int roadsOn;   // №1116: дороги трассы (хвост BRD1 .bns), соперники по ним
 static int planHook(void *u, const McCar *c, const float g[3], float (*out)[3], int cap) {
   (void)u; (void)g; float p[3] = {c->car.x, c->car.y, c->car.z}; return brPlan(&B, c->wp, p, out, cap);
 }
@@ -127,7 +129,7 @@ static unsigned char *readFile(const char *p, unsigned *n) {
 
 int main(int argc, char **argv) {
   if (argc < 4) { fprintf(stderr, "usage: race_host b0N.shr b0N.bns msncars-b.shr [--laps N] [--reverse] [--secs S] [--json f] [-v]\n"); return 2; }
-  FILE *trace = 0; int NR = 4, noPath = 0, noKeep = 0, noGoal = 0, oldDriver = 1, noCurve = 0, npcCollision = 0; int laps = BR_LAPS_DEF, rev = 0, verbose = 0, breakCp = 0, breakSteer = 0; float secs = 0.f; const char *json = 0; int probeOnly = 0, noPick = 0, noDeath = 0, noTrap = 0;
+  FILE *trace = 0; int ai4 = 0, noCollide = 0, infoOnly = 0, dbgPlan = 0; float dbgP[6]; int dbgRoute = -1, NR = 4, oldRoads = 0, noPath = 0, noKeep = 0, noGoal = 0, oldDriver = 1, noCurve = 0, npcCollision = 0; int laps = BR_LAPS_DEF, rev = 0, verbose = 0, breakCp = 0, breakSteer = 0; float secs = 0.f; const char *json = 0; int probeOnly = 0, noPick = 0, noDeath = 0, noTrap = 0;
   for (int i = 4; i < argc; i++) {
     if (!strcmp(argv[i], "--laps") && i + 1 < argc) laps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--reverse")) rev = 1;
@@ -137,10 +139,16 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--nopath")) noPath = 1;
     else if (!strcmp(argv[i], "--wreck")) noKeep = 1;
     else if (!strcmp(argv[i], "--nogoal")) noGoal = 1;
+    else if (!strcmp(argv[i], "--route") && i + 1 < argc) dbgRoute = atoi(argv[++i]);   // служебное: раз в 0,5 с печатать маршрут машины i
+    else if (!strcmp(argv[i], "--plan") && i + 5 < argc) { dbgPlan = 1; for (int q = 0; q < 6; q++) dbgP[q] = (float)atof(argv[++i]); }   // служебное: x z h gx gz (y берётся с пола)
+    else if (!strcmp(argv[i], "--info")) infoOnly = 1;   // служебное: есть ли у трассы блок дорог и принимает ли его загрузчик (tests/g03_1116)
+    else if (!strcmp(argv[i], "--oldroads")) oldRoads = 1;   // №1116, красный: соперники по плотному пути порта, а не по дорогам трассы (BONUS_ROADS_OLD)
     else if (!strcmp(argv[i], "--trackdriver")) oldDriver = 0;   // WIP 09.10: водитель трассы brDrive (по умолчанию — водитель машин миссий viewer/msncar.c, как в EBOOT)
     else if (!strcmp(argv[i], "--msndriver")) oldDriver = 1; // explicit current production driver
     else if (!strcmp(argv[i], "--nocurve")) noCurve = 1;    // красный: водитель трассы без профиля скорости (газ в пол)   // прежнее: водитель считает точки сам (пропуск чекпойнта = лишний круг)   // прежнее правило машин миссий: разбитая встаёт   // красный: прямо к точкам WPR/WPL, как без пути по опоре
     else if (!strcmp(argv[i], "--break-steer")) breakSteer = 1;
+    else if (!strcmp(argv[i], "--ai4")) ai4 = 1;   // №1147: четвёртая машина ведётся как соперник (ходовые bgN_1), а не с ходовыми по умолчанию
+    else if (!strcmp(argv[i], "--noncollide")) noCollide = 1;   // №1147, красный: соперники сквозь друг друга (как до правки)
     else if (!strcmp(argv[i], "--npc-collide")) npcCollision = 1; // отрицательный контроль изоляции AI↔AI
     else if (!strcmp(argv[i], "-v")) verbose = 1;
     else if (!strcmp(argv[i], "--n") && i + 1 < argc) { NR = atoi(argv[++i]); if (NR < 1) NR = 1; if (NR > 4) NR = 4; }
@@ -168,19 +176,35 @@ int main(int argc, char **argv) {
   int track = (int)T.h->track;
   static const char *cars[4] = {"lisa_v", "bart_v", "marge_v", "homer_v"};   // правило порта: машины персонажей MiniMenu.pag
   brInit(&B, &T, laps, rev, NR, -1);
-  if (!noPath) mcPlanHook = planHook;
+  if (!oldRoads && !noGoal && !BONUS_ROADS_OLD && !noPath && T.rd && trafficInitMem(&RT, (void *)T.rd, T.rdSize, 0) == 0 && (rev ? T.h->nwpr : T.h->nwpf) >= 2) { roadsOn = 1; mcSprint = 1; }
+  else if (!noPath) mcPlanHook = planHook;
   static MsnCars M; mcInit(&M);
   for (int i = 0; i < NR; i++) {
     float p[3], h; brStart(&B, i, p, &h);
-    char con[32]; if (i < 3) snprintf(con, sizeof con, "bonus/bg%d_%d", track, i + 1); else con[0] = 0;
-    McCar *c = mcSpawn(&M, &world, NULL, cars[i], p, h, 1, "race", i < 3 ? con : NULL, "bot");
+    char con[32]; if (i < 3 || ai4) snprintf(con, sizeof con, "bonus/bg%d_%d", track, i < 3 ? i + 1 : 1); else con[0] = 0;   // --ai4: четвёртая машина (стенд вместо игрока) — на ходовых соперника №1
+    McCar *c = mcSpawn(&M, &world, roadsOn ? &RT : NULL, cars[i], p, h, 1, "race", (i < 3 || ai4) ? con : NULL, "bot");
     if (!c) { fprintf(stderr, "mcSpawn %s\n", cars[i]); return 2; }
     B.grow[i] = c->car.p.halfW;   // кузов входит в объём (не только центр)
     if (verbose) printf("car %d %s con=%s conOk=%d geo=%d top=%.0f km/h at %.1f %.1f %.1f h %.2f\n", i, cars[i], con, c->conOk, c->geoOk,
                         c->car.p.topSpeed * 3.6f, c->car.x, c->car.y, c->car.z, c->car.h);
   }
-  for (int k = 0; k < B.nwp; k++) mcWaypoint(&M, k, B.wp[k], BR_LAPS_MAX + 1);
+  if (roadsOn) { const BnsWp *w_ = rev ? T.wpr : T.wpf; int nw_ = (int)(rev ? T.h->nwpr : T.h->nwpf); for (int k = 0; k < nw_; k++) mcWaypoint(&M, k, w_[k].p, BR_LAPS_MAX + 1); }
+  else for (int k = 0; k < B.nwp; k++) mcWaypoint(&M, k, B.wp[k], BR_LAPS_MAX + 1);
   for (int i = 0; i < NR; i++) brDriverInit(&B, i, &M.c[i].car.p, &world);   // круги считает brUpdate; водитель — до конца
+  if (infoOnly) {
+    Traffic X; int rc = T.rd ? trafficInitMem(&X, (void *)T.rd, T.rdSize, 0) : -99;
+    printf("ROADS track=b%02d bytes=%u load=%d junc=%u road=%u wpf=%u wpr=%u\nRESULT: %s\n", track, T.rdSize, rc, rc ? 0u : X.hd->nJunc, rc ? 0u : X.hd->nRoad, T.h->nwpf, T.h->nwpr, rc ? "FAIL" : "PASS");
+    return rc ? 1 : 0;
+  }
+  if (dbgPlan && roadsOn) {
+    float out[32][3]; int off = 0; float g[3] = {dbgP[3], 5.f, dbgP[4]};
+    for (int pass = 0; pass < 2; pass++) {
+      int n = mcPlan(&RT, dbgP[0], 5.f, dbgP[1], dbgP[2], g, 1, out, 32, &off);
+      printf("plan pass %d: n=%d off=%d:", pass, n, off); for (int q = 0; q < n; q++) printf(" (%.0f,%.0f)", out[q][0], out[q][2]); printf("\n");
+      for (unsigned r = 0; r < RT.hd->nRoad; r++) { int ck, bd, lg; mcDbgRoad((int)r, &ck, &bd, &lg); printf("  road %u checked %d bad %d ledge %d\n", r, ck, bd, lg); }
+    }
+    return 0;
+  }
   if (haveAo) brTrapBind(&B, &AO);
   if (probeOnly) {
     printf("TRACK b%02d %s probe: подборов %u, зон %u, DEATH %u, объектов ловушек %d (ANM1 %d)\n", track, rev ? "reverse" : "forward",
@@ -192,16 +216,17 @@ int main(int argc, char **argv) {
   int picks[4] = {0}, deaths[4] = {0}, launches[4] = {0}, lights[4] = {0}, inLight[4] = {0};
   if (secs <= 0.f) secs = 60.f + 45.f * B.laps;   // предел прогона: отсчёт + 45 с на круг (правило полигона)
   const float dt = 1.f / 60.f;
+  int ovlN[4][4] = {{0}}, ovlNow[4][4] = {{0}}, ovlTot = 0; float ovlMax = 0.f;   // №1147: пересечения кузовов пар (глубина больше OVL_DEPTH)
   int resets[4] = {0}, wallHits[4] = {0}, carHits[4] = {0}; float wallPrev[4] = {0}, carPrev[4] = {0}, maxV[4] = {0};
   float lapT[4][BR_LAPS_MAX + 1]; memset(lapT, 0, sizeof lapT); float lapStart[4] = {0};
   int frames = (int)(secs / dt), f;
   for (f = 0; f < frames && B.state != BR_DONE; f++) {
-    McEnv e; memset(&e, 0, sizeof e); e.w = &world; e.noNpcCollide = !npcCollision; e.hold = B.state == BR_COUNT;
+    McEnv e; memset(&e, 0, sizeof e); e.w = &world; e.noNpcCollide = AIAI1147_OLD ? !npcCollision : noCollide; e.hold = B.state == BR_COUNT; if (roadsOn) e.tr = &RT;
     if (breakSteer) for (int i = 0; i < M.n; i++) M.c[i].car.p.maxWheelTurn = 0.f;
     for (int i = 0; i < NR; i++) {   // цель водителя — следующий чекпойнт по правилу гонки; доехавшая — стоит
       McCar *c = &M.c[i];
       if (B.r[i].finished) { c->mode = MC_PARKED; continue; }
-      int g = brGoal(&B, i); if (!noGoal && c->wp != g) { c->wp = g; c->nroute = 0; }
+      int g = brGoal(&B, i); if (!roadsOn && !noGoal && c->wp != g) { c->wp = g; c->nroute = 0; }
     }
     if (oldDriver) mcUpdate(&M, &e, dt, 0, 0);
     else {   // водитель трассы (brDrive): ввод -> физика каждой машины, потом удары между ними
@@ -216,6 +241,22 @@ int main(int argc, char **argv) {
         c->wheelAng += k->v / fmaxf(.2f, k->p.wheelRad) * dt; }
       if (npcCollision) brCollide(cs, NR, &world);
     }
+    { const Car *pc_[4]; for (int i = 0; i < NR; i++) pc_[i] = &M.c[i].car; brSetPeers(&B, pc_, NR); }   // №1147
+    for (int i = 0; i < NR; i++) for (int j = i + 1; j < NR; j++) {   // пересечение кузовов: SAT по осям обоих, глубина по меньшему перекрытию
+      Car *a = &M.c[i].car, *b = &M.c[j].car; CarBox A, Bx; carBox(a, &A); carBox(b, &Bx);
+      float dx = Bx.x - A.x, dz = Bx.z - A.z, depth = 1e9f;
+      if (fabsf(a->y - b->y) < .5f * (a->y > b->y ? b->p.bodyHi : a->p.bodyHi) && dx * dx + dz * dz < 100.f) {
+        const float ax_[4][2] = {{A.fx, A.fz}, {-A.fz, A.fx}, {Bx.fx, Bx.fz}, {-Bx.fz, Bx.fx}};
+        for (int q = 0; q < 4; q++) {
+          float u0 = ax_[q][0], u1 = ax_[q][1];
+          float ra = A.hl * fabsf(A.fx * u0 + A.fz * u1) + A.hw * fabsf(-A.fz * u0 + A.fx * u1);
+          float rb = Bx.hl * fabsf(Bx.fx * u0 + Bx.fz * u1) + Bx.hw * fabsf(-Bx.fz * u0 + Bx.fx * u1);
+          float ov = ra + rb - fabsf(dx * u0 + dz * u1); if (ov < depth) depth = ov; }
+      }
+      int now = depth < 1e8f && depth > OVL_DEPTH;
+      if (now && !ovlNow[i][j]) { ovlN[i][j]++; ovlTot++; if (verbose) printf("t=%.1f пересечение %s-%s глубина %.2f\n", f * dt, cars[i], cars[j], depth); }
+      ovlNow[i][j] = now; if (now && depth > ovlMax) ovlMax = depth;
+    }
     for (int i = 0; i < NR; i++) {   // подборы, нитро, подброс, свет, DEATH (viewer/bonus.c — тот же код, что EBOOT)
       Car *k = &M.c[i].car; float lp[3] = {k->x, k->y + .5f, k->z};
       if (B.state == BR_RACE && !B.r[i].finished) {
@@ -224,7 +265,7 @@ int main(int argc, char **argv) {
         brBoost(&B, i, k, oldDriver ? M.c[i].lastIn.throttle : 1.f, dt);   // газ водителя этого кадра (водитель трассы — 1)
         if (brLaunch(&B, i, k)) { launches[i]++; if (verbose) printf("t=%.1f %s подброс поршнем\n", f * dt, cars[i]); }
       }
-      if (!noDeath && brDeath(&B, i, k, &world)) { deaths[i]++; M.c[i].nroute = 0; if (verbose) printf("t=%.1f %s DEATH -> возврат\n", f * dt, cars[i]); }
+      float dx0_ = k->x, dy0_ = k->y, dz0_ = k->z, dv0_ = k->v; if (!noDeath && brDeath(&B, i, k, &world)) { deaths[i]++; M.c[i].nroute = 0; if (verbose) printf("t=%.1f %s DEATH -> возврат (упала у %.1f %.1f %.1f, v %.1f)\n", f * dt, cars[i], dx0_, dy0_, dz0_, dv0_); }
       int L = brLight(&B, lp) != 0; if (L && !inLight[i]) { lights[i]++; B.nLight++; } inLight[i] = L;
     }
     brPickTick(&B, dt);
@@ -241,9 +282,13 @@ int main(int argc, char **argv) {
           memcpy(q, a, 12); qh = atan2f(bb[0] - a[0], bb[2] - a[2]); }
         carPlace(k, &world, q[0], q[1] + .5f, q[2], qh);
         c->nroute = 0; resets[i]++;
-        if (verbose) printf("t=%.1f %s возврат на путь у %.1f %.1f (к остановке %d)\n", f * dt, cars[i], q[0], q[2], c->wp % M.nwp);
+        if (verbose) printf("t=%.1f %s возврат на путь у %.1f %.1f (к остановке %d), застряла у %.1f %.1f %.1f\n", f * dt, cars[i], q[0], q[2], c->wp % M.nwp, pos[i][0], pos[i][1], pos[i][2]);
       }
     }
+    if (getenv("WPDBG")) { static int lw[4] = {-1, -1, -1, -1}; for (int i = 0; i < NR; i++) if (M.c[i].wp != lw[i]) { lw[i] = M.c[i].wp; const BnsCp *cp = &B.t.cp[B.order[B.r[i].next]]; const Car *k = &M.c[i].car;
+      printf("t=%.1f %s wp->%d at %.1f %.1f %.1f next=%d cp(%s) %.1f %.1f %.1f inside=%d lap=%d\n", f * dt, cars[i], M.c[i].wp, k->x, k->y, k->z, B.r[i].next, cp->name, cp->c[0], cp->c[1], cp->c[2], bnsInside(cp, (float[3]){k->x, k->y + .5f, k->z}, B.grow[i]), B.r[i].lap); } }
+    if (dbgRoute >= 0 && dbgRoute < NR && f % 30 == 0) { McCar *c = &M.c[dbgRoute]; printf("t=%.1f car %d at %.1f %.1f %.1f v %.1f h %.2f wp %d nroute %d seg %d off %d turning %d back %.1f route:", f * dt, dbgRoute, c->car.x, c->car.y, c->car.z, c->car.v, c->car.h, c->wp, c->nroute, c->seg, c->offroad, c->turning, c->backT);
+      for (int q = 0; q < c->nroute && q < 14; q++) printf(" (%.0f,%.0f)", c->route[q][0], c->route[q][2]); printf("\n"); }
     if (trace && f % 15 == 0) for (int i = 0; i < NR; i++) fprintf(trace, "%.2f\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%d\t%d\n", f * dt, i,
                                                                    M.c[i].car.x, M.c[i].car.y, M.c[i].car.z, M.c[i].car.v, M.c[i].wp, B.r[i].next),
                                                                    fprintf(trace, "#\t%d\t%d\t%.2f\t%.2f\t%.3f\n", i, B.drv[i].idx, B.drv[i].vt, B.drv[i].backT, M.c[i].car.h);
@@ -257,6 +302,9 @@ int main(int argc, char **argv) {
   }
   int fails = 0; char why[512] = "";
   printf("TRACK b%02d %s laps=%d wp=%d cp=%d secs=%.1f frames=%d\n", track, rev ? "reverse" : "forward", B.laps, B.nwp, B.ncp, f * dt, f);
+  if (getenv("WPDBG") && roadsOn) for (unsigned r = 0; r < RT.hd->nRoad; r++) { int ck, bd, lg; mcDbgRoad((int)r, &ck, &bd, &lg); printf("ROAD %u checked %d bad %d ledge %d\n", r, ck, bd, lg); }
+  printf("ПЕРЕСЕЧЕНИЙ КУЗОВОВ %d (макс глубина %.2f м)\n", ovlTot, ovlMax);
+  if (!AIAI1147_OLD && !noCollide && ovlTot) { fails++; snprintf(why + strlen(why), sizeof why - strlen(why), "пересечений кузовов %d; ", ovlTot); }
   FILE *J = json ? fopen(json, "w") : 0;
   if (J) fprintf(J, "{\"track\":%d,\"reverse\":%d,\"laps\":%d,\"racers\":[", track, rev, B.laps);
   for (int i = 0; i < NR; i++) {

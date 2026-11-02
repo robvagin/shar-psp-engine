@@ -1,0 +1,43 @@
+# №1105 этап 2: галереи SCRAP BOOK. flag scrapon 1 даёт все карточки; миссии, костюмы и машины — по самой свежей записи на карте (или пусто: тогда в журнале open=00000000).
+# Ожидание: в журнале строки "SCRAPBOOK1105 gallery kind=0|1|2 level=N open=..."; при открытом слоте — "view kind=.. slot=..", для миссии X в просмотре — вопрос
+# «Would you like to load this mission?» (строка "startask answer=no"), потом возврат в сетку. Снимки: sg_missions, sg_mission_view, sg_skins, sg_vehicles.
+flag menu
+flag scrapon 1
+wait 6
+press up
+wait 0.5
+press up
+wait 0.5
+press up
+wait 0.5
+press cross
+wait 4
+press cross
+wait 1
+press cross
+wait 2
+shot sg_missions
+press cross
+wait 1
+shot sg_mission_view
+press triangle
+wait 1
+press triangle
+wait 1
+press right
+wait 0.5
+press cross
+wait 2
+shot sg_skins
+press triangle
+wait 1
+press right
+wait 0.5
+press cross
+wait 2
+shot sg_vehicles
+press triangle
+wait 1
+press triangle
+wait 1
+end

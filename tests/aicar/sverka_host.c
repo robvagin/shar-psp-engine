@@ -94,9 +94,9 @@ int main(void) {
     static MsnCars M; McCar *c = mk(&M, "race", 0.f, 0.f, 0.f); Car pl; carInit(&pl, 0, &W, 0.f, 0.f, -380.f, 0.f);
     float run = 0.f;
     int evts = 0;
-    for (int f = 0; f < 60 * 26; f++) { McEnv e; env(&e, &pl, 1, 0.f, -380.f); mcUpdate(&M, &e, DT, 0, 0); run = fmaxf(run, hypotf(c->car.x, c->car.z)); evts += c->waitEvt > 0; }
-    snprintf(d, sizeof d, "игрок в 380 м позади: за 26 с отъехала %.1f м, событий ожидания %d (оригинал: стоит, через 20 с событие)", run, evts);
-    check("wait", run < 15.f && evts >= 1, d);
+    for (int f = 0; f < 60 * 45; f++) { McEnv e; env(&e, &pl, 1, 0.f, -380.f); mcUpdate(&M, &e, DT, 0, 0); run = fmaxf(run, hypotf(c->car.x, c->car.z)); evts = c->waitEvt; }
+    snprintf(d, sizeof d, "игрок в 380 м позади: за 45 с отъехала %.1f м, событий ожидания %d (стоит; событие каждые 20 с, счётчик растёт: за 45 с не меньше двух)", run, evts);
+    check("wait", run < 15.f && evts >= 2, d);
   }
   // ---- объезд: стоящая машина в 30 м прямо по курсу — сдвиг точки руля ~3 м без сглаживания
   {

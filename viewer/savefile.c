@@ -28,7 +28,7 @@ int svFileWrite(const char *dir, int slot, const void *data, int n) {
     w = sceIoWrite(f, data, n); sceIoClose(f); sceIoRemove(t);
     if (w != n) return -3;
   }
-  static unsigned char chk[1024];
+  static unsigned char chk[2048];   // №1114: запись SHV3 1536 Б
   if (n > (int)sizeof chk) return 0;
   int r = svFileRead(dir, slot, chk, sizeof chk);
   return r == n && !memcmp(chk, data, n) ? 0 : -4;

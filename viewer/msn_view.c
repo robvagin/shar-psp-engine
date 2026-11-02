@@ -8,6 +8,8 @@
 #include <malloc.h>
 #include <math.h>
 #include "msn_view.h"
+#include "msn_wager.h"
+#include "msn_rules.h"
 #ifndef BRIEF_ART_PRELOAD_OLD
 #define BRIEF_ART_PRELOAD_OLD 0   // 1 — карточка по готовности данных картинки, как в TEST17
 #endif
@@ -254,6 +256,9 @@ static struct {
 // (Restart паузы, Yes на экране провала); Skip на экране провала — после 7 учтённых (сбросы / 2), на L7 никогда для 5-й, 6-й и 7-й сюжетной миссии. Пропущенная миссия не
 // пройдена, но значок в MISSION SELECT у неё жёлтая черта; крест — только при попытках и без пропуска. Данные живут сессию (запись прогресса — передано main_save.h / savegame.h).
 // Было: счётчика и пропуска нет, крестом помечалась текущая сюжетная миссия всегда. SV_SKIP_OLD=1 — прежнее
+#ifndef SV_SKIP7_OLD
+#define SV_SKIP7_OLD 0   // круг 6 (P13-3): 1 — прежнее: учтённых попыток делилось на 2 ещё раз (Skip только после 14 запусков вместо 7)
+#endif
 #ifndef SV_SKIP_OLD
 #define SV_SKIP_OLD 0
 #endif
@@ -272,7 +277,7 @@ static void dropTick(void) {
   if (!dropOn) return;
   int left = 0; for (int i = 0; i < M.rt.nitems && i < MSN_MAX_ITEMS; i++) if (!M.rt.done[i]) left++;
   if (!left || M.rt.status != MSN_RUNNING) { dropOn = 0; uiForceShow(UI_T_ITEM_DROPPED, 0.f); return; }
-  uiForceShow(UI_T_ITEM_DROPPED, (int)((clock_ - dropT0) / .25f) % 2 == 0 ? .2f : 0.f);
+  uiForceShow(UI_T_ITEM_DROPPED, mvPulseOn(clock_ - dropT0, .25f) ? .2f : 0.f);
 }
 static int levelEndOld;   // служебное (flag uilevelendold): прежняя вспышка 3 с вместо экрана LevelEnd (отрицательный контроль)
 static int iconIndex(const char *icon) {   // значок задания: из msnicons (msnart.shr, может ещё дочитываться) — иначе без значка
@@ -344,8 +349,8 @@ static void uiLapCb(void *u, int lap, int laps) {
 }
 static void lapTick(void) {
   if (lapT0 < 0.f) return;
-  int n = (int)((clock_ - lapT0) / .25f);
-  if (n >= 8) { lapT0 = -1.f; uiHudShow(UI_T_LAP, lapShow); return; }
+  int n = mvLapStep(clock_ - lapT0);
+  if (n < 0) { lapT0 = -1.f; uiHudShow(UI_T_LAP, lapShow); return; }
   uiHudShow(UI_T_LAP, lapShow && n % 2 == 0);
 }
 // сверка g07b-msnview круг 2 (g09a-hud, M2:3): длительность позиции отсчёта из сценария передаётся в ui.c через uiCountdownDur (слабая ссылка: переменная появится вместе с CDOWN_POP_OLD g09a;
@@ -586,8 +591,8 @@ float (*mvCarOdds)(void);
 int mvWagerPay(int fee) {
   if (SV_WAGER_ODDS_OLD) return 2 * fee;
   float o = mvCarOdds ? mvCarOdds() : -1.f;
-  if (o < 0.f) o = mvPackLevel() >= 6 ? 1.f : 2.f;
-  return fee + (int)(o * (float)fee);
+  if (o < 0.f) o = mvWagerOddsDefault(mvPackLevel());
+  return mvWagerPayOf(fee, o);   // формула в msn_wager.h (круг 6: её же берёт хост-тест пары карточка ↔ выплата)
 }
 // сверка g07b-msnview (P13-10, Д1/P13-10 второго читателя): ставка больше банка — Accept скрыт, вместо описания «нужно N монет»; ✕ не работает, ○ остаётся выходом.
 // Было: Accept всегда виден. SV_WAGER_COINS_OLD=1 — прежнее. Строки библии «нужно N монет» в пакете нет (передано: tools/missions/compile.py UI_TEXT_KEYS) — пока свой английский текст
@@ -1212,7 +1217,9 @@ int mvTakeWorldCar(int i) { return active ? gameMsnTakeWorld(&M, i) : 0; }
 int mvHnrOff(void) { return active && gameMsnHnrOff(); }   // перепроверка 96
 int mvPhoneCar(const char *car) { return active ? gameMsnPhoneCar(&M, car) : 0; }   // правка 94
 int mvSummon(void) { return active ? gameMsnSummon(&M) : 1; }
+int mvHudHidden(void) { return active && gameMsnHudHidden(&M); }   // сверка g07 круг 6 (P06-21)
 int mvBoothBlocked(void) { return active && gameMsnBoothBlocked(&M); }   // сверка g07 круг 5 (P05-25)
+int mvBoothsOff(void) { return active && gameMsnBoothsOff(&M); }   // ps2-twin P05:25
 void mvSetState(int transition, int arrested, const char *entering) { if (active) gameMsnSetState(&M, transition, arrested, entering); }   // сверка g10b-loop круг 2
 void mvWorldCarsStep(float px, float pz) { if (active) gameMsnWorldCarsStep(&M, px, pz); }   // сверка g10b-loop круг 5
 int mvShopAllowed(void) { return active ? gameMsnShopAllowed(&M) : 1; }   // сверка g10b-loop круг 2
@@ -1220,6 +1227,9 @@ void mvPolice(int on) { if (active) gameMsnHnrPolice(&M,on); }
 void mvPoliceAdd(void) { if (active) gameMsnHnrPoliceAdd(&M); }
 int mvPoliceLimit(void) { return active ? gameMsnHnrPoliceLimit(&M) : 1; }
 void mvPoliceFar(float px, float pz, float R) { if (active) gameMsnHnrPoliceFar(&M, px, pz, R); }
+int mvPoliceSuspend(void) { return active ? gameMsnHnrPoliceSuspend(&M) : 0; }   // круг 7 (P03-07)
+void mvPoliceResume(void) { if (active) gameMsnHnrPoliceResume(&M); }
+void mvPoliceDrop(int i) { if (active) gameMsnHnrPoliceDrop(&M, i); }   // круг 7 (P03 Д2)
 void mvPoliceHold(void) { if (active) gameMsnHnrPoliceHold(&M); }
 float mvHnrDecay(void) { return active ? M.hnr.decay : 3.f; }
 int mvIsPolice(const char *name) { return !strcasecmp(name,active ? M.hnr.car : "cPolice"); }
@@ -1290,8 +1300,8 @@ static float talkJaw(float t) {
   return TALK_JAW_MAX * a * (.55f + .45f * b);
 }
 // сверка g07b-msnview круг 2 (g04-homer, P15-02): рот говорящего — skinMouthStep (угол с постоянной скоростью между −18° и верхней границей персонажа, разворот со случайным сдвигом границ)
-// вместо синуса. Знак «открыто» по оригиналу не подтверждён записью PS2 (вопрос 1 отчёта P15) — угол нормируется в 0…TALK_JAW_MAX (вся полоса хода, темп и случайность — из числа оригинала). SKIN_MOUTH_OLD=1 — синус
-static SkinMouth homerMouth; static float talkDt = 1.f / 60.f;
+// вместо синуса. (сверка g04-homer круг 6: у игрока имя героя уровня — homerCharName, не всегда "homer") Знак «открыто» по оригиналу не подтверждён записью PS2 (вопрос 1 отчёта P15) — угол нормируется в 0…TALK_JAW_MAX (вся полоса хода, темп и случайность — из числа оригинала). SKIN_MOUTH_OLD=1 — синус
+static SkinMouth homerMouth; static const char *homerMouthFor; static float talkDt = 1.f / 60.f;   // сверка g04-homer круг 6: homerMouthFor — для какого героя рот уже заведён (герой сменился на другом уровне — строка таблицы берётся заново)
 static float mouthJaw(SkinMouth *mo, const char *model, float dt) {
   float a = skinMouthStep(mo, model, dt), lo = -18.f * 0.0174533f, span = mo->hi0 - lo; if (span < .01f) return 0.f;
   float u = (a - lo) / span; if (u < 0.f) u = 0.f; if (u > 1.f) u = 1.f;
@@ -1304,7 +1314,8 @@ static void talkHomer(int line, int pcSpeaks) {   // Гомер: жест сво
   Homer *Hm = g->pHomer;
   if (line >= 0) {
     if (line != homerLine) { homerLine = line; homerTalk(Hm, gameMsnTalkAnim(&M, 0, line)); }
-    homerJaw(Hm, pcSpeaks ? (SKIN_MOUTH_OLD ? talkJaw(talkClock) : mouthJaw(&homerMouth, "homer", talkDt)) : 0.f);   // сверка g07b круг 2 (P15-02)
+    if (homerMouthFor != homerCharName()) { homerMouthFor = homerCharName(); memset(&homerMouth, 0, sizeof homerMouth); }   // сверка g04-homer круг 6
+    homerJaw(Hm, pcSpeaks ? (SKIN_MOUTH_OLD ? talkJaw(talkClock) : mouthJaw(&homerMouth, homerCharName(), talkDt)) : 0.f);   // сверка g07b круг 2 (P15-02)
     if (Hm->jawOpen > tlJawH) tlJawH = Hm->jawOpen;
   } else if (homerLine >= 0) { homerLine = -1; homerTalk(Hm, NULL); homerJaw(Hm, 0.f); }
 }
@@ -1476,20 +1487,15 @@ void mvForceArrow(int on, float x, float y, float z, float h) { forceArrowOn = o
 #ifndef SV_NAVPICK_OLD
 #define SV_NAVPICK_OLD 0
 #endif
+#ifndef SV_NAVWHITE_OLD
+#define SV_NAVWHITE_OLD 0   // круг 6: 1 — прежний чёрный список (стрелки по умолчанию)
+#endif
 #ifndef SV_NAVARROW_OLD
 #define SV_NAVARROW_OLD 0
 #endif
 int (*mvIntersectNavOn)(void);
-static int routeAllowed(void) {
-  if (SV_NAVARROW_OLD) return 1;
-  if (mvIntersectNavOn && !mvIntersectNavOn()) return 0;
-  if (H.marker.nav == MSN_NAV_NEITHER || H.marker.nav == MSN_NAV_NEAREST_ROAD) return 0;
-  switch (M.rt.obj) {
-    case MSN_OBJ_PICKUPITEM: return SV_NAVPICK_OLD;   // круг 3 (проверка g07b): у «подобрать предмет» (бочка) дорожных стрелок нет (в оригинале их три предметных типа: гонка, доставка, сброс груза)
-    case MSN_OBJ_GETIN: case MSN_OBJ_FOLLOW: case MSN_OBJ_DESTROY: case MSN_OBJ_DESTROYBOSS: case MSN_OBJ_LOSETAIL: case MSN_OBJ_TIMER:
-    case MSN_OBJ_DIALOGUE: case MSN_OBJ_FMV: case MSN_OBJ_COINS: case MSN_OBJ_BUYCAR: case MSN_OBJ_BUYSKIN: return 0;
-    default: return 1;
-  }
+static int routeAllowed(void) {   // решение целиком в msn_rules.h (mvRouteAllowed): та же функция идёт в хост-тест круга 6
+  return mvRouteAllowed(M.rt.obj, H.marker.nav, !(mvIntersectNavOn && !mvIntersectNavOn()), SV_NAVARROW_OLD, SV_NAVWHITE_OLD, SV_NAVPICK_OLD);
 }
 static void drawNavPath(float ex, float ey, float ez, float t) {
   static TrNavArrow arr[24]; static struct { float x, z, y; } yc[24]; static int nyc; static unsigned fr;
@@ -1675,7 +1681,7 @@ void mvBriefingInput(unsigned hit) {   // X — Continue, △ — Cancel Mission
   if (hit & PSP_CTRL_CROSS) { H.briefing = 0; brModeOff(); uiBriefAnim(0); logf_("MSN briefing-continue t=%.1f\n", clock_); if (M.mg.hud.objective && *M.mg.hud.objective) uiObjectiveCb(&M, M.mg.hud.objective, M.mg.hud.objective_msg, M.mg.hud.icon);
     // правка 345: [PS2] через 3 кадра после ✕ Continue — реплика водителя на старте миссии W_Mstart_<код>_* (3 из 3, выбор случайный)
     // сверка g07b-msnview (P09 Д8): принятие брифинга в гонке (уличная, на ставку) реплику Mstart не даёт. Было: в любой миссии. SV_RACE_MSTART_OLD=1 — прежнее
-    if ((SV_RACE_MSTART_OLD || !(M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions && (M.f.missions[M.rt.cur].flags & (SV_RACE_MSTART3_OLD ? (MSN_MF_STREETRACE | MSN_MF_GAMBLE) : MSN_MF_STREETRACE)))) && sndSay(SND_SAY_MSTART, 1)) logf_("MSN say mstart %s t=%.1f\n", sndSayLastName(), clock_); }
+    if ((SV_RACE_MSTART_OLD || !(M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions && mvMstartMuted(M.f.missions[M.rt.cur].flags, SV_RACE_MSTART3_OLD))) && sndSay(SND_SAY_MSTART, 1)) logf_("MSN say mstart %s t=%.1f\n", sndSayLastName(), clock_); }
   else if (brOld && (hit & PSP_CTRL_TRIANGLE)) { H.briefing = 0; brModeOff(); logf_("MSN briefing-cancel t=%.1f\n", clock_); gameMsnAbort(&M); }   // только прежняя карточка (отр. контроль): в эталоне PS2 «Cancel Mission» на карточке нет
   // сверка g07b-msnview: M2 Д3 / P13 Д1 — на карточке гонки на ставку после загрузки две кнопки: ✕ принять и ○ отказаться (△ как у подэкранов); отказ = Abort миссии (ирис, свободная езда, игрок у локатора).
   // Было: ○ и △ на новой карточке ничего не делали, ставку нельзя было отклонить. SV_WAGER_CANCEL_OLD=1 — прежнее
@@ -1714,7 +1720,7 @@ void mvHud(float dt) {
     if (!H.brLoaded && briefReady()) { H.brLoaded = 1; logf_("MSN briefing-loaded path=%s ra_wait=%.2f wait=%.2f first=%d queued=%d pic=%s lost=%d title=\"%s\" t=%.1f\n", H.brFirst ? "newspaper" : "card-only", brReadyT < 0.f ? 0.f : briefSec() - brReadyT, briefSec(), H.brFirst, H.brQueued, H.present[0] ? H.present : "-", H.brPicLost, uiBriefTitle(), clock_);
       if (!BRIEF_ANIM_AT_LOAD_OLD) uiBriefAnim(1);   // №612: въезд карточки и руки — с момента, когда карточку видно (до этого экран газеты LOADING); на видео TEST17 въезд проходил под газетой
       if (H.brQueued) { H.brQueued = 0; mvBriefingInput(PSP_CTRL_CROSS); } }
-    float bs = briefSec(); int blinkOn = SV_LOADBLINK_OLD ? (int)(bs / BRIEF_BLINK) % 2 == 0 : (int)(bs / BRIEF_BLINK) % 2 == 1;   // сверка g07b M2:27 (Н): LOADING скрыта при входе, первый переключатель через 0,25 с (SV_LOADBLINK_OLD=1 — горит с первого кадра)
+    float bs = briefSec(); int blinkOn = SV_LOADBLINK_OLD ? mvPulseOn(bs, BRIEF_BLINK) : !mvPulseOn(bs, BRIEF_BLINK);   // сверка g07b M2:27 (Н): LOADING скрыта при входе, первый переключатель через 0,25 с (SV_LOADBLINK_OLD=1 — горит с первого кадра)
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_PRESS_START, H.brLoaded && !wagerShort());                // ✕ Continue
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_GAMBLE, H.brWager && H.brLoaded);       // строки ставки — вместе с текстом карточки
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_LOADING, !H.brLoaded && blinkOn);         // LOADING мигает
@@ -1831,7 +1837,8 @@ static void mvSwitchTo(int mi, const char *why) {   // смена миссии �
   else { MsnEvent e; memset(&e, 0, sizeof e); e.type = MSN_EV_CLEANUP; M.rt.host.event(M.rt.host.user, &e); }   // прежнее: только CLEANUP
   logf_("MSNSWITCH why=%s from=%s to=%s marker=%d gmarker=%d reg=%d obj=\"%.40s\" talk=%d briefing=%d t=%.1f\n", why, from, msn_str(&M.f, M.f.missions[mi].id), H.markerOn,
         M.mg.marker_on, msn_reg_mission_count(&M.rt), M.mg.hud.objective ? M.mg.hud.objective : "", H.talk[0] != 0, H.briefing, clock_);
-  msn_start_mission(&M.rt, mi, 0);
+  if (!strcmp(why, "row") || !strcmp(why, "pause")) msn_enter_mission(&M.rt, mi);   // круг 7 (P06-5): выбор в MISSION SELECT — как вход после загрузки, вступление с этапа RESET_TO_HERE; Skip и служебные — с нулевого
+  else msn_start_mission(&M.rt, mi, 0);
 }
 static int msnSelStatus(int i) {   // 0 закрыта, 1 текущая, 2 пройдена или пропущена (выбрать можно)
   if (i < 0) return 0;
@@ -1846,15 +1853,14 @@ static int msRowIcon(int k, int st) {
   if (!msOld && msLv != msCur()) return st;
   int i = selList[k]; if (i < 0 || i >= 32) return st;
   if (M.rt.completed >> i & 1u) return 2;
-  return msTries[i] && !(msSkipped >> i & 1u) ? 1 : 0;
+  return mvRowIcon(0, msTries[i], (msSkipped >> i & 1u) != 0);
 }
 // сверка g07b P13-3: Skip на экране провала. Номер сюжетной миссии (с 1) на уровне; L7 5-я, 6-я, 7-я — без пропуска; порог 7 учтённых (сбросы / 2)
 static int msStoryOrd(int mi) { int o = 0; for (int i = 0; i <= mi && i < (int)M.f.nmissions; i++) { if (M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) continue; o++; } return o; }
 int mvFailSkipOk(void) {
   if (SV_SKIP_OLD || !active || !H.failed || M.rt.cur < 0 || M.rt.cur >= 32) return 0;
   if (M.f.missions[M.rt.cur].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) return 0;
-  if (M.f.hdr && M.f.hdr->level == 7 && msStoryOrd(M.rt.cur) >= 5) return 0;
-  return msTries[M.rt.cur] / 2 >= 7;
+  return mvSkipAllowed(msTries[M.rt.cur], M.f.hdr ? (int)M.f.hdr->level : 1, msStoryOrd(M.rt.cur), SV_SKIP7_OLD);   // круг 6 (P13-3): счёт у нас в запусках, делить на 2 не нужно
 }
 void mvFailSkip(void) {   // миссия прерывается, включается следующая сюжетная, прежняя помечена «пропущена»
   if (!active || M.rt.cur < 0) return;
@@ -2151,6 +2157,7 @@ static int talkScene(ConvScene *s, float *pcH, float *npcH) {
   const Homer *H = M.g->pHomer; NpcAnim *a = animFor(npcKey(n), 0, 0);
   memset(s, 0, sizeof *s);
   s->pc[0] = H->x; s->pc[1] = H->y; s->pc[2] = H->z; s->npc[0] = n->pos.x; s->npc[1] = n->pos.y; s->npc[2] = n->pos.z;
+  { const float *b_ = gameMsnTalkNpcBase(&M); if (b_) { s->npc[0] = b_[0]; s->npc[2] = b_[2]; } }   // сверка g07 круг 7 (КАМЕРА 4.3): камера считает по месту без сдвига
   s->pcHead = 1.5f; s->npcHead = a ? modelHead(a->m) : 0.f;
   if (pcH) *pcH = HOMER_HEIGHT; if (npcH) *npcH = a ? a->m->h->bbox[4] : 1.8f;
   if (M.talk.hasBest) { s->hasBest = 1; s->best[0] = M.talk.best.x; s->best[1] = M.talk.best.y; s->best[2] = M.talk.best.z; }
@@ -2179,6 +2186,7 @@ int mvTalkCam(const float prevEye[3], MvRayFn blocked, float eye[3], float look[
   }
   TC.s = s;
   if (!TC.shot) return 0;
+  gameMsnTalkNpcBack(&M, TC.shot == CONV_PC_NEAR);   // сверка g07 круг 7 (КАМЕРА 4.3): на крупном плане игрока собеседник на 1,8 м дальше
   int shot = TC.shot;
   if (TC.plant == 1) shot = convShotOnPc(shot) ? (shot == CONV_PC_FAR ? CONV_NPC_FAR : CONV_NPC_NEAR) : (shot == CONV_NPC_FAR ? CONV_PC_FAR : CONV_PC_NEAR);
   convPose(&s, shot, TC.side, eye, look, fovY);

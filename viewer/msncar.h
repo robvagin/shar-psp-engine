@@ -88,6 +88,9 @@ extern "C" {
 #ifndef MC_FREEZE_OLD       // круг 2, g10 СВЕРКА_С_ИСХОДНИКОМ:2.8: во время разговора полиция стоит (McEnv.freeze)
 #define MC_FREEZE_OLD MC_SVERKA_OLD
 #endif
+#ifndef MC_LOOP_OLD         // круг 7, WaypointAI: дойдя до последней точки, ИИ идёт по кругу заново (не стоит); finished остаётся признаком «дошёл» для миссий. Гонка (MC_RACE) — как раньше
+#define MC_LOOP_OLD MC_SVERKA_OLD
+#endif
 #ifndef POLICE_STAND27_OLD  // СВЕРКА_С_ИСХОДНИКОМ 2.10: стоп в 27 м от стоящего игрока (замер PS2) — 1 вернёт его; 0 — полиция всегда едет, как в исходнике
 #define POLICE_STAND27_OLD MC_SVERKA_OLD
 #endif
@@ -150,6 +153,8 @@ typedef struct {
   int turning;                      // подготовка к повороту (руль по дальней точке, ручник)
   int stkOn, stopHold, direct;      // застревание: идёт счёт; после заднего хода ручник до остановки; погоня едет напрямую
   float stkT, ramT, slipT, baseGrip, flipHoldT, waitT, offT;   // счёт застревания; пауза после тарана; потеря управления; сцепление .con; наклон 75°; ожидание игрока; вне звеньев пути
+  float dbgNear[3], dbgFar[3];     // ближняя и дальняя точка руля последнего кадра (проверки)
+  float catchF;                     // коэффициент догонялки последнего расчёта −1…1 (гонка), −1…0 (цель), 0…1 (уход): добавка к броску умения срезать
   float backLen, stkThr; int noPlace;   // круг 3: время заднего хода (0,3 с старт), порог застревания, не ставить на дорогу на 7-м застревании (цель уничтожения; ставит game_msn.c)
   int waitEvt, waiting, chaseRoad, losOk; float chaseRoadT, losT;   // losT/losOk: прямая видимость полиции до игрока, пересчёт раз в 0,1 с   // событий «ИИ добрался до цели» (читает миссия); сейчас ждёт; дорога под целью погони
   float dbgGap, dbgSwerve; int dbgKind;   // служебное: зазоры этого кадра и чья машина впереди (гейт, журнал)   // бот-игрок (mcBotInput): точка, к которой проложен путь; машина-цель тарана
@@ -209,6 +214,7 @@ void mcBotInputPath(const MsnCars *m, McCar *c, const McEnv *e, const float (*pt
 // (out[0] — первая, последняя — цель; 0 — прямо к цели). NULL (по умолчанию) — как было: mcPlan по дорогам e->tr
 typedef int (*McPlanHook)(void *u, const McCar *c, const float g[3], float (*out)[3], int cap);
 extern McPlanHook mcPlanHook; extern void *mcPlanUser;
+extern int mcSprint;   // №1116: 1 — бонус-гонка по дорогам трассы (e->tr): правила Sprint (точка 7 м, без ожидания игрока), планировщик дорог, не хук
 // водители трафика видят машины миссии (тормозят перед ними, как перед игроком): до trafficUpdate каждого кадра; m = NULL —
 // машин нет
 void mcTrafficSees(const MsnCars *m, Traffic *t);

@@ -1,0 +1,34 @@
+# №1151: настройки камеры игрока на крайних значениях — глаз не в геометрии (CAMIN: «внутри» 0), без рывков при смене (CAMJUMP, jmax). Машина L1, езда по кругу, смена настроек на ходу.
+flag player
+scene CS_L1
+flag camin 1
+flag camsafeold 0
+wait 12
+flag drive 75
+wait 4
+flag camusercarh 0.5
+flag camusercard 0.7
+wait 3
+flag camusercarh 1.5
+flag camusercard 1.3
+wait 3
+flag camusertilt -10
+flag camuserfov 0.85
+wait 3
+flag camusertilt 10
+flag camuserfov 1.15
+wait 3
+flag camusercarh 1
+flag camusercard 1
+flag camusertilt 0
+flag camuserfov 1
+wait 2
+flag stop
+flag camuserfooth 0.5
+flag camuserfootd 1.3
+wait 2
+flag camuserfooth 1.5
+flag camuserfootd 0.7
+wait 2
+flag camin
+end

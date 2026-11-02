@@ -1,0 +1,36 @@
+# №1152: RESUME GAME после бонус-игры (TEST84: пункт серый, хотя на карте полные сохранения). Меню -> MINI GAME -> гонка (1 круг, водитель ИИ) -> назад в меню -> RESUME GAME -> игра загрузилась.
+# Нужна запись нового формата на карте (прогон emu_save.txt из tests/savegame/emu.sh, слот 1). Автором не запускался (эмулятор мне запрещён) — прогон за дирижёром; порядок пунктов и число нажатий
+# проверить по снимкам: курсор при входе с записью стоит на RESUME GAME; MINI GAME — последний пункт кольца (► от NEW GAME обходит RESUME, LOAD, SCRAP BOOK, OPTIONS).
+# Ждём в журнале: строка «MENU after_bonus resume=N enabled=1 hidden=0 load=… have=1», потом LOADBACK / загрузка уровня (LOADONE) после ✕ на RESUME GAME. Красный контроль: сборка с -DRESUMEBONUS1152_OLD=1 — enabled=0.
+flag menu
+flag saves
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+wait 2
+shot rb_menu
+press left
+wait 0.5
+press left
+wait 0.5
+shot rb_on_mini
+press cross
+wait 1.5
+shot bonus_menu
+press cross
+wait 1.5
+flag bonusgo
+wait 8
+shot bonus_race
+wait 60
+press triangle
+wait 4
+shot rb_back_in_menu
+press right
+wait 0.5
+shot rb_on_resume
+press cross
+wait 8
+flag svlog
+shot rb_game_loaded
+end

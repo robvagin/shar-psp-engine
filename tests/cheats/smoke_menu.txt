@@ -1,0 +1,45 @@
+# №1104: ввод кодов в OPTIONS главного меню (смоук, flag menu). Не запускался автором (эмулятор мне запрещён) — прогон за дирижёром.
+# Ждём в журнале смоука: строка «CHEAT ok id=1 on=1» (код No Top Speed: L+R зажаты, □ □ □ □), потом «CHEAT fail id=-1 on=0» (✕ ✕ ✕ ✕ — такого кода в выпускной сборке нет),
+# строка UISFX named=cheat_success, затем UISFX named=cheat_fail. Пока L и R зажаты, меню OPTIONS не должно сдвинуться (строка OPT не растёт).
+# Красный контроль: сборка с -DCHEATS1104_OLD=1 — строк CHEAT нет.
+flag menu
+wait 2
+flag feglow -1
+wait 4
+press right
+wait 0.3
+press cross
+wait 2.8
+press right
+wait 0.3
+press cross
+wait 2.8
+press right
+wait 0.3
+press cross
+wait 2.8
+press right
+wait 0.3
+press cross
+wait 2.4
+press l 5.4
+press r 5.4
+wait 0.4
+tap square 0.1
+wait 0.3
+tap square 0.1
+wait 0.3
+tap square 0.1
+wait 0.3
+tap square 0.1
+wait 0.6
+tap cross 0.1
+wait 0.3
+tap cross 0.1
+wait 0.3
+tap cross 0.1
+wait 0.3
+tap cross 0.1
+wait 0.8
+shot cheat_menu
+end

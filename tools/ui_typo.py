@@ -54,7 +54,7 @@ HINT_SPLIT = [
     dict(id='hints_wardrobe', title='Подписи кнопок · гардероб', why='№695: Accept и Back гардероба — как у будки (значения будки без сдвига dx: у будки он под её раскладку)', screens=('wardrobe',), **_HK),
     # Роб 17.10 вечер («везде ли обновлены шрифты… accept и cancel старый шрифт»): экраны настроек (OPTIONS, звук, ролики; в паузе — OPTIONS, звук,
     # SETTINGS) не входили ни в одну группу — подписи шли шрифтом диска строчными «Accept / Back». Теперь как у паузы. UI_TYPO_HINTS_MENU_OLD=1 — без группы
-    *([] if os.environ.get('UI_TYPO_HINTS_MENU_OLD') == '1' else [dict(id='hints_menu', title='Подписи кнопок · настройки', why='✕ Accept и △ Back экранов OPTIONS, звука, титров, роликов (главное меню и пауза)', screens=('options', 'sound', 'viewcredits', 'viewmovies', 'pauseoptions', 'pausesound', 'pausesettings', 'pausecamera', 'pausegame', 'pausepicture', 'pausecartoon'), inherit='hints_pause', **_HK)]),   # №777: подстраницы SETTINGS
+    *([] if os.environ.get('UI_TYPO_HINTS_MENU_OLD') == '1' else [dict(id='hints_menu', title='Подписи кнопок · настройки', why='✕ Accept и △ Back экранов OPTIONS, звука, титров, роликов (главное меню и пауза)', screens=('options', 'sound', 'viewcredits', 'viewmovies', 'pauseoptions', 'pausesound', 'pausesettings', 'pausecamera', 'pausegame', 'pausepicture', 'pausecartoon') + (() if os.environ.get('SCRAPFONT1121_OLD') == '1' else ('scrapbook', 'scrapcontents', 'scrapstats', 'missiongallery', 'skingallery', 'vehiclegallery')), inherit='hints_pause', **_HK)]),   # №1121: Accept / Back альбома SCRAP BOOK   # №777: подстраницы SETTINGS
     dict(id='hints_phone', title='Подписи кнопок · будка', why='Back экрана телефонной будки (раньше настроить было нельзя)', screens=('phone',), **_HK),
 ]
 HINT_ONE = [dict(id='hints', title='Подписи кнопок', why='✕ Accept, △ Back, Continue — одна грань на всех экранах меню',
@@ -114,7 +114,7 @@ GROUPS = [
          screens=('mmhints',), sel=[('Back2.pag', '*'), ('Accept2.pag', '*')], kind='face'),
     dict(id='hints_minipause', title='Подписи кнопок · пауза бонус-режима', why='✕ Accept паузы бонус-гонки (угол как у паузы PS2, правка 11.10)', screens=('minipause',), sel=[('Accept.pag', '*')], kind='face', corner=True, icons=True, inherit='mini_pause'),
     dict(id='mini_pause', title='Бонус: пауза', why='правка 500: PAUSE MENU, CONTINUE и QUIT GAME мини-игры',
-         screens=('minipause',), sel=[('Pause.pag', '*'), ('MiniPause.pag', '*'), ('Accept.pag', '*')], kind='face', pitch=True),
+         screens=('minipause',), sel=[('Pause.pag', '*'), ('MiniPause.pag', '*')] + ([('Accept.pag', '*')] if os.environ.get('BONUSUI1145_OLD') == '1' else []), kind='face', pitch=True),   # №1145: подпись ✕ Accept — своя группа hints_minipause (грань паузы основной игры на неё не переходит)
     # недоработки, найденные проходом по кадрам (10.10): тексты без группы, настроить которые было нельзя — группы без наследования (без ключей в json пакеты те же)
     dict(id='bpause_items', title='Пауза бонус-режима: пункты', why='CONTINUE / QUIT GAME паузы бонус-гонки (страница PauseMission.pag; в группе «Пункты паузы» их нет, чтобы не менять её)', screens=('minipause',), sel=[('PauseMission.pag', '*')], kind='face', pitch=True),
     dict(id='ms_title', title='MISSION SELECT: заголовок', why='название экрана над списком миссий', screens=('missionselect',), sel=[('MissionSelect.pag', 'MissionSelectTitle')], kind='face'),
@@ -315,6 +315,17 @@ def load(path=None):
     pn = (cfg.get('groups') or {}).get('phone_name')
     if pn and 'wardrobe_name' not in cfg['groups'] and os.environ.get('WARDROBE_TYPO_OLD') != '1':
         cfg['groups']['wardrobe_name'] = {k: v for k, v in pn.items() if k not in ('dx', 'dy')}
+    # №1145 (Роб 02.11: «бонус-игра: интерфейс старым шрифтом, сделай как в основной игре»): пауза бонус-гонки берёт грани паузы основной игры — заголовок PAUSE MENU гранью
+    # заголовка паузы (pause_title, толстые мультяшные буквы), CONTINUE / QUIT GAME гранью и шагом пунктов паузы (pause_items). Значения берутся из панели Роба каждый раз заново,
+    # поэтому правка паузы основной игры уходит и в бонус. Подпись ✕ Accept (hints_minipause) своя, не трогается. BONUSUI1145_OLD=1 — прежние группы mini_pause / bpause_items
+    gs = cfg.get('groups') or {}
+    if os.environ.get('BONUSUI1145_OLD') != '1':
+        pt, pit = gs.get('pause_title'), gs.get('pause_items')
+        if pt and pt.get('face'):
+            gs['mini_pause'] = {k: v for k, v in pt.items() if k in ('face', 'dy')}
+            if 'hints_minipause' not in gs and (gs.get('hints_pause') or {}).get('face'): gs['hints_minipause'] = dict(gs['hints_pause'])
+        if pit and pit.get('face'):
+            gs['bpause_items'] = {k: v for k, v in pit.items() if k in ('face', 'pitch', 'dy')}
     return cfg if ((cfg.get('groups') or {}) or (cfg.get('elements') or {})) else None   # №574: бывают только настройки отдельных элементов
 
 

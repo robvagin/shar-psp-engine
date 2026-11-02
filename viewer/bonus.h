@@ -54,6 +54,18 @@ static inline int brCountdownDigit(float remaining) {
 #ifndef BR_DNF_S
 #define BR_DNF_S 20.f        // observer native: ~20s from first winner, or earlier if all finish
 #endif
+#ifndef BONUS_ROADS_OLD
+#define BONUS_ROADS_OLD 0    // №1116: 1 — соперники по плотному пути порта (nav.py), как до правки; 0 — по дорогам трассы (хвост BRD1 файла .bns)
+#endif
+#ifndef AIAI1147_OLD
+#define AIAI1147_OLD 0       // №1147: 1 — соперники проходят сквозь друг друга (e.noNpcCollide, прежнее решение g07b); 0 — удары машина-машина между всеми, как у игрока
+#endif
+#ifndef BR_STUCK_MOVE
+#define BR_STUCK_MOVE 15.f   // №1147: «застряла» — нет продвижения BR_STUCK_S с И сдвиг меньше стольких метров; едущая по извилистой дороге (прямая до чекпойнта растёт) не застряла
+#endif
+#ifndef BR_STUCK_LONG
+#define BR_STUCK_LONG 30.f   // №1147: ... но без продвижения столько секунд, даже едучи (кружит по кругу, не берёт точку) — тоже возврат
+#endif
 #ifndef BR_STUCK_S
 #define BR_STUCK_S 6.f       // ПРАВИЛО ПОРТА: соперник без продвижения по гонке столько секунд — на свой путь впереди
 #endif
@@ -136,22 +148,64 @@ enum { BNS_HZ_TRAP = 1, BNS_HZ_LAUNCH = 2, BNS_HZ_LIGHT = 3 };
 #ifndef BR_LAUNCH_OLD
 #define BR_LAUNCH_OLD 0
 #endif
+// ---- правка Роба 1109 (сверка с оригиналом, круг 7, g03-aicars; supersprintmanager). Каждое — под своим выключателем (=1 — прежнее поведение)
+//   BR_SEQ_OLD: список чекпойнтов круга — как у оригинала, с повторами (b02 и b07: 2,3,4,5,6,3,8,9,1; b05: …,10,7,3,11,1; обратный ход — свои списки), финиш последним
+//   BR_CHEAT_OLD: чекпойнт засчитывается при ВХОДЕ в объём любого чекпойнта по его номеру; не тот номер (и не предыдущий) — «читер»: возврат на предыдущий шаг, круг без
+//     финиша не засчитывается, пока не пройдёт нужный; прежнее — только объём следующего чекпойнта, без возврата
+//   BR_POSDIST_OLD: место при равных кругах и шаге — по расстоянию до следующего чекпойнта ПО ПУТИ (плотный путь хода), меньше — впереди; прежнее — доля прямой между чекпойнтами
+#ifndef BR_SEQ_OLD
+#define BR_SEQ_OLD 0
+#endif
+#ifndef BR_CHEAT_OLD
+#define BR_CHEAT_OLD 0
+#endif
+#ifndef BR_CHEAT_AI
+#define BR_CHEAT_AI 0   // 1 — правило «читера» и у соперников ИИ (их путь заходит в чужие объёмы: возвраты)
+#endif
+#ifndef BR_POSDIST_OLD
+#define BR_POSDIST_OLD 0
+#endif
 #define BR_NITRO_CHARGES 3
 #define BR_HORN_KICK 10.f        // м/с вдоль курса за одно нажатие
 #define BR_HORN_GAP_S 0.5f
 #ifndef BR_AIHORN3_OLD
 #define BR_AIHORN3_OLD 0   // круг 3 (проверка g07b): 1 — ИИ может гудеть с первой секунды и решает каждый кадр (прежнее)
 #endif
+#ifndef BR_LAPLIST_OLD
+#define BR_LAPLIST_OLD 0   // круг 7 (P17-16): 1 — прежний порядок чекпойнтов (по возрастанию, без повторов b02, b05, b07)
+#endif
+int brLapList(int tr, int reverse, int *out, int cap);
+#ifndef BR_GONITRO1_OLD
+#define BR_GONITRO1_OLD 0  // круг 6 (P17-20): на «GO!» гудят до (ИИ − 1) машин; при одном ИИ — никто. 1 — прежнее (при одном ИИ он гудел с шансом 3/7)
+#endif
 #define BR_AI_HORN_GAP_S 10.f
 #define BR_AI_HORN_CHECK_S 2.f
 #define BR_DNF10_S 10.f
 #define BR_RESPAWN_NITRO_S 15.f
 #define BR_RESPAWN_WRENCH_S 30.f
+// круг 6 (P04 B3): ИИ бонус-гонки, перевёрнутый или разбитый, ставится на колёса на месте через 1 с. «Перевёрнутый» = вектор «вверх» кузова отклонён от вертикали больше чем на 75°,
+// то есть его вертикальная составляющая не выше cos75° = 0,258819; скорость не учитывается. Кватернион q = (w, x, y, z); вертикальная составляющая оси «вверх» = 1 − 2(x² + z²).
+#ifndef BR_AIFLIP_UPY
+#define BR_AIFLIP_UPY 0.258819f
+#endif
+#ifndef BR_AIFLIP_S
+#define BR_AIFLIP_S 1.f
+#endif
+static inline float brUpY(const float q[4]) { return 1.f - 2.f * (q[1] * q[1] + q[3] * q[3]); }
+// один кадр счётчика: t — секунды наклона (или с момента разрушения); -> 1, когда пора ставить на колёса. Вышла из наклона и не разбита — счёт с нуля
+static inline int brAiFlipStep(float upY, int destroyed, float *t, float dt) {
+  if (upY <= BR_AIFLIP_UPY || destroyed) *t += dt; else *t = 0.f;
+  if (*t >= BR_AIFLIP_S) { *t = 0.f; return 1; }
+  return 0;
+}
 typedef struct { int state, obj; float f, hold, last, fps; } BrTrap;   // ловушка: BR_TRAP_*, объект ANM1, кадр, выдержка
 
 typedef struct {
   const BnsHdr *h; const BnsCp *cp; const BnsStart *st; const BnsWp *wpf, *wpr; const BnsPath *pf, *pr;
   const BnsPick *pk; const BnsHaz *hz; unsigned npick, nhaz;   // версия 2; в версии 1 — 0
+  // №1116 (сверка g03-aicars): дороги трассы — хвост файла (блок TRF1: перекрёстки, дороги, полосы; tools/bonus/roads.py), u32 размер, 'BRD1'.
+  // Соперники ведутся по ним от точки WPR/WPL к следующей, как у оригинала (WaypointAI по Road/RoadSegment). NULL — хвоста нет (старый файл)
+  const void *rd; unsigned rdSize;
 } BnsTrack;
 // разбор файла BNS1 (данные живут у вызывающего). 0 — ок, < 0 — ошибка (-1 магия/версия, -2 размер, -3 числа вне пределов)
 int bnsParse(BnsTrack *t, const void *data, unsigned size);
@@ -166,8 +220,10 @@ typedef struct {
   float lapT, bestLap, totalT, finishT;
   float prog;          // мера места: круги * ncp + пройдено + доля пути к следующему
   int cps;             // всего пройдено чекпойнтов (наблюдение)
-  float stuckT, lastPos[3], bestProg; int respawnN, respawnCp;   // возвратов подряд у того же чекпойнта
+  float stuckT, stuckLong, anchor[3], lastPos[3], bestProg; int respawnN, respawnCp;   // возвратов подряд у того же чекпойнта
   int deathN, deathCp;   // DEATH подряд без нового чекпойнта (соперник ИИ, BR_DEATH_AI_N, brDeath)
+  int cheated; unsigned inMask;   // 1109: отправлен назад за чужой чекпойнт; маска объёмов чекпойнтов, в которых машина была в прошлый кадр (вход = переход 0 -> 1)
+  int step; float dist;           // 1109: пройдено шагов круга (для места) и путь до следующего чекпойнта, м
 } BrRacer;
 
 typedef struct {
@@ -192,6 +248,7 @@ typedef struct {
   int nitro[BR_MAX]; float nitroGap[BR_MAX], aiHornT[BR_MAX], aiChkT[BR_MAX]; uint32_t rng; unsigned nHorn;   // сверка g07b: заряды нитро, паузы гудка, зерно выбора ИИ, счётчик гудков
   float dnfT; int dnfOn;                       // сверка g07b: отсчёт 10 с до DNF (идёт, когда dnfOn)
   int trapIn[BR_MAXTRAP + 2];                  // сверка g07b: лидер был в датчике k прошлый кадр (границы входа)
+  const Car *peer[BR_MAX]; int npeer;          // №1147: машины гонки (индекс — место в гонке: 0 игрок, 1.. соперники), ставит вызывающий brSetPeers каждый кадр; нужны, чтобы не ставить машину на другую
 } BonusRace;
 enum { BR_TRAP_IDLE = 0, BR_TRAP_RISE, BR_TRAP_HOLD, BR_TRAP_LOWER };
 
@@ -207,6 +264,10 @@ int brPoints(int place);
 #define BONUS_CAMERA_PS2_OLD 0
 #endif
 // Measured b01 lens; vertical field preserved on 16:9 PSP. Other tracks retain authored-fit policy.
+#ifndef BONUSTOP_SV_OLD
+#define BONUSTOP_SV_OLD 0   // №1109 (камера): 1 — по таблице оригинала только трасса 1, остальные трассы камерой по рамке трассы (правило порта), как в TEST84
+#endif
+int brTopIsPs2(const BnsTrack *t);   // вид сверху берётся из таблицы оригинала (трасса 1; с №1109 — все семь)
 void brTopLens(const BnsTrack *t, float *fovyDeg, float *nearZ, float *farZ);
 // камера сверху: глаз и взгляд по направлению sprint_camShape, расстояние — чтобы прямоугольник трассы (bbox) вошёл в кадр
 // с вертикальным углом fovyDeg и соотношением aspect (ПРАВИЛО ПОРТА: дальность sprint_camShape 2212 м при zfar 1000 —
@@ -231,6 +292,12 @@ void brKeepAlive(Car *k);
 int brGoal(const BonusRace *b, int i);
 // третий возврат подряд у того же чекпойнта — прямо на остановку в его объёме (ПРАВИЛО ПОРТА: соперник не застревает навсегда)
 int brRespawn(BonusRace *b, int i, const float pos[3], float out[3], float *h);
+// №1147 (правка Роба 1147: удары между соперниками, пересечений кузовов 0): возврат на путь и DEATH не ставят машину на другую — точка сдвигается вперёд по пути (до BR_CLEAR_TRY точек),
+// пока кузов не освободится; машины гонки — brSetPeers. AIAI1147_OLD = 1 — ставит как было
+void brSetPeers(BonusRace *b, const Car *const *cars, int n);
+int brSpotFree(const BonusRace *b, int self, const float p[3], float h);   // 1 — кузов машины self в точке p курсом h не задевает чужих (зазор BR_CLEAR_GAP)
+#define BR_CLEAR_TRY 10
+#define BR_CLEAR_GAP .6f
 // Водитель трассы (09.10, вторая версия ИИ бонус-игры; прежний — водитель машин миссий viewer/msncar.c). ПРАВИЛО ПОРТА целиком:
 //   * едет по плотному пути круга (tools/bonus/nav.py) целиком, а не до следующей остановки: видит повороты за чекпойнтом;
 //   * профиль скорости на точку пути: поворот — sqrt(a_бок * R) по радиусу через ±2 точки (8 м), a_бок как у водителя машин миссий

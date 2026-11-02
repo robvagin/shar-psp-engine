@@ -14,6 +14,13 @@
 #define DRIP_POOL_A 50.f
 #define DRIP_W_K .28f      // радиус столба — доля ширины квада данных (струя 7,9 м -> 1,1 м)
 #define DRIP_D 90.f        // дальность
+// №1131 (Роб 02.11: «капли кислоты сверху на АЭС — полупрозрачные цилиндры, надо сделать более заметными, более яркими»): по данным оригинала капля — квад-билборд с шейдерами goop (полоса-кромка внизу текстуры
+// 32×32, растянута на 7,9 × 15,2 м у «deathgoop» и 3 × 10 м у труб), goo (всплеск 64×64) и свечение glow2 (круглое пятно), цвет данных чисто зелёный, цикл клипа капли 2,5 с (75 кадров по 30). Текстур у нас в
+// этом месте нет (№770 заменил квады векторным столбом ради кадра), поэтому яркость делаем тем же приёмом, без текстур, одним вызовом: столб плотнее и ярче (альфа сверху 150 вместо 70, снизу 70 вместо 22),
+// светлая сердцевина, три падающие капли-штриха на столб по циклу 2,5 с (падение с ускорением 9,8 м/с², хвост тянется со скоростью), пятно на полу плотнее и мягкое свечение вокруг него (центр непрозрачнее,
+// к краю 0). Числа яркости, сердцевины и размера капель наши, не из оригинала. ACID1131_OLD=1 / «flag acid1131old 1» — как было (столб 70/22, пятно 50, без капель)
+#include "acid1131.h"
+static int acid1131Old = ACID1131_OLD;
 static int dripOn = !DRIP770_OLD;
 static struct { float x, z, top, r, gy; uint32_t rgb; } dripC[DRIP_MAX]; static unsigned dripN; static int dripGround;
 static float dripPt[DRIP_MAX * 4][2]; static unsigned dripPtN;
@@ -43,22 +50,43 @@ static void dripDraw(float ex, float ey, float ez, int inR) {
   if (!dripOn || !dripN || inR) return;
   if (!dripGround && haveCol) { dripGround = 1; for (unsigned k = 0; k < dripN; k++) { float y_, n_[3]; dripC[k].gy = colGround(&world, dripC[k].x, dripC[k].z, dripC[k].top - .2f, dripC[k].top - 40.f, &y_, n_) ? y_ : dripC[k].top - 15.f; } }
   typedef struct { unsigned c; float x, y, z; } DV;
-  unsigned b0 = ggVbUsed, nv = 0; DV *q = (DV *)ggVbAlloc(dripN * (6 + 16 * 3) * sizeof(DV)); if (!q) return;
+  const int ac = !acid1131Old;
+  const float tAcid = (float)(sceKernelGetSystemTimeLow() & 0xFFFFFFu) * 1e-6f;   // с (оборот 16,7 с — по циклу 2,5 с не виден)
+  unsigned b0 = ggVbUsed, nv = 0; DV *q = (DV *)ggVbAlloc(dripN * (6 + 6 + 6 * ACID_DROPS + 2 * 16 * 3) * sizeof(DV)); if (!q) return;
   for (unsigned k = 0; k < dripN; k++) {
     float dx = dripC[k].x - ex, dz = dripC[k].z - ez, d = sqrtf(dx * dx + dz * dz); if (d > DRIP_D) continue;
     float fade = d > DRIP_D - 15.f ? (DRIP_D - d) / 15.f : 1.f, r = dripC[k].r, rx = d > .01f ? -dz / d * r : r, rz = d > .01f ? dx / d * r : 0.f;   // поперёк взгляда
     if (d < r + .5f) fade *= (d - r * .5f) / (r * .5f + .5f) > 0.f ? (d - r * .5f) / (r * .5f + .5f) : 0.f;   // камера внутри столба — гаснет (как конус у глаза)
     if (fade <= 0.f) continue;
-    unsigned cT = ((unsigned)(DRIP_A * fade + .5f) << 24) | dripC[k].rgb, cB = ((unsigned)(DRIP_A_LOW * fade + .5f) << 24) | dripC[k].rgb;
+    const unsigned rgbC = ac ? 0x3CFF5Au : dripC[k].rgb;   // ABGR: (90, 255, 60) ярче и зеленее прежнего (110, 255, 80)
+    unsigned cT = ((unsigned)(acidAlphaTop(!ac) * fade + .5f) << 24) | rgbC, cB = ((unsigned)(acidAlphaLow(!ac) * fade + .5f) << 24) | rgbC;
     float T = dripC[k].top, B = dripC[k].gy + .02f, X = dripC[k].x, Z = dripC[k].z;
     float P[4][3] = {{X - rx, T, Z - rz}, {X + rx, T, Z + rz}, {X - rx, B, Z - rz}, {X + rx, B, Z + rz}};
     static const unsigned char tri[6] = {0, 1, 2, 2, 1, 3};
     for (int m = 0; m < 6; m++) { DV *o = &q[nv++]; int c_ = tri[m]; o->c = c_ < 2 ? cT : cB; o->x = P[c_][0]; o->y = P[c_][1]; o->z = P[c_][2]; }
-    unsigned cp = ((unsigned)(DRIP_POOL_A * fade + .5f) << 24) | dripC[k].rgb; float pr = r * 1.4f;
+    if (ac) {   // сердцевина: узкий светлый столб (0,3 радиуса) и капли-штрихи
+      float cx = rx * .3f, cz = rz * .3f; unsigned kT = ((unsigned)(190.f * fade + .5f) << 24) | 0x96FFBEu, kB = ((unsigned)(95.f * fade + .5f) << 24) | 0x96FFBEu;
+      float Q[4][3] = {{X - cx, T, Z - cz}, {X + cx, T, Z + cz}, {X - cx, B, Z - cz}, {X + cx, B, Z + cz}};
+      for (int m = 0; m < 6; m++) { DV *o = &q[nv++]; int c_ = tri[m]; o->c = c_ < 2 ? kT : kB; o->x = Q[c_][0]; o->y = Q[c_][1]; o->z = Q[c_][2]; }
+      for (int j = 0; j < ACID_DROPS; j++) {
+        float yh, len; if (!acidDropAt(tAcid, j, (int)k, T, B, &yh, &len)) continue;
+        float wd = .1f + .1f * r, ddx = d > .01f ? -dz / d * wd : wd, ddz = d > .01f ? dx / d * wd : 0.f, yt = yh + len; if (yt > T) yt = T;
+        unsigned dH = ((unsigned)(235.f * fade + .5f) << 24) | 0xAAFFD2u, dT = (0u << 24) | 0xAAFFD2u;   // голова яркая, хвост прозрачный
+        float D[4][3] = {{X - ddx, yt, Z - ddz}, {X + ddx, yt, Z + ddz}, {X - ddx, yh, Z - ddz}, {X + ddx, yh, Z + ddz}};
+        for (int m = 0; m < 6; m++) { DV *o = &q[nv++]; int c_ = tri[m]; o->c = c_ < 2 ? dT : dH; o->x = D[c_][0]; o->y = D[c_][1]; o->z = D[c_][2]; }
+      }
+    }
+    unsigned cp = ((unsigned)(acidAlphaPool(!ac) * fade + .5f) << 24) | rgbC; float pr = r * (ac ? 1.6f : 1.4f);
     float dxp = ex - X, dyp = ey - B, dzp = ez - Z, dd = sqrtf(dxp * dxp + dyp * dyp + dzp * dzp), kk = dd > .3f ? .15f / dd : .5f; if (kk > .5f) kk = .5f;   // пятно ближе к глазу (не тонет в полу)
     for (int j = 0; j < 16; j++) { float a0 = 6.2831853f * j / 16.f, a1 = 6.2831853f * (j + 1) / 16.f;
       float Pp[3][3] = {{X, B, Z}, {X + pr * cosf(a0), B, Z + pr * sinf(a0)}, {X + pr * cosf(a1), B, Z + pr * sinf(a1)}};
       for (int m = 0; m < 3; m++) { DV *o = &q[nv++]; o->c = cp; o->x = Pp[m][0] + (ex - Pp[m][0]) * kk; o->y = Pp[m][1] + (ey - Pp[m][1]) * kk; o->z = Pp[m][2] + (ez - Pp[m][2]) * kk; } }
+    if (ac) {   // мягкое свечение вокруг пятна: центр плотнее, к краю прозрачное (вершинный градиент, тот же вызов)
+      float hr = r * 3.f; unsigned hc = ((unsigned)(90.f * fade + .5f) << 24) | 0x3CFF3Cu, he = 0x3CFF3Cu;
+      for (int j = 0; j < 16; j++) { float a0 = 6.2831853f * j / 16.f, a1 = 6.2831853f * (j + 1) / 16.f;
+        float Pp[3][3] = {{X, B, Z}, {X + hr * cosf(a0), B, Z + hr * sinf(a0)}, {X + hr * cosf(a1), B, Z + hr * sinf(a1)}};
+        for (int m = 0; m < 3; m++) { DV *o = &q[nv++]; o->c = m ? he : hc; o->x = Pp[m][0] + (ex - Pp[m][0]) * kk; o->y = Pp[m][1] + (ey - Pp[m][1]) * kk; o->z = Pp[m][2] + (ez - Pp[m][2]) * kk; } }
+    }
   }
   if (!nv) return;
   ggVbWriteback(b0);

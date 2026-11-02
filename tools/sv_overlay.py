@@ -61,11 +61,14 @@ def srf1(col):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--level', type=int, required=True); ap.add_argument('--base', required=True)
-    ap.add_argument('--old', required=True); ap.add_argument('--new', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--old', default=None); ap.add_argument('--new', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--surf-only', action='store_true', help='круг 6: только файл поверхности; --out — сам файл surf-l<N>.shr (правило tools/ship_rules.txt, tools/surf_make.sh)')
     a = ap.parse_args()
+    if not a.surf_only and not a.old: ap.error('нужен --old (или --surf-only)')
     if os.environ.get('SV_OVERLAY_OLD') == '1': print('SV_OVERLAY_OLD=1: ничего не пишу'); return
-    out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-    base, old, new = (Path(p).read_bytes() for p in (a.base, a.old, a.new))
+    out = Path(a.out)
+    if not a.surf_only: out.mkdir(parents=True, exist_ok=True)
+    base, new = (Path(p).read_bytes() for p in (a.base, a.new)); old = new if a.surf_only else Path(a.old).read_bytes()
     sb, so, sn = sections(base), sections(old), sections(new)
     rep = [f'уровень {a.level}: основа {a.base} ({len(base)} Б)']
 
@@ -77,6 +80,7 @@ def main():
     rep.append(f'COL1: треугольников основа {nB} / новый {nN}; таблица треугольников {"ПОБАЙТНО ОДИНАКОВА" if tri_same else "РАЗНАЯ"}')
     if not tri_same:
         rep.append('ОТКАЗ по поверхности: порядок треугольников разный — файл рядом был бы неверным'); surf = None
+        if a.surf_only: raise SystemExit('\n'.join(rep))
     else:
         bad = [v for v in set(bytes_) if (v & 0x7f) > 7]
         if bad: raise SystemExit(f'значения поверхности вне 0..7|0x80: {bad}')
@@ -85,6 +89,7 @@ def main():
             n = (v & 7) | (8 if v & 0x80 else 0)
             nib[i >> 1] |= n << ((i & 1) * 4)
         surf = b'SRFS' + struct.pack('<3I', 1, ntri, fingerprint(colB)) + bytes(nib)
+        if a.surf_only: out.parent.mkdir(parents=True, exist_ok=True); out.write_bytes(surf); print('\n'.join(rep)); return
         (out / f'surf-l{a.level}.shr').write_bytes(surf)
         rep.append(f'surf-l{a.level}.shr: {len(surf)} Б (по полубайту на треугольник; в COL1 тот же блок SRF1 занял бы {16 + (ntri + 15) // 16 * 16} Б); '
                    f'отпечаток COL1 {fingerprint(colB):08x}; COL1 основы НЕ тронут')

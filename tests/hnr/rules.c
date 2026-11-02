@@ -67,6 +67,7 @@ int main(void) {
   check("взрыв машины ИИ миссии игроком: +25", near(heat, .25f), heat * 100.f, 25.f);
   gameHnrBoom(&G); check("тот же взрыв второй раз — нет", near(heat, .25f), heat * 100.f, 25.f);
   fresh(); G.boomSeen = svBoom.seq; svBoom.kind = 3; svBoom.seq++; gameHnrBoom(&G); check("взрыв полицейской: не двигает шкалу", near(heat, 0.f), heat * 100.f, 0.f);
+  fresh(); G.boomSeen = svBoom.seq; svBoom.kind = 5; svBoom.byPlayer = 1; svBoom.seq++; gameHnrBoom(&G); check("взрыв цели destroy / dump (иммунитет): не двигает шкалу", near(heat, 0.f), heat * 100.f, 0.f);
   { float t1, t2; gameHnrNewLevel(&G); gameHnrChaseStart(&t1, 1.f / 60.f); gameHnrChaseStart(&t2, 1.f / 60.f);
     check("первая погоня уровня: 0,72 с", near(t1, .72f + 1.f / 60.f), t1, .72f + 1.f / 60.f);
     check("вторая погоня уровня: в ближайшем кадре", near(t2, 1.f / 60.f), t2, 1.f / 60.f); }

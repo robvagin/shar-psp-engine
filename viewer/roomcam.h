@@ -35,7 +35,7 @@ typedef struct {
 } RoomCam;
 // сверка g06 (02.11.2026): в конце состояния — стек вошедших камер, поза прошлого кадра для переходов (g06-camera:16,19,25,36), выход
 typedef struct { int cur; float eye[3], look[3], t; unsigned in; int newWins; int want; float wantT; int switchOld; float inT[ROOM_CAMS];
-  int stk[8], nstk, firstDone, trOn, exiting; float trT, trFromE[3], trFromL[3], outE[3], outL[3], exitT, exitE[3], exitL[3]; float lastP[3]; int hasP; } RoomCamState;   // switchOld: 1 — правило задержки 172 до школы (файл roomcamswitchold)   // want/wantT — камера, на которую переходим, и сколько ждём (правка 172)   // cur: камера прошлого кадра (-1 — ходьба); t — место на рельсе
+  int stk[8], nstk, firstDone, trOn, exiting; float trT, trFromE[3], trFromL[3], outE[3], outL[3], exitT, exitE[3], exitL[3]; float lastP[3]; int hasP; int xInit; float xE[3], xL[3], xR[3], xLv[3]; float trRate; } RoomCamState;   // switchOld: 1 — правило задержки 172 до школы (файл roomcamswitchold)   // want/wantT — камера, на которую переходим, и сколько ждём (правка 172)   // cur: камера прошлого кадра (-1 — ходьба); t — место на рельсе
 // newWins (правка 186, комнаты): камера, в чей триггер Гомер только что вошёл, берёт кадр, даже если он ещё в триггере текущей
 // (близнец v17_house_cam: оригинал переключил на int_sh_path2, когда Гомер был в обоих); in — маска «внутри» прошлого кадра
 
@@ -64,8 +64,18 @@ int roomCamAllows(const RoomCam *c, int inCar, float speed);
 #ifndef CUT1085_OLD
 #define CUT1085_OLD 0   // №1085: 1 — первая камера после загрузки/переноса героя включается переходом 1 с, как в TEST82
 #endif
+#ifndef ROOMCAM_RATE_SV_OLD
+#define ROOMCAM_RATE_SV_OLD 0   // круг 7 (P18-02, P18-03, P08:14): 1 — скорость перехода между камерами 0,6 за секунду у всех (как в TEST84); 0 — у каждой камеры своя из данных
+#endif
+#ifndef ROOMCAM_EXIT_SV_OLD
+#define ROOMCAM_EXIT_SV_OLD 0   // круг 6 (СВЕРКА_КАМЕРА 3.5, P08:14): 1 — возврат к камере ходьбы за 0,15 с (e^(-t/0,15)), как в TEST83
+#endif
+#ifndef ROOMCAM_FOVCAR_SV_OLD
+#define ROOMCAM_FOVCAR_SV_OLD 0   // круг 6 (СВЕРКА_КАМЕРА 5.1, P08 Д7): 1 — авто-зум статичной камеры для машины по расстоянию (в оригинале он только у одной из чит-камер)
+#endif
 void roomCamRestart(RoomCamState *s);   // №1085: герой поставлен заново (загрузка, перенос, вход/выход из помещения) — первая камера включается срезом
-int roomCamCut(const RoomCam *c);   // срез на входе и выходе: CutInOut статичной / бит 2 рельса / скорость перехода ≥ 1 (g06-camera:25)
+int roomCamCut(const RoomCam *c);
+float roomCamTransRate(const RoomCam *c);   // круг 7: скорость перехода камеры (доля времени в секунду = 30 × скорость данных): статичная — поле данных (0,04), рельс — x осевой игры, если > 0,001, иначе 0,02   // срез на входе и выходе: CutInOut статичной / бит 2 рельса / скорость перехода ≥ 1 (g06-camera:25)
 float roomCamFovFromH(float hdeg);  // градусы по горизонтали кадра 4:3 -> вертикаль 4:3 (как roomCamFovY)
 // угол статичной камеры для машины (g06-camera:12): ближе 10 м максимальный (данные; нет — 90°), дальше 25 м минимальный 20°, между линейно, запаздывание 0,022 за 16 мс.
 // *cur — текущий горизонтальный угол (0 — начать с цели); возврат — вертикаль 4:3. Рельс — всегда максимальный

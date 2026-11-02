@@ -2,6 +2,7 @@
 #include <string.h>
 #include <math.h>
 #include "bonus.h"
+#include "camlaw.h"
 
 _Static_assert(sizeof(BnsHdr) == 128, "BnsHdr 128 B");
 _Static_assert(sizeof(BnsPick) == 32, "BnsPick 32 B (tools/bonus/export.py PK_FMT)");
@@ -25,6 +26,11 @@ int bnsParse(BnsTrack *t, const void *data, unsigned size) {
   t->wpf = (const BnsWp *)p; p += h->nwpf * sizeof(BnsWp); t->wpr = (const BnsWp *)p; p += h->nwpr * sizeof(BnsWp);
   t->pf = (const BnsPath *)p; p += h->npathf * sizeof(BnsPath); t->pr = (const BnsPath *)p; p += h->npathr * sizeof(BnsPath);
   t->pk = (const BnsPick *)p; t->npick = npk; p += npk * sizeof(BnsPick); t->hz = (const BnsHaz *)p; t->nhaz = nhz;
+  // №1116: хвост BRD1 — блок дорог трассы (размер перед меткой); начало блока выровнено по 16 при экспорте
+  if (size >= need + 8 && !memcmp((const char *)data + size - 4, "BRD1", 4)) {
+    uint32_t rs; memcpy(&rs, (const char *)data + size - 8, 4);
+    if (rs >= 256 && rs <= size - 8 - need) { t->rd = (const char *)data + size - 8 - rs; t->rdSize = rs; }
+  }
   for (unsigned i = 0; i < nhz; i++) for (int k = 0; k < 3; k++) if (!(t->hz[i].h[k] > 0.f && t->hz[i].h[k] < 500.f)) return -3;
   for (unsigned i = 0; i < h->ncp; i++) for (int k = 0; k < 3; k++) if (!(t->cp[i].h[k] > 0.f && t->cp[i].h[k] < 500.f)) return -3;
   return 0;
@@ -42,6 +48,17 @@ int bnsInside(const BnsCp *c, const float p[3], float grow) {
 
 static float d2xz(const float *a, const float *b) { float x = a[0] - b[0], z = a[2] - b[2]; return x * x + z * z; }
 
+// Список номеров чекпойнтов круга трассы tr (1..7) в порядке прохода, финиш (номер 1) последним; reverse — обратный ход. -> длина или 0. Те же списки в tools/bonus/track.py (LAP_FWD)
+int brLapList(int tr, int reverse, int *out, int cap) {
+  static const signed char L[8][14] = { {0}, {2, 3, 4, 5, 6, 7, 8, 1, 0}, {2, 3, 4, 5, 6, 3, 8, 9, 1, 0}, {2, 3, 4, 5, 6, 7, 1, 0}, {2, 3, 4, 5, 6, 7, 1, 0},
+                                         {2, 3, 4, 5, 6, 7, 8, 9, 10, 7, 3, 11, 1, 0}, {2, 3, 4, 5, 6, 7, 1, 0}, {2, 3, 4, 5, 6, 3, 8, 9, 1, 0} };
+  if (tr < 1 || tr > 7) return 0;
+  int n = 0; while (L[tr][n]) n++;
+  if (n > cap) return 0;
+  for (int k = 0; k < n; k++) out[k] = reverse ? (k == n - 1 ? L[tr][n - 1] : L[tr][n - 2 - k]) : L[tr][k];
+  return n;
+}
+
 void brInit(BonusRace *b, const BnsTrack *t, int laps, int reverse, int n, int human) {
   memset(b, 0, sizeof *b);
   b->t = *t; b->laps = laps < BR_LAPS_MIN ? BR_LAPS_MIN : laps > BR_LAPS_MAX ? BR_LAPS_MAX : laps;
@@ -50,6 +67,13 @@ void brInit(BonusRace *b, const BnsTrack *t, int laps, int reverse, int n, int h
   // порядок хода: финиш (номер 1 в данных, cp[0]), дальше по номерам; обратный ход — от последнего к первому
   b->order[0] = 0;
   for (int k = 1; k < b->ncp; k++) b->order[k] = reverse ? b->ncp - k : k;
+  // круг 7 (g07b, P17-16): порядок прохода — список номеров локаторов оригинала, у b02 и b07 номер 3 дважды, у b05 номера 7 и 3 дважды; финиш последним, обратный ход — тот же круг наоборот.
+  // Круг может быть длиннее числа чекпойнтов: ncp здесь — длина круга. Нет списка или номера в данных не те — прежний порядок. BR_LAPLIST_OLD=1 — всегда прежний
+  if (!BR_LAPLIST_OLD && !BR_SEQ_OLD) {   // сведение 1109: g07b (brLapList) и g03 (BR_SEQ_OLD) сделали один и тот же круг — оставлен один, оба выключателя возвращают прежнее
+    int lst[BNS_MAXCP], n = brLapList((int)(t->h->track), reverse, lst, BNS_MAXCP), idx[BNS_MAXCP], ok = n >= 2;
+    for (int k = 0; ok && k < n; k++) { idx[k] = -1; for (unsigned c = 0; c < t->h->ncp; c++) if ((int)t->cp[c].order == lst[k]) idx[k] = (int)c; if (idx[k] < 0) ok = 0; }
+    if (ok && idx[n - 1] == 0) { b->ncp = n; b->order[0] = idx[n - 1]; for (int k = 1; k < n; k++) b->order[k] = idx[k - 1]; }
+  }
   // остановки ИИ на круге — центры чекпойнтов хода по порядку, финиш последним (правило порта: точки WPR/WPL данных лежат
   // внутри плотного пути между ними, tools/bonus/export.py; номера WPR у b05/b07 не идут по кругу)
   b->nwp = 0;
@@ -65,6 +89,7 @@ void brInit(BonusRace *b, const BnsTrack *t, int laps, int reverse, int n, int h
   for (int i = 0; i < b->n; i++) {
     BrRacer *r = &b->r[i]; r->next = b->ncp > 1 ? 1 : 0; r->bestLap = 0.f; r->place = i + 1;
     float h; brStart(b, i, r->lastPos, &h);
+    for (unsigned q = 0; q < t->h->ncp; q++) if (bnsInside(&t->cp[q], r->lastPos, 0.f)) r->inMask |= 1u << q;   // 1109: старт внутри объёма финиша — входа нет
   }
   b->state = BR_COUNT; b->count = BR_COUNT_S;
   for (int i = 0; i < BR_MAX; i++) { b->nitro[i] = BR_NITRO3_OLD ? 0 : BR_NITRO_CHARGES; b->aiHornT[i] = BR_AIHORN3_OLD ? 0.f : BR_AI_HORN_GAP_S; b->aiChkT[i] = 0.f; }   // круг 3: таймер между гудками ИИ стартует с полного значения, первый гудок не раньше 10 с гонки   // сверка g07b P17-14: 3 заряда в начале заезда
@@ -87,9 +112,24 @@ static float progOf(const BonusRace *b, const BrRacer *r, const float p[3]) {
   return (float)(r->lap * b->ncp + passed) + f;
 }
 
+// 1109: путь до следующего чекпойнта по плотному пути хода — от ближней к машине точки отрезка пути между остановками, плюс расстояние до этой точки. Нет пути — по прямой
+static float pathDist(const BonusRace *b, const BrRacer *r, const float p[3]) {
+  int g = r->next == 0 ? b->nwp - 1 : r->next - 1;
+  if (b->npath < 2 || g < 0 || g >= b->nwp) return sqrtf(d2xz(p, b->t.cp[b->order[r->next]].c));
+  int pr = (g + b->nwp - 1) % b->nwp, N = b->npath, i0 = b->stopAt[pr], i1 = b->stopAt[g], len = (i1 - i0 + N) % N;
+  if (len == 0) len = N;
+  int best = 0; float bd = 1e30f;
+  for (int s = 0; s <= len; s++) { const float *q = b->path[(i0 + s) % N].p; float dy = q[1] - p[1], d = d2xz(q, p) + 4.f * dy * dy; if (d < bd) { bd = d; best = s; } }
+  float tot = sqrtf(d2xz(b->path[(i0 + best) % N].p, p));
+  for (int s = best; s < len; s++) tot += sqrtf(d2xz(b->path[(i0 + s + 1) % N].p, b->path[(i0 + s) % N].p));
+  return tot;
+}
+
 static int brAhead(const BrRacer *a, int ia, const BrRacer *b, int ib) {   // a впереди b?
   if (a->finished != b->finished) return a->finished;
   if (a->finished) return a->finishT < b->finishT || (a->finishT == b->finishT && ia < ib);
+  // 1109, как оригинал: круги, потом шаг круга (индекс следующего чекпойнта в списке), потом путь до него — меньше впереди
+  if (!BR_POSDIST_OLD) { if (a->lap != b->lap) return a->lap > b->lap; if (a->step != b->step) return a->step > b->step; if (a->dist != b->dist) return a->dist < b->dist; return ia < ib; }
   return a->prog > b->prog || (a->prog == b->prog && ia < ib);
 }
 unsigned brUpdate(BonusRace *b, const float (*pos)[3], float dt) {
@@ -106,6 +146,9 @@ unsigned brUpdate(BonusRace *b, const float (*pos)[3], float dt) {
     BrRacer *r = &b->r[i]; if (r->finished) continue;
     r->lapT += dt; r->totalT += dt;
     const BnsCp *c = &b->t.cp[b->order[r->next]];
+    // 1109: правило «читера» — у человека. Путь ИИ порта (tools/bonus/nav.py) не оригинальные дороги и местами заходит в объёмы чужих чекпойнтов (b03: объём 7 сразу за стартом,
+    // финиш в начале круга), поэтому соперник ИИ засчитывается по-прежнему: только объём следующего чекпойнта, без возврата (ПРАВИЛО ПОРТА). BR_CHEAT_AI = 1 — и у ИИ
+    if (BR_CHEAT_OLD || (i != b->human && !BR_CHEAT_AI)) {
     if (bnsInside(c, pos[i], b->grow[i])) {
       r->cps++;
       if (r->next == 0) {   // финиш после всех чекпойнтов круга — круг
@@ -116,7 +159,29 @@ unsigned brUpdate(BonusRace *b, const float (*pos)[3], float dt) {
       }
       r->next = (r->next + 1) % b->ncp;
     }
+    } else {
+      // 1109, как оригинал: событие — ВХОД в объём любого чекпойнта (номер данных). Тот, что ждали, — идём дальше (круг, если это финиш и не «читер»). Не тот и не предыдущий
+      // — «читер»: назад на предыдущий шаг, пометка; пока не пройдёт нужный, финиш круг не даёт. Предыдущий чекпойнт повторно не наказывается
+      unsigned now = 0; for (unsigned q = 0; q < b->t.h->ncp; q++) if (bnsInside(&b->t.cp[q], pos[i], b->grow[i])) now |= 1u << q;
+      unsigned enter = now & ~r->inMask; r->inMask = now;
+      for (unsigned q = 0; q < b->t.h->ncp; q++) {
+        if (!(enter & (1u << q)) || r->finished) continue;
+        int num = (int)b->t.cp[q].order, prevStep = (r->next + b->ncp - 1) % b->ncp;
+        int nextNum = (int)b->t.cp[b->order[r->next]].order, prevNum = (int)b->t.cp[b->order[prevStep]].order;
+        if (num != nextNum) { if (!r->cheated && num != prevNum) { r->next = prevStep; r->cheated = 1; } continue; }
+        int was = r->cheated; r->cheated = 0; r->cps++;
+        if (r->next == 0 && !was) {
+          r->lap++; lapMask |= 1u << i;
+          if (r->bestLap <= 0.f || r->lapT < r->bestLap) r->bestLap = r->lapT;
+          r->lapT = 0.f;
+          if (r->lap >= b->laps) { r->finished = 1; r->finishT = b->time; b->finishedN++; if (b->finishedN == 1) b->sinceFirst = 0.f; }
+        }
+        r->next = (r->next + 1) % b->ncp;
+      }
+    }
     r->prog = progOf(b, r, pos[i]);
+    r->step = r->next == 0 ? b->ncp - 1 : r->next - 1;
+    r->dist = BR_POSDIST_OLD ? 0.f : pathDist(b, r, pos[i]);
   }
   // места: доехавшие — по времени финиша, остальные — по мере пути
   for (int i = 0; i < b->n; i++) {
@@ -147,21 +212,15 @@ int brPoints(int place) {   // measured PS2 finish points 4/3/2/1; DNF handled s
   return place >= 1 && place <= 4 ? 5 - place : 0;
 }
 
+int brTopIsPs2(const BnsTrack *t) { return !BONUS_CAMERA_PS2_OLD && (t->h->track == 1 || (!BONUSTOP_SV_OLD && t->h->track >= 2 && t->h->track <= 7)); }
+
 void brTopLens(const BnsTrack *t, float *fovyDeg, float *nearZ, float *farZ) {
-  if (!BONUS_CAMERA_PS2_OLD && t->h->track == 1) {
-    *fovyDeg = 17.2892584f; *nearZ = 150.f; *farZ = 800.f;
-  }
+  if (brTopIsPs2(t)) { float e[3], a[3], u[3], d; camBonusTop((int)t->h->track, e, a, u, fovyDeg, nearZ, farZ, &d); }   // №1109: таблица камер оригинала по трассам (трасса 1 даёт прежние 17,289°, 150, 800)
 }
 
 void brTopCam(const BnsTrack *t, float fovyDeg, float aspect, float eye[3], float at[3], float up[3], float *dist) {
   const BnsHdr *h = t->h;
-  if (!BONUS_CAMERA_PS2_OLD && h->track == 1) {
-    // Retail P3D/EE uses mirrored Z (tools/bonus/track.py _mirror).
-    const float e[3] = {26.88f, 157.87f, 206.23f};
-    const float u[3] = {-0.0781452f, 0.7965135f, -0.5995493f};
-    for (int k = 0; k < 3; k++) { eye[k] = e[k]; at[k] = 0.f; up[k] = u[k]; }
-    if (dist) *dist = 261.105881f; return;
-  }
+  if (brTopIsPs2(t)) { float fv, zn, zf, d; camBonusTop((int)h->track, eye, at, up, &fv, &zn, &zf, &d); if (dist) *dist = d; return; }
   float f[3] = {h->look[0], h->look[1], h->look[2]}, u[3] = {h->up[0], h->up[1], h->up[2]};
   float fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]); for (int k = 0; k < 3; k++) f[k] /= fl;
   // правая ось r = f × u, верх заново u = r × f (ортонормально)
@@ -183,10 +242,16 @@ void brTopCam(const BnsTrack *t, float fovyDeg, float aspect, float eye[3], floa
 }
 
 int brStuck(BonusRace *b, int i, const float pos[3], float dt) {
-  BrRacer *r = &b->r[i]; (void)pos;
-  if (r->finished || b->state != BR_RACE) { r->stuckT = 0.f; r->bestProg = r->prog; return 0; }
-  if (r->prog > r->bestProg + BR_STUCK_PROG) { r->bestProg = r->prog; r->stuckT = 0.f; return 0; }   // продвинулась к чекпойнту
-  r->stuckT += dt;
+  BrRacer *r = &b->r[i];
+  if (r->finished || b->state != BR_RACE) { r->stuckT = r->stuckLong = 0.f; r->bestProg = r->prog; memcpy(r->anchor, pos, 12); return 0; }
+  if (r->prog > r->bestProg + BR_STUCK_PROG) { r->bestProg = r->prog; r->stuckT = r->stuckLong = 0.f; memcpy(r->anchor, pos, 12); return 0; }   // продвинулась к чекпойнту
+  r->stuckT += dt; r->stuckLong += dt;
+  if (!AIAI1147_OLD) {   // №1147: по дорогам трассы путь извилист — прямая до чекпойнта то растёт, то падает; застрявшая — не сдвинулась с места
+    if (r->stuckT < BR_STUCK_S && r->stuckLong < BR_STUCK_LONG) return 0;
+    float dx = pos[0] - r->anchor[0], dy = pos[1] - r->anchor[1], dz = pos[2] - r->anchor[2];
+    if (r->stuckLong < BR_STUCK_LONG && dx * dx + dy * dy + dz * dz > BR_STUCK_MOVE * BR_STUCK_MOVE) { r->stuckT = 0.f; memcpy(r->anchor, pos, 12); return 0; }
+    r->stuckT = r->stuckLong = 0.f; r->bestProg = r->prog; memcpy(r->anchor, pos, 12); return 1;
+  }
   if (r->stuckT < BR_STUCK_S) return 0;
   r->stuckT = 0.f; r->bestProg = r->prog; return 1;
 }
@@ -217,6 +282,34 @@ void brKeepAlive(Car *k) {
   k->destroyed = 0; k->deadT = 0.f;
 }
 
+void brSetPeers(BonusRace *b, const Car *const *cars, int n) {
+  b->npeer = n < BR_MAX ? n : BR_MAX; for (int i = 0; i < b->npeer; i++) b->peer[i] = cars[i];
+}
+int brSpotFree(const BonusRace *b, int self, const float p[3], float h) {
+  if (self < 0 || self >= b->npeer || !b->peer[self]) return 1;
+  const Car *a = b->peer[self]; float c = cosf(h), s = sinf(h);
+  for (int j = 0; j < b->npeer; j++) {
+    const Car *o = b->peer[j]; if (j == self || !o) continue;
+    float dx = o->x - p[0], dz = o->z - p[2]; if (fabsf(o->y - p[1]) > 3.f) continue;
+    float f = dx * s + dz * c, l = dx * c - dz * s;   // чужой центр в осях новой машины: вперёд / вбок
+    float ra = a->p.halfL + BR_CLEAR_GAP, rb = o->p.halfL + o->p.halfW;   // по ходу: полудлина новой + зазор + грубо вся длина чужой по любому курсу
+    if (fabsf(f) < ra + o->p.halfL && fabsf(l) < a->p.halfW + BR_CLEAR_GAP + o->p.halfW) return 0;
+    (void)rb;
+  }
+  return 1;
+}
+// точка p (машина i, курс h) занята — ближайшая свободная вперёд по плотному пути хода (до BR_CLEAR_TRY точек); -> 1, если сдвинули
+static int brClear(const BonusRace *b, int i, float p[3], float *h) {
+  if (AIAI1147_OLD || b->npath < 2 || brSpotFree(b, i, p, *h)) return 0;
+  int n = b->npath, best = 0; float bd = 1e30f;
+  for (int k = 0; k < n; k++) { const float *q = b->path[k].p; float dy = q[1] - p[1], d = (q[0] - p[0]) * (q[0] - p[0]) + (q[2] - p[2]) * (q[2] - p[2]) + 4.f * dy * dy; if (d < bd) { bd = d; best = k; } }
+  for (int s = 1; s <= BR_CLEAR_TRY; s++) {
+    const float *q = b->path[(best + s) % n].p, *r = b->path[(best + s + 1) % n].p; float c[3] = {q[0], p[1] > q[1] ? p[1] : q[1], q[2]}, hh = atan2f(r[0] - q[0], r[2] - q[2]);
+    if (!brSpotFree(b, i, c, hh)) continue;
+    p[0] = c[0]; p[1] = q[1]; p[2] = c[2]; *h = hh; return 1;
+  }
+  return 0;
+}
 int brRespawn(BonusRace *b, int i, const float pos[3], float out[3], float *h) {
   BrRacer *rr = &b->r[i]; int goal = brGoal(b, i);
   if (rr->respawnCp != rr->cps) { rr->respawnCp = rr->cps; rr->respawnN = 0; }
@@ -228,6 +321,7 @@ int brRespawn(BonusRace *b, int i, const float pos[3], float out[3], float *h) {
   memcpy(out, r[k], 12);
   *h = atan2f(r[k + 1][0] - r[k][0], r[k + 1][2] - r[k][2]);
   if (rr->respawnN >= 3) { memcpy(out, r[n - 1], 12); rr->respawnN = 0; }
+  brClear(b, i, out, h);   // №1147: не на чужую машину
   return 1;
 }
 
@@ -394,7 +488,7 @@ int brGoNitro(BonusRace *b, Car *const *cars) {   // «GO!»: до (ИИ − 1) 
   if (BR_NITRO3_OLD) return 0;
   int ai[BR_MAX], na = 0; for (int i = 0; i < b->n; i++) if (i != b->human) ai[na++] = i;
   if (na == 0) return 0;
-  int used = 0, cap = na > 1 ? na - 1 : 1;
+  int used = 0, cap = (na > 1 || BR_GONITRO1_OLD) ? (na > 1 ? na - 1 : 1) : 0;   // круг 6 (P17-20): при единственном ИИ не гудит никто (до ИИ−1 машин = 0); BR_GONITRO1_OLD=1 — прежнее: одна машина с шансом 3/7
   for (int a = 0; a < na && used < cap; a++) if (brRnd(b) < 3.f / 7.f && brHorn(b, ai[a], cars[ai[a]])) { used++; b->aiHornT[ai[a]] = BR_AI_HORN_GAP_S; }
   if (!used && na > 1) { int a = (int)(brRnd(b) * na); if (a >= na) a = na - 1; if (brHorn(b, ai[a], cars[ai[a]])) { used++; b->aiHornT[ai[a]] = BR_AI_HORN_GAP_S; } }
   return used;
@@ -429,9 +523,9 @@ int brDeath(BonusRace *b, int i, Car *k, const ColWorld *w) {
     if (r->deathCp != r->cps) { r->deathCp = r->cps; r->deathN = 0; }
     float q[3], qh, p[3] = {k->x, k->y, k->z};
     if (++r->deathN >= BR_DEATH_AI_N && brRespawn(b, i, p, q, &qh)) { carPlace(k, w, q[0], q[1] + .5f, q[2], qh); r->deathN = 0; }
-    else carPlace(k, w, A[0], A[1], A[2], h);
+    else { float a3[3] = {A[0], A[1], A[2]}, hh = h; if (brClear(b, i, a3, &hh)) a3[1] += .5f; carPlace(k, w, a3[0], a3[1], a3[2], hh); }
     r->stuckT = 0.f; r->bestProg = -1e9f;   // счёт «застрял» — заново от точки возврата
-  } else carPlace(k, w, A[0], A[1], A[2], h);
+  } else { float a3[3] = {A[0], A[1], A[2]}, hh = h; if (i >= 0 && brClear(b, i, a3, &hh)) a3[1] += .5f; carPlace(k, w, a3[0], a3[1], a3[2], hh); }
   if (i >= 0 && i < BR_MAX) b->boostT[i] = 0.f;
   b->nDeath++;
   return 1;

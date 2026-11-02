@@ -209,6 +209,8 @@ enum { UI_T_VC_GRID = UI_T_SKIP, UI_T_VC_ZOOM = UI_T_STREETRACE };
 // cont — показать «Continue» (Continue.pag). 0 — экрана нет в пакете
 enum { UI_T_TUT_CONTINUE = UI_T_STREETRACE };
 int  uiDrawTutorial(int msg, int cont);
+float uiPauseDimStep(int sub);                 // №1122: слой затемнения паузы при подэкране: прозрачность (0 — не нужен), шаг за кадр
+void uiScrFly(int on, int viewField, float s, float cx, float cy, float gridA, float viewA);   // сверка g11b-collect №1117: полёт картинки просмотра в галерее альбома (масштаб s вокруг (cx, cy), прозрачность сетки и просмотра); on = 0 — как есть
 void uiSubFade(float a);                       // №639: прозрачность всего рисуемого экрана (кроссфейд подэкранов паузы), 1 — как есть
 void uiTutorialScale(float k);                 // №516: масштаб всей подсказки из центра экрана (ui_anim.h 2г), 1 — как есть; ставится на один вызов uiDrawTutorial
 void uiTutLayoutOld(int on);
@@ -325,6 +327,11 @@ const char *uiMenuLabel(int menu, int item);
 // Plain text with a pack font (0 = Tt2001m 9 px, 1 = boulder 11 px, 2 = boulder 16 px; order
 // as in the pack, see uiFontName).  Returns the advance width in pixels.
 int  uiText(int font, int x, int y, unsigned abgr, const char *s);
+int  uiTextSh(int font, int x, int y, unsigned abgr, const char *s);   // №1145: то же с тенью HUD (0,78 чёрного, 1 px вправо-вниз)
+int  uiTextW(int font, const char *s);                                  // №1145: ширина строки гранью font, без рисования
+int  uiFontFindExact(const char *name);                                 // №1145: грань ровно по имени, -1 — нет
+int  uiFontLh(int font);                                                // №1145: высота строки грани
+void uiDrawCountdownOnly(void);                                         // №1149: HUD рисует только отсчёт (3-2-1, слово)
 const char *uiFontName(int font);
 int uiFontFind(const char *name);                 // номер шрифта по грани ("Tt2001m__14"; её вариант для миссий «*k» — первым), 0 — нет
 
@@ -383,7 +390,7 @@ int  uiScrScreens(void);                           // экранов во вто
 int  uiScrBackInput(unsigned hit);                 // экран без строк: △ / ○ — 1 (звук back)
 // VIEW CREDITS (ViewCredits.scr): фон, титры (блоки CREDITS_NN, сдвиг вверх на scroll px), рамка-телевизор и Back поверх;
 // 1 — титры ещё на экране, 0 — все ушли за верх. info (может быть NULL) — для гейта: что нарисовано
-typedef struct { int blocks, lines, first, top, bottom, x0, x1; float end; } UiCredits;
+typedef struct { int blocks, lines, first, top, bottom, x0, x1; float end; int lh; } UiCredits;   // lh: шаг строки титров, px PSP (№1104: счёт строк для реплик Кэнга и Кодос)
 int  uiScrDrawCredits(int screen, float scroll, UiCredits *info);
 
 // ---- анимации и звуки HUD (viewer/ui_anim.h — числа и откуда они; звуки — viewer/ui_sfx.c) -------------------------

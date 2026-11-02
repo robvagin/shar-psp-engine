@@ -14,6 +14,12 @@ static PnoE *pnoE; static unsigned pnoN, pnoH, pnoSz, pnoPsm, pnoFlags;   // pno
 static float pnoR; static char pnoPath[256]; static PnoSlot pnoS[PNO_SLOTS];
 static volatile int pnoReq = -1;   // слот, который надо прочитать (пишет главный поток, сбрасывает загрузчик)
 static unsigned pnoLoads, pnoLoadUs, pnoLoadMax, pnoFails;
+// сверка g12-data №1109: центр ближайшей к точке панорамы (бонус-трасса ставится на него: у трассы нет места на карте уровня). 1 — есть
+static int pano917Nearest(float x, float z, float *cx, float *cz, float *cey) {
+  if (!pnoE || !pnoN) return 0; unsigned b = 0; float bd = 1e30f;
+  for (unsigned i = 0; i < pnoN; i++) { float dx = pnoE[i].x - x, dz = pnoE[i].z - z, d = dx * dx + dz * dz; if (d < bd) { bd = d; b = i; } }
+  *cx = pnoE[b].x; *cz = pnoE[b].z; *cey = pnoE[b].ey; return 1;
+}
 static int pano917Active(void) { return pano917On && pnoN > 0; }   // у уровня есть панорамы и они включены: город держит 150 м
 static void pano917Free(void) {
   for (int w = 0; w < 200 && pnoReq >= 0; w++) sceKernelDelayThread(1000);   // загрузчик дочитывает слот (не дольше 0,2 с)

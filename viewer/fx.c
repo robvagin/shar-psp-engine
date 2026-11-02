@@ -112,7 +112,11 @@ void fxInit(int level) {
   char nm[32], p[304]; if (level > 1) snprintf(nm, sizeof nm, "l%d/fx.shr", level); else strcpy(nm, "fx.shr");
   if (getcwd(p, 256)) { size_t l = strlen(p); if (l && p[l - 1] != '/') strcat(p, "/"); strcat(p, nm); if (fxLoad(p)) return; }
   if (fxLoad(nm)) return;
-  snprintf(p, sizeof p, "ms0:/PSP/GAME/SHARVIEW/%s", nm); fxLoad(p);
+  snprintf(p, sizeof p, "ms0:/PSP/GAME/SHARVIEW/%s", nm); if (fxLoad(p)) return;
+#ifndef MODEL_PATH_OLD
+#define MODEL_PATH_OLD 0   // №1110: 1 — запасной путь только ms0: (PSP Go держит память игр на внутренней ef0:; основной путь — рядом с EBOOT, он от устройства не зависит)
+#endif
+  if (!MODEL_PATH_OLD) { snprintf(p, sizeof p, "ef0:/PSP/GAME/SHARVIEW/%s", nm); fxLoad(p); }   // №1110: запасной путь для PSP Go
 }
 int fxReady(void) { return ready; }
 // смена уровня (viewer/main.c levelUnload): пакет частиц уровня — обратно в кучу; fxInit(N) прочитает l<N>/fx.shr
@@ -398,7 +402,12 @@ int fxWheelSpin(float x, float y, float z, int surf, float vx, float vz, float k
 #ifndef FOLIAGEFX_SV_OLD
 #define FOLIAGEFX_SV_OLD 0
 #endif
-#define FOLIAGE_FX_V 3.f
+// Круг 7 (g11, по оригиналу): частица идёт, когда импульс удара больше 10 × масса предмета в строке ATC. Строка листвы (изгороди, кусты-шары, мелкие деревья: частицы кустов, строка 10 таблицы) — масса 5 кг,
+// порог 50 Н·с: у машины 1500 кг это 0,03 м/с, то есть любой удар. Было (круги 2–5): порог скорости 3 м/с, число наше. FOLIAGEIMP_SV_OLD=1 — порог скорости 3 м/с (и 2 м/с в car.c)
+#ifndef FOLIAGEIMP_SV_OLD
+#define FOLIAGEIMP_SV_OLD 0
+#endif
+#define FOLIAGE_FX_V (FOLIAGEIMP_SV_OLD ? 3.f : 0.f)   // порог импульса проверяет вызывающий (car.h foliageFxOk)
 int fxFoliageHit(const float pos[3], float v) {
   if (FOLIAGEFX_SV_OLD || !ready || v < FOLIAGE_FX_V) return 0;
   int id = fxFindInst(5); if (id < 0) id = fxFindInst(3);

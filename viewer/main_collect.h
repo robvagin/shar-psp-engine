@@ -141,11 +141,14 @@ static void trafficHornClear(void) {
 
 // №390: moving traffic uses authored engine/idle clips and the same spatial DSP.
 // Keep a stable assignment for the three nearest audible cars, without increasing mixer capacity.
+#ifndef TRAFFIC_SCAN_OLD
+#define TRAFFIC_SCAN_OLD 0   // круг 6 (g08): 1 — поиск машины для слота каждый кадр, даже когда все пять слотов заняты
+#endif
 #ifndef TRAFFIC_HEARSE_OLD
 #define TRAFFIC_HEARSE_OLD 0
 #endif
 // Сверка g08-sound (P10-1, P10-2, P10-21, Д2; audio.c audioSvEngine): трафик — до 5 слотов по порядку появления (вблизи слышимости), один клип «ferrari»,
-// высота (0,5 + 0,5·v/16,7)·множитель машины (0,8…1,2 при появлении); машины ИИ миссий — до 5 слотов, клип «mission_ai_vehicle», высота 0,3 + 0,7·v/TopSpeed;
+// высота (0,5 + 0,5·v/16,67)·множитель (круг 7: эталонная скорость трафика 60 км/ч на всех уровнях = 16,6667 м/с) машины (0,8…1,2 при появлении); машины ИИ миссий — до 5 слотов, клип «mission_ai_vehicle», высота 0,3 + 0,7·v/TopSpeed;
 // стоящим тоже играет, шин нет, оверлей у трафика по модели. WORLD_ENGINE_SV_OLD=1 или нет клипов в пакете — прежние 3 источника (audio.c)
 static void trafficMotorFrameSv(float dt,float camx,float camy,float camz) {
   static int slotCar[AUDIO_SV_SLOTS]={-1,-1,-1,-1,-1}; static float slotMul[AUDIO_SV_SLOTS]; static unsigned rngS=0x2545F491u;
@@ -160,7 +163,8 @@ static void trafficMotorFrameSv(float dt,float camx,float camy,float camz) {
       if(!ok){slotCar[s]=-1;audioSvEngine(0,s,0,-1,0,0,0,0,1,1,dt);} else taken[i]=1;
     }
   }
-  if(haveTraffic) for(int i=0;i<traffic.maxCars&&i<TR_MAXCAR;i++) {
+  int freeSlot=0; for(int s=0;s<AUDIO_SV_SLOTS;s++) freeSlot|=slotCar[s]<0;   // круг 6 (g08, цена на PSP): все пять слотов заняты — поиск новой машины по всему трафику не нужен (было: обход всех машин каждый кадр, стало: только при свободном слоте)
+  if(haveTraffic && (freeSlot || TRAFFIC_SCAN_OLD)) for(int i=0;i<traffic.maxCars&&i<TR_MAXCAR;i++) {
     if(taken[i])continue;
     const TrCar *a=&traffic.car[i];
     if((a->mode!=TRM_DRIVE && a->mode!=TRM_PHYS) || a->car.destroyed || a->model<0 || a->model>=(int)traffic.hd->nModel)continue;
@@ -174,7 +178,7 @@ static void trafficMotorFrameSv(float dt,float camx,float camy,float camz) {
     int i=slotCar[s]; if(i<0)continue;
     const TrCar *a=&traffic.car[i];
     float v=a->mode==TRM_DRIVE?a->v:a->car.v;
-    audioSvEngine(0,s,1,audioCarProfile(traffic.model[a->model].name),a->car.x,a->car.ry,a->car.z,v,16.7f,slotMul[s],dt);
+    audioSvEngine(0,s,1,audioCarProfile(traffic.model[a->model].name),a->car.x,a->car.ry,a->car.z,v,16.6667f,slotMul[s],dt);
   }
   const MsnCars *mc=mvCars();
   for(int s=0;s<AUDIO_SV_SLOTS;s++) {
@@ -375,7 +379,8 @@ static void gagSound(int g) {
 #endif
 typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, tutorial; unsigned tutSeen, movies; int colour, invertCam, toon, treeShadow;
                  int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist, carShadow, curbTint,
-                 jumpCam, navSys; } Settings;   // круг 5 (сверка g10-flow, P08:22, P16:08): jumpCam — строка Jump Cameras (камеры зон у машины), navSys — Navigation System (стрелки пути); 0 Off / 1 On, по умолчанию On; в старых файлах короче — On   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
+                 jumpCam, navSys,
+                 carTilt, carFov, footHeight, footDist; } Settings;   // №1151 (раздел CAMERA паузы): carHeight = camHeight, carDist = camDist (машина), carTilt, carFov, footHeight, footDist (пешком) — ступени 0..4, середина 2; в старых файлах короче footHeight / footDist берут прежние camHeight / camDist   // круг 5 (сверка g10-flow, P08:22, P16:08): jumpCam — строка Jump Cameras (камеры зон у машины), navSys — Navigation System (стрелки пути); 0 Off / 1 On, по умолчанию On; в старых файлах короче — On   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
 // №794 (сверено 19.10 с settings.bin Роба на PSP: насыщенность 1,56, контраст 1,50): значения по умолчанию для нового файла. DEFAULTS794B_OLD=1 — 1,36/1,00
 #ifndef DEFAULTS794B_OLD
 #define DEFAULTS794B_OLD 0
@@ -392,7 +397,7 @@ typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, 
 #define DEFAULTS1066_OLD 0
 #endif
 static Settings cfg = {{'S', 'H', 'S', 'T'}, DRAWDEF1042_OLD ? 10 : 14, 1000, 1000, 1000, 1000, 1, 1, 0, 1, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? TONE_SAT_DEF : 156) : 128, 1, DEFAULTS794_OLD ? 0 : 1, 0, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? 100 : 150) : 130,
-                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0, 1, 1};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
+                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0, 1, 1, 2, 2, 2, 2};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
 // №996: CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители камеры всегда 1 (как TEST70); шаги Height / Distance — множитель дальности и отступа глаза над точкой взгляда
 #ifndef CAMCFG996_OLD
 #define CAMCFG996_OLD 0
@@ -404,6 +409,11 @@ static Settings cfg = {{'S', 'H', 'S', 'T'}, DRAWDEF1042_OLD ? 10 : 14, 1000, 10
 #endif
 static int carShadow1003Old = CARSHADOW1003_OLD, carShadow1003On;   // carShadow1003On ставит cfgApply: тени машин рисуются
 static int camCfg996On = !CAMCFG996_OLD, camCfgSnap996;   // camCfgSnap996: Height / Distance сменились — сглаживание камеры (отпускание стены, опора глаза) сбросить: под паузой (dt = 0) оно иначе не сдвинется
+#if defined(__has_include) && __has_include("camuser.h")
+#include "camuser.h"        // g06-camera: camUserCarH/D/Tilt/Fov, camUserFootH/D (float; 1/1/0/1/1/1)
+#else
+static float camUserCarH = 1.f, camUserCarD = 1.f, camUserCarTilt = 0.f, camUserCarFov = 1.f, camUserFootH = 1.f, camUserFootD = 1.f;   // до слияния ветки g06-camera
+#endif
 static const float camCfgH996[5] = {.5f, .75f, 1.f, 1.25f, 1.5f}, camCfgD996[5] = {.7f, .85f, 1.f, 1.15f, 1.3f};
 static int toonDevFile;   // №428: служебный файл toon рядом с EBOOT — режим включён поверх настройки игрока
 static int camTurnOld, boomCamOld;   // правки 362 / 361: служебное, прежнее — L/R без инверсии / камера держит горящую машину (красный контроль)
@@ -778,6 +788,7 @@ static int neonArchBig957(const float *v, unsigned bfl) {
 }
 static void glowQuadQ(const float *v, unsigned abgr, float ph);   // №839: spritelight.h (подключается ниже)
 static void glowGlintFlush(float ex, float ey, float ez);
+static void nitroGlintBatch1148(const float *P, const float *CY, int n, float ex, float ey, float ez);   // №1148: spritelight.h — блик нитро бонус-игры как у ключа
 static void g944Bill(const char *site, int blm, int bt, const float *v, unsigned col, unsigned inst, unsigned b);   // №944 служебно: перепись картинок-квадов (spritelight.h)
 // Разбор L3/L5 (журнал тура TEST55, COLLPROF inst 0,69 мс PSP на причале L3 при 111 экземплярах, на L5 0,11): collDraw два раза за кадр (тела и билборды) перебирает ВСЕ экземпляры набора коллекции
 // (комната, живость, дальность) — рисуется из них единицы. Теперь список экземпляров в дальности + COLL_NEAR_MARGIN м от глаза строится раз в COLL_NEAR_AGE кадров или при сдвиге глаза на

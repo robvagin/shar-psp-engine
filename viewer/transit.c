@@ -248,11 +248,12 @@ int transitSkipMsn(void) {
   T.active = 0; logFrame("skip", T.f, 1.f); return 1;
 }
 int transitFullyClosed(void) { return T.active && (T.mode == 1 || weightAt(T.f) <= .001f); }   // ирис закрыт целиком (или чёрный после затемнения): мир под ним не виден
+#include "flowrules.h"
 static void loadingBlink(void) {
-  if (IRIS_LOADING_OLD || blackT <= 3.f || ((int)((blackT - 3.f) / .25f) & 1)) return;
+  if (IRIS_LOADING_OLD || !flowIrisLoadingOn(blackT)) return;   // №1112: фаза мигания и место надписи — по оригиналу (viewer/flowrules.h)
   int font = uiFontFind("boulder_16"); if (font < 0) font = 0;
   int w = uiText(font, 0, -100, 0x00000000u, "LOADING");   // замер ширины за экраном
-  uiText(font, (TR_W - w) / 2, 128, 0xffffffffu, "LOADING");
+  uiText(font, (TR_W - w) / 2, FLOW_IRIS_LOADING_Y, 0xffffffffu, "LOADING");
 }
 void transitDraw(void) {
   if (!T.active) return;

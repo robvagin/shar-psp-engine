@@ -18,7 +18,7 @@ What it does
   * synthesizes the intro dialogue phase of bonus missions from leveli.mfk (as the original does in code)
 Binary layout: see viewer/mission/msn_format.h (kept in sync by hand; version field checked at load).
 """
-import argparse, json, math, re, struct, sys, hashlib
+import argparse, json, math, os, re, struct, sys, hashlib
 from pathlib import Path
 from collections import defaultdict, Counter
 
@@ -40,6 +40,9 @@ UI_TEXT_KEYS = ['MISSION_COMPLETE', 'BONUS_MISSION_COMPLETE', 'STAGE_COMPLETE', 
 FAIL_TEXT_KEYS = ['TIME_OUT', 'PLAYER_OUT_OF_VEHICLE', 'VEHICLE_DAMAGE', 'POSITION', 'RACE', 'FOLLOW_DISTANCE',
                   'HIT_N_RUN', 'OUT_OF_BOUNDS']
 NAV_MODES = {'': 0, 'neither': 1, 'both': 2, 'nearest road': 3, 'intersection': 4}
+def nav_of_token(tok):
+    """Круг 6 (P16-07): режим стрелки по слову скрипта; None — слово не режим (опечатка 'niether' в level06/m4i.mfk оригинал не узнаёт: режим по умолчанию)."""
+    return NAV_MODES.get(tok.lower())
 CTX_BODY, CTX_OBJ, CTX_COND = 0, 1, 2
 ARG_INT, ARG_FLOAT, ARG_STR, ARG_BARE = 0, 1, 2, 3
 MF_BONUS, MF_STREETRACE, MF_GAMBLE, MF_BONUSMISSION, MF_NOSCRIPT, MF_LEVELOVER, MF_GAMEOVER, MF_FORCEDCAR, MF_TRANSITION = 1, 2, 4, 8, 16, 32, 64, 128, 256
@@ -59,11 +62,19 @@ class FileIndex:
     def find(self, rel):
         return self.map.get(str(rel).replace('\\', '/').lower().lstrip('/'))
 
+def _enc(t):
+    """текст миссии в байты: английский — как раньше (UTF-8); другой язык (LANG_BIBLE) — коды знаков шрифтов игры (Latin-1; Œ œ ¿ на 0x8C 0x9C 0x8F, tools/accents.py): движок рисует байт как знак"""
+    if os.environ.get('LANG_BIBLE', 'E') == 'E' or os.environ.get('LANG1111_OLD') == '1':
+        return t.encode('utf-8')
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    import accents
+    return accents.font_bytes(t)
+
 def bible():
-    """English text bible (same algorithm as hit-and-run-web/tools/campaign.py, MIT)."""
+    """Text bible, language by LANG_BIBLE (default English; same algorithm as hit-and-run-web/tools/campaign.py, MIT)."""
     from p3d import read, walk, string
     root = read(GAME / 'art/frontend/scrooby/resource/txtbible/srr2.p3d')
-    c = next(c for c in walk(root) if c.id == 0x1800e and c.data[string(c.data)[1]:string(c.data)[1] + 1] == b'E')
+    c = next(c for c in walk(root) if c.id == 0x1800e and c.data[string(c.data)[1]:string(c.data)[1] + 1] == os.environ.get('LANG_BIBLE', 'E').encode())   # №1111: язык текстов (E F G S)
     _, p = string(c.data); n, mod, size = struct.unpack_from('<III', c.data, p + 1); p += 13
     hashes = struct.unpack_from('<' + str(n) + 'I', c.data, p); offsets = struct.unpack_from('<' + str(n) + 'I', c.data, p + 4 * n)
     buf = c.data[p + 8 * n:]
@@ -166,7 +177,7 @@ class Pack:
         sec = []
         blob = bytearray(); offs = []
         for t in self.strings:
-            offs.append(len(blob)); blob += t.encode('utf-8') + b'\0'
+            offs.append(len(blob)); blob += _enc(t) + b'\0'
         while len(blob) % 4:
             blob += b'\0'
         def rec(fmt, rows):
@@ -210,7 +221,7 @@ class Pack:
         # strings added above must be in the blob: rebuild the two string sections
         blob = bytearray(); offs = []
         for t in self.strings:
-            offs.append(len(blob)); blob += t.encode('utf-8') + b'\0'
+            offs.append(len(blob)); blob += _enc(t) + b'\0'
         while len(blob) % 4:
             blob += b'\0'
         sections[0] = (struct.pack(f'<{len(offs)}I', *offs), len(offs))
@@ -578,8 +589,8 @@ class Compiler:
         nav = 0; objarg = 0
         for m in mode:
             ml = m.lower()
-            if ml in NAV_MODES:
-                nav = NAV_MODES[ml]
+            if nav_of_token(ml) is not None:
+                nav = nav_of_token(ml)
             elif ml == 'niether':
                 pass   # круг 3 (проверка g07b, P16-07): опечатка в level06/m4i.mfk оригиналом не распознаётся — режим стрелки по умолчанию (both), не neither
             elif ml == 'gamble':
