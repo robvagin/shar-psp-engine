@@ -85,7 +85,7 @@ Comments in the code are mostly in Russian.
 ## How it was made
 
 About five weeks, 83 test builds and 40 full tours on a real PSP. 1,086 playtest notes, logged and worked through one by one.
-Over 4,500 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
+Over 3,300 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
 ## Reporting bugs
