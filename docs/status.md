@@ -43,7 +43,7 @@ Where the port stands against the original PS2 game, as of November 3, 2026 (bui
 | Mission Select, loading and pop-in | a mission change inside a level restarts the music and always shows the loading screen; the loading screen waits for the mission characters, nearby bonus characters and mission cars, so nothing appears after it opens; the mission car keeps its own spot unless you stand close on the same ground or are more than 60 m away. Old code fails the same check: music 0 of 2, car on the ledge, 6 late loads | emulator (green and red builds) |
 | Settings defaults | a fresh save matches the author's PSP menus (see README) | emulator menu frames |
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
-| Other PSP models, NTSC discs | untested (PSP-1000 cannot run it: not enough RAM) | n/a |
+| Other PSP models, NTSC discs | PSP-3000 untested; PSP-1000 has half the memory, untested | n/a |
 
 ## Hardware numbers (PSP-2000, tour build TEST62)
 

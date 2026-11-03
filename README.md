@@ -59,7 +59,12 @@ psp-cmake -S . -B build -DSHAR_RELEASE=ON -DSHAR_RELEASE_KEEP_DIAG=ON -DSHAR_REL
 
 Game data: unpack your own disc with [hit-and-run-web](https://github.com/Vheissu/hit-and-run-web) into
 `hit-and-run-web/source/`, run `tools/build_level.sh` or `tools/ship.sh`, and copy the result next to the EBOOT
-in `PSP/GAME/SHARVIEW`. Needs custom firmware and a PSP-2000 or later (the PSP-1000 has too little RAM). Tested on a PSP-2000.
+in `PSP/GAME/SHARVIEW`. Needs custom firmware and a PSP-2000 or PSP-3000. The PSP-1000 has half the memory and is not tested yet. Tested on a PSP-2000.
+
+- Space: the game folder takes about 3.3 GB on the Memory Stick (7 levels, cutscenes, sound, four languages). Building needs about 10 GB free on the computer
+  (disc image, unpacked disc, tools and the finished game) and takes roughly an hour, up to two on a slower machine
+- Computer: tested on macOS. On Windows it should run in WSL, but that is not tested yet
+- Known issue (November 3): on a fresh clone `tools/ship.sh` can stop at `road934.shr`. A fix is on the way
 
 - Discs: PAL `SLES_518.97` and US NTSC `SLUS_206.24`. The executable is read from `SYSTEM.CNF`; NTSC movies are 640x448 at 29.97 fps
   and are resampled to the engine's 25 fps
