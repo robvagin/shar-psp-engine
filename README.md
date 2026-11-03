@@ -17,6 +17,7 @@ No game files are included, and none will be.
 - [Using the PSP Media Engine](docs/research/media-engine.md): sound mixing on the second core, what worked and what did not
 - [How this port is built and tested](docs/process.md): the rules and the path of a fix from a playtest note to the handheld
 - [Tests](tests/README.md): how every fix is checked
+- [Build 86 in pictures](docs/slides/README.md): what was checked, what changed and how fast it runs, in five slides
 - [All documents](docs/index.md)
 
 ## What's new in build 86
