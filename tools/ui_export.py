@@ -600,6 +600,8 @@ BUTTON_CHARS = {'but_dpad': '+', 'but_jump': '\xa3', 'but_run': '\xae', 'but_gas
 # Правка 500 (аудит панели 10.10: «MISSION COMPLETE! упирается в края»): 1,69 давало 446 px из 480 — поля 17 px, М и «!» у самых краёв. 1,60 — ≈420 px, поля по 30 px
 # (безопасная зона), надпись остаётся крупной (правка 216); больше или меньше — ползунком панели «MISSION COMPLETE!» (hud_mdone). UI_MSN_DONE_SAFE_OLD=1 — прежние 1,69
 MSN_DONE_K = float(os.environ.get('UI_MSN_DONE_K', '1.69' if os.environ.get('UI_MSN_DONE_SAFE_OLD') == '1' else '1.6'))
+# №1157 (Роб 03.11, TEST86): надпись провала FAILED (MissionOver.pag, спрайтовый шрифт) в 1,5 раза крупнее. FAILTITLE1157_OLD=1 — прежнее; UI_FAILTITLE_K — другой множитель
+FAILTITLE_K = 1.0 if os.environ.get('FAILTITLE1157_OLD') == '1' else float(os.environ.get('UI_FAILTITLE_K', '1.5'))
 # Правка Роба 267 (04.10: «подсказки Барта выходят за пределы рамки; текст громадный, еле вмещается; доработать типографику по
 # размерам, подаче, ритму; использовать пиксельность PSP»): картинки букв ровно вчетверо мельче своих (1 px PSP = 4×4 px картинки,
 # чистое уменьшение без мыла): k = 0,25 / S. Самая широкая строка («USE LEFT ANALOG STICK OR + TO STEER») 293 -> 235 px в рамке
@@ -1400,6 +1402,8 @@ def build_items(screen):
                     it.update(field=f, fmt=fm, text=sample)
                     if name == 'MissionComplete' and MSN_DONE_K != 1.0:   # правка 216: крупно, на всю ширину кадра (поля ~20 px)
                         x_, y_, w_, h_ = it['rect']; it.update(glyph_k=MSN_DONE_K, rect=[x_, y_ + h_ / 2 - h_ * MSN_DONE_K / 2, w_, h_ * MSN_DONE_K])
+                    if page == 'MissionOver.pag' and name == 'MissionFailed' and FAILTITLE_K != 1.0:   # №1157 (Роб 03.11, TEST86): красный FAILED сверху экрана провала мелкий — в 1,5 раза крупнее; картинки букв пересчитываются из исходных (без размазывания), центр по x и по y прежний. FAILTITLE1157_OLD=1 — прежний размер
+                        x_, y_, w_, h_ = it['rect']; it.update(glyph_k=FAILTITLE_K, rect=[x_ + w_ / 2 - w_ * FAILTITLE_K / 2, y_ + h_ / 2 - h_ * FAILTITLE_K / 2, w_ * FAILTITLE_K, h_ * FAILTITLE_K])
                     if page == 'Tutorial.pag' and name == 'TutorialMessage':   # тексты подсказок: TUTORIAL_NNN библии (PS2-вариант)
                         it.update(texts=tutorial_texts(), glyph_k=TUT_GLYPH_K)
                     items.append(it)

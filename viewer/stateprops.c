@@ -970,6 +970,7 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #ifndef SP_SCAN_OLD
 #define SP_SCAN_OLD 0
 #endif
+unsigned spHitStat[3];
 void spHitCar(StateProps *sp, const ColWorld *world, Car *car, Coins *coins) {
   if (car) {
     CarBox cb; carBox(car, &cb);
@@ -979,8 +980,9 @@ void spHitCar(StateProps *sp, const ColWorld *world, Car *car, Coins *coins) {
     for (unsigned t = 0; t < sp->ntype; t++) { const SpType *T = &sp->type[t];
       lim[t] = sqrtf(T->h[0] * T->h[0] + T->h[1] * T->h[1] + T->h[2] * T->h[2]) + 1.f + sqrtf(T->c[0] * T->c[0] + T->c[1] * T->c[1] + T->c[2] * T->c[2]) + cb.hl + cb.hw + .05f; }
     for (unsigned i = 0; i < sp->ninst; i++) {
-      const SpRun *r = &sp->run[i]; float dx = r->x - cb.x, dz = r->z - cb.z, l = lim[sp->inst[i].type];
+      const SpRun *r = &sp->run[i]; float dx = r->x - cb.x, dz = r->z - cb.z, l = lim[sp->inst[i].type]; spHitStat[0]++;
       if (dx * dx + dz * dz > l * l) continue;
+      spHitStat[1]++; if (sp->type[sp->inst[i].type].nCol) spHitStat[2]++;   // №1159: счётчики для теста — просмотрено / дошло до carContact / из них с объёмом (дальше идёт дорогая часть)
       carContact(sp, i, world, car, coins, &cb);
     }
   }

@@ -473,7 +473,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   marksClose(); free(tex); tex = 0; ntex = 0; free(pc); pc = 0; free(cr); cr = 0; cullHierFree(); npc = 0; free(carP); carP = 0; free(skyP); skyP = 0; ncarP = nskyP = 0; sky954Free();
   for (unsigned i = 0; cdl && i < ncell; i++) dlFree(i);   // правка 275
   free(cdl); cdl = 0; free(cdlMark); cdlMark = 0;
-  cgGen++; csNearPrevOk = 0; peOk = 0; nfAge = 99; phPrevOk = 0; phHold = 0;   // №654: кэши камеры не переживают уровень
+  cgGen++; camLevelGen++; csNearPrevOk = 0; peOk = 0; nfAge = 99; phPrevOk = 0; phHold = 0;   // №654: кэши камеры не переживают уровень
   roadqFree();   // №864
   slLightResetReq = 1; toneJobCancel(); toneBlkDel(levelData); free(cl); cl = 0; free(cellBigF); cellBigF = 0; ncell = 0; lvaFree(levelData); levelData = 0; hm = wl = 0;
   lvaReset();   // №775: участок уровня пуст — следующий уровень кладёт резидентную часть, COL1 и PRP2 туда же

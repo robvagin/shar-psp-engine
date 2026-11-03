@@ -8,6 +8,7 @@
 unsigned xsubU[XS_N], xsubC[XS_N], xsubW[XS_N]; int xsubOn, xsubSkin, xsubCar, xsubFlag;
 #endif
 #include "carcoins.h"
+#include "boltnear1159.h"
 #include "sverka_shared.h"   // сверка g10-flow: svBoom (взрыв машины), общая точка с car.c
 
 #define world (*g->pWorld)
@@ -341,31 +342,10 @@ static int coinGround(void *u, float x, float z, float yTop, float *gy) {   // �
 #endif
 // сверка g11b-collect круг 7 (P04 W5, удар снаряда в оригинале): снаряд осы бьёт подвижные предметы — стейтпропы (кроме ящиков и торгоматов, у них объём едет за суставом) толчком силой 400
 // (событие HIT и spImpulse, как пинок) и пропы PRP1 (скорость 400 / масса под 45° по полёту). По отрезку полёта a -> b: -> доля пути до первого (больше 1 — нет); apply = 1 — удар. Игрока и ос не касается
+unsigned gameBoltStat[4];   // №1159: счётчики обхода снаряда за прогон (см. boltnear1159.h)
 float gameBoltProps(Game *g, const float a[3], const float b[3], const float dir[3], int apply) {
-  float best = 2.f; int bi = -1, bk = 0;
-  float sx = b[0] - a[0], sy = b[1] - a[1], sz = b[2] - a[2], sl2 = sx * sx + sy * sy + sz * sz;
-#define BOLT_U(cx, cy, cz) ({ float u_ = sl2 > 1e-9f ? (((cx) - a[0]) * sx + ((cy) - a[1]) * sy + ((cz) - a[2]) * sz) / sl2 : 0.f; u_ < 0.f ? 0.f : u_ > 1.f ? 1.f : u_; })
-  if (haveSP) for (unsigned i = 0; i < sprops.ninst; i++) {
-    const SpRun *r = &sprops.run[i]; if (!r->alive || (!r->colOn && !r->col2On)) continue;
-    const SpType *T = &sprops.type[sprops.inst[i].type]; if (T->kind == 1 || (sprops.follow && sprops.follow[sprops.inst[i].type])) continue;   // обломок; ящик и торгомат
-    float c[3], rad; spBounds(&sprops, i, c, &rad); rad = fminf(rad, 1.5f);
-    float u = BOLT_U(c[0], c[1], c[2]), dx = a[0] + sx * u - c[0], dy = a[1] + sy * u - c[1], dz = a[2] + sz * u - c[2];
-    if (dx * dx + dy * dy + dz * dz <= rad * rad && u < best) { best = u; bi = (int)i; bk = 1; }
-  }
-  if (haveProps) for (unsigned i = 0; i < props.ninst; i++) {
-    const PropState *st = &props.st[i]; if (st->hidden) continue;
-    float u = BOLT_U(st->x, st->y, st->z), pt[3] = {a[0] + sx * u, a[1] + sy * u, a[2] + sz * u}, cl[3]; propsClosestPoint(&props, i, pt, cl);
-    float dx = pt[0] - cl[0], dy = pt[1] - cl[1], dz = pt[2] - cl[2];
-    if (dx * dx + dy * dy + dz * dz <= .25f * .25f && u < best) { best = u; bi = (int)i; bk = 2; }
-  }
-#undef BOLT_U
-  if (apply && bi >= 0) {
-    if (bk == 1) { spEvent(&sprops, (unsigned)bi, SP_EV_HIT); spImpulse(&sprops, (unsigned)bi, dir[0], dir[2], 400.f); }
-    else { PropState *st = &props.st[bi]; const PropType *ty = &props.types[props.def[bi].type];
-      float dl = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]), dx = dl > 1e-4f ? dir[0] / dl : 0.f, dz = dl > 1e-4f ? dir[2] / dl : 1.f, v = 400.f / (ty->mass > 0.f ? ty->mass : 100.f), h45 = v * .70710678f;
-      st->vel[0] = dx * h45; st->vel[2] = dz * h45; st->vel[1] = h45; st->w[0] = dz * h45; st->w[2] = -dx * h45; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; }
-  }
-  return best;
+  (void)g;
+  return boltScan(haveSP ? &sprops : 0, haveProps ? &props : 0, a, b, dir, apply, gameBoltStat);   // №1159: тело и отсев — в boltnear1159.h (BOLTNEAR1159_OLD=1 — полный обход)
 }
 void gameAfterCar(Game *g, const GamePad *p, float dt) {
   unsigned xt_ = XS_T(), xw_ = XS_W();

@@ -414,6 +414,18 @@ static void quatYaw(float *q, float h) { q[0] = cosf(h * .5f); q[1] = 0; q[2] = 
 #define CAR_PARK_EPS 1e-3f
 #endif
 #define CAR_PARK_V .02f
+// №1159 (Роб, ночь 03.11: подсистема машин в туре PSP TEST83→85 +2,6 мс/кадр; счётчики tests/g01cars/cost.sh): растёт число чужих машин в физике (трафик после удара остаётся твёрдым,
+// за кадр 0,18→0,47, из них стоят 0,41) — на каждую 2,5 подшага с ~38 обращениями к миру. У игрока подшагов 4,017 за кадр и там и там. Теперь у чужих машин (не игрок, не остов игрока):
+//  а) «сон» стоянки наступает при чуть большем дрожании (скорость < CAR_PARK_V_NP 0,05 м/с, сдвиг позы < CAR_PARK_EPS_NP 2,5 мм): ползущая с ручником уже не считается каждый кадр;
+//  а') спящая чужая считается один кадр из 16 (было из 8);
+//  б) медленная (< CAR_COARSE_V 1 м/с) машина без газа и тормоза (катится, стоит с ручником) на четырёх колёсах без контактов, без опоры-крыши и без удара кузова считается шагом в два раза крупнее (1/60 вместо 1/120).
+// Игрок не затронут. -DSV_CARCOST1159_OLD=1 — прежний счёт
+#ifndef SV_CARCOST1159_OLD
+#define SV_CARCOST1159_OLD 0
+#endif
+#define CAR_PARK_V_NP .05f
+#define CAR_PARK_EPS_NP 2.5e-3f
+#define CAR_COARSE_V 1.f
 #ifndef CAR_WHEEL_RADIUS_MESH_OLD
 #define CAR_WHEEL_RADIUS_MESH_OLD 0
 #endif
@@ -2674,12 +2686,14 @@ void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       c->vel[0] == 0.f && c->vel[1] == 0.f && c->vel[2] == 0.f && c->w[0] == 0.f && c->w[1] == 0.f && c->w[2] == 0.f && c->supOn == 0) {
     skip = c->x == c->restPose[0] && c->y == c->restPose[1] && c->z == c->restPose[2] && !memcmp(c->restPose + 3, c->q, sizeof c->q);
   }
+  const int foreign1159 = !SV_CARCOST1159_OLD && !(c->huskDrive || c->svPlayer || SV_FORCE_PLAYER);   // чужая машина (трафик, ИИ, брошенная)
+  const float pkV = foreign1159 ? CAR_PARK_V_NP : CAR_PARK_V, pkEps = foreign1159 ? CAR_PARK_EPS_NP : CAR_PARK_EPS;
   int parkIn = !CAR_PARK_SKIP_OLD && !c->destroyed && in->handbrake > .5f && in->throttle == 0.f && in->brake == 0.f && in->steer == 0.f && c->supOn == 0;
   int parkSkip = 0;
   if (!skip) {
     if (!parkIn) c->parkN = 0;
     else if (c->parkN >= CAR_PARK_N && c->x == c->parkPose[0] && c->y == c->parkPose[1] && c->z == c->parkPose[2] && !memcmp(c->parkPose + 3, c->q, sizeof c->q) &&
-             fabsf(c->vel[0]) + fabsf(c->vel[1]) + fabsf(c->vel[2]) < CAR_PARK_V && fabsf(c->w[0]) + fabsf(c->w[1]) + fabsf(c->w[2]) < CAR_PARK_V && ++c->parkTick % CAR_PARK_EVERY) parkSkip = 1;
+             fabsf(c->vel[0]) + fabsf(c->vel[1]) + fabsf(c->vel[2]) < pkV && fabsf(c->w[0]) + fabsf(c->w[1]) + fabsf(c->w[2]) < pkV && ++c->parkTick % (foreign1159 ? 2 * CAR_PARK_EVERY : CAR_PARK_EVERY)) parkSkip = 1;
   }
   if (skip) { c->t += dt; c->acc = 0.f; c->quietSteps += (int)(dt / c->p.sub + .5f); }
   else if (parkSkip) { c->t += dt; c->acc = 0.f; }
@@ -2690,7 +2704,9 @@ void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt) {
     // (2 и 4 шага ровно по 1/120) результат тот же бит в бит. В оригинале один шаг на кадр = всё время кадра, поэтому и там путь за кадр ровно по времени
     // -DFLIPLAG1126_OLD=1 — прежний счёт с остатком
     int ns = 0; float hs = c->p.sub;
-    if (!FLIPLAG1126_OLD && c->acc >= c->p.sub * 0.5f) { ns = (int)(c->acc / c->p.sub + .5f); if (ns > 16) ns = 16; hs = c->acc / (float)ns; }
+    float sb = c->p.sub;   // №1159: шаг счёта (у медленной чужой машины без контактов вдвое крупнее)
+    if (foreign1159 && c->acc >= sb * 1.5f && c->wheels >= 4 && c->grounded && !c->contacts && !c->bodyHit && !c->supOn && !c->burstOn && in->throttle == 0.f && in->brake == 0.f && fabsf(c->v) < CAR_COARSE_V && fabsf(c->vel[1]) < .5f) sb *= 2.f;
+    if (!FLIPLAG1126_OLD && c->acc >= sb * 0.5f) { ns = (int)(c->acc / sb + .5f); if (ns > 16) ns = 16; hs = c->acc / (float)ns; }
     while (FLIPLAG1126_OLD ? (c->acc >= c->p.sub * 0.999f && n < 16) : n < ns) {
       int r0 = c->reverts; substep(c, w, in, hs); c->acc -= hs; n++;
       if (!DEADEND32_OLD) {
@@ -2704,7 +2720,7 @@ void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   XS_LAP(1, xt_, xw_); XS_ADD(3, n); XS_ADD(16, skip); XS_ADD(17, parkSkip);   // подшаги: время и счёт; пропуск покоя и сна (CAR_PARK)
   if (parkIn && !skip && !parkSkip) {   // посчитанный кадр покоя: сдвинулась ли поза против прошлого посчитанного
     float d_ = fabsf(c->x - c->parkPose[0]) + fabsf(c->y - c->parkPose[1]) + fabsf(c->z - c->parkPose[2]) + fabsf(c->q[0] - c->parkPose[3]) + fabsf(c->q[1] - c->parkPose[4]) + fabsf(c->q[2] - c->parkPose[5]) + fabsf(c->q[3] - c->parkPose[6]);
-    if (d_ < CAR_PARK_EPS && fabsf(c->vel[0]) + fabsf(c->vel[1]) + fabsf(c->vel[2]) < CAR_PARK_V && fabsf(c->w[0]) + fabsf(c->w[1]) + fabsf(c->w[2]) < CAR_PARK_V && !c->contacts && !c->bodyHit) { if (c->parkN < 1 << 20) c->parkN++; } else c->parkN = 0;
+    if (d_ < pkEps && fabsf(c->vel[0]) + fabsf(c->vel[1]) + fabsf(c->vel[2]) < pkV && fabsf(c->w[0]) + fabsf(c->w[1]) + fabsf(c->w[2]) < pkV && !c->contacts && !c->bodyHit) { if (c->parkN < 1 << 20) c->parkN++; } else c->parkN = 0;
         c->parkPose[0] = c->x; c->parkPose[1] = c->y; c->parkPose[2] = c->z; memcpy(c->parkPose + 3, c->q, sizeof c->q);
   }
   if (!PERCH_ESCAPE_OLD) perchEscape(c, w, in, dt);

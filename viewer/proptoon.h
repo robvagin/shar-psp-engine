@@ -36,11 +36,7 @@
 // 2 кусков, 357 вершин (по журналам смоука PROPTOON), теперь у будки только её куски; PROPINK1138_OLD=1 / «flag propink1138old 1» — как в TEST84
 #include "propink1138.h"
 static int propInk1138Old = PROPINK1138_OLD;
-static int ptIsBooth(const StateProps *sp, const SpType *T) {
-  if (T->nPiece != 7) return 0;
-  const SpPiece *P = &sp->piece[T->firstPiece];
-  return propInkIsBooth(T->nPiece, T->kind, P[1].nv, P[6].nv);
-}
+#include "propbooth1159.h"   // №1159: ptIsBooth и список будок уровня
 typedef struct { const void *v; unsigned nv; float lo[3], hi[3]; } PtBox;
 static PtBox ptBox[256]; static unsigned ptDraws, ptInst, ptVerts, ptUs, ptFrames; static int ptLogLv = -1, ptLogN; static unsigned ptLogK[24];
 static void ptLog(int kind, unsigned i, float x, float y, float z, float h, float r, int got) {   // журнал смоука: первые 24 обведённых экземпляра уровня (где они, какого размера)
@@ -140,7 +136,11 @@ static void propToonPass(float ex, float ey, float ez) {
     }
     ptInst += (unsigned)got; if (tone && got && (2.f * ty->halfH > PROP_TOON_H || ty->radius > PROP_TOON_R)) ptToneTall++; ptLog(0, i, st->x, st->y, st->z, 2.f * ty->halfH, ty->radius, got);
   }
-  ptTone951 = tone; unsigned *cs_ = 0; unsigned ncs_ = haveSP ? (PT_NEAR845_OLD ? sprops.ninst : spGridCollect(PROP_TOON_D, e3, 0, &cs_)) : 0;   // №845: стейтпропы у глаза — из сетки
+  ptTone951 = tone; unsigned *cs_ = 0, ncs_ = 0;
+  if (haveSP) {
+    if (!PROPBOOTH1159_OLD && !propInk1138Old && !PT_NEAR845_OLD) { ncs_ = ptBoothEnsure(&sprops); cs_ = ptBoothL; }   // №1159: обводится только будка — обход её списка, без сетки и проверки каждого кандидата
+    else ncs_ = PT_NEAR845_OLD ? sprops.ninst : spGridCollect(PROP_TOON_D, e3, 0, &cs_);   // №845: стейтпропы у глаза — из сетки
+  }
   if (haveSP) for (unsigned j_ = 0; j_ < ncs_ && np < tMaxP; j_++) { unsigned i = cs_ ? cs_[j_] : j_;
     SpRun *r = &sprops.run[i];
     if (!propInkWanted(propInk1138Old, ptIsBooth(&sprops, &sprops.type[sprops.inst[i].type]))) continue;   // №1138: у предметов контура нет, только у будки

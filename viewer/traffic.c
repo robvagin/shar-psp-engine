@@ -799,12 +799,17 @@ static float pathGap(const Traffic *t, const TrCar *c, const Obs *o, int n, cons
 // ---- сверка g02-traffic: что видит машина впереди (T1, T2, 8.5, 8.3), очередь стоп-знака (P16-01, Д11), уворот (8.1), смена полосы (8.2/T5)
 static const Car *svPlayerCar;   // машина игрока этого кадра (ставит trafficUpdate): уворот смотрит её скорость
 typedef struct { float rem, playerD, pedD, dist, homerD; int blocked; } SvLook;   // dist — расстояние между центрами до помехи, которая даёт rem; homerD — до Гомера пешком   // rem — расстояние до остановки по центрам (запас вычтен), м; playerD/pedD — до машины игрока / пешехода в коридоре
+#ifndef TRF_FOLLOW1159_OLD
+#define TRF_FOLLOW1159_OLD 0
+#endif
 // та же ли полоса: свой путь (полоса, кривая) совпадает с путём другой машины трафика
 static int sameLane(const TrCar *c, const TrCar *o) {
   if (o->mode != TRM_DRIVE) return 1;   // сбитая и разбитая лежит на дороге — препятствие для любой
   if (c->elem == 0 && o->elem == 0) return (c->road == o->road && (c->lane == o->lane || (o->chgK > 0.f && o->chgLane == c->lane) || (c->chgK > 0.f && c->chgLane == o->lane))) || (c->next > 0 && o->road == c->nroad && o->lane == c->nlane);
   if (c->elem == 1 && o->elem == 0) return o->road == c->nroad && o->lane == c->nlane;
-  if (c->elem == 0 && o->elem == 1) return c->next > 0 && o->nroad == c->road && o->nlane == c->lane;
+  if (c->elem == 0 && o->elem == 1) return (c->next > 0 && o->nroad == c->road && o->nlane == c->lane) || (!TRF_FOLLOW1159_OLD && o->road == c->road && o->lane == c->lane);
+  // №1159: машина, уже въехавшая на кривую перекрёстка с моей полосы, едет впереди меня; прежде её отсекало («не моя полоса»), и идущая сзади на 16,7 м/с проезжала сквозь неё
+  // (tests/traffic/host.c: кадров с пересечением двух едущих 386 → 1444 после №1092, когда в перекрёстке скорость упала до 3,5 м/с). TRF_FOLLOW1159_OLD=1 — как в TEST85
   return o->nroad == c->nroad && o->nlane == c->nlane;
 }
 // T1/T2/8.5: цели в коридоре впереди: боковое смещение центра ≤ 3 м (машина), ≤ 2 м (пешеход, Гомер); глубина max(15 м, 1,5 с × скорость) по расстоянию до центра;
@@ -1423,13 +1428,28 @@ static void physStep(Traffic *t, const ColWorld *w, TrCar *c, float dt) {
     else { c->car.wheelMaxOvr = 0.f; if (c->dodgeHb) { in.handbrake = 1.f; c->dodgeHb = 0; } else in.handbrake = 0.f; }
   } else c->car.wheelMaxOvr = 0.f;
   if (c->flashT > 0.f) c->flashT -= dt;
+  int asleep = 0;
+  if (!TRF_REST1159_OLD && c->rest) {   // №1159: спит — проверка, что никто не тронул (поза та же, скорости нулевые); тронули — считаем как обычно
+    const Car *k = &c->car;
+    asleep = k->x == c->restPose[0] && k->y == c->restPose[1] && k->z == c->restPose[2] && k->h == c->restPose[3] && c->dodgeT <= 0.f && !c->dodgeHb &&
+             k->vel[0] * k->vel[0] + k->vel[1] * k->vel[1] + k->vel[2] * k->vel[2] < .0025f && fabsf(k->w[0]) + fabsf(k->w[1]) + fabsf(k->w[2]) < .05f && !c->car.destroyed == !c->restWreck;
+    if (!asleep) c->rest = 0;
+  }
+  float wv;
+  if (asleep) { c->stillT += dt; wv = 0.f; }   // время покоя идёт: возврат на полосу и гудок ждут его как раньше
+  else {
   carUpdate(&c->car, w, &in, dt);
   { int air = !c->car.grounded && c->car.airT > .3f;   // круг 2 (g08 P09:30): приземление после полёта — подвеска (suspension_ronks), если ударило сильнее 4 м/с
     if (c->wasAir && c->car.grounded && -c->vy0 > 4.f) pushEv(t, TR_EV_CAR_LAND, (int)(c - t->car), c->car.x, c->car.y, c->car.z, -c->vy0);
     c->wasAir = air; c->vy0 = c->car.vel[1]; }
   c->wheelAng += c->car.v / fmaxf(.2f, c->car.p.wheelRad) * dt;
-  float wv = fabsf(c->car.w[0]) + fabsf(c->car.w[1]) + fabsf(c->car.w[2]);
+  wv = fabsf(c->car.w[0]) + fabsf(c->car.w[1]) + fabsf(c->car.w[2]);
   c->stillT = (fabsf(c->car.v) < .3f && fabsf(c->car.vl) < .3f && wv < .3f) ? c->stillT + dt : 0.f;
+  if (!TRF_REST1159_OLD && c->stillT > TR_REST_T && c->car.grounded && c->dodgeT <= 0.f && !c->dodgeHb && (!c->car.destroyed || carBoomed(&c->car)) &&
+      c->car.vel[0] * c->car.vel[0] + c->car.vel[1] * c->car.vel[1] + c->car.vel[2] * c->car.vel[2] < .0025f && fabsf(c->car.w[0]) + fabsf(c->car.w[1]) + fabsf(c->car.w[2]) < .05f) {
+    c->rest = 1; c->restWreck = c->car.destroyed != 0; c->restPose[0] = c->car.x; c->restPose[1] = c->car.y; c->restPose[2] = c->car.z; c->restPose[3] = c->car.h; }   // №1159: заснула
+  }
+  (void)wv;
   // В112: native moving minivan stops in1.24s and stands13.76s; v14_ram3 also stands8s
   // Physical car stays physical after the impact. Rejoining a lane was a port guess
   if (TRF_REJOIN_OLD) {
@@ -2473,6 +2493,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) continue;
     t->activeCars++; if (c->hitCool > 0.f) c->hitCool -= dt;
     if (c->mode == TRM_DRIVE) {
+      c->rest = 0;   // №1159: вернулась на полосу — не спит (иначе устаревший признак пропускал её столкновения со спящими)
       driveStep(t, w, c, obs, no, dt);
       if (carObs[i] >= 0) { obsCar(&obs[carObs[i]], &c->car, i); obs[carObs[i]].kind = OBK_TRAF; }
       if (c->v > .5f) t->movingCars++;
@@ -2491,12 +2512,14 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     }
     for (int j = i + 1; j < t->maxCars; j++) {
       TrCar *o = &t->car[j]; if (o->mode == TRM_OFF || (c->mode == TRM_DRIVE && o->mode == TRM_DRIVE)) continue;
+      if (!TRF_REST1159_OLD && c->rest && o->rest) continue;   // №1159: два спящих тела друг друга не двигают
       if (near2(&c->car, &o->car, .3f) && carHitCar(&c->car, &o->car, w)) {
         ramLatch(c); ramLatch(o);
         if (c->mode == TRM_DRIVE) c->mode = TRM_PHYS; if (o->mode == TRM_DRIVE) o->mode = TRM_PHYS; c->stillT = o->stillT = 0.f; }
     }
     for (int j = 0; j < t->npark; j++) {
       TrParked *P = &t->park[j]; if (P->gone) continue;
+      if (!TRF_REST1159_OLD && c->rest && !P->state) continue;   // №1159: спящая съехавшая и спящая стоящая — не будят друг друга каждый кадр
       if (near2(&c->car, &P->car, .3f) && carHitCar(&c->car, &P->car, w)) { if (c->mode == TRM_DRIVE) { c->mode = TRM_PHYS; c->stillT = 0.f; } parkWake(t, P); }
     }
     carRamCapFrame(&c->car, dmg);   // №176 повтор: один удар не разбивает трафик

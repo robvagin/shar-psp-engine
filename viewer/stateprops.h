@@ -141,6 +141,7 @@ extern int spNear1000;   // №1000: 1 — далёкие качающиеся �
 int spInit(StateProps *sp, const void *section, unsigned size);
 int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);
 void spFree(StateProps *sp);
+extern unsigned spHitStat[3];   // №1159: [0] просмотрено в spHitCar, [1] дошло до carContact, [2] из них с объёмом (до дорогой части); счётчики для теста
 int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]);   // круг 7: центр объёма в мире с учётом следования за суставом (тест)
 // кадр: состояния, вызовы, частицы; машина (может быть NULL) — удары и упор в целые пропы; монеты — в coins (может быть NULL)
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt);

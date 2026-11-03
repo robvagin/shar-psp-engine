@@ -123,6 +123,13 @@ static int cgBudgetOld = CG_BUDGET_OLD;
 static int camDet; 
 #define CG_DET_TRIS 12
 static unsigned cgPf[4]; static float cgAhX = -1e9f, cgAhZ;
+// №1159 (TEST85: фаза камеры «cam» в 2–3 раза дороже, CAMSUB.safe +0,7 мс на PSP; в эмуляторе STARTCAM1141_OLD=1 возвращает 1,4 → 0,6 мс): окно старта камеры №1141 (camGeomCollect: 120 вызовов с достройкой клеток)
+// взводилось по смене cgGen, а cgGen растёт при каждой выгрузке клетки города (main_stream.h) — то есть при езде, постоянно: камера всё время строила сетки клеток рядом целиком. Окно должно взводиться только
+// переносом опоры больше CAM_START_JUMP и загрузкой уровня: для неё свой счётчик camLevelGen (растёт в main_levels.h вместе с кэшами камеры). CAMSTARTGEN1159_OLD=1 — по cgGen, как в TEST85
+#ifndef CAMSTARTGEN1159_OLD
+#define CAMSTARTGEN1159_OLD 0
+#endif
+static unsigned camLevelGen = 1;
 static int cgProf; static unsigned cgGen = 1;   // cgProf — таймеры камеры только под smoke flag camin; cgGen — поколение клеток (выгрузка/смена уровня сбрасывает кэш клеток луча)
 static unsigned cgBuildN, cgBuildUs, cgScanN, cgScanUs;   // служебное (CAMIN gb/gs): кадры со стройкой сетки (> 150 мкс) и обычные
 static void cgStep(float ex, float ez) { unsigned t0 = cgProf ? sceKernelGetSystemTimeLow() : 0; cgFrame++; cgStep2(ex, ez); if (!cgProf) { cgStepN++; return; } unsigned d_ = sceKernelGetSystemTimeLow() - t0; if (CG_PROF) cgUsStep += d_; cgStepN++; if (d_ > 150) { cgBuildN++; cgBuildUs += d_; } else { cgScanN++; cgScanUs += d_; } }
@@ -201,11 +208,20 @@ static float cgBoxDist(const Cell *c, const float p[3]) {
   float d[3]; for (int k = 0; k < 3; k++) d[k] = fmaxf(fmaxf(c->bb[k] - p[k], p[k] - c->bb[k + 3]), 0.f);
   return sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
 }
+// №1159 (тур TEST85: город +0,2 мс в эмуляторе после каждого переноса опоры, окно CAM_START_WIN вызовов): перебор клеток считал корень (расстояние до ящика) дважды на каждую недостроенную клетку уровня — ~1000 клеток × 120 вызовов.
+// Теперь сравниваются квадраты (тот же результат без корня). STARTCAM1159_OLD=1 — как в TEST85
+#ifndef STARTCAM1159_OLD
+#define STARTCAM1159_OLD 0
+#endif
+static float cgBoxD2(const Cell *c, const float p[3]) {
+  float d[3]; for (int k = 0; k < 3; k++) d[k] = fmaxf(fmaxf(c->bb[k] - p[k], p[k] - c->bb[k + 3]), 0.f);
+  return d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+}
 static int cgBuildNear(const float a[3], const float b[3], float R, int maxCells) {
   if (!CAM_GEOM_FAST || !cl) return 0;
-  int n = 0;
+  int n = 0; const float R2 = R * R;
   for (unsigned i = 0; i < ncell && n < maxCells; i++) { Cell *q = &cl[i]; if (q->state != 2 || q->cgs == 2) continue;
-    if (cgBoxDist(q, a) > R && cgBoxDist(q, b) > R) continue;
+    if (STARTCAM1159_OLD ? (cgBoxDist(q, a) > R && cgBoxDist(q, b) > R) : (cgBoxD2(q, a) > R2 && cgBoxD2(q, b) > R2)) continue;
     cgForceCell = q; cgStep2(a[0], a[2]); n++; }
   cgForceCell = 0; return n;
 }

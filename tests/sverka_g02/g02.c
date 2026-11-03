@@ -431,6 +431,25 @@ int main(int argc, char **argv) {
         check("61 повтор 5 с", tFirst > 0 && tTake > 0 && tTake - tFirst > 4.5f && tTake - tFirst < 5.6f, "первый отказ в %.2f с, выезд взят в %.2f с (через %.2f с; место освободили через 1,5 с) (оригинал: повтор выбора раз в 5 с; прежнее: брал сразу)", tFirst, tTake, tTake - tFirst); }
     } }
 
+  // ---- №1159 (регресс скорости тура TEST83→85): съехавшая и остановившаяся машина трафика остаётся твёрдой до удаления (запрет возврата, круги 6–7) и считала подшаги физики на месте.
+  // Лежит без движения дольше 1 с — спит (физика не считается), поза та же; удар по ней, сдвиг, скорость — просыпается; другое её поведение (возврат на полосу) не меняется
+  { TrCar *c = scene(R, 0, 60.f, 0.f, 40.f, 14.f); c->mode = TRM_PHYS; c->stillT = 0.f; c->outLaneT = 0.f; c->ramStrong = 0; c->noRejoin = 1;
+    int asleepFrames = 0, tSleep = -1; float p0[3] = {0, 0, 0};
+    for (int i = 0; i < 60 * 6; i++) { frame(hd); if (c->rest) { if (tSleep < 0) { tSleep = i; p0[0] = c->car.x; p0[1] = c->car.y; p0[2] = c->car.z; } asleepFrames++; } }
+    float drift = tSleep >= 0 ? hypotf(c->car.x - p0[0], c->car.z - p0[2]) + fabsf(c->car.y - p0[1]) : 9.f;
+    check("1159 засыпает", tSleep >= 0 && tSleep < 60 * 3 && asleepFrames > 60 * 2 && c->mode == TRM_PHYS && drift < 1e-4f, "уснула на кадре %d (%.1f с), спит %d кадров из 360, сдвиг за сон %.5f м, режим %d (нужно: уснула до 3 с, спит более 120 кадров, поза та же, физика)", tSleep, tSleep / 60.f, asleepFrames, drift, c->mode);
+    // удар: машина игрока на 8 м/с в бок спящей
+    float x0 = c->car.x, z0 = c->car.z; static Car ram; float hx = sinf(c->car.h), hz = cosf(c->car.h);
+    carInit(&ram, NULL, &world, x0 - hz * 9.f, ground(x0 - hz * 9.f, z0 + hx * 9.f, c->car.y + 2.f), z0 + hx * 9.f, atan2f(hz, -hx)); carSetSpeed(&ram, 8.f);
+    int woke = 0; for (int i = 0; i < 90; i++) { CarInput ci = {.5f, 0, 0, 0}; carUpdate(&ram, &world, &ci, DT); float pp[3] = {ram.x, ram.y, ram.z}, eye[3] = {ram.x, ram.y + 3.f, ram.z - 7.f}, fw[3] = {0, 0, 1};
+      trafficUpdate(&T, &world, &ram, 1, pp, eye, fw, DT); if (!c->rest) woke = 1; }
+    float moved = hypotf(c->car.x - x0, c->car.z - z0);
+    check("1159 удар будит", woke && moved > .2f, "после удара не спит: %d, сдвинулась на %.2f м (нужно: проснулась и поехала от удара; ударов не было — не двигалась)", woke, moved);
+    // толчок без удара (взрыв рядом передаёт скорость напрямую)
+    for (int i = 0; i < 60 * 3; i++) frame(hd);
+    float x1 = c->car.x; int slept = c->rest; c->car.vel[0] += 3.f; for (int i = 0; i < 30; i++) frame(hd);
+    check("1159 толчок будит", slept && fabsf(c->car.x - x1) > .05f, "спала до толчка: %d, после скорости 3 м/с сдвиг по x %.2f м (нужно: проснулась и сдвинулась; с ручником скорость гаснет за ~0,15 м)", slept, fabsf(c->car.x - x1)); }
+
   // ---- 21 / 44 (P03-25, 8.7): после удара машина лежит, возврат на свою полосу не раньше чем через 3 с; помеха на полосе — ждёт заново 3 с
   { float tBack[2] = {-1, -1};
     for (int k = 0; k < 2; k++) { TrCar *c = scene(R, 0, 60.f, 0.f, 40.f, 14.f); static Car obst; float q[3]; lanePos(&T, R, 0, 60.f + 10.f, q); carInit(&obst, NULL, &world, q[0], ground(q[0], q[2], q[1]), q[2], hd);

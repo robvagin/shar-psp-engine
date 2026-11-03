@@ -129,4 +129,9 @@ static inline float camCarNearStep(float prev, float want, float dt, float minN)
   return v < minN ? minN : v;
 }
 
+// №1159: окно старта камеры (№1141: клетки у глаза достраиваются целиком) взводится первым вызовом, сменой поколения УРОВНЯ и переносом опоры дальше limit м за вызов. В TEST85 поколением служил счётчик клеток
+// города, а он растёт при каждой выгрузке клетки (езда) — окно взводилось почти каждый кадр, camSafe стоил ×2–3 (CAMSUB.safe 480 → 1300 мкс на Маке, PSP +0,7 мс). old = CAMSTARTGEN1159_OLD
+static inline unsigned camStartGenSel(unsigned cellGen, unsigned levelGen, int old) { return old ? cellGen : levelGen; }
+static inline int camStartArm(int haveLast, unsigned lastGen, unsigned gen, float jumpM, float limit) { return !haveLast || lastGen != gen || jumpM > limit; }
+
 #endif

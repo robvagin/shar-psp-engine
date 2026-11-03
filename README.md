@@ -19,7 +19,16 @@ No game files are included, and none will be.
 - [Tests](tests/README.md): how every fix is checked
 - [All documents](docs/index.md)
 
-## What's new in build 85
+## What's new in build 86
+
+November 3, 2026. Since build 85 (the same day):
+
+- Faster: on the full hardware tour of all 7 levels the p95 frame time (median over scenes) went from 39.2 to 35.8 ms and dropped frames from 31 to 18 percent; 49 of 55 scenes got faster. The mission start camera no longer rebuilds the street grid each time a cell unloads, the wasp's shot checks only nearby props, parked traffic and standing cars sleep instead of running full physics, and skid marks go to the graphics chip piece by piece
+- Mission complete in a car: the hero cheers from the driver's seat, like the original, instead of sliding out through the door
+- Mission failed: the red FAILED title is 1.5 times bigger
+- Known: after about ten level changes in one session, a level's collectibles may not load (a new list fragments memory). Fix planned for the next build
+
+### Build 85
 
 November 3, 2026. Since build 83 (November 2):
 
@@ -35,19 +44,6 @@ November 3, 2026. Since build 83 (November 2):
 - Ink outlines only on characters and cars
 - Look-back in the car is gone; the radar is back to its earlier look, with the blinking dot kept inside its edge
 
-### Build 83
-
-November 2, 2026. Since build 81 (October 31):
-
-- A full behavior pass against the original game: driving and on-foot physics, traffic and pedestrians, police and mission cars, the camera, missions and the moves between them, menus, sounds and loading. More than 900 points compared, each change behind a switch that restores the old behavior. What is ours for the PSP stays ours: fonts, layout, 16:9, camera angle, buttons
-- Every level has its own hero (Homer, Bart, Lisa, Marge, Apu, Bart, Homer), and each one now has the dodge, cheer and look-back moves
-- Police and the wanted meter follow the original timing on every level; mission cars, races and their catch-up behave like the PS2
-- Burnouts throw light dust on the road and dirt, grass or water spray by surface; the burning-car smoke comes only after a long burnout
-- Rooms: the gap next to the TV in the Simpsons' house is gone (rooms are drawn relative to the camera, like the city, so the PSP's graphics chip keeps its precision), and the first room camera after a load or a door is a straight cut, no fly-in from behind
-- The level 7 camera tilt stays outside, it no longer leans the room and talk cameras
-- Any car can push and break street props, traffic and mission cars included, and it costs almost nothing: only moving cars and props nearby are checked
-- Level loading is faster again: the baked traffic data is rebuilt with every data set, so the PSP no longer recomputes it at each load
-
 ## Build
 
 1. `./setup.sh` installs the PSPDEV toolchain into `./pspdev`
@@ -58,7 +54,7 @@ The exact build we test on a PSP-2000 (release switches; each `*_OLD=1` keeps an
 
 ```
 psp-cmake -S . -B build -DSHAR_RELEASE=ON -DSHAR_RELEASE_KEEP_DIAG=ON -DSHAR_RELEASE_KEEP_HUD=ON \
-  -DCMAKE_C_FLAGS="-DJITTER_STRIPS_OLD=1 -DJITTER_CAR_OLD=1 -DFE_DEMO_PS2_OLD=1 -DZF932_OLD=1 -DCARFILL930_OLD=1"
+  -DCMAKE_C_FLAGS="-DJITTER_STRIPS_OLD=1 -DJITTER_CAR_OLD=1 -DFE_DEMO_PS2_OLD=1 -DZF932_OLD=1 -DCARFILL930_OLD=1 -DGAME_C7_TALKHIDE_OLD=1"
 ```
 
 Game data: unpack your own disc with [hit-and-run-web](https://github.com/Vheissu/hit-and-run-web) into
@@ -89,8 +85,8 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About five weeks, 85 test builds and 42 full tours on a real PSP. 1,157 playtest notes, logged and worked through one by one.
-Over 3,300 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
+About five weeks, 86 test builds and 43 full tours on a real PSP. 1,159 playtest notes, logged and worked through one by one.
+Over 3,400 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
 ## Reporting bugs

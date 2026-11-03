@@ -46,8 +46,15 @@ static int dripSkipBill(const float *v, uint32_t bfl) {   // квад капли
   for (unsigned i = 0; i < dripPtN; i++) { float dx = cx - dripPt[i][0], dz = cz - dripPt[i][1]; if (dx * dx + dz * dz < DRIP_R * DRIP_R) return 1; }
   return 0;
 }
+#ifndef DRIPTRIG1159_OLD
+#define DRIPTRIG1159_OLD 0   // 1 — cosf/sinf на лету, как в TEST85
+#endif
+static float dripCs[17][2]; static int dripCsOk;
+#define DRIP_COS(j) (DRIPTRIG1159_OLD ? cosf(6.2831853f * (j) / 16.f) : dripCs[j][0])
+#define DRIP_SIN(j) (DRIPTRIG1159_OLD ? sinf(6.2831853f * (j) / 16.f) : dripCs[j][1])   // №1159: cos и sin углов 2π·j/16, j = 0..16 (те же числа, что считались на лету)
 static void dripDraw(float ex, float ey, float ez, int inR) {
   if (!dripOn || !dripN || inR) return;
+  if (!dripCsOk) { for (int j = 0; j <= 16; j++) { float a_ = 6.2831853f * j / 16.f; dripCs[j][0] = cosf(a_); dripCs[j][1] = sinf(a_); } dripCsOk = 1; }
   if (!dripGround && haveCol) { dripGround = 1; for (unsigned k = 0; k < dripN; k++) { float y_, n_[3]; dripC[k].gy = colGround(&world, dripC[k].x, dripC[k].z, dripC[k].top - .2f, dripC[k].top - 40.f, &y_, n_) ? y_ : dripC[k].top - 15.f; } }
   typedef struct { unsigned c; float x, y, z; } DV;
   const int ac = !acid1131Old;
@@ -78,13 +85,13 @@ static void dripDraw(float ex, float ey, float ez, int inR) {
     }
     unsigned cp = ((unsigned)(acidAlphaPool(!ac) * fade + .5f) << 24) | rgbC; float pr = r * (ac ? 1.6f : 1.4f);
     float dxp = ex - X, dyp = ey - B, dzp = ez - Z, dd = sqrtf(dxp * dxp + dyp * dyp + dzp * dzp), kk = dd > .3f ? .15f / dd : .5f; if (kk > .5f) kk = .5f;   // пятно ближе к глазу (не тонет в полу)
-    for (int j = 0; j < 16; j++) { float a0 = 6.2831853f * j / 16.f, a1 = 6.2831853f * (j + 1) / 16.f;
-      float Pp[3][3] = {{X, B, Z}, {X + pr * cosf(a0), B, Z + pr * sinf(a0)}, {X + pr * cosf(a1), B, Z + pr * sinf(a1)}};
+    for (int j = 0; j < 16; j++) {   // №1159: косинусы и синусы 17 углов — из таблицы (раньше 64 вызова cosf/sinf на столб на кадр, с №1131 128)
+      float Pp[3][3] = {{X, B, Z}, {X + pr * DRIP_COS(j), B, Z + pr * DRIP_SIN(j)}, {X + pr * DRIP_COS(j + 1), B, Z + pr * DRIP_SIN(j + 1)}};
       for (int m = 0; m < 3; m++) { DV *o = &q[nv++]; o->c = cp; o->x = Pp[m][0] + (ex - Pp[m][0]) * kk; o->y = Pp[m][1] + (ey - Pp[m][1]) * kk; o->z = Pp[m][2] + (ez - Pp[m][2]) * kk; } }
     if (ac) {   // мягкое свечение вокруг пятна: центр плотнее, к краю прозрачное (вершинный градиент, тот же вызов)
       float hr = r * 3.f; unsigned hc = ((unsigned)(90.f * fade + .5f) << 24) | 0x3CFF3Cu, he = 0x3CFF3Cu;
-      for (int j = 0; j < 16; j++) { float a0 = 6.2831853f * j / 16.f, a1 = 6.2831853f * (j + 1) / 16.f;
-        float Pp[3][3] = {{X, B, Z}, {X + hr * cosf(a0), B, Z + hr * sinf(a0)}, {X + hr * cosf(a1), B, Z + hr * sinf(a1)}};
+      for (int j = 0; j < 16; j++) {
+        float Pp[3][3] = {{X, B, Z}, {X + hr * DRIP_COS(j), B, Z + hr * DRIP_SIN(j)}, {X + hr * DRIP_COS(j + 1), B, Z + hr * DRIP_SIN(j + 1)}};
         for (int m = 0; m < 3; m++) { DV *o = &q[nv++]; o->c = m ? he : hc; o->x = Pp[m][0] + (ex - Pp[m][0]) * kk; o->y = Pp[m][1] + (ey - Pp[m][1]) * kk; o->z = Pp[m][2] + (ez - Pp[m][2]) * kk; } }
     }
   }

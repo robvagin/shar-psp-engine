@@ -356,10 +356,12 @@ static void camGeomCollect(const float P[3], const float e[3]) {
   // №1141: перенос опоры больше CAM_START_JUMP м (старт миссии, сброс машины) или первая загрузка уровня — окно CAM_START_WIN вызовов: клетки рядом достраиваются сразу (camgrid.h cgBuildNear),
   // чтобы глаз и ближняя плоскость видели вывески, навесы и стенки с первого кадра. STARTCAM1141_OLD=1 — как в TEST84
   if (!STARTCAM1141_OLD && !inRoom()) {
-    static float lp[3]; static int lpOk; static unsigned lgen; static int win;
-    if (!lpOk || lgen != cgGen || hypotf(hypotf(P[0] - lp[0], P[1] - lp[1]), P[2] - lp[2]) > CAM_START_JUMP) win = CAM_START_WIN;
-    memcpy(lp, P, 12); lpOk = 1; lgen = cgGen;
-    if (win > 0) { win--; camStartBuilt += (unsigned)cgBuildNear(e, P, CAM_START_R, 6); }
+    static float lp[3]; static int lpOk; static unsigned lgen; static int win, nb_ = 1;
+    unsigned gen_ = camStartGenSel(cgGen, camLevelGen, CAMSTARTGEN1159_OLD);   // №1159 (g10b): поколение уровня, а не клеток города
+    if (camStartArm(lpOk, lgen, gen_, hypotf(hypotf(P[0] - lp[0], P[1] - lp[1]), P[2] - lp[2]), CAM_START_JUMP)) { win = CAM_START_WIN; nb_ = 1; }
+    memcpy(lp, P, 12); lpOk = 1; lgen = gen_;
+    // №1159 (g12): пока ничего не достроено (рядом всё готово или клетки ещё грузятся), перебор клеток — раз в 4 вызова, а не каждый (STARTCAM1159_OLD=1 — каждый, как в TEST85)
+    if (win > 0) { win--; if (STARTCAM1159_OLD || nb_ > 0 || !(win & 3)) { nb_ = cgBuildNear(e, P, CAM_START_R, 6); camStartBuilt += (unsigned)nb_; } }
   }
   csScene.ntri = 0; camGeomTris = 0; csScene.geomRay = (CAM_GEOM_FAST && !camGeomOld && !inRoom()) ? cgRayFracCam : 0;
   if (!pc || !cl || inRoom()) return;

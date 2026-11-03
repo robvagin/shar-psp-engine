@@ -1,0 +1,10 @@
+# №1157: красная надпись FAILED на экране провала миссии (в 1,5 раза крупнее). Сравнить пакеты ui.shr: новый и FAILTITLE1157_OLD=1.
+flag menu
+wait 2
+press cross
+wait 20
+flag msnfail
+wait 1
+shot failtitle
+wait 1
+end

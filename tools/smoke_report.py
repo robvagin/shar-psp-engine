@@ -29,7 +29,7 @@ BONUS_SCENES = set()   # сцены бонуса: кадры мерит tests/bo
 
 def parse(out):
     BONUS_SCENES.clear()
-    log = (out / 'smoke.txt').read_text().splitlines() if (out / 'smoke.txt').exists() else []
+    log = (out / 'smoke.txt').read_text(errors='replace').splitlines() if (out / 'smoke.txt').exists() else []   # журнал может обрезать строку посреди буквы (OBJCNT, TEST86)
     ended = any(l.startswith('END') for l in log)
     rows, stats, started = {}, {}, []
     for l in log:

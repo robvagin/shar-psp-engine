@@ -157,6 +157,18 @@ int main(int argc, char **argv) {
     if (fl) { chk("круг 7+: кайф с флагом, 2,5 с в машине — ещё покой (1)", (float)before, 1.f, 1.f, 1.f, 1.f);
               chk("круг 7+: кайф с флагом, 3,5 с в машине — играет victory_small (1)", (float)after, 1.f, 1.f, 0.f, 0.f); }
     else chk("круг 7+: без флага этапа через 3,5 с — покой, не кайф (0)", (float)after, 0.f, 0.f, 0.f, 0.f); }
+  // 10л. правка 1158: радость за рулём (малая, большая) на месте водителя. Корень позы во время клипа радости не уходит от места сиденья (раньше уезжал влево сквозь дверь);
+  //      по клипу максимум за весь проигрыш, м. Ложный сосед: радость пешком — корень идёт по движению клипа, там привязки нет (проверяется отдельно ниже)
+  for (int big = 0; big < 2; big++) {
+    static Car car3; carInit(&car3, NULL, &world, spx, spy, spz, 0.f); HomerCar hc3; homerCarFrom(&hc3, &car3, .62f);
+    homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); homerSetInCar(&H, &hc3); homerRockOut(&H, 0);
+    for (int i = 0; i < 150; i++) { homerUpdate(&H, &world, &hc3, &(HomerInput){0}, DT); homerPose(&H); }
+    int ok = homerCelebrate(&H, big); int root = (int)H.m->h->rootJoint; float mx = 0.f;
+    for (int i = 0; i < 90; i++) { homerUpdate(&H, &world, &hc3, &(HomerInput){0}, DT); homerPose(&H);
+      if (H.clip == H.cCarVic[big]) { float dx = H.xf[root].t[0] - H.seatRoot[0], dy = H.xf[root].t[1] - H.seatRoot[1], dz = H.xf[root].t[2] - H.seatRoot[2];
+        float d = sqrtf(dx * dx + dy * dy + dz * dz); if (d > mx) mx = d; } }
+    chk(big ? "правка 1158: большая радость за рулём запущена (1)" : "правка 1158: малая радость за рулём запущена (1)", (float)ok, 1.f, 1.f, 1.f, 1.f);
+    chk(big ? "правка 1158: большая радость за рулём, уход корня от сиденья, м (0)" : "правка 1158: малая радость за рулём, уход корня от сиденья, м (0)", mx, 0.f, 0.01f, 0.05f, 9.f); }
   // 11. круг 6: прибавка воздуха «за тик». Прыжок с места, во время полёта стик вперёд на полную: через 0,1 с (6 кадров по 1/60) прибавка = 0,078 × 4 × (0,1 с × 30 тиков/с) = 0,94 м/с.
   //     Ложные соседи: тик 60 Гц даёт 1,87; старое (цель 4 м/с, разгон 4,68 м/с²) — 0,47
   homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 60; i++) step(&H, 0, 0, 0, 0, 0);

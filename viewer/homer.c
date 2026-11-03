@@ -175,6 +175,8 @@ static void sampleLoco(Homer *H, SkinXf *out) {
 // круг 7+: основной «покой» водителя — руки на руле или кайф (после 3 с в машине при команде этапа AllowRockOut)
 static int baseCarClip(const Homer *H) { return (!HOMER_ROCKOUT_OLD && H->rockOn && H->cCarVic[0] >= 0) ? H->cCarVic[0] : H->cInCar; }
 static int isDrvClip(const Homer *H, int c) {
+  // правка 1158: радость водителя (малая, большая) — тоже клип места водителя: корень привязан к сиденью, не к движению клипа
+  if (!CHEERCAR1158_OLD && c >= 0 && (c == H->cCarVic[0] || c == H->cCarVic[1])) return 1;
   return c >= 0 && (c == H->cDrvTurn[0] || c == H->cDrvTurn[1] || c == H->cDrvGas || c == H->cDrvBrake || c == H->cDrvCrash || (c >= 0 && c == H->cDrvBack));
 }
 void homerDriveInput(Homer *H, float steer, float gas, float brake, float speed, int crash) {

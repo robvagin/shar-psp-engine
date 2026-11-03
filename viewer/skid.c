@@ -67,6 +67,14 @@ static unsigned short qown[SKID_QUADS];   // метка следа-хозяин�
 static unsigned char qlive[SKID_QUADS];   // квад тянется за колесом (его не затираем)
 static float qlen[SKID_QUADS];
 static int head, used, dirty, made, skipped, drawnLast, curSlot, madeAi;
+// №1159 (сверка тура TEST85 на PSP, g12-data): «тени и следы» в x_car3d выросли 0,4 → 1,5 мс в сценах с ездой и скольжением (проспект L5, стекло L1). Каждый кадр скольжения писал в кольцо следов один-два квада,
+// а на GE отдавалась ВСЯ записанная часть кольца (до 384 квадов × 96 Б = 36 КБ — больше кэша данных 16 КБ: сброс кэша целиком). Теперь сбрасывается только промежуток квадов, тронутых после прошлого рисования
+// (dLo..dHi; записи — quadWrite, alphaSet, skidClear). Картинка та же. SKIDWB1159_OLD=1 — сброс всей записанной части, как в TEST85
+#ifndef SKIDWB1159_OLD
+#define SKIDWB1159_OLD 0
+#endif
+static int dLo = 1 << 30, dHi = -1;
+static inline void dmark(int q) { if (q < dLo) dLo = q; if (q > dHi) dHi = q; dirty = 1; }
 static float lvlLast, usLast, usCar;
 // Правка Роба 500 (машины в кадре, «следы»): машины миссии с ИИ дальше SKID_DRAW_DIST + 40 м от глаза (прошлый кадр) следов не оставляют — раньше каждый кадр
 // считали уровень скольжения и по лучу земли на каждое из 4 колёс (colGroundMat), хотя квадраты дальше 90 м не рисуются. След начинается заново, когда машина
@@ -111,7 +119,7 @@ void skidClear(int on) {
   memset(vb, 0, sizeof vb); memset(qown, 0, sizeof qown); memset(qlive, 0, sizeof qlive); memset(qlen, 0, sizeof qlen);
   memset(tr, 0, sizeof tr);
   for (int s = 0; s < SKID_CARS; s++) for (int i = 0; i < 4; i++) tr[s][i].q = -1;
-  head = used = made = skipped = drawnLast = madeAi = 0; dirty = 1; levelOn = on; lvlLast = 0.f; skidTex = -2;
+  head = used = made = skipped = drawnLast = madeAi = 0; dirty = 1; dLo = 0; dHi = SKID_QUADS - 1; levelOn = on; lvlLast = 0.f; skidTex = -2;
 }
 
 #ifndef SKID_MARKS_ALL_OLD
@@ -240,12 +248,12 @@ static void quadWrite(int q, const float *al, const float *ar, float va, unsigne
   v[1] = (SV){1.f, va, col(aa), ar[0], ar[1], ar[2]};
   v[2] = (SV){1.f, vbv, col(ab), br[0], br[1], br[2]};
   v[3] = (SV){0.f, vbv, col(ab), bl[0], bl[1], bl[2]};
-  dirty = 1;
+  dmark(q);
 }
 static inline unsigned char alphaOf(int q, int end) { return alphaRaw(vb[q * 4 + (end ? 2 : 0)].c); }
 static void alphaSet(int q, int end, unsigned char a) {
   SV *v = &vb[q * 4 + (end ? 2 : 0)];
-  v[0].c = col(a); v[1].c = col(a); dirty = 1;
+  v[0].c = col(a); v[1].c = col(a); dmark(q);
 }
 
 // 0x206b20: последний участок прозрачный, к нему спад по последнему метру (альфа не больше 255 × путь до конца)
@@ -255,7 +263,7 @@ static void trailEnd(Trail *t) {
     qlive[t->q] = 0;
     if (qlen[t->q] >= SKID_MIN && t->nh < SKID_HIST) t->hist[t->nh++] = t->q;
     else if (qlen[t->q] >= SKID_MIN) { memmove(t->hist, t->hist + 1, sizeof(int) * (SKID_HIST - 1)); t->hist[SKID_HIST - 1] = t->q; }
-    else { qown[t->q] = 0; dirty = 1; }   // короче шага — не след
+    else { qown[t->q] = 0; if (SKIDWB1159_OLD) dirty = 1; }   // короче шага — не след (qown — список ЦП, на GE не уходит; №1159: сброс кэша не нужен)
   }
   float dEnd = 0.f;
   for (int k = t->nh - 1; k >= 0 && dEnd < SKID_FADE; k--) {
@@ -403,7 +411,10 @@ void skidDraw(float ex, float ey, float ez) {
     unsigned short b = (unsigned short)(q * 4);
     o[0] = b; o[1] = b + 1; o[2] = b + 2; o[3] = b; o[4] = b + 2; o[5] = b + 3; o += 6;
   }
-  if (dirty) { sceKernelDcacheWritebackRange(vb, sizeof(SV) * 4u * (unsigned)used); dirty = 0; }
+  if (dirty) {
+    if (SKIDWB1159_OLD || dHi < dLo) sceKernelDcacheWritebackRange(vb, sizeof(SV) * 4u * (unsigned)used);
+    else { int hi_ = dHi < SKID_QUADS ? dHi : SKID_QUADS - 1; sceKernelDcacheWritebackRange(&vb[dLo * 4], sizeof(SV) * 4u * (unsigned)(hi_ - dLo + 1)); }
+    dirty = 0; dLo = 1 << 30; dHi = -1; }
   ScePspFMatrix4 I; memset(&I, 0, sizeof I); I.x.x = I.y.y = I.z.z = I.w.w = 1.f;
   sceGuSetMatrix(GU_MODEL, &I);
   sceGuDisable(GU_ALPHA_TEST); if (SKID_TINT_OLD) sceGuEnable(GU_TEXTURE_2D); else sceGuDisable(GU_TEXTURE_2D); sceGuEnable(GU_BLEND);

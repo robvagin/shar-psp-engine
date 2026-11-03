@@ -37,6 +37,9 @@
 #ifndef SV_DAMVIS_OLD
 #define SV_DAMVIS_OLD 0
 #endif
+#ifndef SV_CARCOST1159_OLD
+#define SV_CARCOST1159_OLD 0   // №1159: 1 — без кэша матриц куска (считать заново на каждый кусок)
+#endif
 #ifndef SV_STOPLIGHT2_OLD
 #define SV_STOPLIGHT2_OLD 0
 #endif
@@ -277,11 +280,14 @@ static void jointXf(const CarVis *v, const Car *c, int j, float R[9], float t[3]
                                 fminf(c->lim+c->p.suspensionYOffset,v->wheelUp[i]));
     t[1] += dy;
     float ph = i < 2 ? -c->steer * v->maxSteer : 0.f, sp = noSpin ? 0.f : -v->spin[i];
+    CarVis *vm = (CarVis *)v;   // кэш — служебное, не часть состояния
+    if (!SV_CARCOST1159_OLD && vm->wOk[i] && vm->wKey[i][0] == ph && vm->wKey[i][1] == sp) { memcpy(R, vm->wR[i], 9 * sizeof(float)); return; }
     float cp = cosf(ph), sph = sinf(ph), cs = cosf(sp), ss = sinf(sp);
     // Ry(ph) * Rx(sp)
     R[0] = cp; R[1] = sph * ss; R[2] = sph * cs;
     R[3] = 0;  R[4] = cs;       R[5] = -ss;
     R[6] = -sph; R[7] = cp * ss; R[8] = cp * cs;
+    if (!SV_CARCOST1159_OLD) { vm->wKey[i][0] = ph; vm->wKey[i][1] = sp; memcpy(vm->wR[i], R, 9 * sizeof(float)); vm->wOk[i] = 1; }
     return;
   }
   for (int i = 0; i < v->nhinge; i++) if (v->hinge[i].joint == j) {
@@ -301,7 +307,13 @@ int carVisWheelJoint(const CarVis *v, int joint) {   // №867: сустав —
   return 0;
 }
 void carVisPieceMatrixEx(const CarVis *v, const Car *c, int joint, int variant, float ox, float oy, float oz, float sc, int noSpin, float m[16]) {
-  float B[16]; carPieceMatrix(c, variant == 1 ? v->huskLift : carModelLift(c,v->lift), 0, 0, 0, 1, B);
+  float B[16], lift = variant == 1 ? v->huskLift : carModelLift(c, v->lift);
+  if (SV_CARCOST1159_OLD) carPieceMatrix(c, lift, 0, 0, 0, 1, B);
+  else {   // №1159: матрица тела одна на кадр для всех кусков (ключ: машина, положение, поворот, подъём)
+    CarVis *vm = (CarVis *)v; const float key[8] = {c->x, c->y, c->z, c->q[0], c->q[1], c->q[2], c->q[3], lift};
+    if (!vm->cOk || vm->cKeyCar != c || memcmp(vm->cKey, key, sizeof key)) { carPieceMatrix(c, lift, 0, 0, 0, 1, vm->cB); memcpy(vm->cKey, key, sizeof key); vm->cKeyCar = c; vm->cOk = 1; }
+    memcpy(B, vm->cB, sizeof B);
+  }
   float R[9], t[3];
   if (variant == 1) { memset(R, 0, sizeof R); R[0] = R[4] = R[8] = 1; t[0] = t[1] = t[2] = 0; }
   else jointXf(v, c, joint, R, t, noSpin);
