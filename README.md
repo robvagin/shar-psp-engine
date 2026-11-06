@@ -47,6 +47,21 @@ November 3, 2026. Since build 83 (November 2):
 
 ## Build
 
+### The easy way: one line, then your browser
+
+Paste one line. It downloads this code into `~/SHAR-PSP`, sets up the tools and opens a page in your browser with a PSP on it.
+Drop the image of your own disc on the PSP screen (`.iso`, PAL or NTSC). The build takes about an hour, up to two on a slower machine;
+when it is done, connect the PSP by USB and press **Put on PSP**: only changed files are copied, each one is checked
+
+- Mac or Linux, in Terminal: `curl -fsSL https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.sh | bash`
+- Windows, in PowerShell: `irm https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.ps1 | iex`
+  (runs through Ubuntu inside Windows, WSL; the first time it installs WSL and asks for a restart. Not tested on Windows yet)
+
+The page runs only on your computer (`127.0.0.1`), nothing is uploaded anywhere. Close the Terminal window and the build pauses;
+run the same line again and it picks up where it stopped. Nothing from the game is inside the code: it builds only from your disc
+
+### By hand
+
 1. `./setup.sh` installs the PSPDEV toolchain into `./pspdev`
 2. `export PSPDEV=$PWD/pspdev PATH=$PWD/pspdev/bin:$PATH`
 3. `cd viewer && psp-cmake -S . -B build && cmake --build build` builds `EBOOT.PBP`
