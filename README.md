@@ -64,8 +64,15 @@ in `PSP/GAME/SHARVIEW`. Needs custom firmware and a PSP-2000 or PSP-3000. The PS
 
 - Space: the game folder takes about 3.3 GB on the Memory Stick (7 levels, cutscenes, sound, four languages). Building needs about 10 GB free on the computer
   (disc image, unpacked disc, tools and the finished game) and takes roughly an hour, up to two on a slower machine
-- Computer: tested on macOS. On Windows it should run in WSL, but that is not tested yet
-- Known issue (November 3): on a fresh clone `tools/ship.sh` can stop at `road934.shr`. A fix is on the way
+- Computer: tested on macOS. Ubuntu 22.04/24.04 (x86_64 or arm64): the Linux path comes from noname8723, who built the game on Windows through Ubuntu;
+  we have not run it on Linux ourselves yet. On Windows use WSL (Ubuntu inside Windows)
+- Ubuntu notes: `./setup.sh` installs the apt packages (build-essential, cmake, 7zip or p7zip-full, ffmpeg and the libraries the PSP toolchain needs)
+  and clones `hit-and-run-web` and `donut`. Then run `source tools/linux_env.sh`: it adds small `stat`/`cp`/`sed` wrappers for the macOS-style
+  commands in the test scripts (`tools/ship.sh` does not need them). Python 3.11 or newer is required (Ubuntu 22.04 needs the deadsnakes PPA).
+  The smoke test needs a headless PPSSPP: set `PPSSPP_HEADLESS=/path/to/PPSSPPHeadless`; without it `ship.sh` skips the smoke test and says so
+  (`SHIP_SMOKE_REQUIRED=1` makes that an error). `--deploy` finds the Memory Stick in `/media/$USER/PSP`, `/run/media/$USER/PSP`, `/mnt/PSP`
+  or any volume with `PSP/GAME` (`SHIP_PSP=/path` to force one). Instead of `caffeinate -i` use `systemd-inhibit tools/ship.sh`
+- Fixed: on a fresh clone `tools/ship.sh` used to stop at `road934.shr` (a side file of the level export was dropped while staging)
 
 - Discs: PAL `SLES_518.97` and US NTSC `SLUS_206.24`. The executable is read from `SYSTEM.CNF`; NTSC movies are 640x448 at 29.97 fps
   and are resampled to the engine's 25 fps
@@ -76,7 +83,7 @@ in `PSP/GAME/SHARVIEW`. Needs custom firmware and a PSP-2000 or PSP-3000. The PS
   The coin needs Blender (`BLENDER=/path/to/blender`); without it, coins are drawn as 3D models
 - In game, R+SELECT shows or hides the FPS counter
 
-Thanks to the first outside builder for the NTSC report and the build notes.
+Thanks to the first outside builder for the NTSC report and the build notes, and to noname8723 for the Ubuntu build path (setup, Memory Stick and emulator lookup, Linux wrappers for the test scripts).
 
 ## Repository
 
