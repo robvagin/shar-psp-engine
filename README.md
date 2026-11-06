@@ -49,7 +49,7 @@ November 3, 2026. Since build 83 (November 2):
 
 ### The easy way: one line, then your browser
 
-Paste one line. It downloads this code into `~/SHAR-PSP`, sets up the tools and opens a page in your browser with a PSP on it.
+Paste one line. It downloads this code into `~/SHAR-PSP`, sets up the tools and opens Hit & Run PSP Builder in your browser: a page with a PSP on it.
 Drop the image of your own disc on the PSP screen (`.iso`, PAL or NTSC). The build takes about an hour, up to two on a slower machine;
 when it is done, connect the PSP by USB and press **Put on PSP**: only changed files are copied, each one is checked
 
