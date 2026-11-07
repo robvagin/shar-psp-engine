@@ -27,7 +27,8 @@ PPSSPP рисует с увеличением и в плавающей точк�
   python tools/seams_raster.py --plant SRC.shr DST.shr         -> заведомо плохой вход: копия, у которой треугольники
          города ужаты к своему центру на 3 % (щели по всем стыкам) — сторож обязан упасть
   python tools/seams_raster.py --zfight A.shr [B.shr …]        -> только полосы глубины по видам"""
-import argparse, ctypes, math, struct, subprocess, sys
+import argparse, ctypes, math, os, struct, subprocess, sys
+import shutil
 from pathlib import Path
 import numpy as np
 
@@ -44,10 +45,11 @@ GATE_ABS = 20
 
 
 def lib():
-    src = ROOT / 'tools/seams_raster.c'; out = ROOT / 'build/tmp_conv/seams_raster.dylib'
+    src = ROOT / 'tools/seams_raster.c'; out = ROOT / ('build/tmp_conv/seams_raster.dylib' if sys.platform == 'darwin' else 'build/tmp_conv/seams_raster.so')   # Linux/WSL: .so
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
-        subprocess.run(['clang', '-O2', '-shared', '-o', str(out), str(src)], check=True)
+        cc = os.environ.get('CC') or ('clang' if sys.platform == 'darwin' else (shutil.which('cc') or shutil.which('gcc') or 'cc'))   # на Linux clang обычно нет
+        subprocess.run([cc, '-O2', '-shared', '-fPIC', '-o', str(out), str(src), '-lm'], check=True)
     L = ctypes.CDLL(str(out))
     L.raster.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                          ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
@@ -112,6 +114,9 @@ def views(pieces):
         if s[0] == 'scene': cur = s[1]
         if s[0] == 'goto': x, z, h = map(float, s[1:4]); pts.append((cur, x, None, z, h))
     rt = ROOT / 'build/routes.txt'
+    # №1162: build/routes.txt делает обход ботом (build/sandbox), его у собирающего по README нет, и сторож швов падал «виды замера не совпали с эталоном (12 против 22)».
+    # Копия (2,5 КБ, координаты стартов разгона у трамплинов L1, не данные диска) лежит в репозитории. SEAMS_ROUTES1162_OLD=1 — как было
+    if not rt.exists() and not os.environ.get('SEAMS_ROUTES1162_OLD'): rt = ROOT / 'tools/seams_routes.txt'
     if rt.exists():
         R = {s[0]: s for s in (ln.split() for ln in rt.read_text().splitlines()) if s and not s[0].startswith('#')}
         for k in ROUTE_PTS:

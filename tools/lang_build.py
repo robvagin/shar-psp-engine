@@ -8,7 +8,7 @@ import argparse, os, re, subprocess, sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ROWPACKS = ('menu.shr', 'pmenu.shr')   # пакеты, где движок ищет строки по английской подписи: пары подписей -> rowkeys.txt (tools/lang_rowkeys.py)
-LANG_FILES = {'rowkeys.txt', 'prompts.txt', 'ui.shr', 'msnart.shr', 'load.shr', 'menu.shr', 'pmenu.shr', 'pextra.shr', 'fsave.shr', 'psave.shr', 'scrap.shr', 'scrapgal.shr', 'ending.shr', 'shop.shr', 'phone.shr',
+LANG_FILES = {'rowkeys.txt', 'prompts.txt', 'bonuslabels.txt', 'ui.shr', 'msnart.shr', 'load.shr', 'menu.shr', 'pmenu.shr', 'pextra.shr', 'fsave.shr', 'psave.shr', 'scrap.shr', 'scrapgal.shr', 'ending.shr', 'shop.shr', 'phone.shr',
               'phonecars.txt', 'wardrobe.shr', 'mini.shr', 'ticket.shr'}
 
 
@@ -48,6 +48,7 @@ def main():
                 continue
             todo.append((nm, n, deps, cmd))
     todo.append(('prompts.txt', None, [], 'python tools/lang_prompts.py --out {out}'))   # вопросы паузы и меню (savemenu.c)
+    todo.append(('bonuslabels.txt', None, [], 'python tools/lang_bonus.py --out {out}'))   # GitHub #4: подписи запасных экранов бонус-гонки (bonus_play.h)
     bad = 0
     for L in a.lang.split(','):
         for nm, n, deps, cmd in todo:

@@ -1,0 +1,396 @@
+{
+ "level": "l3",
+ "mul": 0.5,
+ "signs": [
+  {
+   "sig": "f511f14bdcae588d",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 0
+  },
+  {
+   "sig": "f6f3b3531e8d20af",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 10
+  },
+  {
+   "sig": "ff76c378d04e33ac",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 27
+  },
+  {
+   "sig": "42cc7c157c7b4a2e",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 32
+  },
+  {
+   "sig": "866c3f8c66086f0a",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 45
+  },
+  {
+   "sig": "b1e9d08b445cbeb8",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 51
+  },
+  {
+   "sig": "7115da2e8e9eacd4",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 54
+  },
+  {
+   "sig": "9450a28aceb697d6",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 87
+  },
+  {
+   "sig": "9a6dd40ed08fd0ee",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 88
+  },
+  {
+   "sig": "8298340fb1f40325",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 89
+  },
+  {
+   "sig": "f801d844217eaae4",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 90
+  },
+  {
+   "sig": "ddf3885d3898eb37",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 146
+  },
+  {
+   "sig": "96afe91942491bc3",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 165
+  },
+  {
+   "sig": "9109407c4b55062d",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 166
+  },
+  {
+   "sig": "56b274353651ccbb",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 197
+  },
+  {
+   "sig": "ecadbb3c5dec6bb1",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 210
+  },
+  {
+   "sig": "a0c669993c0b35cc",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 213
+  },
+  {
+   "sig": "75a6ce8d6b9a3a46",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 214
+  },
+  {
+   "sig": "26e0c05c2b0f6852",
+   "w": 64,
+   "h": 16,
+   "id_at_curation": 215
+  },
+  {
+   "sig": "ddfba9c13d7d7f26",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 216
+  },
+  {
+   "sig": "1f437e61ec70d6f2",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 228
+  },
+  {
+   "sig": "8ff69098cfc4f3c0",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 231
+  },
+  {
+   "sig": "ae6b06fcaca13341",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 236
+  },
+  {
+   "sig": "b26497644049054a",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 262
+  },
+  {
+   "sig": "e4c40bd1ba75c3f1",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 263
+  },
+  {
+   "sig": "2d3fd6081de0a216",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 278
+  },
+  {
+   "sig": "45616ed91aeb29c8",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 283
+  },
+  {
+   "sig": "d412de2dbc7516b9",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 284
+  },
+  {
+   "sig": "bf21ee61183afd80",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 297
+  },
+  {
+   "sig": "456d9aad935fad85",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 306
+  },
+  {
+   "sig": "0481b770b53de49e",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 323
+  },
+  {
+   "sig": "e1ac69ae4903d3a7",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 324
+  },
+  {
+   "sig": "e7286b870cbb49ab",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 326
+  },
+  {
+   "sig": "273c74e7e28d85c7",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 328
+  },
+  {
+   "sig": "37706332c436492a",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 332
+  },
+  {
+   "sig": "e2892ecde44be9c0",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 341
+  },
+  {
+   "sig": "54bee2c23e6bd264",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 346
+  },
+  {
+   "sig": "600de47a1f1f7547",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 347
+  },
+  {
+   "sig": "e6f99e56cf5cc7fe",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 349
+  },
+  {
+   "sig": "475e031667b6dcfe",
+   "w": 64,
+   "h": 32,
+   "id_at_curation": 350
+  },
+  {
+   "sig": "3720a5d22be7b0d8",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 353
+  },
+  {
+   "sig": "99f968aab85490c8",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 362
+  },
+  {
+   "sig": "48d21f59a2a3947b",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 363
+  },
+  {
+   "sig": "3596d226ff89c0ca",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 382
+  },
+  {
+   "sig": "0b3367e3eb2ee289",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 386
+  },
+  {
+   "sig": "449aee27b77b3a81",
+   "w": 64,
+   "h": 32,
+   "id_at_curation": 388
+  },
+  {
+   "sig": "f6790943af4504e6",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 392
+  },
+  {
+   "sig": "35327505042e1660",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 398
+  },
+  {
+   "sig": "a44c75b04ae3b530",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 428
+  },
+  {
+   "sig": "4b6b3faa4e2a3d4d",
+   "w": 128,
+   "h": 32,
+   "id_at_curation": 429
+  },
+  {
+   "sig": "e7d7a88d15ed2bd1",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 441
+  },
+  {
+   "sig": "5845e144ba746f7e",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 457
+  },
+  {
+   "sig": "a04f38d7458997c2",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 458
+  },
+  {
+   "sig": "e476f2ced2d9158c",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 461
+  },
+  {
+   "sig": "3673879ad3141900",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 470
+  },
+  {
+   "sig": "2c5a0033c47483f5",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 472
+  },
+  {
+   "sig": "11a18cd77b3fc924",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 473
+  },
+  {
+   "sig": "cecbce2b7fd7df26",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 474
+  },
+  {
+   "sig": "4a7da3062fb7af05",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 475
+  },
+  {
+   "sig": "02bc9e6bb17c8f2d",
+   "w": 64,
+   "h": 64,
+   "id_at_curation": 476
+  },
+  {
+   "sig": "75b2462bf91ce796",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 481
+  },
+  {
+   "sig": "9a0e6e5795201830",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 491
+  },
+  {
+   "sig": "92741c53a832055f",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 502
+  },
+  {
+   "sig": "9723582894d11351",
+   "w": 128,
+   "h": 64,
+   "id_at_curation": 503
+  },
+  {
+   "sig": "aa799223fe70a8dd",
+   "w": 128,
+   "h": 128,
+   "id_at_curation": 504
+  }
+ ]
+}

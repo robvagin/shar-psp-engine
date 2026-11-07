@@ -11,6 +11,7 @@
 //  The same VAG blocks can later be fed to sceSasCore (pspsascore.h, hardware-assisted VAG voices) for
 //  many simultaneous positional effects without re-exporting anything.
 #include "audio.h"
+#include "reliab.h"   // №1192: relNote
 // Аудит 09.10 п. 22 (правка 161). AMB161_OLD=1 — прежнее: ×AMB_GAIN только при загрузке банка, а первый же набор шин режима
 // (sound.c applyMode из sndInit, sndMode) присваивал шине фона значение тюнера диска — множитель 0,6 не действовал ни разу
 // (замер tests/amb161: множитель фона пешком 0,70 = OnFoot 1,0 × мастер 0,7, а не 0,42). Теперь множитель живёт в audioBus.
@@ -834,15 +835,25 @@ int audioMeAttach(void) {
   meState = 1;
   return 0;
 }
-void audioMeHold(int on) {                // ролики: on=1 — дождаться, что ME звуком не занят (до 100 мс)
+#ifndef MEHOLD1192_OLD
+#define MEHOLD1192_OLD 0   // 1 — ожидание ack не дольше 100 мс и молча (как в TEST89)
+#endif
+static unsigned meHoldMiss;   // сколько раз ролик пошёл дальше, а ME звуком так и не отпустил (ack не пришёл)
+// №1192 (кандидат 2, разбор arch-fable): ролик на sceJpeg тоже работает на ME. Раньше ждали ack всего 100 мс и шли дальше молча — если ME ещё считал буфер звука, ролик и наше задание
+// пересекались на ME. Теперь ждём до 1 с (в норме ack приходит за 2–10 мс, ожидание не удлиняется), а промах — строка «ME HOLD miss» в ящик и счётчик hm в AUDV: по журналу видно, что ME не отпустил
+void audioMeHold(int on) {                // ролики: on=1 — дождаться, что ME звуком не занят (до 1 с)
   meSvcHold(on);
   if (!on) { meHoldReq = 0; meHoldAck = 0; return; }
   meHoldReq = 1;
-  for (int i = 0; i < 50 && meState == 1 && mixTh >= 0 && !meHoldAck; i++) sceKernelDelayThread(2000);
+  int lim = MEHOLD1192_OLD ? 50 : 500, i = 0;
+  for (; i < lim && meState == 1 && mixTh >= 0 && !meHoldAck; i++) sceKernelDelayThread(2000);
+  if (!MEHOLD1192_OLD && i >= lim && meState == 1 && mixTh >= 0 && !meHoldAck) {
+    meHoldMiss++; relNote("ME HOLD miss: waited_ms=%d state=%d seq=%u miss=%u (ролик идёт, ME звуком не отпустил)", i * 2, meState, meSeq, meHoldMiss);
+  }
 }
 int audioMeState(char *out, int n) {      // для строки AUDV и ящика (main.c bbMus): «on86/0.4» — заданий за секунду / ожидание, мс
   extern unsigned meSvcChained;          // очередь (облако 05.10): заданий звука, ушедших на ME следом за частицами — «/c<число>» в конце
-  if (meState == 1) return snprintf(out, n, "%s%u/%.1f%s/c%u", meHoldReq ? "hold" : "on", meJobsLast, meWaitLast / 1000.f, meBusy ? "b" : "", meSvcChained);
+  if (meState == 1) return snprintf(out, n, "%s%u/%.1f%s/c%u%s%.0u", meHoldReq ? "hold" : "on", meJobsLast, meWaitLast / 1000.f, meBusy ? "b" : "", meSvcChained, meHoldMiss ? "/hm" : "", meHoldMiss);
   return snprintf(out, n, "%s", meState == 2 ? meWhy : "-");
 }
 // правка 410 (шаг 0 плана ME): качество звука и цена отправки за секунду — строка AUDQ в smoke.txt (main.c), разбор tools/tour_report.py.
@@ -1325,6 +1336,7 @@ int audioPlayAtGain(int id,float vol,float x,float y,float z,float mn,float mx) 
 void audioSetAt(int h,float x,float y,float z,float mn,float mx) {
   Voice *v=byHandle(h);if(v)setPoint(v,spatialPoint(x,y,z,mn,mx));
 }
+int audioResLoops(int id) { return H && id >= 0 && id < (int)H->nres ? (int)(R[id].flags & 1) : 0; }   // №1174: ресурс банка — петля (голос живёт до audioStop)
 void audioStreamAt(int stream,float x,float y,float z,float mn,float mx) {
   if((unsigned)stream<NSTREAM)setPoint(&voices[NVOICE+stream],spatialPoint(x,y,z,mn,mx));
 }
@@ -1816,6 +1828,7 @@ void audioStats(AudioStats *s) {
   memset(s, 0, sizeof *s);
   s->cpu = statCpu; s->mixUs = statUs; s->mixUsMax = statUsMax;
   for (int k = 0; k < NVOICE + NSTREAM; k++) s->voices += voices[k].state != V_FREE;
+  for (int k = 0; k < NVOICE; k++) s->loops += voices[k].state != V_FREE && voices[k].loop && !voices[k].stopReq;   // №1174
   s->underruns = underruns; s->dropped = dropped;
   for (int i = 0; i < NSTREAM; i++) {
     Stream *st = &streams[i];

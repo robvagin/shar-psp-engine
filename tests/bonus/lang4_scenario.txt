@@ -1,0 +1,42 @@
+# GitHub #4: подписи запасных экранов бонус-гонки на выбранном языке (набор без bonus/mini.shr: движок рисует запасные экраны)
+flag menu
+flag bonusopen
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusquit 0
+flag bonustrack 2
+wait 2
+press left
+wait 0.6
+press cross
+wait 5
+shot fb_menu
+press right
+wait 0.5
+shot fb_menu2
+flag bonusgo
+wait 0.3
+shot fb_load
+wait 14
+press start
+wait 0.6
+shot fb_pause
+press start
+wait 0.6
+wait 17
+shot s0
+wait 1
+shot s1
+wait 1
+shot s2
+wait 1
+shot s3
+wait 1
+shot s4
+wait 1
+shot s5
+wait 1
+shot s6
+wait 1
+shot s7
+end

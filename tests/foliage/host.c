@@ -32,7 +32,10 @@ static int isolated(const ColCyl *source) {
     {float s=(car.x*nx+car.z*nz)*side;                                    // правка 173: куст машина проезжает насквозь, твёрдое — нет
      // правка 421 (09.10): 173 — только про кусты; изгородь (лежачая капсула листвы, l*_hedgeunit) у оригинала держит машину
      // (сверка PS2: выталкивает из капсулы, разгон встаёт) — не проезжается. Куст (стоячая листва, l2/l5_shrubsml) — насквозь
-     int hedge=0;   // капсула изгороди пока проезжается (col.c COL_HEDGE_CAPSULE_SOLID 0); изгородь держит забор под ней — tests/walls/ps2_placement_gate.sh
+#ifndef FOLIAGE_PS2_1154_OLD
+#define FOLIAGE_PS2_1154_OLD 0
+#endif
+     int hedge=!FOLIAGE_PS2_1154_OLD;   // №1204 (Роб, 05.11, запись PS2 L7 J9-5): лежачая капсула изгороди держит машину в лоб (col.c FOLIAGE_PS2_1154_OLD=1 — проезжается, как в TEST85…90)
      if(!hard&&!hedge&&s>-2.f){printf("FAIL foliage not crossed: side=%d fps=%d s=%.2f\n",side,fps,s);failures++;}
      if(!hard&&hedge&&s<0.f){printf("FAIL hedge crossed: side=%d fps=%d s=%.2f\n",side,fps,s);failures++;}
      if(hard&&s<0.f){printf("FAIL hard crossed: side=%d fps=%d s=%.2f\n",side,fps,s);failures++;}}

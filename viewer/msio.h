@@ -19,6 +19,11 @@ void msioInit(void);
 extern int (*volatile msioReadWait)(int fd, void *data, unsigned int size); /* optional owner-thread loading wait */
 int msioWriteRaw(int fd, const void *data, unsigned int size);
 int msioOwned(void);   // №775: 1 — этот поток держит замок карты (внутри своего чтения; запись была бы пропущена)   // мимо очереди — след зависаний (trace.txt) не встаёт вместе с игрой
+// ТЕСТ90 (WAITLIMIT_OLD): сторож видит, что поток стоит внутри чтения карты: msioBusySince — время начала текущего куска (0 — не читает), msioBusyFd; msioHangTest N —
+// тест: следующие N чтений никогда не возвращаются (flag readhangsync N)
+// ТЕСТ90: ожидание замка карты ограничено (msioLockLimitMs, 0 — 6 с): не дождались — msioLockTimeout(ms) (главный поток: экран «Memory Stick read error»), другие потоки ждут дальше
+extern volatile unsigned msioLockLimitMs; extern void (*volatile msioLockTimeout)(unsigned ms);
+extern volatile unsigned msioBusySince; extern volatile int msioBusyFd, msioHangTest, msioHangLoader;   // msioHangLoader N — то же, но только для потока загрузчика (приоритет 0x18)
 extern volatile unsigned msioReads, msioWaits, msioMaxWaitUs;   // счётчики для чёрного ящика
 #ifdef __cplusplus
 }

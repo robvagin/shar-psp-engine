@@ -8,6 +8,7 @@
 # Итог по каждому шагу — build/levels/report.txt (OK / FAIL + последняя строка ошибки). Упавший шаг не мешает остальным.
 # Время: ~6–8 мин на уровень (PVS — самая долгая часть). Ресурсы игры никуда не отправляются.
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+export PYTHONPATH="$ROOT/tools/_ci${PYTHONPATH:+:$PYTHONPATH}"   # Linux/WSL: поиск файлов диска без учёта регистра (tools/ci_fs.py); на macOS ничего не меняет
 source .venv/bin/activate
 export SHR_TEX_CAP256=${SHR_TEX_CAP256:-1} SHR_SMALL_MIPS=${SHR_SMALL_MIPS:-1} SHR_LAYERS=${SHR_LAYERS:-1}
 LEVELS=${*:-1 2 3 4 5 6 7}

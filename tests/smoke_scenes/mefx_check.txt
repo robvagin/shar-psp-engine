@@ -1,0 +1,35 @@
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene F_MEFX_L1_ON_A
+flag mefx 1
+flag stop
+goto 220 172 1.5708
+wait 3
+flag drive 6
+wait 6
+flag stop
+scene F_MEFX_L1_OFF_A
+flag mefx 0
+goto 220 172 1.5708
+wait 3
+flag drive 6
+wait 6
+flag stop
+scene F_MEFX_L1_OFF_B
+flag mefx 0
+goto 220 172 1.5708
+wait 3
+flag drive 6
+wait 6
+flag stop
+scene F_MEFX_L1_ON_B
+flag mefx 1
+goto 220 172 1.5708
+wait 3
+flag drive 6
+wait 6
+flag stop
+flag mefx 0
+end

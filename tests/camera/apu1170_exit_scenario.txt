@@ -1,0 +1,40 @@
+# №1170: L5, путь игрока: старт первой миссии, после облёта глаз игровой камеры не подходит к герою ближе 2,2 м (apu1170_blend.py); кадры каждые 0,2 с вокруг конца облёта
+scene A1170_X5
+flag camdet 1
+flag camlog
+flag golevel 5
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 0
+wait 3.2
+wait 0.2
+shot x00
+wait 0.2
+shot x01
+wait 0.2
+shot x02
+wait 0.2
+shot x03
+wait 0.2
+shot x04
+wait 0.2
+shot x05
+wait 0.2
+shot x06
+wait 0.2
+shot x07
+wait 0.2
+shot x08
+wait 0.2
+shot x09
+wait 0.2
+shot x10
+wait 0.2
+shot x11
+wait 0.2
+shot x12
+wait 0.2
+shot x13
+end

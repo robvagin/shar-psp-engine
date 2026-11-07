@@ -24,6 +24,20 @@
 # целевого периода, пропуски периода, видимые недогруженные клетки, ошибки чтения/памяти.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/tools/portable.sh"
+# эмулятор (доработка noname8723 для Ubuntu, 06.11): macOS — окно PPSSPPSDL.app (tools/ppsspp_run.sh); Linux и SMOKE_HEADLESS=1 — PPSSPPHeadless:
+# $PPSSPP_HEADLESS, build/twins/bin, общий build/twins/bin основной копии или PATH. На Linux безголовый режим включается сам
+find_headless() {
+  local c
+  for c in "${PPSSPP_HEADLESS:-}" "$ROOT/build/twins/bin/PPSSPPHeadless" "$HOME/Downloads/shar-psp/build/twins/bin/PPSSPPHeadless" "$(command -v PPSSPPHeadless 2>/dev/null)"; do
+    [ -n "$c" ] && [ -x "$c" ] && { echo "$c"; return 0; }
+  done; return 1
+}
+[ "$(uname -s)" = Darwin ] || SMOKE_HEADLESS=1
+if [ "${1:-}" = --have-emulator ]; then   # ship.sh: есть ли чем гнать смоук на этой машине (код 0 — да)
+  if [ "${SMOKE_HEADLESS:-0}" = 1 ]; then find_headless >/dev/null; exit $?; else [ -d /Applications/PPSSPPSDL.app ]; exit $?; fi
+fi
+[ "${SMOKE_HEADLESS:-0}" != 1 ] || { PPSSPP_HEADLESS="$(find_headless)" || { echo "smoke: нет PPSSPPHeadless (PPSSPP_HEADLESS=/путь/к/PPSSPPHeadless)"; exit 1; }; export PPSSPP_HEADLESS; }
 NEG=""; if [ "${1:-}" = --negative ]; then NEG=--negative; shift; SMOKE_SCN="${SMOKE_SCN:-$ROOT/tools/smoke_negative.txt}"; fi
 SRC="${1:-$ROOT/build}"; case "$SRC" in /*) ;; *) SRC="$PWD/$SRC" ;; esac
 SCN="${SMOKE_SCN:-$ROOT/tools/smoke_scenario.txt}"
@@ -40,7 +54,7 @@ while IFS='|' read -r f p; do
   s="$SRC/$f"
   if [ ! -f "$s" ]; then
     case "$f" in
-      l[0-9]/*|movies/fmv*|bonus/*|far_plain|mcpr.shr|lmap.shr|pv2s.shr|horizon.shr) s="$ROOT/$p"; [ -f "$s" ] || continue ;;   # horizon.shr (Горизонт) — по желанию: нет файла — горизонт тихо выкл   # правка 420: трассы бонус-игры — по желанию (нет — MINI GAME серый)
+      l[0-9]/*|movies/fmv*|bonus/*|far_plain|mcpr.shr|lmap.shr|colbake.shr|pv2s.shr|horizon.shr) s="$ROOT/$p"; [ -f "$s" ] || continue ;;   # horizon.shr (Горизонт) — по желанию: нет файла — горизонт тихо выкл   # правка 420: трассы бонус-игры — по желанию (нет — MINI GAME серый)
       *) s="$ROOT/$p"; [ -f "$s" ] || { echo "smoke: нет $SRC/$f"; exit 1; } ;;   # 30.09: иначе с места сборки (level01.msn — build/missions/)
     esac
   fi
@@ -62,16 +76,26 @@ LOGARG=(); [ -n "${SMOKE_PPSSPPLOG:-}" ] && LOGARG=("" "--log=$OUT/ppsspp.log") 
 # максимум времени: сумма wait + 90 с на загрузку и снимки
 MAXT=$(awk '$1=="wait"{s+=$2} $1=="shot"{s+=1} END{print int(s)+90}' "$SCN")
 [ -n "${SMOKE_MAXT:-}" ] && MAXT=$SMOKE_MAXT   # SMOKE_MAXT=с — свой предел (загрузка уровней 2–7 в безголовом эмуляторе дольше 90 с)
+T0=$(date +%s)
 if [ "${SMOKE_HEADLESS:-0}" = 1 ]; then
   python3 "$ROOT/tools/smoke_headless.py" "$RUN" "$OUT" "$MAXT"
 else
   PPSSPP_SHOTS="$RUN/smoke.txt" PPSSPP_SHOTDIR="$OUT" "$ROOT/tools/ppsspp_run.sh" "$RUN/EBOOT.PBP" "$MAXT" ${LOGARG[@]+"${LOGARG[@]}"}   # bash 3.2 + set -u: пустой массив без ошибки
 fi
+# 04.11 (gates): паспорт прогона для tools/run_outcome.py — TIMEOUT эмулятора под нагрузкой Мака отличается от зависания игры (wall_s против maxt, gap_s = сколько секунд журнал не рос до обрыва)
+T1=$(date +%s); MT=$(file_mtime "$RUN/smoke.txt" 2>/dev/null || echo "$T0")
+echo "wall_s=$((T1 - T0)) maxt=$MAXT gap_s=$((T1 - MT)) t0=$T0 t1=$T1 load1=$(sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1}') ncpu=$(sysctl -n hw.ncpu)" > "$OUT/run_meta.txt"
+cp "$RUN/stall.txt" "$OUT/" 2>/dev/null
 cp "$RUN/smoke.txt" "$OUT/" 2>/dev/null; cp "$RUN/acct.txt" "$OUT/" 2>/dev/null   # учёт ACCT (viewer/acct.h) — рядом с журналом
-for f in blackbox.txt blackbox_prev.txt sfxlog.txt; do [ -f "$RUN/$f" ] && cp "$RUN/$f" "$OUT/"; done   # правка 103: чёрный ящик, журнал звуков
+for f in blackbox.txt blackbox_prev.txt sfxlog.txt stall.txt shar_report.txt bootmark.txt texbake_L1.out texbake_L2.out texbake_L3.out texbake_L4.out texbake_L5.out texbake_L6.out texbake_L7.out colbake_L1.out colbake_L2.out colbake_L3.out colbake_L4.out colbake_L5.out colbake_L6.out colbake_L7.out; do [ -f "$RUN/$f" ] && cp "$RUN/$f" "$OUT/"; done   # правка 103: чёрный ящик, журнал звуков
 for f in "$RUN"/rfsnap_*.bin; do [ ! -f "$f" ] || cp "$f" "$OUT/" || exit 1; done   # retained RF frame evidence, before owned RUN cleanup
 . "$ROOT/.venv/bin/activate"
 python "$ROOT/tools/smoke_report.py" "$OUT" "$SCN" $NEG; RC=$?
+# 04.11 (gates): SMOKE_AUDIO=1 (или список сцен «A,B») — звук действительно играл (tools/audio_alive.py: AUDV/SNDV самого движка, не флаги); провал звука = провал смоука. Без переменной — прежнее
+if [ -n "${SMOKE_AUDIO:-}" ]; then
+  python3 "$ROOT/tools/audio_alive.py" "$OUT" ${SMOKE_AUDIO_SCENES:+--scenes "$SMOKE_AUDIO_SCENES"} > "$OUT/audio.txt" 2>&1; ARC=$?; cat "$OUT/audio.txt"
+  [ $ARC = 0 ] || { echo "смоук: звук не доказан (audio_alive код $ARC)" >> "$OUT/summary.txt"; [ $RC = 0 ] && RC=1; }
+fi
 [ "$SCN" = "$OUT/scenario_full.txt" ] || cp "$SCN" "$OUT/scenario.txt"
 echo "отчёт: ${OUT#$ROOT/}/summary.txt, листы: ${OUT#$ROOT/}/contact.png"
 exit $RC

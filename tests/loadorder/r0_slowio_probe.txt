@@ -1,0 +1,10 @@
+# ag/loadorder R0: проба slowio: дальний телепорт машины goto, смотрим CELLLAT/MISSCELL; в одной и той же сцене со slowio 200 и без
+flag nosave
+scene LO0_A
+wait 2
+goto -122.1 -313.0 0
+wait 6
+scene LO0_B
+goto 220 172 1.57
+wait 8
+end

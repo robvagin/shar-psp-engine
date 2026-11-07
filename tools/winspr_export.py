@@ -81,7 +81,7 @@ def main():
         for i in np.where(D['TEX'] == t)[0]:
             n_in += 1
             for tri in window_tris(D['P'][i], D['UV'][i], rect): bycell[int(D['CELL'][i])].append((tri, col))
-    if not G: print(f'уровень {a.level}: окон-светильников нет, файл не пишется'); return 2
+    if not G: print(f'уровень {a.level}: окон-светильников нет, файл не пишется'); print(f'НЕОБЯЗАТЕЛЬНО: пропуск, у уровня {a.level} нет окон-светильников (№1162)'); return 2
     cells = sorted(bycell); body = bytearray(); recs = []
     for ci in cells:
         recs.append((ci, len(body) // 40, len(bycell[ci])))

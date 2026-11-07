@@ -70,6 +70,7 @@ int           msn_streq(const char *a, const char *b);                /* case-in
 /* English UI texts from the game's text bible (TEXTS section): "MISSION_COMPLETE" -> "MISSION COMPLETE!",
  * countdown keys ("3", "GO" -> "GO!"). Unknown key -> the key itself. '\n' = line break of the bible. */
 const char   *msn_text(const MsnFile *f, const char *key);
+const char   *msn_text_h(const MsnFile *f, uint32_t fnv1a);   /* текст по хешу ключа (FNV-1a 32 по байтам ключа); NULL, если такого ключа в пакете нет */
 const char   *msn_fail_text(const MsnFile *f, int reason);            /* enum MsnFail -> "Timed out."     */
 const char   *msn_fail_hint(const MsnFile *f, int reason, int n);     /* hint n (0..7) or ""              */
 
@@ -281,6 +282,7 @@ void msn_init(MsnRuntime *rt, const MsnFile *f, const MsnHost *host);
 void msn_level_start(MsnRuntime *rt);
 /* start mission (index in f->missions) from its intro phase (or checkpoint if restore) */
 void msn_start_mission(MsnRuntime *rt, int mission, int restore);
+int msn_service_pass(MsnRuntime *rt);   /* служебное: засчитать текущий этап, как цель (прогон «начало-конец миссий») */
 void msn_enter_mission(MsnRuntime *rt, int mission);   /* круг 7 (P06-5): вход «как после загрузки» — вступление с этапа RESET_TO_HERE */
 /* player talked to a bonus giver in free roam; returns 0 if not allowed now */
 int  msn_start_bonus(MsnRuntime *rt, int mission);
@@ -292,6 +294,8 @@ int  msn_bonus_near(MsnRuntime *rt, const MsnWorld *w);
    c_talk — команда SetTalkToTarget этапа (NULL — бонус-персонаж). msnTalkOld = 1 (flag talkold 1) — прежнее: 3 м (или аргумент) + 1 м */
 #define MSN_TALK_R 1.3f
 extern int msnTalkOld;
+extern int msnTalkRoomOld;   /* 1 — радиус разговора в комнате без нижней границы 2,6 м (как в TEST89) */
+float msn_talk_reach_w(const MsnRuntime *rt, const MsnCmd *c_talk, const MsnWorld *w);   /* msn_talk_reach с поправкой для комнат */
 float msn_talk_reach(const MsnRuntime *rt, const MsnCmd *c_talk);
 /* 1 = free roam (no mission objective beyond "drive to the next story giver"): bonus givers, shops, gags active */
 int  msn_free_roam(const MsnRuntime *rt);

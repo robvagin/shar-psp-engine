@@ -3,7 +3,8 @@
 #   tests/homer/host.sh [level.shr] [homer.shr]
 set -e
 cd "$(dirname "$0")/../.."
-[ -f build/homer.shr ] || { source .venv/bin/activate; python tools/homer_export.py > /dev/null; }
+# 04.11 (gates): готовый build/homer.shr читался без проверки свежести (9 ложных красных g04 от файла 9 октября): tools/fresh_homer.sh — свежий, пересобранный или код 77 «НЕ СВИДЕТЕЛЬ» (не FAIL)
+tools/fresh_homer.sh || exit $?
 T=${TMPDIR:-/tmp}/homer_host.$$
 cc -std=c99 -O2 -Wall -Wno-unused-function -DSKIN_HOST $HOST_CFLAGS -I viewer tests/homer/host_homer.c viewer/homer.c viewer/skin.c \
    viewer/col.c viewer/car.c viewer/props.c viewer/stateprops.c viewer/coins.c -lm -o "$T"

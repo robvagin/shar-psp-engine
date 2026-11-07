@@ -9,12 +9,24 @@
 #define DAL877_OLD 0
 #endif
 #define DAL_HOLD 1.f   // с
+// Рампа границы дали (TEST90, слово Роба: «убрать дыхание пояса 150–250 м»): раньше цель таблицы (150 / 200 / полная) переключалась ступенькой и пояс 50–100 м домов
+// появлялся или пропадал целиком за один кадр (в езде L5 в 26 % окон по 2 с средняя дальность прыгала на ≥ 25 м). Теперь дальность идёт к цели с ограниченной скоростью
+// (растёт DAL_UP м/с, убирается DAL_DN м/с) шагами по DAL_Q м (шаг реже кадра: отсечение города переиспользуется между шагами, цена ≈ 0). Гистерезис прежний (вниз только
+// после DAL_HOLD с). В покое дальность доходит ровно до цели таблицы: картинка та же, что без рампы. DALRAMP_OLD=1 / файл `dalrampold` / «flag dalramp 0» — прежняя ступенька.
+#ifndef DALRAMP_OLD
+#define DALRAMP_OLD 0
+#endif
+#define DAL_UP 40.f
+#define DAL_DN 25.f
+#define DAL_Q 10.f
+static int dalRampOn = !DALRAMP_OLD; static float dalOut = 1e9f, dalAcc, dalPrev = -1.f; static unsigned dalJump, dalChg, dalJumpAll, dalChgAll;   // dalOut — дальность после рампы
 static int dalOn = !DAL877_OLD;
 static struct { float x0, z0, st; unsigned w, h; unsigned short *pk; short *yt; } dal;
 static float dalCur = 1e9f; static unsigned dalN, dalCapN, dalSum, dalWhy[5];   // dalWhy: вне сетки, глаз выше, нет точки, 250 м, пропуск кадра   // dalCur — текущее ограничение, м; счётчики для строки DAL877
 static void dalFree(void) { free(dal.pk); memset(&dal, 0, sizeof dal); dalCur = 1e9f; }
 static void dalLoad(const unsigned char *tab, unsigned npcN) {
   dalFree(); if (DAL877_OLD || !npcN) return;
+  { char fo_[256]; sibling(fo_, "dalrampold"); SceUID o_ = sceIoOpen(fo_, PSP_O_RDONLY, 0); if (o_ >= 0) { sceIoClose(o_); dalRampOn = 0; } }   // рампа границы дали: файл dalrampold — прежняя ступенька
   char fn[256]; levelFile(fn, "dal877.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;
   unsigned h[7]; int ok = 0;
   if (sceIoRead(f, h, 28) == 28 && !memcmp(h, "DAL1", 4) && h[1] == pvs2Sig(tab, npcN) && h[5] > 0 && h[6] > 0 && h[5] * h[6] <= 65536u) {
@@ -44,14 +56,22 @@ static float dalNeed(float ex, float ey, float ez, float fx, float fz) {   // н
 }
 // кадр: ограничение отсечения города; возвращает прежнюю drawDist (вернуть после cullCity)
 static float dalApply(float dt, int skip) {
-  float keep = drawDist;
-  if (!dalOn || skip || !dal.pk) { dalCur = 1e9f; if (dal.pk) dalWhy[4]++; return keep; }
+  float keep = drawDist; dimArm = 0;
+  if (!dalOn || skip || !dal.pk) { dalCur = 1e9f; dalOut = 1e9f; dalAcc = 0.f; dalPrev = -1.f; if (dal.pk) dalWhy[4]++; return keep; }
   float nd = dalNeed(eyeX, eyeY, eyeZ, cfX, cfZ);
   // ступенькой (150 / 200 / полная): вверх сразу, вниз — когда меньшая нужда держится DAL_HOLD с; ровная дальность — отсечение города переиспользуется
   // (cullCity crv: плавный спуск по DAL_DOWN м/с менял дальность каждый кадр и сбрасывал переиспользование)
   static float lowT; if (nd >= dalCur || nd >= keep) { dalCur = nd; lowT = 0.f; } else if ((lowT += dt) >= DAL_HOLD) { dalCur = nd; lowT = 0.f; }
-  dalN++; if (dalCur < drawDist) { drawDist = dalCur; dalCapN++; } dalSum += (unsigned)drawDist;
+  float cap = dalCur < keep ? dalCur : keep;
+  if (dalRampOn) {   // рампа: к цели с ограниченной скоростью, шагами по DAL_Q (вверх DAL_UP м/с, вниз DAL_DN м/с)
+    static int dir_; if (dalOut > keep) dalOut = keep;
+    if (cap > dalOut) { if (dir_ != 1) { dir_ = 1; dalAcc = 0.f; } dalAcc += DAL_UP * dt; while (dalAcc >= DAL_Q && dalOut < cap) { dalOut += DAL_Q; dalAcc -= DAL_Q; } if (dalOut > cap) dalOut = cap; }
+    else if (cap < dalOut) { if (dir_ != -1) { dir_ = -1; dalAcc = 0.f; } dalAcc += DAL_DN * dt; while (dalAcc >= DAL_Q && dalOut > cap) { dalOut -= DAL_Q; dalAcc -= DAL_Q; } if (dalOut < cap) dalOut = cap; }
+    else { dalAcc = 0.f; dir_ = 0; }
+    cap = dalOut; }
+  { float now_ = cap < keep ? cap : keep; if (dalPrev >= 0.f) { float dd_ = now_ - dalPrev; if (dd_ < 0.f) dd_ = -dd_; if (dd_ > .5f) dalChg++; if (dd_ >= 25.f) dalJump++; } dalPrev = now_; }   // счётчики: кадров со сменой дальности, со сменой на ≥ 25 м
+  dalN++; if (cap < drawDist) { drawDist = cap; dalCapN++; dimCapV = drawDist; dimKeepV = keep; dimArm = dimOn && dimN; } dalSum += (unsigned)drawDist;   // dimArm: ориентиры дали (dalimp.h)
   if (smkOn) { static unsigned t0_; unsigned t_ = sceKernelGetSystemTimeLow(); if (!t0_) t0_ = t_;
-    if (t_ - t0_ > 2000000u && dalN) { char s_[180]; snprintf(s_, sizeof s_, "DAL877 frames=%u capped=%u avg_dd=%u full_dd=%.0f out=%u high=%u nodata=%u far=%u skip=%u ey=%.1f t=%.1f\n", dalN, dalCapN, dalSum / dalN, keep, dalWhy[0], dalWhy[1], dalWhy[2], dalWhy[3], dalWhy[4], eyeY, smkT); smkWrite(s_); dalN = dalCapN = dalSum = 0; memset(dalWhy, 0, sizeof dalWhy); t0_ = t_; } }
+    if (t_ - t0_ > 2000000u && dalN) { char s_[280]; snprintf(s_, sizeof s_, "DAL877 frames=%u capped=%u avg_dd=%u full_dd=%.0f out=%u high=%u nodata=%u far=%u skip=%u ey=%.1f t=%.1f chg=%u jump25=%u ramp=%d\n", dalN, dalCapN, dalSum / dalN, keep, dalWhy[0], dalWhy[1], dalWhy[2], dalWhy[3], dalWhy[4], eyeY, smkT, dalChg, dalJump, dalRampOn); smkWrite(s_); dimLine(smkT); dalJumpAll += dalJump; dalChgAll += dalChg; dalChg = dalJump = 0; dalN = dalCapN = dalSum = 0; memset(dalWhy, 0, sizeof dalWhy); t0_ = t_; } }
   return keep;
 }

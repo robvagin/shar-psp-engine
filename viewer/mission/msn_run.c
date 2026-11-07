@@ -41,6 +41,9 @@
 #ifndef MSN_LOSETAIL_OLD
 #define MSN_LOSETAIL_OLD 0     /* P07-30: losetail закрывается в кадр, когда расстояние (целое) больше SetObjDistance; без числа — 0 */
 #endif
+#ifndef MSN_RADIUS_OLD
+#define MSN_RADIUS_OLD 0       /* аудит полноты п.10: цель goto/gooutside — объём триггера своего локатора (данные уровня, оригинал: сфера-триггер локатора из данных уровня; радиус задают данные, у нас все 167 целей L1–L7 имеют свой объём); 1 — один радиус на всех (6,5 машина / 2,6 пешком) — красный контроль теста tests/msn_radius */
+#endif
 #ifndef MSN_GOOUTSIDE_OLD
 #define MSN_GOOUTSIDE_OLD 0    /* P07-31: gooutside закрывается по входу в триггер своего локатора */
 #endif
@@ -648,6 +651,14 @@ static void advance(MsnRuntime *rt)
     enter_stage(rt);
 }
 
+/* служебное (06.11, прогон «начало-конец миссий», MSNPASS_OLD): засчитать текущий этап тем же путём, что выполненная цель (события конца этапа, переход, конец миссии) */
+int msn_service_pass(MsnRuntime *rt)
+{
+    if (!rt || rt->status != MSN_RUNNING || !rt->st) return 0;
+    complete_stage(rt);
+    return 1;
+}
+
 static void next_mission(MsnRuntime *rt)
 {
     const MsnMission *m = cur_mission(rt);
@@ -786,6 +797,22 @@ float msn_talk_reach(const MsnRuntime *rt, const MsnCmd *c_talk)
     float rad = msnTalkOld ? 3.0f : rt->talk_radius;
     if (c_talk && msn_argc(c_talk) > 3 && msn_arg_f(rt->f, c_talk, 3) > 0) rad = msn_arg_f(rt->f, c_talk, 3);
     return rad + (msnTalkOld ? 1.0f : 0.0f);
+}
+
+/* Нижняя граница радиуса разговора в комнате (L2 m2 «Weapons of Mass Delinquency», стадия talkto Moe, находка ботов 05.11): Мо стоит за стойкой в точке (53,1; −20,0; 200,6), радиус разговора из скрипта 2,0 (m2i.mfk:82, 4-й аргумент), а Гомер пешком по коллизии комнаты Moes
+   (interiors-l2.bin, тот же код, что EBOOT: tools/cartest/talkreach.c — залив достижимых клеток 0,5 м) подходит к Мо не ближе 2,26 м (3D): разговор не открывается, миссию не пройти. Радиус оригинала у Мо (сфера триггера 2,0 вокруг его точки,
+   проверка по центру игрока, как у порта) совпадает со скриптом, поэтому расхождение в положении Мо или стойки у PS2 (запрос emu-ps2 g11-objects_moe_ps2). Пока PS2 не ответила: в комнате разговор открывается не с меньшей, чем 2,6 м, дистанции
+   (2,26 + 0,34 запаса на сетку 0,5 м и ходьбу вдоль стойки); вне комнат радиус прежний. MSN_TALKROOMFLOOR_OLD=1 / flag talkroomfloorold 1 — как в TEST89 */
+#ifndef MSN_TALKROOMFLOOR_OLD
+#define MSN_TALKROOMFLOOR_OLD 0
+#endif
+#define MSN_TALK_ROOM_MIN 2.6f
+int msnTalkRoomOld = MSN_TALKROOMFLOOR_OLD;
+float msn_talk_reach_w(const MsnRuntime *rt, const MsnCmd *c_talk, const MsnWorld *w)
+{
+    float r = msn_talk_reach(rt, c_talk);
+    if (!msnTalkRoomOld && w && w->interior && w->interior[0] && r < MSN_TALK_ROOM_MIN) r = MSN_TALK_ROOM_MIN;
+    return r;
 }
 
 int msn_bonus_near(MsnRuntime *rt, const MsnWorld *w)
@@ -1092,7 +1119,8 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
     case MSN_OBJ_GOTO: {
         const MsnLoc *l = rt->c_dest ? msn_arg_loc(F, rt->c_dest, 0) : NULL;
         if (!l) return 0;
-        if (!msn_loc_contains(F, l, w->player, r)) return 0;
+        if (MSN_RADIUS_OLD) { float dx = w->player.x - l->pos[0], dy = w->player.y - l->pos[1], dz = w->player.z - l->pos[2]; if (dx * dx + dy * dy + dz * dz > r * r) return 0; }
+        else if (!msn_loc_contains(F, l, w->player, r)) return 0;
         return (st->flags & MSN_SF_MUSTACTION) ? w->action : 1; }
     case MSN_OBJ_GETIN:
         if (w->on_foot) return 0;
@@ -1100,7 +1128,7 @@ static int check_objective(MsnRuntime *rt, const MsnWorld *w, float dt)
                msn_streq(rt->target, w->vehicle);
     case MSN_OBJ_TALKTO: {
         if (!w->on_foot || !w->action || !entity(rt, rt->target, &e)) return 0;
-        return dist3(w->player, e.pos) < msn_talk_reach(rt, rt->c_talk); }   /* правка 345 */
+        return dist3(w->player, e.pos) < msn_talk_reach_w(rt, rt->c_talk, w); }   /* правка 345; в комнате не меньше 2,6 м */
     case MSN_OBJ_DIALOGUE: return rt->flag_dialogue;
     case MSN_OBJ_FMV: return rt->flag_fmv;
     case MSN_OBJ_TIMER: return rt->t_stage >= rt->duration;

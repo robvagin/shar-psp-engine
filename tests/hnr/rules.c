@@ -76,6 +76,16 @@ int main(void) {
     check("касание предмета: новый да, повтор нет, после 16 других снова новый", a1 == 1 && a2 == 0 && ok16 && a3 == 1, (float)(a1 * 100 + a2 * 10 + a3), 101.f); }
   { gameCarHealthNote(&G, "famil_v", .4f); gameCarHealthNote(&G, "cletu_v", .9f); gameCarHealthNote(&G, "famil_v", .3f);
     check("прочность по имени машины", near(gameCarHealthGet(&G, "famil_v"), .3f) && near(gameCarHealthGet(&G, "cletu_v"), .9f) && gameCarHealthGet(&G, "x") < 0.f, gameCarHealthGet(&G, "famil_v"), .3f); }
+  { Car c1, c2, c3; memset(&c1, 0, sizeof c1); memset(&c2, 0, sizeof c2); memset(&c3, 0, sizeof c3);   // №1171: машина уровня — своя запись у каждого уровня
+    fresh(); G.chLevel = 1; gameCarHealthNote(&G, "", .4f); gameCarHealthApply(&G, "", &c1);
+    G.chLevel = 2; gameCarHealthApply(&G, "", &c2); float l2 = gameCarHealthGet(&G, "");
+    G.chLevel = 1; gameCarHealthApply(&G, "", &c3);
+    check("побитая машина уровня 1 не переходит на уровень 2", near(c1.damage, .6f) && c2.damage == 0.f && !c2.destroyed && l2 < 0.f && near(c3.damage, .6f), c2.damage, 0.f); }
+  { Car c1, c3, c2; memset(&c1, 0, sizeof c1); memset(&c2, 0, sizeof c2); memset(&c3, 0, sizeof c3);   // аудит g01 04.11: запись игры хранит урон машины каждого уровня отдельно (туда-обратно через Dump/Load)
+    uint16_t dh[8]; float df[8]; fresh(); G.chLevel = 1; gameCarHealthNote(&G, "", .4f); G.chLevel = 3; gameCarHealthNote(&G, "", .7f);
+    int dn = gameCarHealthDump(&G, dh, df); fresh(); gameCarHealthLoad(&G, dn, dh, df);
+    G.chLevel = 1; gameCarHealthApply(&G, "", &c1); G.chLevel = 3; gameCarHealthApply(&G, "", &c3); G.chLevel = 2; gameCarHealthApply(&G, "", &c2);
+    check("запись игры: урон L1 и L3 раздельно, L2 целая", dn == 2 && near(c1.damage, .6f) && near(c3.damage, .3f) && c2.damage == 0.f, c2.damage, 0.f); }
   { float ax, ay; gameStick(.2f, 0.f, &ax, &ay); check("стик .2: зона .25 — ноль", near(ax, 0.f), ax, 0.f);
     gameStick(.26f, 0.f, &ax, &ay); check("стик .26: плавный старт, не .26", ax < .03f && ax > 0.f ? 1 : near(ax, 0.f), ax, .013f);
     gameStick(1.f, 0.f, &ax, &ay); check("стик 1.0: полный", near(ax, 1.f), ax, 1.f); }

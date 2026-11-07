@@ -1,0 +1,61 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L5_load
+flag golevel 5
+wait 40
+flag repair
+flag trffadetest 0.5
+scene L5_trf
+flag drive 60
+wait 2
+shot ft00
+wait 2
+shot ft01
+wait 2
+shot ft02
+wait 2
+shot ft03
+wait 2
+shot ft04
+wait 2
+shot ft05
+wait 2
+shot ft06
+wait 2
+shot ft07
+wait 2
+shot ft08
+wait 2
+shot ft09
+wait 2
+shot ft10
+wait 2
+shot ft11
+wait 2
+shot ft12
+wait 2
+shot ft13
+wait 2
+shot ft14
+wait 2
+shot ft15
+wait 2
+shot ft16
+wait 2
+shot ft17
+wait 2
+shot ft18
+wait 2
+shot ft19
+wait 2
+shot ft20
+wait 2
+shot ft21
+wait 2
+shot ft22
+wait 2
+shot ft23
+flag stop
+wait 1
+end

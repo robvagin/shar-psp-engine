@@ -8,6 +8,7 @@ import os, subprocess, sys, time
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]; B = ROOT / 'build/bots'
 A = [str(ROOT / p) for p in ('build/level.shr', 'build/homer.shr', 'build/sandbox/roads-l1.bin', 'build/missions/level01.msn')]
+if os.environ.get('GATE_A'): A = os.environ['GATE_A'].split(':')   # 04.11: входы ночи (level:homer:roads:msn), а не build/ дерева
 PASS, WALL = ('188', '3.5', '279.9'), ('200', '45', '250')
 
 
@@ -17,8 +18,8 @@ def cls(binp, leg, **env):
 
 
 def main():
-    subprocess.run([str(ROOT / 'tools/bots/build.sh')], check=True, capture_output=True)
-    subprocess.run([str(ROOT / 'tools/bots/build.sh'), '-DMSN_LOOSE_ARRIVE=1'], check=True, capture_output=True, env=dict(os.environ, BINS='missioner', SUF='_loose'))
+    subprocess.run(['nice', '-n', '20', str(ROOT / 'tools/bots/build.sh')], check=True, capture_output=True, env=dict(os.environ, BINS='missioner'))
+    subprocess.run(['nice', '-n', '20', str(ROOT / 'tools/bots/build.sh'), '-DMSN_LOOSE_ARRIVE=1'], check=True, capture_output=True, env=dict(os.environ, BINS='missioner', SUF='_loose'))
     good, loose = B / 'missioner', B / 'missioner_loose'
     p_ctl, p_ok = cls(good, PASS, MISSIONER_NO_SECOND='1'), cls(good, PASS)
     w_ctl, w_ok = cls(loose, WALL), cls(good, WALL)

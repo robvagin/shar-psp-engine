@@ -1,0 +1,134 @@
+# ТЕСТ90 память: смена L7 → L5 (игра Роба TEST89: на L5 наибольший кусок 0,44 МБ и 21 отказ) и 8 кругов езды по L5 с картой кучи (flag hmap — только сборка LEAK696_TRACE)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene S_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 16
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene S_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 16
+flag msnhud 1
+flag hmap 1
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+flag hmap 3
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+flag hmap 5
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+flag hmap 7
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+flag drive 24
+wait 26
+flag stop
+press triangle 0.2
+wait 3
+goto -157 -494 4.712
+wait 3
+flag drive 24
+wait 26
+flag stop
+flag hmap 9
+end

@@ -312,6 +312,7 @@ void gameMsnFreezeCar(const GameMsn *m, CarInput *in);  // во время от�
 extern int gameMsnCarNearOld;   // №1073: 1 — машина миссии к герою с любого расстояния (как до правки)
 extern void (*gameMsnNote)(const char *line);   // №1073: строка в журнал (msn_view.c ставит logf_), NULL — молча
 extern int gameMsnResetAlways;           // правка 61: отрицательный контроль (1 — переносить и после пройденной миссии)
+extern int gameMsnRaceResetOld;          // правка 1205: 1 — основная фаза уличной гонки не ставит игрока в машину на SetMissionResetPlayerInCar (прежнее; RACE_RESET_OLD / flag raceresetold)
 extern int gamePoliceDmgOld;   // правка 280: 1 — полицейская получает полный урон машин миссий (прежнее)
 extern int gameTalkCarOld;   // правка 305: 1 — машина переносится на место разговора из данных (прежнее, красный)
 extern int gameShopFirstOld;   // правка 306: 1 — лавка перехватывает △ у собеседника этапа (прежнее, красный контроль)

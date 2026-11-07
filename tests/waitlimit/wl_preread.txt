@@ -1,0 +1,9 @@
+### ТЕСТ90 пределы ожиданий: предчтение резидента уровня (preread) читает загрузчик, чтение не возвращается. Нужен набор БЕЗ файлов prereadold и pfetchold (в наборах тура они лежат). Новое: WAITLIMIT preread ms=3000 (или pfetch), экран fail; старое — вечная газета
+wait 12
+flag cfgdefaults 1
+flag waitlimitms 3000
+wait 5
+flag readhangloader 1
+flag golevel 2
+wait 40
+end

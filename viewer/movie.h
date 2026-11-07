@@ -34,6 +34,7 @@ typedef struct Movie Movie;
 int  movieSystem(int on);
 extern int movieVolume;                // сверка g09b-menu круг 2: громкость звука ролика 0..32767 (по умолчанию максимум); ставить перед movieOpen (main_frontend.h movieVolSync)
 // NULL — нет файла, испорчен или нет памяти (errOut, если не NULL, получает MV_*); сразу стартуют чтение и звук
+extern void (*movieNote)(const char *);   // №1206: строка о повторе открытия ролика
 Movie *movieOpen(const char *fn, int *errOut);
 int  movieUpdate(Movie *m);           // раз в кадр развёртки: разжать нужный кадр; 1 = идёт, 0 = кончился или ошибка
 int  movieFrame(const Movie *m);      // номер кадра на экране (-1 — ещё ни одного)

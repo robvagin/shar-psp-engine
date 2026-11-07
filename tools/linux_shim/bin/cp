@@ -1,0 +1,15 @@
+#!/bin/bash
+# Linux shim: macOS "cp -c" (APFS clone) / "cp -cR" -> GNU cp with --reflink=auto
+REAL=/usr/bin/cp; [ -x "$REAL" ] || REAL=/bin/cp
+args=(); clone=0; end=0
+for a in "$@"; do
+  if [ $end = 0 ]; then
+    case "$a" in
+      --) end=1 ;;
+      -[a-zA-Z]*) if [[ "$a" != --* && "$a" == *c* ]]; then clone=1; a="${a//c/}"; [ "$a" = - ] && continue; fi ;;
+    esac
+  fi
+  args+=("$a")
+done
+if [ $clone = 1 ]; then exec "$REAL" --reflink=auto "${args[@]}"; fi
+exec "$REAL" "${args[@]}"

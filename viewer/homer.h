@@ -90,6 +90,17 @@
 // Расчётный кадр оригинала 33,3 мс (порог размытия при просадке кадра), на PAL с вертикальной синхронизацией реальный кадр кратен 20 мс. 30 Гц — РАСЧЁТНОЕ число; реальная частота PS2 по записи не подтверждена
 #define HOMER_AIR_TICK_HZ 30.f
 #endif
+#ifndef HOMER_RUNRAMP_OLD
+#define HOMER_RUNRAMP_OLD 0     // GitHub #2 разбор tests/homer: запись PS2 gh2_dir_right/gh2_stop_all — бег с места разгоняется (путь за 0,6 с 2,3 м, за 1,2 с 7,1 м; мгновенные 8 м/с дали бы 4,8 и 9,6 м), ≈ 13 м/с²; 1 — сразу 8 м/с (сверка круга 3: скорость желаемая ставится сразу, реальный разгон вёл клип)
+#endif
+#define HOMER_RUN_ACCEL 13.0f    // м/с² разгона бега из ходьбы или с места (по записи PS2)
+#ifndef HOMER_HIGHSEAT_OLD
+#define HOMER_HIGHSEAT_OLD 0     // аудит 04.11 (решение дирижёра): высокое сиденье водителя (над началом машины выше 0,1 м, у 23 из 88 машин) — клипы посадки и выхода *_high_driver; 1 — всегда обычные клипы
+#endif
+#define HOMER_HIGH_SEAT_Y 0.1f   // порог высоты сиденья водителя, м (оригинал: 0,1)
+#ifndef HOMER_BRAKE_SNAP_OLD
+#define HOMER_BRAKE_SNAP_OLD 0   // GitHub #2 + запись PS2 04.11: конец бега (○ отпущен) режет скорость на земле до шага 4 м/с в тот же тик, дальше торможение 10 м/с²; 1 — 8 → 4 / 8 → 0 торможением 10 м/с²
+#endif
 #ifndef HOMER_TURNTICK_OLD
 #define HOMER_TURNTICK_OLD 0     // круг 7, ГОМЕР 1.2/2.4/P02-4: доля поворота лица за кадр = темп × dt (линейно, как в оригинале), пересчитана на тик HOMER_AIR_TICK_HZ: эффективный темп ходьбы 12,2/с вместо 10; 1 — экспонента с темпом 10
 #endif
@@ -108,6 +119,12 @@
 #ifndef HOMER_IDLE_PS2_OLD
 #define HOMER_IDLE_PS2_OLD 0     // P02-36, ГОМЕР 1.9: ожидание — 10–20 с случайно, клипы 5/10, 3/10, 2/10, подряд один и тот же не берётся; 1 — 8 с и по очереди
 #endif
+#ifndef HOMER_JUMPWIND_OLD
+#define HOMER_JUMPWIND_OLD 0     // решение дирижёра 04.11 «запись PS2 главнее текста исходника»: заводка прыжка с места ≈ 0,04 с (запись ps2_homer_jump: первый кадр воздуха через 2 кадра после ✕; отрыв → земля 0,72–0,82 с; второй ✕ через 0,32 с срабатывает); 1 — заводка на весь клип (≈ 0,25 с)
+#endif
+#define HOMER_LAUNCH_S 0.02f
+#define HOMER_JUMP2_DH_PS2 0.05f  // второй прыжок нажимается теперь при вертикали ≈ +2,5 (а не у вершины): добавка к высоте, вершина двойного по записи PS2 2,706 м
+#define HOMER_JUMP2_UP_PS2 2.7f   // запись PS2: второй ✕ через 0,32 с после первого (вертикаль ≈ +2,1…2,5 м/с) срабатывает; прежний порог HOMER_JUMP2_UP 2,0 его отбрасывал (HOMER_JUMPWIND_OLD=1)
 #ifndef HOMER_JUMP_LAUNCH_OLD
 #define HOMER_JUMP_LAUNCH_OLD 0  // P02-7, ГОМЕР 2.8: прыжок с места — сначала клип заводки (без движения и гравитации), отрыв и звук после него; на ходу и при падении сразу; 1 — отрыв в тот же кадр
 #endif
@@ -325,6 +342,7 @@ typedef struct {
   int ok;
   int dead;                    // машина взорвана (остов): сесть нельзя (txtbible: «VEHICLE DESTROYED! FIND A WRENCH, OR GO TO A PHONEBOOTH»)
   float door[2];               // точка у двери водителя (x, z модели; car.p.doorX/Z): отсюда начинается посадка
+  int high;                    // аудит 04.11: сиденье водителя выше 0,1 м над началом машины (car.p.seat[1], сустав dl) — посадка и выход клипами *_high
   float seatY; int seatData;   // №666: высота сиденья над землёй (car.p.seat[1] + lift, сустав dl) и признак «из данных машины»
   float seatA[2];              // якорь посадки (car.p.seatAx/Az): конец клипа посадки ставит Гомера на сиденье; у машины, где
                                // дверь дальше от борта (коробка кузова шире кабины), якорь доезжает от двери за время клипа посадки
@@ -375,6 +393,8 @@ typedef struct {
   float fade, fadeLen;         // переход из снимка позы snap
   int cLoco[4], cTake, cAir, cLand, cDash2, cBreak, cJKick, cStA, cStAir, cStLand,
       cOpenIn, cIn, cCloseIn, cOpenOut, cOut, cCloseOut, cInCar, cFlail, cGetUp, cIdle[3];
+  int hInOpen, hIn, hOut, hCloseOut;   // аудит 04.11: клипы *_high_driver (-1 — нет в пакете, тогда обычные); активные на текущую посадку/выход — aIn, aOpenIn, aOut, aCloseOut
+  int aOpenIn, aIn, aOut, aCloseOut; float hiOfs[3][2];   // сдвиг корня высоких клипов (x, z): каждый клип начинается там, где кончился предыдущий
   // правки Роба 220/231: за рулём — набор водителя ndr оригинала (cInCar = ndr_in_car_idle; нет в пакете — hom_in_car_idle):
   // жесты поворота руля влево/вправо, газа, тормоза, удара (-1 — нет клипа). Вход — homerDriveInput (main.c / game.c каждый кадр)
   int cDrvTurn[2], cDrvGas, cDrvBrake, cDrvCrash;
@@ -544,6 +564,8 @@ extern int homerCamCarOld;   // №982: 1 — машина у спины Гом�
 extern float homerCamCarTop;   // №982: верх кузова машины, задержавшей луч камеры в последнем вызове homerCamRayExtra (-1e9 — не было)
 extern int homerCamFlipOld, homerCamFlipN, homerFlipBusyOld, homerFlipHold;   // №916в: перескок камеры у стены одним кадром (CAM_FLIP1_OLD=1 / flag camflip1old 1 — как было); счётчик перескоков
 extern int homerCamPs2Old;   // CAM_WALL_PS2_OLD=1 / flag camwallps2old 1 — стена за камерой пешком как раньше (подъезд + подъём), не как у PS2
+extern float homerCamDbg[8];
+extern int homerCarPinOld;   // 1 — как в TEST89 (упор луча в кузов подтягивает камеру пешком к герою)
 extern int homerCamWallOff;   // 1 — камера пешком без обхода стен (служебное, красный контроль tests/camera)
 // №996 (Роб 26.10: «настройка высоты и дальности камеры в меню, и в машине, и пешком»): множители страницы CAMERA паузы (Height, Distance; 1 — как было): камера пешком и камера за машиной
 // (main_camera.h chaseCamUpdate). Задаёт cfgApply (viewer/main_save.h). CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители всегда 1

@@ -23,9 +23,12 @@
 #include "props.h"
 #include "stateprops.h"
 #include "animobj.h"
+#include "bnssector.h"   // №1185: проверка листа секторов — следы машин против линии пути
 
 int mcDbgRoad(int r, int *checked, int *bad, int *ledge);
 #define OVL_DEPTH .75f   // №1147: «пересечение кузовов» — глубина перекрытия в плане больше 0,75 м (мельче — контакт, который столкновение разводит за кадры); одна на крыше другой (car.c STACK_DY 0,5 высоты) — не пересечение
+static McCar hostSecCar; static McEnv hostSecEnv; static MsnCars *hostSecM;
+static int hostSecPlan(void *u, const float pos[3], float hdg, const float g[3], float (*out)[3], int cap) { (void)u; hostSecCar.car.x = pos[0]; hostSecCar.car.y = pos[1]; hostSecCar.car.z = pos[2]; hostSecCar.car.h = hdg; return mcPlanFor(hostSecM, &hostSecEnv, &hostSecCar, g, out, cap); }
 static BonusRace B; static Traffic RT; static int roadsOn;   // №1116: дороги трассы (хвост BRD1 .bns), соперники по ним
 static int planHook(void *u, const McCar *c, const float g[3], float (*out)[3], int cap) {
   (void)u; (void)g; float p[3] = {c->car.x, c->car.y, c->car.z}; return brPlan(&B, c->wp, p, out, cap);
@@ -129,7 +132,7 @@ static unsigned char *readFile(const char *p, unsigned *n) {
 
 int main(int argc, char **argv) {
   if (argc < 4) { fprintf(stderr, "usage: race_host b0N.shr b0N.bns msncars-b.shr [--laps N] [--reverse] [--secs S] [--json f] [-v]\n"); return 2; }
-  FILE *trace = 0; int ai4 = 0, noCollide = 0, infoOnly = 0, dbgPlan = 0; float dbgP[6]; int dbgRoute = -1, NR = 4, oldRoads = 0, noPath = 0, noKeep = 0, noGoal = 0, oldDriver = 1, noCurve = 0, npcCollision = 0; int laps = BR_LAPS_DEF, rev = 0, verbose = 0, breakCp = 0, breakSteer = 0; float secs = 0.f; const char *json = 0; int probeOnly = 0, noPick = 0, noDeath = 0, noTrap = 0;
+  const char *secFile = 0, *secOut = 0, *secIn = 0; FILE *trace = 0; int ai4 = 0, noCollide = 0, infoOnly = 0, dbgPlan = 0; float dbgP[6]; int dbgRoute = -1, NR = 4, oldRoads = 0, noPath = 0, noKeep = 0, noGoal = 0, oldDriver = 1, noCurve = 0, npcCollision = 0; int laps = BR_LAPS_DEF, rev = 0, verbose = 0, breakCp = 0, breakSteer = 0; float secs = 0.f; const char *json = 0; int probeOnly = 0, noPick = 0, noDeath = 0, noTrap = 0;
   for (int i = 4; i < argc; i++) {
     if (!strcmp(argv[i], "--laps") && i + 1 < argc) laps = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--reverse")) rev = 1;
@@ -153,6 +156,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "-v")) verbose = 1;
     else if (!strcmp(argv[i], "--n") && i + 1 < argc) { NR = atoi(argv[++i]); if (NR < 1) NR = 1; if (NR > 4) NR = 4; }
     else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace = fopen(argv[++i], "w");
+    else if (!strcmp(argv[i], "--sec-in") && i + 1 < argc) secIn = argv[++i];   // №1185: готовая линия .sec — меряем следы всех машин против неё
+    else if (!strcmp(argv[i], "--sec-out") && i + 1 < argc) secOut = argv[++i];   // №1185: след круга лидера -> bonus/bNN.sec
+    else if (!strcmp(argv[i], "--sectors") && i + 1 < argc) secFile = argv[++i];   // №1185: линия секторов в файл + расстояния машин до неё
     else if (!strcmp(argv[i], "--probe")) probeOnly = 1;
     else if (!strcmp(argv[i], "--nopick")) noPick = 1;     // служебное: подборы в гонке выключены (разбор, что влияет на ИИ)
     else if (!strcmp(argv[i], "--nodeath")) noDeath = 1;   // служебное: DEATH трассы в гонке выключен
@@ -204,6 +210,14 @@ int main(int argc, char **argv) {
       for (unsigned r = 0; r < RT.hd->nRoad; r++) { int ck, bd, lg; mcDbgRoad((int)r, &ck, &bd, &lg); printf("  road %u checked %d bad %d ledge %d\n", r, ck, bd, lg); }
     }
     return 0;
+  }
+  static float recP[4][2400][3], recT[2400]; int recN = 0;
+  static BscMap SM; int secOn = 0; static float secD[8000]; int secN = 0;
+  if (secIn) { FILE *sf = fopen(secIn, "rb"); if (sf) { static unsigned char sb[BSC_MAXP * 12 + 16]; unsigned sn = (unsigned)fread(sb, 1, sizeof sb, sf); fclose(sf); secOn = bscLoad(&SM, sb, sn) == 0; } if (!secOn) { printf("SEC-IN: не прочитан %s\n", secIn); return 1; } }
+  else   if (secFile && roadsOn && T.h->nwpf >= 2 && T.pf && T.h->npathf > 0) {   // №1185: линия секторов — виртуальный проезд тем же планом, что у водителя соперника
+    hostSecM = &M; hostSecCar = M.c[0]; memset(&hostSecEnv, 0, sizeof hostSecEnv); hostSecEnv.w = &world; hostSecEnv.tr = &RT;
+    secOn = bscInitRoute(&SM, hostSecPlan, 0, T.wpf, (int)T.h->nwpf, T.pf[0].p) == 0;
+    if (secOn) { FILE *sf = fopen(secFile, "w"); for (int k = 1; k <= SM.nsec + 1; k++) { float p[3], dr[2]; bscBoundary(&SM, k, p, dr); fprintf(sf, "B %d %d %.2f %.2f %.3f %.3f %.2f\n", track, k, p[0], p[2], dr[0], dr[1], p[1]); } fclose(sf); }
   }
   if (haveAo) brTrapBind(&B, &AO);
   if (probeOnly) {
@@ -289,6 +303,8 @@ int main(int argc, char **argv) {
       printf("t=%.1f %s wp->%d at %.1f %.1f %.1f next=%d cp(%s) %.1f %.1f %.1f inside=%d lap=%d\n", f * dt, cars[i], M.c[i].wp, k->x, k->y, k->z, B.r[i].next, cp->name, cp->c[0], cp->c[1], cp->c[2], bnsInside(cp, (float[3]){k->x, k->y + .5f, k->z}, B.grow[i]), B.r[i].lap); } }
     if (dbgRoute >= 0 && dbgRoute < NR && f % 30 == 0) { McCar *c = &M.c[dbgRoute]; printf("t=%.1f car %d at %.1f %.1f %.1f v %.1f h %.2f wp %d nroute %d seg %d off %d turning %d back %.1f route:", f * dt, dbgRoute, c->car.x, c->car.y, c->car.z, c->car.v, c->car.h, c->wp, c->nroute, c->seg, c->offroad, c->turning, c->backT);
       for (int q = 0; q < c->nroute && q < 14; q++) printf(" (%.0f,%.0f)", c->route[q][0], c->route[q][2]); printf("\n"); }
+    if (secOut && f % 6 == 0 && recN < 2400) { for (int i = 0; i < NR; i++) { recP[i][recN][0] = M.c[i].car.x; recP[i][recN][1] = M.c[i].car.y; recP[i][recN][2] = M.c[i].car.z; } recT[recN++] = f * dt; }
+    if (secOn && f % 15 == 0 && f * dt >= 4.f) for (int i = 0; i < NR && secN < 8000; i++) { float dd; bscArc(&SM, M.c[i].car.x, M.c[i].car.y + .5f, M.c[i].car.z, &dd); secD[secN++] = dd; }
     if (trace && f % 15 == 0) for (int i = 0; i < NR; i++) fprintf(trace, "%.2f\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%d\t%d\n", f * dt, i,
                                                                    M.c[i].car.x, M.c[i].car.y, M.c[i].car.z, M.c[i].car.v, M.c[i].wp, B.r[i].next),
                                                                    fprintf(trace, "#\t%d\t%d\t%.2f\t%.2f\t%.3f\n", i, B.drv[i].idx, B.drv[i].vt, B.drv[i].backT, M.c[i].car.h);
@@ -305,6 +321,18 @@ int main(int argc, char **argv) {
   if (getenv("WPDBG") && roadsOn) for (unsigned r = 0; r < RT.hd->nRoad; r++) { int ck, bd, lg; mcDbgRoad((int)r, &ck, &bd, &lg); printf("ROAD %u checked %d bad %d ledge %d\n", r, ck, bd, lg); }
   printf("ПЕРЕСЕЧЕНИЙ КУЗОВОВ %d (макс глубина %.2f м)\n", ovlTot, ovlMax);
   if (!AIAI1147_OLD && !noCollide && ovlTot) { fails++; snprintf(why + strlen(why), sizeof why - strlen(why), "пересечений кузовов %d; ", ovlTot); }
+  if (secOut && recN > 10 && T.pf) {   // линия секторов = след круга того, кто доехал первым: от прохода линии старта (ближайшая к первой точке пути за первые 12 с после «GO») до финиша
+    int win = -1; float bt = 1e9f; for (int i = 0; i < NR; i++) if (B.r[i].finished && B.r[i].finishT < bt) { bt = B.r[i].finishT; win = i; }
+    if (win < 0) { printf("SEC-OUT: никто не финишировал\n"); return 1; }
+    float goT = BR_COUNT_S; int i0 = -1; float bd = 1e30f;
+    for (int k = 0; k < recN; k++) { if (recT[k] < goT || recT[k] > goT + 12.f) continue; float dx = recP[win][k][0] - T.pf[0].p[0], dz = recP[win][k][2] - T.pf[0].p[2], d = dx * dx + dz * dz; if (d < bd) { bd = d; i0 = k; } }
+    int i1 = recN - 1; for (int k = 0; k < recN; k++) if (recT[k] >= goT + bt) { i1 = k; break; }
+    if (i0 < 0 || i1 <= i0 + 5) { printf("SEC-OUT: нет участка круга (i0=%d i1=%d)\n", i0, i1); return 1; }
+    FILE *of = fopen(secOut, "wb"); unsigned n = (unsigned)(i1 - i0 + 1); fwrite("SEC1", 1, 4, of); fwrite(&n, 4, 1, of); for (int k = i0; k <= i1; k++) fwrite(recP[win][k], 4, 3, of); fclose(of);
+    printf("SEC-OUT track=%d winner=%d points=%u lap=%.1f s\n", track, win, n, bt);
+  }
+  if (secOn && secN > 0) { for (int a = 0; a < secN; a++) for (int b = a + 1; b < secN; b++) if (secD[b] < secD[a]) { float t_ = secD[a]; secD[a] = secD[b]; secD[b] = t_; }
+    printf("SECTORS track=%d n=%d length=%.1f nsec=%d car_to_line_m median=%.1f p90=%.1f p95=%.1f max=%.1f\n", track, secN, SM.len, SM.nsec, secD[secN / 2], secD[(int)(secN * .9f)], secD[(int)(secN * .95f)], secD[secN - 1]); }
   FILE *J = json ? fopen(json, "w") : 0;
   if (J) fprintf(J, "{\"track\":%d,\"reverse\":%d,\"laps\":%d,\"racers\":[", track, rev, B.laps);
   for (int i = 0; i < NR; i++) {

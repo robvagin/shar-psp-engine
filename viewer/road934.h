@@ -95,10 +95,10 @@ static void road934Draw(float ex, float ey, float ez) {
   else if (fogCity1042On) { sceGuDisable(GU_FOG); }   // №1042: слой дальних дорог без дымки (до RD_FAR полным цветом)
   else { float f0 = drawDist + (RD_FAR - drawDist) * RD_FOG0; sceGuEnable(GU_FOG); sceGuFog(f0 * k, (RD_FAR + 2.f) * k, cityFogColor() & 0xffffffu); }
   // ближняя плоскость слоя = near_ (в масштабе k): видеочип сам срезает дороги ближе дальности города, блоки (160 м) заходят под город на десятки метров; матрица считается при смене поля зрения/дальности, не каждый кадр
-  static ScePspFMatrix4 pm1; static float pmFov = -1.f, pmNear = -1.f, pmDd = -1.f; ScePspFMatrix4 pm0;
+  static ScePspFMatrix4 pm1; static float pmFov = -1.f, pmNear = -1.f, pmDd = -1.f, pmAim = 0.f; ScePspFMatrix4 pm0;
   if (!RD_NEARCLIP_OLD) {
     sceGumMatrixMode(GU_PROJECTION); sceGumStoreMatrix(&pm0);
-    if (pmFov != curFovY || pmNear != near_ || pmDd != drawDist) { sceGumPushMatrix(); sceGumLoadIdentity(); sceGumPerspective(curFovY, ASPECT, near_ * k, drawDist + 10.f); sceGumStoreMatrix(&pm1); sceGumPopMatrix(); pmFov = curFovY; pmNear = near_; pmDd = drawDist; }
+    if (pmFov != curFovY || pmNear != near_ || pmDd != drawDist || pmAim != camAimC) { sceGumPushMatrix(); sceGumLoadIdentity(); sceGumPerspective(curFovY, ASPECT, near_ * k, drawDist + 10.f); sceGumStoreMatrix(&pm1); sceGumPopMatrix(); camAimPm(&pm1); pmFov = curFovY; pmNear = near_; pmDd = drawDist; pmAim = camAimC; }   // №1160: сдвиг кадра Car Aim — и в кэше матрицы
     sceGumMatrixMode(GU_MODEL); sceGuSetMatrix(GU_PROJECTION, &pm1);
   }
   ScePspFMatrix4 m; memset(&m, 0, sizeof m); m.x.x = m.y.y = m.z.z = rdE * k; m.w.w = 1.f;   // одна матрица на все блоки: вершины общие, s16 от центра рамки уровня

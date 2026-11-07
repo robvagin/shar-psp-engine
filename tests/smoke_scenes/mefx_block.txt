@@ -1,0 +1,32 @@
+### №1186+ (g10b-loop): A/B частиц на Media Engine, L1. Нужен файл mefxpair рядом с EBOOT (служба ME поднята, частицы на главном до «flag mefx 1»). Две пары, порядок половин чередуется: ON→OFF и OFF→ON,
+### по 20 с езды автопилотом от одной точки. Читать: MEPROF mefx=… (on…/pair0-…), FXSUB/PHSEC x_fx, p95 по сцене; без файла mefxpair «flag mefx» ничего не меняет (строка MEFX flag … state_before=-).
+scene F_MEFX_L1_ON_A
+flag mefx 1
+flag stop
+goto 220 172 1.5708
+wait 3
+flag drive 20
+wait 21
+flag stop
+scene F_MEFX_L1_OFF_A
+flag mefx 0
+goto 220 172 1.5708
+wait 3
+flag drive 20
+wait 21
+flag stop
+scene F_MEFX_L1_OFF_B
+flag mefx 0
+goto 220 172 1.5708
+wait 3
+flag drive 20
+wait 21
+flag stop
+scene F_MEFX_L1_ON_B
+flag mefx 1
+goto 220 172 1.5708
+wait 3
+flag drive 20
+wait 21
+flag stop
+flag mefx 0

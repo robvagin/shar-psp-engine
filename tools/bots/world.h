@@ -42,7 +42,8 @@ typedef struct {
   AnimObjs ao; int haveAo, aoAct;
 #endif
 } BotWorld;
-typedef struct { BotWorld w; PropState *pst; Coin *coin; void *spmem, *collmem, *trmem, *aomem; size_t npst, ncoin, nspmem, ncollmem, ntrmem, naomem; } BotSnap;
+typedef struct { BotWorld w; PropState *pst; Coin *coin; void *spmem, *collmem, *trmem, *aomem; size_t npst, ncoin, nspmem, ncollmem, ntrmem, naomem;
+  float **spjm, **colljm; unsigned nspjm, ncolljm; } BotSnap;   // 04.11: jm0 обломков (№923) — отдельные выделения внутри sp.mem, снимок хранит свои копии
 
 int bwData(const char *level, const char *homer, const char *msn);   // один раз: уровень (COL1, PRP2, CAR1), Гомер, пакет миссий (NULL — без); 0 = ок
 const char *bwCarName(void);   // машина уровня из CAR1 v2 (famil_v, honor_v, …); без неё — famil_v

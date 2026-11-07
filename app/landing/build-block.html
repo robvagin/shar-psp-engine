@@ -1,0 +1,98 @@
+<!-- Блок «Build it» для лендинга (site/build-site.cjs, раздел #build): контурная PSP-2000, на экране — одна строка запуска
+     сборщика (app/get.sh · app/get.ps1) с кнопкой Copy. Самостоятельный: классы bb-*, токены сайта (--ground --ink --accent --muted --tint). -->
+<style>
+.bb { container: bb / inline-size; --bb-ink: var(--ink, #1a1a1a); --bb-muted: var(--muted, rgba(26,26,26,.62)); --bb-accent: var(--accent, #e2462c); --bb-tint: var(--tint, rgba(26,26,26,.05)); }
+.bb-psp { position: relative; width: 100%; max-width: 980px; margin: 0 auto; aspect-ratio: 1960.4 / 828.7; }
+.bb-psp-art { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bb-psp-art path, .bb-psp-art rect { stroke-width: 1.25px; }
+.bb-mark { position: absolute; left: 48.46%; top: 93.9%; width: 13.52%; height: auto; transform: translate(-50%, -50%); }
+.bb-screen { position: absolute; left: 21.28%; top: 8.183%; width: 57.412%; height: 77.698%; container-type: size;
+              display: grid; align-content: center; gap: 4.6cqh; padding: 0 7cqw; color: var(--bb-ink); }
+.bb-eyebrow { font-weight: 500; font-size: clamp(10px, 1.9cqw, 12px); letter-spacing: .08em; text-transform: uppercase; color: var(--bb-muted); }
+.bb-title { font-weight: 600; font-size: clamp(18px, 6.2cqw, 38px); line-height: 1.08; letter-spacing: -.02em; text-wrap: balance; }
+.bb-tabs { display: flex; gap: 6px; }
+.bb-tab { font: inherit; font-size: clamp(11px, 2.1cqw, 13px); padding: .45em .95em; border-radius: 999px; border: 0; cursor: pointer;
+           background: var(--bb-tint); color: var(--bb-muted); transition: background-color 300ms ease, color 300ms ease; }
+.bb-tab[aria-selected="true"] { background: var(--bb-ink); color: var(--ground, #f6f5f2); }
+.bb-line { display: flex; min-width: 0; align-items: stretch; border-radius: 4px; background: var(--bb-tint); overflow: hidden; }
+.bb-line code { flex: 1; min-width: 0; padding: .95em 1.1em; font: 400 clamp(10px, 1.85cqw, 13px)/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+                 white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.bb-copy { font: inherit; font-weight: 500; font-size: clamp(11px, 2.1cqw, 13px); border: 0; cursor: pointer; padding: 0 1.3em;
+            background: var(--bb-accent); color: #fff; transition: filter 200ms ease; }
+.bb-copy:hover { filter: brightness(.94); }
+.bb-copy:focus-visible, .bb-tab:focus-visible { outline: 1.5px solid var(--bb-ink); outline-offset: 2px; }
+.bb-note { font-size: clamp(11px, 2.05cqw, 14px); color: var(--bb-muted); text-wrap: balance; }
+.bb-note a { color: inherit; text-underline-offset: 3px; }
+/* узко (телефон, планшет до 860 px): экран PSP слишком мал для строки — на экране только заголовок, строка и пояснение под консолью */
+.bb-below { display: none; margin-top: 24px; gap: 14px; grid-template-columns: minmax(0, 1fr); }
+@container bb (max-width: 860px) { .bb-screen > :not(.bb-eyebrow):not(.bb-title) { display: none; } .bb-screen { text-align: center; } .bb-below { display: grid; } }
+@media (prefers-reduced-motion: reduce) { .bb-tab, .bb-copy { transition: none; } }
+</style>
+<div class="bb">
+  <div class="bb-psp">
+    <svg class="bb-psp-art" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="19 18.9 1960.4 828.7"><style>path,rect{fill:none;stroke:#1a1a1a;stroke-width:1.25px;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}[data-k="dpad"],[data-k="face"],[data-k="stick"],[data-k="body"],[data-k="shoulder"]{fill:#f6f5f2}</style><path d="m-414.53 57.17s-32.45 0.66-57.09 30.31l-42.87 56.09c-1.83 2.40-0.81 5.10 0.5 7.09 2.13-3.38 4.31-6.76 6.53-10.15 4.29-6.57 16.15-6.56 16.15-6.56l131.81-4.06c19.69-1.51 32.84-13.62 32.84-13.62l38.25-40.31s9.32-11.21 17.18-11.21h73.81c-0.19-2.46-1.25-7.06-6.53-7.06l-210.59-0.5z" data-k="shoulder" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<path d="m944.82 54.55c-6.51 0.42-6 8.5-6 8.5l0.59 1.59h65.18c18.56-0.00 26.90 16.28 26.90 16.28l18.68 23.21c17.14 26.78 44.43 25.25 44.43 25.25l119.19 3.53c22.47 0.66 30.00 6.64 38.21 18.68 0.38-1.89 0.29-3.96-0.93-5.84l-38.28-58.37c-24.30-29.92-56.71-30.93-56.71-30.93l-210.62-1.90c-0.22-0.00-0.44-0.01-0.65 0z" data-k="shoulder" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<path d="m342.31 42.29-38.25 40.32s-13.13 12.12-32.83 13.63l-131.82 4.04s-11.86-0.00-16.16 6.56c-232.38 355.19 4.05 663.65 4.05 663.65s2.90 3.53 14.14 3.53l128.78 6.55s30.46-1.17 49.53 31.85c5.29 9.16 35.39 33.04 45.41 33.1h1275.4c12.32 0 30.32-30.52 54.25-52.16 3.19-2.55 17.86-11.87 41.37-12.84l121.49-4.98s11.60-2.42 16.60-9.57c127.34-185.97 144.29-448.74 8.41-648.01-8.20-12.04-15.74-18.02-38.21-18.68l-119.2-3.53s-27.30 1.53-44.44-25.25l-18.7-23.22s-8.32-16.28-26.88-16.28l-1275.8 0.11c-7.86 0.00-17.18 11.18-17.18 11.18z" data-k="body" transform="matrix(1 0 0 1 0 0)"></path>
+<rect rx="8" ry="8" height="643.88" width="1125.5" y="120.36" x="-194.54" data-k="screen" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<rect rx="9.93" height="22.47" width="47.98" y="233.58" x="-303.05" data-k="speaker" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<rect rx="9.93" height="22.47" width="47.98" y="233.58" x="991.97" data-k="speaker" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<path d="m1892.2 388.7c0 69.90-56.66 126.57-126.57 126.57-69.90 0-126.57-56.66-126.57-126.57 0-69.90 56.66-126.57 126.57-126.57 69.90 0 126.57 56.66 126.57 126.57z" data-k="ring" transform="matrix(1.18 0 0 1.18 -1846.79 -73.10)"></path>
+<path d="m1892.2 388.7c0 69.90-56.66 126.57-126.57 126.57-69.90 0-126.57-56.66-126.57-126.57 0-69.90 56.66-126.57 126.57-126.57 69.90 0 126.57 56.66 126.57 126.57z" data-k="ring" transform="matrix(1.01 0 0 1.01 -14.02 -6.45)"></path>
+<path d="m-440.44 554.07c7.32 19.52 91.84 18.16 97.26 0v-57.21c0-3.26-2.46-7.76-5.15-11.11-8.72-10.87-29.82-28.47-29.82-28.47-6.23-6.37-25.75-6.23-31.72 0 0 0-18.79 19.04-26.03 28.47-2.17 2.82-4.53 7.72-4.53 11.11z" data-k="dpad" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<path d="m-440.44 554.07c7.32 19.52 91.84 18.16 97.26 0v-57.21c0-3.26-2.46-7.76-5.15-11.11-8.72-10.87-29.82-28.47-29.82-28.47-6.23-6.37-25.75-6.23-31.72 0 0 0-18.79 19.04-26.03 28.47-2.17 2.82-4.53 7.72-4.53 11.11z" data-k="dpad" transform="matrix(1 0 0 -1 630.71 807.09)"></path>
+<path d="m-440.44 554.07c7.32 19.52 91.84 18.16 97.26 0v-57.21c0-3.26-2.46-7.76-5.15-11.11-8.72-10.87-29.82-28.47-29.82-28.47-6.23-6.37-25.75-6.23-31.72 0 0 0-18.79 19.04-26.03 28.47-2.17 2.82-4.53 7.72-4.53 11.11z" data-k="dpad" transform="matrix(0 1 1 0 -182.16 779.38)"></path>
+<path d="m-440.44 554.07c7.32 19.52 91.84 18.16 97.26 0v-57.21c0-3.26-2.46-7.76-5.15-11.11-8.72-10.87-29.82-28.47-29.82-28.47-6.23-6.37-25.75-6.23-31.72 0 0 0-18.79 19.04-26.03 28.47-2.17 2.82-4.53 7.72-4.53 11.11z" data-k="dpad" transform="matrix(0 1 -1 0 658.58 779.38)"></path>
+<path d="m455.3 518.14h-11.97l5.98-10.37z" data-k="arrow" transform="matrix(2.57 0 0 1.43 -919.48 -453.62)"></path>
+<path d="m455.3 518.14h-11.97l5.98-10.37z" data-k="arrow" transform="matrix(2.57 0 0 -1.43 -919.29 1234.05)"></path>
+<path d="m455.3 518.14h-11.97l5.98-10.37z" data-k="arrow" transform="matrix(0 2.57 1.43 0 -607.29 -768.05)"></path>
+<path d="m455.3 518.14h-11.97l5.98-10.37z" data-k="arrow" transform="matrix(0 2.57 -1.43 0 1083.57 -766.80)"></path>
+<path d="m314.08 645.98c0 37.85-30.69 68.54-68.54 68.54-37.85 0-68.54-30.69-68.54-68.54 0-37.85 30.69-68.54 68.54-68.54 37.85 0 68.54 30.69 68.54 68.54z" data-k="stick" transform="matrix(0.95 0 0 0.95 11.99 33.85)"></path>
+<path d="m1827.2 273.31c0 30.06-24.37 54.44-54.44 54.44s-54.44-24.37-54.44-54.44 24.37-54.44 54.44-54.44 54.44 24.37 54.44 54.44z" data-k="face" transform="matrix(1 0 0 1 0 0)"></path>
+<path d="m1827.2 273.31c0 30.06-24.37 54.44-54.44 54.44s-54.44-24.37-54.44-54.44 24.37-54.44 54.44-54.44 54.44 24.37 54.44 54.44z" data-k="face" transform="matrix(1 0 0 1 112.5 113.97)"></path>
+<path d="m1827.2 273.31c0 30.06-24.37 54.44-54.44 54.44s-54.44-24.37-54.44-54.44 24.37-54.44 54.44-54.44 54.44 24.37 54.44 54.44z" data-k="face" transform="matrix(1 0 0 1 -1.31 229.25)"></path>
+<path d="m1827.2 273.31c0 30.06-24.37 54.44-54.44 54.44s-54.44-24.37-54.44-54.44 24.37-54.44 54.44-54.44 54.44 24.37 54.44 54.44z" data-k="face" transform="matrix(1 0 0 1 -115.72 114.86)"></path>
+<path d="m455.3 518.14h-11.97l5.98-10.37z" data-k="symbol" transform="matrix(2.57 0 0 2.57 615.40 -1050.14)"></path>
+<path d="m461.57 510.66c0 4.54-3.68 8.23-8.23 8.23s-8.23-3.68-8.23-8.23 3.68-8.23 8.23-8.23 8.23 3.68 8.23 8.23z" data-k="symbol" transform="matrix(-2.04 0 0 -2.04 2814.21 1432.15)"></path>
+<path d="m1126.5 522.05 28.31 28.31m0-28.31-28.31 28.31" data-k="symbol" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<rect rx="0" ry="0" height="27.51" width="27.51" y="408.06" x="1011.8" data-k="symbol" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<path d="m401.54 770.04h97.22c5.20 0 6.06 2.61 6.06 5.30-0.03 23.98-28.21 47.47-54.29 47.47-26.33 0-55.40-23.23-55.30-47.47 0.01-2.74 0.63-5.30 6.31-5.30z" data-k="pill" transform="matrix(1 0 0 1 0 0)"></path>
+<path d="m741.82 803.68h97.22c5.20 0 6.06 2.61 6.06 5.30-0.03 23.98-28.21 47.47-54.29 47.47-26.33 0-55.40-23.23-55.30-47.47 0.01-2.74 0.63-5.30 6.31-5.30z" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<path d="m868.82 803.68h97.22c5.20 0 6.06 2.61 6.06 5.30-0.03 23.98-28.21 47.47-54.29 47.47-26.33 0-55.40-23.23-55.30-47.47 0.01-2.74 0.63-5.30 6.31-5.30z" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></path>
+<rect rx="22.46" ry="22.87" height="43.78" width="61.92" y="808.98" x="-67.33" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<rect rx="22.46" ry="22.87" height="43.78" width="61.92" y="808.98" x="63.37" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<rect rx="22.46" ry="22.87" height="43.78" width="61.92" y="809.38" x="551.07" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></rect>
+<rect rx="22.46" ry="22.87" height="43.78" width="61.92" y="809.69" x="639.12" data-k="pill" transform="matrix(1 0 0 1 630.71 -33.64)"></rect></svg>
+    <svg class="bb-mark" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2820 486"><g fill="#1a1a1a"><rect x="0" y="0" width="878" height="35"/><rect x="1326" y="0" width="485" height="35"/><rect x="1941" y="0" width="879" height="35"/><rect x="844" y="35" width="34" height="191"/><rect x="1326" y="35" width="37" height="191"/><rect x="2785" y="35" width="35" height="191"/><rect x="0" y="226" width="878" height="35"/><rect x="1326" y="226" width="37" height="35"/><rect x="1941" y="226" width="879" height="35"/><rect x="0" y="261" width="35" height="190"/><rect x="1326" y="261" width="37" height="190"/><rect x="1941" y="261" width="35" height="190"/><rect x="0" y="451" width="35" height="35"/><rect x="878" y="451" width="485" height="35"/><rect x="1941" y="451" width="35" height="35"/></g></svg>
+    <div class="bb-screen">
+      <p class="bb-title">Paste one line. Then drop your disc image</p>
+      <div class="bb-tabs" role="tablist" aria-label="Your computer">
+        <button class="bb-tab" role="tab" aria-selected="true" data-os="mac">Mac · Linux Terminal</button>
+        <button class="bb-tab" role="tab" aria-selected="false" data-os="win">Windows PowerShell</button>
+      </div>
+      <div class="bb-line"><code data-cmd>curl -fsSL https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.sh | bash</code><button class="bb-copy" type="button">Copy</button></div>
+      <p class="bb-note">This PSP opens in your browser. Drop the .iso, wait about an hour, press Put on PSP<span data-win hidden>. Windows goes through WSL, not tested yet</span>. <a href="https://github.com/robvagin/shar-psp-engine#build">Build by hand</a></p>
+    </div>
+  </div>
+  <div class="bb-below">
+    <div class="bb-tabs" role="tablist" aria-label="Your computer">
+      <button class="bb-tab" role="tab" aria-selected="true" data-os="mac">Mac · Linux</button>
+      <button class="bb-tab" role="tab" aria-selected="false" data-os="win">Windows</button>
+    </div>
+    <div class="bb-line"><code data-cmd>curl -fsSL https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.sh | bash</code><button class="bb-copy" type="button">Copy</button></div>
+    <p class="bb-note">This PSP opens in your browser. Drop the .iso, wait about an hour, press Put on PSP<span data-win hidden>. Windows goes through WSL, not tested yet</span>. <a href="https://github.com/robvagin/shar-psp-engine#build">Build by hand</a></p>
+  </div>
+</div>
+<script>
+(() => {
+  const CMD = { mac: 'curl -fsSL https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.sh | bash', win: 'irm https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.ps1 | iex' }, root = document.currentScript.previousElementSibling;
+  let os = /Win/.test(navigator.platform) ? 'win' : 'mac';
+  const sync = () => { root.querySelectorAll('.bb-tab').forEach(t => t.setAttribute('aria-selected', t.dataset.os === os));
+                        root.querySelectorAll('[data-cmd]').forEach(c => c.textContent = CMD[os]); root.querySelectorAll('[data-win]').forEach(w => w.hidden = os !== 'win'); };
+  root.addEventListener('click', e => {
+    const tab = e.target.closest('.bb-tab'); if (tab) { os = tab.dataset.os; sync(); return; }
+    const b = e.target.closest('.bb-copy'); if (!b) return;
+    navigator.clipboard.writeText(CMD[os]).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy', 1600); });
+  });
+  sync();
+})();
+</script>

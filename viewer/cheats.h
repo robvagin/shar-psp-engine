@@ -26,33 +26,33 @@ enum {   // номера кодов (наши); порядок = порядок 
   CH_N
 };
 enum { CHI_X = 0, CHI_O = 1, CHI_SQ = 2, CHI_TRI = 3 };   // ✕ ○ □ △
-typedef struct { int id; unsigned char seq[4]; const char *name, *what; } CheatDef;
+typedef struct { int id; unsigned char seq[4]; const char *what; } CheatDef;   // what — пояснение своими словами (на экран не выводится)
 static const CheatDef CHEAT_TAB[] = {
-  {CH_VEHICLES, {CHI_X, CHI_O, CHI_X, CHI_O}, "Vehicles", "все машины-награды в телефонной будке; только когда пройдены все 7 сюжетных миссий всех 7 уровней"},
-  {CH_NOTOP, {CHI_SQ, CHI_SQ, CHI_SQ, CHI_SQ}, "No Top Speed", "у машины игрока нет сопротивления: разгон дальше предела скорости"},
-  {CH_ACCEL, {CHI_TRI, CHI_TRI, CHI_TRI, CHI_TRI}, "High Acceleration", "тяга машины игрока вдвое"},
-  {CH_HORNJUMP, {CHI_SQ, CHI_SQ, CHI_SQ, CHI_TRI}, "Car Jump on Horn", "прыжок машины игрока по гудку (кнопки гудка на PSP нет)"},
-  {CH_ONETAP, {CHI_TRI, CHI_TRI, CHI_SQ, CHI_SQ}, "One Tap Traffic Death", "машина трафика или ИИ от касания машины игрока сразу разбита"},
-  {CH_CAMERAS, {CHI_O, CHI_O, CHI_O, CHI_X}, "Unlock All Cameras", "шесть дополнительных камер езды, две пешком и широкий угол следящих камер"},
-  {CH_CREDITS, {CHI_X, CHI_SQ, CHI_SQ, CHI_TRI}, "Play Credits Dialog", "в титрах звучит диалог Кэнга и Кодос без прохождения игры"},
-  {CH_SPEEDO, {CHI_TRI, CHI_TRI, CHI_O, CHI_SQ}, "Show Speedometer", "на экране скорость в км/ч"},
-  {CH_REDBRICK, {CHI_O, CHI_O, CHI_TRI, CHI_SQ}, "Red Brick", "бесплатная машина на улице — кирпич"},
-  {CH_INVINC, {CHI_TRI, CHI_X, CHI_TRI, CHI_X}, "Invincible Car", "машина игрока не получает урона"},
-  {CH_TREE, {CHI_O, CHI_X, CHI_O, CHI_TRI}, "Show Tree", "отладочная подсветка: красные коробки дерева мира и треугольник под игроком"},
-  {CH_TRIPPY, {CHI_TRI, CHI_O, CHI_TRI, CHI_O}, "Trippy", "сильное размытие кадра"},
+  {CH_VEHICLES, {CHI_X, CHI_O, CHI_X, CHI_O}, "все машины-награды в телефонной будке; только когда пройдены все 7 сюжетных миссий всех 7 уровней"},
+  {CH_NOTOP, {CHI_SQ, CHI_SQ, CHI_SQ, CHI_SQ}, "у машины игрока нет сопротивления: разгон дальше предела скорости"},
+  {CH_ACCEL, {CHI_TRI, CHI_TRI, CHI_TRI, CHI_TRI}, "тяга машины игрока вдвое"},
+  {CH_HORNJUMP, {CHI_SQ, CHI_SQ, CHI_SQ, CHI_TRI}, "прыжок машины игрока по гудку (кнопки гудка на PSP нет)"},
+  {CH_ONETAP, {CHI_TRI, CHI_TRI, CHI_SQ, CHI_SQ}, "машина трафика или ИИ от касания машины игрока сразу разбита"},
+  {CH_CAMERAS, {CHI_O, CHI_O, CHI_O, CHI_X}, "шесть дополнительных камер езды, две пешком и широкий угол следящих камер"},
+  {CH_CREDITS, {CHI_X, CHI_SQ, CHI_SQ, CHI_TRI}, "в титрах звучит диалог Кэнга и Кодос без прохождения игры"},
+  {CH_SPEEDO, {CHI_TRI, CHI_TRI, CHI_O, CHI_SQ}, "на экране скорость в км/ч"},
+  {CH_REDBRICK, {CHI_O, CHI_O, CHI_TRI, CHI_SQ}, "бесплатная машина на улице — кирпич"},
+  {CH_INVINC, {CHI_TRI, CHI_X, CHI_TRI, CHI_X}, "машина игрока не получает урона"},
+  {CH_TREE, {CHI_O, CHI_X, CHI_O, CHI_TRI}, "отладочная подсветка: красные коробки дерева мира и треугольник под игроком"},
+  {CH_TRIPPY, {CHI_TRI, CHI_O, CHI_TRI, CHI_O}, "сильное размытие кадра"},
 #if CHEATS_DEBUG
-  {CH_CARDS, {CHI_X, CHI_X, CHI_X, CHI_X}, "Unlock All Cards", "все карточки"},
-  {CH_SKINS, {CHI_SQ, CHI_TRI, CHI_SQ, CHI_TRI}, "Unlock All Clothing", "все костюмы"},
-  {CH_LIST, {CHI_X, CHI_O, CHI_SQ, CHI_TRI}, "Display All Cheats", "список кодов поверх OPTIONS"},
-  {CH_MISSIONS, {CHI_X, CHI_O, CHI_O, CHI_X}, "Unlock All Missions", "все миссии в MISSION SELECT"},
-  {CH_MOVIES, {CHI_O, CHI_TRI, CHI_SQ, CHI_TRI}, "Unlock All Movies", "все ролики"},
-  {CH_ALLUNLOCK, {CHI_X, CHI_O, CHI_O, CHI_TRI}, "Unlock All", "карточки, костюмы, миссии, ролики и машины сразу"},
-  {CH_COINS, {CHI_X, CHI_SQ, CHI_O, CHI_TRI}, "Add Extra Coins", "добавка монет"},
-  {CH_KICKMODEL, {CHI_O, CHI_O, CHI_O, CHI_SQ}, "Kick Swaps Character Model", "удар меняет модель персонажа"},
-  {CH_POS, {CHI_O, CHI_O, CHI_O, CHI_O}, "Show Avatar Position", "координаты игрока на экране"},
-  {CH_FULLDMG, {CHI_SQ, CHI_SQ, CHI_TRI, CHI_TRI}, "Full Damage", "машина игрока нарисована полностью разбитой"},
-  {CH_EXTRATIME, {CHI_O, CHI_O, CHI_O, CHI_TRI}, "Extra Time", "время задания ×5"},
-  {CH_DEMO, {CHI_X, CHI_X, CHI_X, CHI_O}, "Demotest", "режим демо"},
+  {CH_CARDS, {CHI_X, CHI_X, CHI_X, CHI_X}, "все карточки"},
+  {CH_SKINS, {CHI_SQ, CHI_TRI, CHI_SQ, CHI_TRI}, "все костюмы"},
+  {CH_LIST, {CHI_X, CHI_O, CHI_SQ, CHI_TRI}, "список кодов поверх OPTIONS"},
+  {CH_MISSIONS, {CHI_X, CHI_O, CHI_O, CHI_X}, "все миссии в MISSION SELECT"},
+  {CH_MOVIES, {CHI_O, CHI_TRI, CHI_SQ, CHI_TRI}, "все ролики"},
+  {CH_ALLUNLOCK, {CHI_X, CHI_O, CHI_O, CHI_TRI}, "карточки, костюмы, миссии, ролики и машины сразу"},
+  {CH_COINS, {CHI_X, CHI_SQ, CHI_O, CHI_TRI}, "добавка монет"},
+  {CH_KICKMODEL, {CHI_O, CHI_O, CHI_O, CHI_SQ}, "удар меняет модель персонажа"},
+  {CH_POS, {CHI_O, CHI_O, CHI_O, CHI_O}, "координаты игрока на экране"},
+  {CH_FULLDMG, {CHI_SQ, CHI_SQ, CHI_TRI, CHI_TRI}, "машина игрока нарисована полностью разбитой"},
+  {CH_EXTRATIME, {CHI_O, CHI_O, CHI_O, CHI_TRI}, "время задания ×5"},
+  {CH_DEMO, {CHI_X, CHI_X, CHI_X, CHI_O}, "режим демо"},
 #endif
 };
 #define CHEAT_TAB_N ((int)(sizeof CHEAT_TAB / sizeof CHEAT_TAB[0]))

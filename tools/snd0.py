@@ -23,7 +23,7 @@ SND0 у самоделок: XMB его играет; образец Sony Tony Ha
 игр с карты Роба (Tomb Raider Anniversary, GTA LCS, LocoRoco, Cube, NFS Undercover; build/xmb_ref, только заголовки): у всех,
 и ATRAC3, и AT3+, после fact идёт чанк smpl на 60 байт — одна петля от задержки кодера (второе число fact) до total + задержка − 1,
 период 22676, нота 60, samplerData 24. У atracdenc smpl нет — дописываем тем же правилом (add_loop)"""
-import argparse, json, struct, subprocess, sys, tempfile
+import argparse, json, os, struct, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np
 
@@ -190,19 +190,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=str(ROOT / 'build/assets/snd0.at3'))
     ap.add_argument('--start', type=float, help='начало отрывка, с (по умолчанию — самое ровное место)')
-    ap.add_argument('--dur', type=float, default=DUR)
+    ap.add_argument('--dur', type=float, default=None, help='длина отрывка, с (№1162: заданная явно берётся как есть, даже 16; по умолчанию — 16, у sunday_drive 25, у simpsons_theme 20)')
     ap.add_argument('--codec', default=CODEC, choices=['atrac3', 'atrac3plus'])
     ap.add_argument('--preview', help='папка: WAV отрывка и ещё двух мест дорожки — послушать Робу')
     ap.add_argument('--verify'); ap.add_argument('--src', action='store_true'); ap.add_argument('--loop')
     ap.add_argument('--track', default='sunday_drive', choices=sorted(TRACKS), help='дорожка диска: sunday_drive (правка 307), simpsons_theme (262), muzak (130)')
     ap.add_argument('--fade-out', type=float, help='затухание в конце, с (по умолчанию %g; правка 307 — 3)' % FADE_OUT)
     a = ap.parse_args()
+    dur_given = a.dur is not None and os.environ.get('SND0_DUR1162_OLD') != '1'   # №1162: «--dur 16» раньше совпадало с умолчанием и молча становилось 25 (принятый SND0 — 16 с)
+    if a.dur is None: a.dur = DUR
     if not a.verify and not a.loop:
         SRC = TRACKS[a.track]
         if a.track == 'simpsons_theme' and a.start is None: a.start = 0.0   # вступление темы
-        if a.track == 'simpsons_theme' and a.dur == DUR: a.dur = 20.0      # длиной с превью ICON1 (20 с)
+        if a.track == 'simpsons_theme' and a.dur == DUR and not dur_given: a.dur = 20.0      # длиной с превью ICON1 (20 с)
         if a.track == 'sunday_drive' and a.start is None: a.start = 0.0     # правка 307: с начала дорожки, как Роб слушал
-        if a.track == 'sunday_drive' and a.dur == DUR: a.dur = 25.0         # «секунд 25»
+        if a.track == 'sunday_drive' and a.dur == DUR and not dur_given: a.dur = 25.0         # «секунд 25»
         if a.track == 'sunday_drive' and a.fade_out is None: a.fade_out = 3.0   # «с затуханием»
     if a.fade_out is not None: FADE_OUT = a.fade_out
     if a.verify: sys.exit(1 if verify(a.verify, a.src) else 0)

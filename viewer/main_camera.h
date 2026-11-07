@@ -341,10 +341,6 @@ static int camGeomOld = CAM_GEOM_OLD;
 #define CS_SP_MAX 3.5f   // полуось коробки больше — не в счёт (деревья с кроной, вышки)
 static int camNearSpOld = CAM_NEAR_SP_OLD, camNearDataOld, nearPassClrOld;   // nearPassClrOld — второй проход своей машины (main_loop.h, NEARPASS_CLR)
 static int camGeomTris, camGeomOver;
-#define CAM_START_JUMP 6.f   // №1141: м; опора ушла дальше за кадр — перенос героя
-#define CAM_START_WIN 120    // вызовов сбора сцены (≈ 1–2 с) после переноса: клетки у глаза достраиваются целиком
-#define CAM_START_R 16.f     // м от глаза и от опоры до ящика клетки
-static unsigned camStartBuilt;   // служебное: сколько клеток достроено окном старта
 static void camGeomCollect(const float P[3], const float e[3]) {
   { CPT0;
     // TEST25 (разовая стройка сетки на новой клетке = рывок при въезде): строим в первую очередь клетки по ходу глаза (через ~1,5 с вперёд), а не ближайшие к нему.
@@ -353,16 +349,8 @@ static void camGeomCollect(const float P[3], const float e[3]) {
     if (!cgAheadOld && peOk) { float vx = e[0] - pe[0], vz = e[2] - pe[2]; if (fabsf(vx) < 3.f && fabsf(vz) < 3.f) { ax += fmaxf(-60.f, fminf(60.f, vx * 45.f)); az += fmaxf(-60.f, fminf(60.f, vz * 45.f)); } }
     memcpy(pe, e, 12); peOk = 1;
     cgAhX = cgAheadOld ? -1e9f : ax; cgAhZ = az; cgStep(e[0], e[2]); CPT(1); }
-  // №1141: перенос опоры больше CAM_START_JUMP м (старт миссии, сброс машины) или первая загрузка уровня — окно CAM_START_WIN вызовов: клетки рядом достраиваются сразу (camgrid.h cgBuildNear),
-  // чтобы глаз и ближняя плоскость видели вывески, навесы и стенки с первого кадра. STARTCAM1141_OLD=1 — как в TEST84
-  if (!STARTCAM1141_OLD && !inRoom()) {
-    static float lp[3]; static int lpOk; static unsigned lgen; static int win, nb_ = 1;
-    unsigned gen_ = camStartGenSel(cgGen, camLevelGen, CAMSTARTGEN1159_OLD);   // №1159 (g10b): поколение уровня, а не клеток города
-    if (camStartArm(lpOk, lgen, gen_, hypotf(hypotf(P[0] - lp[0], P[1] - lp[1]), P[2] - lp[2]), CAM_START_JUMP)) { win = CAM_START_WIN; nb_ = 1; }
-    memcpy(lp, P, 12); lpOk = 1; lgen = gen_;
-    // №1159 (g12): пока ничего не достроено (рядом всё готово или клетки ещё грузятся), перебор клеток — раз в 4 вызова, а не каждый (STARTCAM1159_OLD=1 — каждый, как в TEST85)
-    if (win > 0) { win--; if (STARTCAM1159_OLD || nb_ > 0 || !(win & 3)) { nb_ = cgBuildNear(e, P, CAM_START_R, 6); camStartBuilt += (unsigned)nb_; } }
-  }
+  // №1141 / №1159: окно старта камеры (клетки у глаза достраиваются сразу после переноса опоры, загрузки уровня) — camStartWindow в camgrid.h; в помещении не нужно
+  if (!inRoom()) camStartWindow(e, P);
   csScene.ntri = 0; camGeomTris = 0; csScene.geomRay = (CAM_GEOM_FAST && !camGeomOld && !inRoom()) ? cgRayFracCam : 0;
   if (!pc || !cl || inRoom()) return;
   if (CAM_GEOM_FAST ? !(smkOn && camInOn && camInGeom) : (camGeomOld && !(smkOn && camInOn))) return;   // быстрый путь: треугольники только для замера «flag camingeom 1» (с flag camin они раньше шли всегда и в туре давали ph6 +1,4…2,4 мс)
@@ -1057,7 +1045,8 @@ static void groundCoverDraw(float fov,float ey,float refy) {   // refy — вы�
   ScePspFMatrix4 view;sceGumMatrixMode(GU_VIEW);sceGumStoreMatrix(&view);sceGumMatrixMode(GU_MODEL);
   GroundCoverVertex*v=sceGuGetMemory(8*sizeof*v);
   float focal=136.f/tanf(fmaxf(1.f,fminf(179.f,fov))*(3.14159265358979f/360.f));
-  int n=groundCoverBackground(&groundCover,-view.y.z,view.y.x,view.y.y,focal,v);if(n<3)return;
+  const float sp_=camAimPx(camAimC);   // №1160: сдвиг кадра Car Aim в экранных пикселях (вниз > 0): подстилка и её туман считают луч через строку без сдвига
+  int n=groundCoverBackgroundShift(&groundCover,-view.y.z,view.y.x,view.y.y,focal,sp_,v);if(n<3)return;
   sceGuDisable(GU_TEXTURE_2D);sceGuDisable(GU_BLEND);sceGuDisable(GU_ALPHA_TEST);sceGuDisable(GU_FOG);sceGuDisable(GU_CULL_FACE);
   sceGuEnable(GU_DEPTH_TEST);sceGuDepthMask(GU_FALSE);
   sceGuDrawArray(GU_TRIANGLE_FAN,GU_COLOR_8888|GU_VERTEX_32BITF|GU_TRANSFORM_2D,n,0,v);
@@ -1075,14 +1064,14 @@ static void groundCoverDraw(float fov,float ey,float refy) {   // refy — вы�
         a[0]=(GroundCoverVertex){0,x0,0,3};a[1]=(GroundCoverVertex){0,x1,0,3};a[2]=(GroundCoverVertex){0,x1,272,3};a[3]=(GroundCoverVertex){0,x0,272,3};
         for(int side=0;side<2&&na>=3;side++){float T=side?lo:hi;int nb2=0;
           for(int k=0;k<na;k++){const GroundCoverVertex*p0=&a[k],*p1=&a[(k+1)%na];
-            float d0=fy_+(p0->x-240)*ry_/focal-(p0->y-136)*uy_/focal,d1=fy_+(p1->x-240)*ry_/focal-(p1->y-136)*uy_/focal;
+            float d0=fy_+(p0->x-240)*ry_/focal-(p0->y-136-sp_)*uy_/focal,d1=fy_+(p1->x-240)*ry_/focal-(p1->y-136-sp_)*uy_/focal;
             int in0=side?d0>=T:d0<=T,in1=side?d1>=T:d1<=T;
             if(in0)b[nb2++]=*p0;
             if(in0!=in1){float t=(T-d0)/(d1-d0);b[nb2++]=(GroundCoverVertex){0,p0->x+t*(p1->x-p0->x),p0->y+t*(p1->y-p0->y),3};}
             if(nb2>=14)break;}
           for(int k=0;k<nb2;k++)a[k]=b[k];na=nb2;}
         if(na<3||nq+(na-2)*3>MAXV)continue;
-        for(int k=0;k<na;k++){float u=(a[k].x-240)/focal,v=(a[k].y-136)/focal,da=fy_+u*ry_-v*uy_;
+        for(int k=0;k<na;k++){float u=(a[k].x-240)/focal,v=(a[k].y-136-sp_)/focal,da=fy_+u*ry_-v*uy_;
           float F=1.f;if(da<-1e-4f){float rh2=1.f+u*u+v*v-da*da,dh=H*sqrtf(rh2>0.f?rh2:0.f)/-da;F=fminf(1.f,fmaxf(0.f,(dh-.75f*D)/(.25f*D)));}
           unsigned c=0;for(int ch=0;ch<3;ch++){float vf=(float)(fc>>(8*ch)&255),vg=(float)(gc>>(8*ch)&255);c|=(unsigned)(vg+(vf-vg)*F+.5f)<<(8*ch);}
           a[k].c=c|0xff000000u;}

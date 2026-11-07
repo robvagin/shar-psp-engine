@@ -1,0 +1,11 @@
+### ТЕСТ90 пределы ожиданий: загрузчик «умер» посреди чтения клетки, дальше смена уровня (levelUnload ждёт загрузчика). Новое: WAITLIMIT unload ms=3000 и экран fail; WAITLIMIT_OLD / flag waitlimitold 1: ожидание вечно (LOADWAIT unload_retryN каждые 2 с)
+wait 12
+flag cfgdefaults 1
+flag waitlimitms 3000
+wait 5
+flag readhangloader 1
+goto -78 -298 0
+wait 3
+flag golevel 2
+wait 25
+end

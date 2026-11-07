@@ -1,0 +1,96 @@
+# разбор дали: камера порта в позе камеры PS2 (build/emu_hub/done/g13-far_fardiag/позы.tsv, ось z перевёрнута)
+flag camdet 1
+scene start
+wait 3
+scene L5_load
+flag golevel 5
+wait 40
+flag repair
+cam off
+goto -581.4 -316.2 0
+wait 6
+flag dal 1
+cam -581.4 32.9 -316.2 -0.27 -0.23 -0.93 60
+wait 5
+shot ps2pose_p1_a60
+flag dal 1
+cam -581.4 32.9 -316.2 -0.27 -0.23 -0.93 78
+wait 5
+shot ps2pose_p1_a78
+flag dal 0
+cam -581.4 32.9 -316.2 -0.27 -0.23 -0.93 78
+wait 5
+shot ps2pose_p1_b78
+flag dal 1
+cam off
+goto -442.5 -539.7 0
+wait 6
+flag dal 1
+cam -442.5 24.6 -539.7 -0.01 -0.23 -0.97 60
+wait 5
+shot ps2pose_p2_a60
+flag dal 1
+cam -442.5 24.6 -539.7 -0.01 -0.23 -0.97 78
+wait 5
+shot ps2pose_p2_a78
+flag dal 0
+cam -442.5 24.6 -539.7 -0.01 -0.23 -0.97 78
+wait 5
+shot ps2pose_p2_b78
+flag dal 1
+cam off
+goto -25.9 -388.9 0
+wait 6
+flag dal 1
+cam -25.9 32.8 -388.9 -0.97 -0.22 0.09 60
+wait 5
+shot ps2pose_p3_a60
+flag dal 1
+cam -25.9 32.8 -388.9 -0.97 -0.22 0.09 78
+wait 5
+shot ps2pose_p3_a78
+flag dal 0
+cam -25.9 32.8 -388.9 -0.97 -0.22 0.09 78
+wait 5
+shot ps2pose_p3_b78
+flag dal 1
+cam off
+goto -589.4 -652.4 0
+wait 6
+flag dal 1
+cam -589.4 42.0 -652.4 -0.01 -0.13 0.99 60
+wait 5
+shot ps2pose_p4_a60
+flag dal 1
+cam -589.4 42.0 -652.4 -0.01 -0.13 0.99 78
+wait 5
+shot ps2pose_p4_a78
+flag dal 0
+cam -589.4 42.0 -652.4 -0.01 -0.13 0.99 78
+wait 5
+shot ps2pose_p4_b78
+flag dal 1
+scene start
+wait 3
+scene L4_load
+flag golevel 4
+wait 40
+flag repair
+cam off
+goto 192.6 561.3 0
+wait 6
+flag dal 1
+cam 192.6 2.8 561.3 -0.97 -0.24 0.00 60
+wait 5
+shot ps2pose_q2_a60
+flag dal 1
+cam 192.6 2.8 561.3 -0.97 -0.24 0.00 78
+wait 5
+shot ps2pose_q2_a78
+flag dal 0
+cam 192.6 2.8 561.3 -0.97 -0.24 0.00 78
+wait 5
+shot ps2pose_q2_b78
+flag dal 1
+cam off
+end

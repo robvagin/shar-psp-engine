@@ -1,0 +1,75 @@
+# №1179/1182/1183: тот же сценарий, что у emu-psp (build/emu_hub/scn/bonus_sheet.txt), без экрана ожидания других игроков (его больше нет)
+# emu-psp: лист экранов бонус-игры (абсолютные секунды сценария; прогон TEST88 при flag bonusauto, 1 круг, трасса 1)
+flag menu
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+wait 3.00
+shot s01_main_menu
+wait 0.10
+press left 0.3
+wait 0.90
+shot s02_main_minigame
+wait 0.10
+press cross 0.3
+wait 2.30
+shot s03_select_track
+wait 0.10
+press cross 0.3
+wait 1.30
+shot s04_select_char
+wait 0.10
+press right 0.3
+wait 0.70
+shot s05_select_char_next
+wait 0.10
+press cross 0.3
+wait 0.80
+shot s06_select_car
+wait 0.10
+press cross 0.3
+wait 0.30
+shot s07_after_ok
+wait 0.70
+shot s10_loading
+wait 0.80
+shot s11_count_0
+wait 1.00
+shot s11_count_1
+wait 1.10
+shot s11_count_2
+wait 1.00
+shot s11_count_3
+wait 1.10
+shot s11_count_4
+wait 1.80
+shot s12_race_0
+wait 7.00
+shot s12_race_1
+wait 6.00
+press start 0.3
+wait 0.70
+shot s13_pause
+wait 0.20
+press down 0.3
+wait 0.70
+shot s14_pause_quit
+wait 0.20
+press start 0.3
+wait 7.80
+shot s15_finish_0
+wait 1.60
+shot s15_finish_1
+wait 2.50
+shot s15_finish_2
+wait 5.00
+shot s15_finish_3
+wait 5.00
+shot s16_summary_0
+wait 2.00
+shot s16_summary_1
+wait 4.00
+shot s17_after_summary
+wait 2
+end

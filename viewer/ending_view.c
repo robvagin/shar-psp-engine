@@ -1,4 +1,5 @@
 #include <pspkernel.h>
+#include "genest.h"   // №1188
 #include <pspctrl.h>
 #include <pspgu.h>
 #include <pspdisplay.h>
@@ -14,6 +15,7 @@
 
 int endingRun(const char *file, void *geList, void (*reset)(void), void *(*swap)(void),
               unsigned (*frame)(float, int), void (*log)(const char *), void **fbp) {
+  GE_NEST_GUARD_RET("endingRun", 0);   // №1188
 #ifndef C3_ENDING_OLD
   if (uiScrOpen(file)) { if (log) log("ENDING missing\n"); return 0; }
   int mode = sndModeCur(); sndMode(SND_MODE_CREDITS);

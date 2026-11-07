@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "camlaw.h"   // camStartGenSel / camStartArm (окно старта)
 #ifndef CAM_GEOM_FAST
 #define CAM_GEOM_FAST 1
 #endif
@@ -217,6 +218,24 @@ static float cgBoxD2(const Cell *c, const float p[3]) {
   float d[3]; for (int k = 0; k < 3; k++) d[k] = fmaxf(fmaxf(c->bb[k] - p[k], p[k] - c->bb[k + 3]), 0.f);
   return d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
 }
+// Аудит 04.11 (кадр после переноса, G59_XFER: самый длинный кадр на PSP 412 мс): окно старта достраивало до шести клеток за один вызов — вся стройка в первом кадре после переноса.
+// Теперь за вызов достраивается ОДНА клетка, ближайшая к глазу или опоре (по квадрату расстояния до ящика), остальные — в следующих вызовах окна (120 вызовов, клеток у глаза обычно 2–6).
+// Клетка под глазом и опорой строится первой, поэтому вывеска и навес, которые закрывают обзор, видны с первого кадра. CAMWINSPLIT_OLD=1 / flag camwinsplitold 1 — до шести за вызов, по порядку списка, как в TEST88
+#ifndef CAMWINSPLIT_OLD
+#define CAMWINSPLIT_OLD 0
+#endif
+static int camWinSplitOld = CAMWINSPLIT_OLD;
+// порядок: по расстоянию от ящика клетки до ОТРЕЗКА опора → глаз (пять точек отрезка, считаются концы и середина), а не до концов: клетки, через которые идёт луч правила глаза (стена между героем и камерой),
+// строятся раньше соседних, пока недостроенная клетка для луча пуста — это единственное место, где камера после переноса может на несколько кадров пройти сквозь стену
+static int cgBuildNearest(const float a[3], const float b[3], float R) {
+  if (!CAM_GEOM_FAST || !cl) return 0;
+  const float R2 = R * R; Cell *best = 0; float bd = 1e30f;
+  for (unsigned i = 0; i < ncell; i++) { Cell *q = &cl[i]; if (q->state != 2 || q->cgs == 2) continue;
+    float d = 1e30f; for (int k = 0; k <= 4; k++) { float t = .25f * (float)k, p[3] = {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t}; float dk = cgBoxD2(q, p); if (dk < d) d = dk; }
+    if (d > R2 || d >= bd) continue; bd = d; best = q; }
+  if (!best) return 0;
+  cgForceCell = best; cgStep2(a[0], a[2]); cgForceCell = 0; return 1;
+}
 static int cgBuildNear(const float a[3], const float b[3], float R, int maxCells) {
   if (!CAM_GEOM_FAST || !cl) return 0;
   int n = 0; const float R2 = R * R;
@@ -224,6 +243,25 @@ static int cgBuildNear(const float a[3], const float b[3], float R, int maxCells
     if (STARTCAM1159_OLD ? (cgBoxDist(q, a) > R && cgBoxDist(q, b) > R) : (cgBoxD2(q, a) > R2 && cgBoxD2(q, b) > R2)) continue;
     cgForceCell = q; cgStep2(a[0], a[2]); n++; }
   cgForceCell = 0; return n;
+}
+// №1141 + №1159: окно старта камеры вынесено из camGeomCollect сюда, чтобы хост-тест (tests/camera/startcam1141_host.c) вызывал тот же код, что игра.
+// Перенос опоры больше CAM_START_JUMP м (старт миссии, сброс машины), первый вызов или смена поколения УРОВНЯ взводят окно на CAM_START_WIN вызовов: клетки у глаза и опоры достраиваются целиком,
+// чтобы вывески и навесы были видны с первого кадра. Вызывающий сам пропускает кадры в помещении. STARTCAM1141_OLD=1 — окна нет (как в TEST84)
+#define CAM_START_JUMP 6.f   // м; опора ушла дальше за вызов — перенос героя
+#define CAM_START_WIN 120    // вызовов сбора сцены (≈ 1–2 с) после переноса: клетки у глаза достраиваются целиком
+#define CAM_START_R 16.f     // м от глаза и от опоры до ящика клетки
+static unsigned camStartBuilt;   // служебное: сколько клеток достроено окном старта
+static void camStartWindow(const float e[3], const float P[3]) {
+  if (STARTCAM1141_OLD) return;
+  static float lp[3]; static int lpOk; static unsigned lgen; static int win, nb_ = 1;
+  unsigned gen_ = camStartGenSel(cgGen, camLevelGen, CAMSTARTGEN1159_OLD);   // №1159 (g10b): поколение уровня, а не клеток города
+  if (camStartArm(lpOk, lgen, gen_, hypotf(hypotf(P[0] - lp[0], P[1] - lp[1]), P[2] - lp[2]), CAM_START_JUMP)) { win = CAM_START_WIN; nb_ = 1; }
+  memcpy(lp, P, 12); lpOk = 1; lgen = gen_;
+  // №1159 (g12): пока ничего не достроено (рядом всё готово или клетки ещё грузятся), перебор клеток — раз в 4 вызова, а не каждый (STARTCAM1159_OLD=1 — каждый, как в TEST85)
+  if (win > 0) { win--; if (STARTCAM1159_OLD || nb_ > 0 || !(win & 3)) {
+    unsigned t_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
+    nb_ = camWinSplitOld ? cgBuildNear(e, P, CAM_START_R, 6) : cgBuildNearest(e, P, CAM_START_R); camStartBuilt += (unsigned)nb_;
+    if (smkOn && nb_ > 0) { char l_[96]; snprintf(l_, sizeof l_, "CAMWIN left=%d built=%d us=%u\n", win, nb_, sceKernelGetSystemTimeLow() - t_); smkWrite(l_); } } }
 }
 static inline int cgOcc(const Cell *c, const float p[3]) {
   int ix = (int)((p[0] - c->bb[0]) / CG_VX), iy = (int)((p[1] - c->bb[1]) / CG_VX), iz = (int)((p[2] - c->bb[2]) / CG_VX);

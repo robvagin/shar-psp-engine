@@ -1,0 +1,24 @@
+# №1160: цена ступени Car Aim — одна и та же езда на ступени 2 и на 4 (без снимков: снимок сам роняет кадр). Ход кадров фиксирован (camdet): те же кадры, разница — только сдвиг.
+# Сравнение: средние tris / draws / work / cpu по секундам езды (smoke.txt), пропуски. tests/camera/caraim1160_cost.py <папка прогона>
+scene drive
+wait 2
+flag camdet 1
+flag camuseraim 2
+scene drive
+goto 220 172 1.5708
+flag repair
+wait 1
+flag autostraight
+wait 14
+flag stop
+wait 1
+flag camuseraim 4
+scene drive
+goto 220 172 1.5708
+flag repair
+wait 1
+flag autostraight
+wait 14
+flag stop
+wait 1
+end

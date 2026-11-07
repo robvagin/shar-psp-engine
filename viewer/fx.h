@@ -31,6 +31,11 @@ int  fxHomerDust(int kind, float x, float y, float z, float power);   // -> ск
 // сверка g11 (fx.c): кольцо пыли при сильном приземлении; частицы удара машины от импульса (Н·с): звёзды об забор, искры вдоль движения (movable 1 — подвижный предмет), крошка
 // машина о машину, 30 искр днищем. fxCrashFxSv = 0 (CRASHFX_SV_OLD=1) — вызовы не нужны, main_loop.h даёт прежние искры от прироста урона. Возврат — сколько частиц пущено
 void fxLandRing(float x, float y, float z, float force);
+// №1161: частица предмета без своей системы по материалу пресета SPFX_* (щепа, листья, сено, томаты — родная система; пыль, обломки — клуб code_dust); вместо дыма машины. 0 — нет пакета
+#ifndef BITFX1161_OLD
+#define BITFX1161_OLD 0   // 1 — как в TEST86: спрайт дыма car_damage3
+#endif
+int  fxPropBit(int preset, float x, float y, float z, float vx, float vy, float vz);
 int  fxCrashStars(float x, float y, float z, float impulse);
 int  fxCrashSparks(float x, float y, float z, float dx, float dz, float impulse, int movable);
 int  fxCrashPaint(float x, float y, float z, float impulse);
@@ -54,6 +59,7 @@ void fxDrawEnd(void);
 void fxLab941(const float c[3], const float R[3], const float U[3], float s, int kind);   // №941 служебно: лист форм (flag glintlab)
 void fxSetMeMax(int n);                       // ME-доля B: предел элементов задания частиц на ME (8..400)
 int  fxMeAttach(void);                       // viewer/me/meprobe.c (флаг-файл mefx): служба ME поставлена — частицы на ME
+void fxMeEnable(int on);                     // A/B: 1 — частицы на ME (если служба поднята), 0 — на главном (файл mefxpair: служба поднята, старт с 0; «flag mefx 0/1»)
 int  fxMeStateStr(char *out, int n);         // для журнала: «on…» / «off:…» / «-»
 void fxProfJob(unsigned *us, unsigned *n);   // замер (main.c «flag meprof»): мкс счёта задания частиц на главном и кадров с прошлого вызова
 // правка 103: room(байт) = 0 — в списке GE кадра нет места (viewer/main.c geRoom): группа частиц этого кадра не рисуется

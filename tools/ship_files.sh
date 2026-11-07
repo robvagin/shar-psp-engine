@@ -12,6 +12,10 @@ SRCS=$(sed -n 's/.*add_executable([^ ]* \(.*\))/\1/p' "$ROOT/viewer/CMakeLists.t
 FILES=""; for s in $SRCS; do FILES="$FILES $ROOT/viewer/$s ${ROOT}/viewer/${s%.c}.h"; done
 # main.c assembly modules contain the same original file references.
 if [ "${MAIN_FILES_OLD:-0}" != 1 ]; then FILES="$FILES $ROOT/viewer/main_*.h"; fi
+# №1162: имя файла, которое упоминает заголовок без одноимённого .c (bootscreen.h: bootvo.bin; carfill930.h: carflat930.bin; spritelight.h: phonespr.bin,
+# wrenchspr.bin, wrglow.bin; coinspr.h: coinspr.bin), раньше не находилось, и публичный путь (tools/ship.sh) не собирал эти файлы; в нашем наборе они
+# были, их клали наложением. Теперь просматриваются все заголовки viewer/. SHIPFILES1162_OLD=1 — прежний перечень
+if [ "${SHIPFILES1162_OLD:-0}" != 1 ]; then FILES="$FILES $ROOT/viewer/*.h"; fi
 LEVELS="${SHIP_LEVELS-}"   # Роб 01.10: уровни 2–7 не собирать, пока он не принял L1 (вернуть: SHIP_LEVELS="2 3 4 5 6 7")
 LVDIR=0; cat $FILES 2>/dev/null | grep -q '"l%d/%s"' && LVDIR=1
 expand() {   # строки с {N} -> по уровню

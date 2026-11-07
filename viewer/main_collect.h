@@ -10,6 +10,21 @@ static SceUID collStreamFd=-1;
 static int collReadAt(void *user,unsigned off,void *data,unsigned size) {
   int fd=*(int *)user;return sceIoLseek32(fd,off,PSP_SEEK_SET)!=(int)off || sceIoRead(fd,data,size)!=(int)size;
 }
+// ТЕСТ90 П1 (SYNCREAD_P1_OLD / файл syncreadp1old / flag syncreadp1old 1): гэги читаются фоном по второму дескриптору файла пакета; кадр только запускает и принимает готовое
+static SceUID collAsyncFd=-1;   // syncReadP1Old — в main_rooms.h (подключён раньше)
+static unsigned collAsyncWant;
+static int collAsyncStart(void *user,unsigned off,void *data,unsigned size){
+  (void)user; if(collAsyncFd<0)return -1;
+  if(sceIoLseek32(collAsyncFd,off,PSP_SEEK_SET)!=(int)off)return -1;
+  collAsyncWant=size; return sceIoReadAsync(collAsyncFd,data,size)<0?-1:0;
+}
+static int collAsyncPoll(void *user){   // 1 — прочитано целиком, 0 — идёт, -1 — ошибка
+  (void)user; SceInt64 res=-1; int r=sceIoPollAsync(collAsyncFd,&res);
+  if(r>0)return 0; if(r<0)return -1; return res==(SceInt64)collAsyncWant?1:-1;
+}
+static void collAsyncCancel(void *user){(void)user; SceInt64 res; if(collAsyncFd<0)return; sceIoCancel(collAsyncFd); sceIoWaitAsync(collAsyncFd,&res);}   // как load_fuse_io.c: отмена, потом ожидание конца (после отмены оно не вечное)
+static unsigned collAsyncNow(void *user){(void)user; return sceKernelGetSystemTimeLow()/1000u;}
+static const CollectAsync collAsyncTab={collAsyncStart,collAsyncPoll,collAsyncCancel,collAsyncNow,0};
 static void *collPak;   // Collect coll, haveColl — выше (правка 338: камера видит гэги)
 enum { STREET_SOURCE_NONE,STREET_SOURCE_PED,STREET_SOURCE_NPC,STREET_SOURCE_DRIVER };
 static int streetSource,streetSlot;static char streetWho[24];
@@ -217,7 +232,7 @@ static void trafficMotorFrame(float dt,float camx,float camy,float camz) {
 #endif
     }
     profile[i]=audioCarProfile(model[i]);
-    // сверка g11b, P10_звук_машины_и_пространство P10-31: настройки звука hearse_posn и chase_hearse_posn в данных не определены — у катафалка мотора не слышно (TRAFFIC_HEARSE_OLD=1 — обычный профиль).
+    // сверка g11b, P10_звук_машины_и_пространство P10-31: настройки звука катафалка (обычная и в погоне) в данных не определены — у катафалка мотора не слышно (TRAFFIC_HEARSE_OLD=1 — обычный профиль).
     // coffin_posn (клип traffic_coffin, 10–100 м) — профиль и клип в audio.c, передано g08-sound
     if(!TRAFFIC_HEARSE_OLD && strstr(model[i],"hearse"))profile[i]=-1;
     float dx=body[i]->x-camx,dy=body[i]->ry-camy,dz=body[i]->z-camz;
@@ -306,9 +321,14 @@ static void collLoad(void) {   // один раз после fxInit и sndInit: 
   unsigned n = (unsigned)sceIoLseek32(f, 0, PSP_SEEK_END); sceIoLseek32(f, 0, PSP_SEEK_SET);
   unsigned char *b; int e=0;
   if(!gagSkinStreamOld){
-    collStreamFd=f;b=collStreamLoad(&coll,collReadAt,&collStreamFd,n);
+    collStreamFd=f;unsigned mf0_=collStreamAllocFails;b=collStreamLoad(&coll,collReadAt,&collStreamFd,n);
+    if(!b && collRetry1 && collStreamAllocFails>mf0_){   // ТЕСТ90 память (журнал карты TEST89, L7 после L4: отказ 1,6 МБ при 10,5 МБ свободных и куске 1,25 МБ — гэги не загрузились): экран загрузки закрывает мир — далёкие, затем все клетки уходят в кучу и пакет просится ещё раз
+      unsigned need_=collStreamLastFail+(64u<<10),b0_=memMaxBlock?memMaxBlock():0;int ok_=mem1060Pre(need_,"collect");b=collStreamLoad(&coll,collReadAt,&collStreamFd,n);
+      if(smkOn){char l_[160];snprintf(l_,sizeof l_,"COLLRETRY level=%d need=%.2f room=%d blk=%.2f->%.2f loaded=%d t=%.1f\n",gameLevel,need_/1048576.f,ok_,b0_/1048576.f,(memMaxBlock?memMaxBlock():0)/1048576.f,b!=0,smkT);smkWrite(l_);}
+    }
     if(!b){sceIoClose(f);collStreamFd=-1;smkWrite("COLL stream error=load\n");return;}
     n=coll.size;
+    if(!syncReadP1Old && !SYNCREAD_P1_OLD){collAsyncFd=sceIoOpen(fn,PSP_O_RDONLY,0); if(collAsyncFd>=0)collStreamSetAsync(&collAsyncTab);}
   } else {
     b=memalign(16,n);
     if(!b || sceIoRead(f,b,n)!=(int)n){sceIoClose(f);free(b);return;}
@@ -316,6 +336,7 @@ static void collLoad(void) {   // один раз после fxInit и sndInit: 
   }
   if (e) { char s[96]; snprintf(s, sizeof s, "COLL error=%s\n", collectError(e)); smkWrite(s); free(b); return; }
   cxTex = calloc(coll.ntex ? coll.ntex : 1, sizeof(Tex)); cxNtex = coll.ntex;
+  if (!cxTex && !LOADMEM1170_OLD) { smkWrite("COLL error=memory cxTex\n"); cxNtex = 0; if (collStreamFd >= 0) { sceIoClose(collStreamFd); collStreamFd = -1; } free(b); return; }   // №1170: без таблицы текстур карточек уровень без карточек, а не запись в NULL
   unsigned p = (unsigned)(coll.tex - b);   // текстуры — формат level.shr (заголовок 16 Б, палитра 1024 Б, уровни в swizzle)
   for (unsigned i = 0; i < coll.ntex && p < n; i++) {
     const unsigned short *t2 = (const unsigned short *)(b + p); Tex *t = &cxTex[i];
@@ -380,7 +401,8 @@ static void gagSound(int g) {
 typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, tutorial; unsigned tutSeen, movies; int colour, invertCam, toon, treeShadow;
                  int contrast, lineWidth, eyeLines, toonTex, drawDist, oldTv, texturesOn, ink, camHeight, camDist, carShadow, curbTint,
                  jumpCam, navSys,
-                 carTilt, carFov, footHeight, footDist; } Settings;   // №1151 (раздел CAMERA паузы): carHeight = camHeight, carDist = camDist (машина), carTilt, carFov, footHeight, footDist (пешком) — ступени 0..4, середина 2; в старых файлах короче footHeight / footDist берут прежние camHeight / camDist   // круг 5 (сверка g10-flow, P08:22, P16:08): jumpCam — строка Jump Cameras (камеры зон у машины), navSys — Navigation System (стрелки пути); 0 Off / 1 On, по умолчанию On; в старых файлах короче — On   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
+                 carTilt, carFov, footHeight, footDist,
+                 carAim; } Settings;   // №1160: carAim — Car Aim (сдвиг кадра), 0..4, 2 — как было, поле в конце: в старом settings.bin его нет — берётся 2;   // №1151 (раздел CAMERA паузы): carHeight = camHeight, carDist = camDist (машина), carTilt, carFov, footHeight, footDist (пешком) — ступени 0..4, середина 2; в старых файлах короче footHeight / footDist берут прежние camHeight / camDist   // круг 5 (сверка g10-flow, P08:22, P16:08): jumpCam — строка Jump Cameras (камеры зон у машины), navSys — Navigation System (стрелки пути); 0 Off / 1 On, по умолчанию On; в старых файлах короче — On   // ver 9 (№912): texturesOn — строка Textures на PICTURE: 0 Off — мир без текстур (заливка, мультик), 1 On — родные текстуры
 // №794 (сверено 19.10 с settings.bin Роба на PSP: насыщенность 1,56, контраст 1,50): значения по умолчанию для нового файла. DEFAULTS794B_OLD=1 — 1,36/1,00
 #ifndef DEFAULTS794B_OLD
 #define DEFAULTS794B_OLD 0
@@ -397,7 +419,7 @@ typedef struct { char magic[4]; int ver, music, effects, vehicle, voice, radar, 
 #define DEFAULTS1066_OLD 0
 #endif
 static Settings cfg = {{'S', 'H', 'S', 'T'}, DRAWDEF1042_OLD ? 10 : 14, 1000, 1000, 1000, 1000, 1, 1, 0, 1, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? TONE_SAT_DEF : 156) : 128, 1, DEFAULTS794_OLD ? 0 : 1, 0, DEFAULTS1066_OLD ? (DEFAULTS794B_OLD ? 100 : 150) : 130,
-                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0, 1, 1, 2, 2, 2, 2};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
+                       DEFAULTS794_OLD ? 5 : 4, DEFAULTS1066_OLD ? 1 : 0, DEFAULTS1066_OLD ? (DEFAULTS794_OLD ? 35 : 45) : 80, DRAWDEF1042_OLD ? 1 : 2, DEFAULTS1066_OLD ? 5 : 2, DEFAULTS1066_OLD ? 0 : 1, INK951_DEF, 2, 2, 0, 0, 1, 1, 2, 2, 2, 2, 2};   // ver 12 (№1003): carShadow — строка Car Shadows на PICTURE, 0 Off (по умолчанию) / 1 On; в старых файлах короче — 0   // ver 11 (№996): camHeight, camDist — строки Height и Distance страницы CAMERA, 0..4, 2 (Normal) — как было; в старых файлах короче — 2
 // №996: CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители камеры всегда 1 (как TEST70); шаги Height / Distance — множитель дальности и отступа глаза над точкой взгляда
 #ifndef CAMCFG996_OLD
 #define CAMCFG996_OLD 0
@@ -476,6 +498,7 @@ static void movieVeil(float a) {   // чёрный прямоугольник н
 }
 // мир стоит: два буфера кадра хранят последние кадры мира; в каждый по очереди добавляется чёрный слой так, чтобы накопленное затемнение шло линейно 0..1 за MOVIE_WORLD_FADE_S
 static void movieWorldFade(void **fbp) {
+  GE_NEST_GUARD("movieWorldFade");   // №1186/№1188
   void *buf[2] = {0, 0}; float cum[2] = {0.f, 0.f};
   unsigned t0 = sceKernelGetSystemTimeLow();
   for (;;) {
@@ -487,6 +510,7 @@ static void movieWorldFade(void **fbp) {
   }
 }
 static void movieBlackTail(void **fbp) {   // после ролика: 10 кадров сплошного чёрного (на 30 кадр/с около 0,33 с), потом чёрный снимается срезом
+  GE_NEST_GUARD("movieBlackTail");   // №1186/№1188
   for (int k = 0; k < MOVIE_BLACK_FRAMES; k++) { sceGuStart(GU_DIRECT, list); movieVeil(1.f); sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf(); }
 }
 static void movieVolSync(void) { movieVolume = cfg.voice < 0 ? 0 : cfg.voice > 1000 ? PSP_AUDIO_VOLUME_MAX : cfg.voice * PSP_AUDIO_VOLUME_MAX / 1000; }   // сверка g09b-menu круг 2 (M3:4): звук ролика = ползунок голоса
@@ -494,6 +518,7 @@ static int movieSeenBefore(const char *nm);   // ниже, после MOVIES
 // ролик гэга (GagPlayFMV): весь экран, мир стоит, START — пропустить; в сценарии смоука снимки берутся и здесь (как в интро)
 // в поставке (tools/ship_rules.txt): "movies/loot.smv" — единственный ролик гэгов уровня 1 (gag_tele, Kwik-E-Mart)
 static void gagMovie(int g, void **fbp) {
+  GE_NEST_GUARD("gagMovie");   // №1186/№1188
   char fn[256], rel[64]; snprintf(rel, sizeof rel, "movies/%s.smv", coll.gag[g].fmv); sibling(fn, rel);
   if (movieSystem(1) < 0) { collLog("fmv_nojpeg", g, coll.gag[g].fmv); return; }
   if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
@@ -540,7 +565,16 @@ static void gagMovie(int g, void **fbp) {
 // кадре игры читался новым нажатием — открывалась пауза (тюнер «Pause» глушит музыку). После ролика пульт игры начинает заново
 // с нынешнего состояния кнопок: зажатая кнопка — не нажатие. «flag padresyncold 1» — прежнее
 static int padResync, padResyncOld;
-static void msnMovie(const char *rmv, void **fbp) {
+#ifndef MELADSTUCK1192_OLD
+#define MELADSTUCK1192_OLD 0   // 1 — ролики без проверки «ME замолчал на ступени лесенки» (как в TEST89: проверка была только в служебной сцене mefmv)
+#endif
+int meLadderStuck(void);
+static void msnMovie1(const char *rmv, void **fbp);
+static void msnMovie(const char *rmv, void **fbp) { unsigned t0_ = sceKernelGetSystemTimeLow(); msnMovie1(rmv, fbp); xnEnd("movie", t0_, (int)gameLevel); }   // №1206: время перехода
+static void msnMovie1(const char *rmv, void **fbp) {
+  GE_NEST_GUARD("msnMovie");   // №1186/№1188
+  // №1192 (кандидат 2): ролик sceJpeg работает на ME; если лесенка ME оставила его «stuck» (ступень без ответа), задание прошивки повесило бы PSP целиком. Теперь так для ЛЮБОГО ролика (логотипы, fmv, интро), не только в сцене mefmv
+  if (!MELADSTUCK1192_OLD && meLadderStuck()) { char s_[96]; snprintf(s_, sizeof s_, "MSNFMV skip: ME stuck name=%s t=%.1f\n", rmv, smkT); if (smkOn) smkWrite(s_); bbNote(s_); return; }
   char nm[32], rel[64], fn[256], s[192]; snprintf(nm, sizeof nm, "%s", rmv); char *dot = strrchr(nm, '.'); if (dot) *dot = 0;
   snprintf(rel, sizeof rel, "movies/%s.smv", nm); sibling(fn, rel);
   SceIoStat st; int have = sceIoGetstat(fn, &st) >= 0;
@@ -550,6 +584,11 @@ static void msnMovie(const char *rmv, void **fbp) {
   int fmvWorld = !MOVIE_RULES_OLD && msnMovieWorld && !strncmp(nm, "fmv", 3);
   int canSkip = MOVIE_RULES_OLD || (strcmp(nm, "fmv1a") && (strncmp(nm, "fmv", 3) || movieSeenBefore(nm)));
   int crossOk = !MOVIE_RULES_OLD && (!strncmp(nm, "fmv", 3) || !strcmp(nm, "intro"));
+#ifndef MSNBOTFMV_OLD
+#define MSNBOTFMV_OLD 0   // 1 — как было: бот миссий (flag msnbot, смоук) ждёт ролик цели целиком, а команды сценария на это время теряются (06.11, L5: msnsel после fmv5 пропал)
+#endif
+  int botSkip = !MSNBOTFMV_OLD && msnBot && smkOn;   // бот — как игрок, видевший ролик: пропуск после MOVIE_SKIP_MIN_S (служебно)
+  if (botSkip) canSkip = 1;
   if (fmvWorld && !FMV_STOPMUSIC_OLD && !strcmp(nm, "fmv7")) sndMusic(SND_MUS_OFF);   // SetFMVInfo("fmv7.rmv","stopmusic") в m8l.mfk уровня 7: второй аргумент в данных; до хоста он не доходит (fmvCb получает только имя) — по имени из данных
   if (fmvWorld) movieWorldFade(fbp);   // P15-04: мир темнеет до чёрного за 0,5 с линейно, ролик цели стартует после
   sndMaster(0.f);
@@ -561,6 +600,7 @@ static void msnMovie(const char *rmv, void **fbp) {
     unsigned tt = sceKernelGetSystemTimeLow(); float dt = (tt - last) * 1e-6f; last = tt; if (dt > .05f) dt = .05f;
     sceCtrlPeekBufferPositive(&pad, 1); pad.Buttons |= smokePad();
     unsigned hit = pad.Buttons & ~prev; prev = pad.Buttons;
+    if (botSkip && (tt - t00) * 1e-6f >= MOVIE_SKIP_MIN_S + .5f) hit |= PSP_CTRL_START;
     // сведение дирижёра: правила пропуска g11b-collect (P15, задержка, ✕, затухание) + запрет пропуска ролика новой игры g10b-loop (P14:14)
     if (MOVIE_RULES_OLD) { if ((hit & PSP_CTRL_START) && !movieNoSkipSv) { skipped = 1; break; } }
     else {

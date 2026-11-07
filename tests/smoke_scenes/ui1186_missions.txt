@@ -1,0 +1,354 @@
+# №1186 (g10b-loop): старт заданий L1-L7 — карточка и экраны интерфейса; строки UIDRAWBIG, UIPEAK, GESYNCSLOW в smoke.txt
+# Для каждого уровня: загрузка (golevel), затем миссии 0..7 — основная часть с этапа 0 (flag msnmainat M*100) и вступительная (-M*100: прогулка/карточка), 4 с на каждую
+scene PRE
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_UI1186_L1_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m0
+scene F_UI1186_L1_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m1
+scene F_UI1186_L1_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m2
+scene F_UI1186_L1_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m3
+scene F_UI1186_L1_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m4
+scene F_UI1186_L1_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m5
+scene F_UI1186_L1_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m6
+scene F_UI1186_L1_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l1_m7
+flag golevel 2
+wait 40
+scene F_UI1186_L2_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m0
+scene F_UI1186_L2_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m1
+scene F_UI1186_L2_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m2
+scene F_UI1186_L2_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m3
+scene F_UI1186_L2_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m4
+scene F_UI1186_L2_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m5
+scene F_UI1186_L2_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m6
+scene F_UI1186_L2_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l2_m7
+flag golevel 3
+wait 40
+scene F_UI1186_L3_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m0
+scene F_UI1186_L3_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m1
+scene F_UI1186_L3_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m2
+scene F_UI1186_L3_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m3
+scene F_UI1186_L3_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m4
+scene F_UI1186_L3_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m5
+scene F_UI1186_L3_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m6
+scene F_UI1186_L3_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l3_m7
+flag golevel 4
+wait 40
+scene F_UI1186_L4_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m0
+scene F_UI1186_L4_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m1
+scene F_UI1186_L4_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m2
+scene F_UI1186_L4_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m3
+scene F_UI1186_L4_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m4
+scene F_UI1186_L4_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m5
+scene F_UI1186_L4_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m6
+scene F_UI1186_L4_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l4_m7
+flag golevel 5
+wait 40
+scene F_UI1186_L5_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m0
+scene F_UI1186_L5_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m1
+scene F_UI1186_L5_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m2
+scene F_UI1186_L5_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m3
+scene F_UI1186_L5_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m4
+scene F_UI1186_L5_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m5
+scene F_UI1186_L5_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m6
+scene F_UI1186_L5_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l5_m7
+flag golevel 6
+wait 40
+scene F_UI1186_L6_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m0
+scene F_UI1186_L6_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m1
+scene F_UI1186_L6_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m2
+scene F_UI1186_L6_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m3
+scene F_UI1186_L6_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m4
+scene F_UI1186_L6_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m5
+scene F_UI1186_L6_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m6
+scene F_UI1186_L6_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l6_m7
+flag golevel 7
+wait 40
+scene F_UI1186_L7_M0
+flag msnmainat 0
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m0
+scene F_UI1186_L7_M1
+flag msnmainat 100
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m1
+scene F_UI1186_L7_M2
+flag msnmainat 200
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m2
+scene F_UI1186_L7_M3
+flag msnmainat 300
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m3
+scene F_UI1186_L7_M4
+flag msnmainat 400
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m4
+scene F_UI1186_L7_M5
+flag msnmainat 500
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m5
+scene F_UI1186_L7_M6
+flag msnmainat 600
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m6
+scene F_UI1186_L7_M7
+flag msnmainat 700
+wait 0.8
+press cross 0.2
+wait 3.2
+shot ui1186_l7_m7

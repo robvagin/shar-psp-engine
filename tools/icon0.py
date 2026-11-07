@@ -25,7 +25,7 @@
 render() — та же плитка функцией: tools/pbp_gate.py перерисовывает её из источника и сверяет с ICON0.
   tools/icon0.py [--src build/assets/icon0-source-rob.png] [--out build/assets/icon0.png] [--pad 5] [--text none|keep]
                  [--align right|plate|none]"""
-import argparse
+import argparse, sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -51,6 +51,23 @@ def parts(px):
     return plate, box(0, plate[1] - 2), box(plate[3] + 2, px.shape[0])
 
 
+def disc_card(out):
+    """№1162: карточка знака с диска игрока — спрайт gamelogo (640×480) из art/frontend/scrooby/frontend.p3d, тот же знак (табличка The Simpsons, жёлтый
+    ромб, плашка HIT&RUN), что и на карточке Роба; в PNG с прозрачным фоном нет — чёрный, как у карточки. Нужен только свой диск (hit-and-run-web/source)."""
+    sys.path.insert(0, str(ROOT / 'tools')); sys.path.insert(0, str(ROOT / 'hit-and-run-web/tools'))
+    import ui_export as U
+    from p3d import read
+    for c in read(U.WEB / 'source/game/art/frontend/scrooby/frontend.p3d').children:
+        if c.id == 0x19005:
+            n, i = U.decode_sprite_image(c)
+            if n.startswith('gamelogo'):
+                a = np.asarray(i.convert('RGBA')).copy()
+                lit = a[..., :3].max(axis=2) >= 64   # зелёное свечение вокруг знака на диске тёмное (≤ 40): в чёрный, как фон карточки Роба
+                a[~lit, :3] = 0; a[..., 3] = 255
+                Image.fromarray(a, 'RGBA').save(out); return Path(out)
+    raise SystemExit('icon0: в frontend.p3d нет спрайта gamelogo')
+
+
 def render(src=SRC, pad=5, text='none', align='right', log=print):
     """Карточка Роба -> плитка ICON0 144×80 RGB (PIL.Image)."""
     src = Image.open(src).convert('RGBA')
@@ -62,6 +79,7 @@ def render(src=SRC, pad=5, text='none', align='right', log=print):
             x0, y0, x1, y1 = (int(v) for v in bx); px[y0:y1, x0:x1] = 0
         card = Image.fromarray(px.astype(np.uint8), 'RGB')
         log(f'надписи убраны (правка 146): v.0.1 {tuple(int(v) for v in ver)}, PSP {tuple(int(v) for v in psp)}')
+    elif text == 'disc': log('карточка с диска: надписей «v.0.1» и «PSP» в ней нет (№1162)')
     elif align == 'right':   # правка Роба 68 (видео IMG_7662 0:05–0:25): «зелёная грань справа… по правую сторону надо добить» —
         plate, ver, psp = parts(px)   # «v.0.1» и «PSP» правым краем точно в правый край плашки HIT&RUN (в карточке были на 2–3 px левее)
         for bx in (ver, psp):
@@ -96,11 +114,14 @@ def render(src=SRC, pad=5, text='none', align='right', log=print):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('--src', default=str(SRC))
+    ap.add_argument('--src', default=str(SRC), help='PNG карточки; disc — знак gamelogo с диска игрока (№1162)')
     ap.add_argument('--out', default=str(ROOT / 'build/assets/icon0.png'))
     ap.add_argument('--pad', type=int, default=5, help='поле слева и справа, px плитки')
-    ap.add_argument('--text', default='none', choices=['none', 'keep'], help='none — только логотип (правка 146); keep — с «v.0.1» и «PSP»')
+    ap.add_argument('--text', default='none', choices=['none', 'keep', 'disc'], help='disc — карточка с диска без надписей (ставится сама при --src disc); none — только логотип (правка 146); keep — с «v.0.1» и «PSP»')
     ap.add_argument('--align', default='right', choices=['right', 'plate', 'none'], help='при --text keep: right — правым краем точно в правый край плашки HIT&RUN (правка 68); plate — от левого края (правка 30)')
     a = ap.parse_args()
+    if a.src == 'disc':   # №1162: знак с диска игрока (публичный путь, tools/xmb_assets.sh)
+        import tempfile
+        a.src = disc_card(Path(tempfile.mkdtemp(prefix='shar-icon0-')) / 'gamelogo.png'); a.text = 'disc'
     render(a.src, a.pad, a.text, a.align).save(a.out, optimize=True)
     print(f'{a.out}: готово')

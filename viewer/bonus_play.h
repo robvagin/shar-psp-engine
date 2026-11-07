@@ -59,12 +59,26 @@ static const char *const bnsVeh[] = {"apu_v", "bart_v", "bbman_v", "bookb_v", "b
 static const char *const bnsNpcCar[] = {"pickupA", "cLimo", "otto_v"}; // measured default Lisa/b01; original Vehicle bindings
 #define BNS_NVEH ((int)(sizeof bnsVeh / sizeof bnsVeh[0]))
 static struct { int track, laps, rev, cam, chr, veh; } bsel = {1, BR_LAPS_DEF, 0, 0, BONUS_SETUP_PS2_OLD ? 2 : 0, -1};
+static float bnsQuitAt;   // служебное «flag bonusquitat N» (тур TEST88, №1168): выйти из гонки на N-й секунде гонки, как QUIT GAME из паузы
 static int bnsShots, bnsQuit;                   // служебное (гейт tests/bonus/screens.sh): снимки экранов самой игрой; выход из первой гонки после снимков
 static unsigned bnsShotDone;                     // какие снимки уже сняты (бит на имя)
 static int bnsAuto, bnsGo, bnsAgainYes;                       // служебное: машина игрока на водителе ИИ; старт гонки без нажатий
 static BonusRace BR; static MsnCars BM; static BnsTrack BT; static unsigned char *bnsMem;
 static Traffic bnsTr; static int bnsRoads;       // №1116: дороги трассы (хвост BRD1 файла .bns) и признак «соперники едут по ним»
-static McCar bnsBot;                             // тень водителя ИИ для машины игрока (flag bonusauto)
+static BscMap bnsSec; static int bnsCodeOn, bnsCodeLast;   // №1185: сектора трассы, показ кода, последний показанный сектор
+static int bnsBotWi = -1, bnsBotLine; static float bnsBotProgT, bnsBotS;   // №1180в: текущая точка WPR/WPL водителя за игрока
+#ifndef BONUSBOTSEC1180_OLD
+#define BONUSBOTSEC1180_OLD 1   // 0 — при «читере» или остановке водитель за игрока преследует точку линии секторов (проверено: хуже на трассе 7, поэтому выключено); 1 — цель всегда центр ждущего чекпойнта
+#endif
+#ifndef BONUSBOT1180_OLD
+#define BONUSBOT1180_OLD 0   // 1 — водитель за игрока по прежним отрезкам (flag bonusauto)
+#endif
+static McCar bnsBot; 
+                            // тень водителя ИИ для машины игрока (flag bonusauto)
+#ifndef STRBOUND1195_OLD
+#define STRBOUND1195_OLD 0   // №1195: 1 — прежний strcpy без проверки длины имени модели
+#endif
+#define BNS_CPY16(dst, src) do { if (STRBOUND1195_OLD) strcpy((dst), (src)); else snprintf((dst), 16, "%s", (src)); } while (0)   // имя модели из пакета: не больше 15 знаков + ноль
 static char bnsCarName[4][16];                   // модели машин: 0 — игрок (глобальная car), 1..3 — соперники (BM.c[0..2])
 // сверка g07b-msnview (02.11.2026): P17-14/20 нитро по гудку (↑ крестовины) и ИИ; P17-15 отсчёт 10 с; P17-22 «GO!» 0,5 с; P17 Д6 вид меняется только в гонке; P17 Д7 финишировавшего
 // машина катится без управления и без торможения; P04 B3 перевёрнутый/разбитый ИИ через 1 с на месте. Выключатели (=1 — прежнее): BR_NITRO3_OLD, BR_DNF10_OLD (bonus.h),
@@ -131,13 +145,60 @@ static void bnsRect(int x, int y, int w, int h, unsigned abgr) {   // 2D-пла�
 #ifndef BONUSCD1149_OLD
 #define BONUSCD1149_OLD 0
 #endif
-static int bnsFont(void) { return BONUSUI1145_OLD ? -1 : uiFontFindExact("bart_16bit"); }   // номер грани в открытом пакете UI, -1 — прежнее
+// №1179 (повтор №1145: Роб в TEST88 по-прежнему видел старый шрифт): причина — грани в пакете называются с кратностью («bart_16bit@1», «msx_thin@1»), а поиск по точному имени искал «bart_16bit»
+// и не находил: bnsFont() всегда давал -1 и рисовалась прежняя грань с плашкой. BONUSFONT1179_OLD=1 — прежние имена (как в TEST88)
+#ifndef BONUSFONT1179_OLD
+#define BONUSFONT1179_OLD 0
+#endif
+#ifndef BONUSHUDK1179
+#define BONUSHUDK1179 2   // кратность грани HUD гонки (круг, место и время, нитро): точка грани — 2 x 2 px
+// №1212 (Роб 05.11: «выходим из гонки в меню бонусной игры — там музыка как в главном меню… мне кажется, не это»): у оригинала в меню мини-игры
+// играет её же музыка (событие мини-игры с её начала, после каждой гонки — заново), не музыка главного меню. BONUSMENUMUS1212_OLD=1 — как было
+#ifndef BONUSMENUMUS1212_OLD
+#define BONUSMENUMUS1212_OLD 0
+#endif
+#endif
+static int bnsFont(void) { return BONUSUI1145_OLD ? -1 : uiFontFindExact(BONUSFONT1179_OLD ? "bart_16bit" : "bart_16bit@1"); }   // номер грани в открытом пакете UI, -1 — прежнее
 static int bnsT(int x, int y, unsigned c, const char *s) { int f = bnsFont(); return f >= 0 ? uiTextSh(f, x, y, c, s) : uiText(0, x, y, c, s); }
-static int bnsTR(int x, int y, unsigned c, const char *s) { int f = BONUSUI1145_OLD ? -1 : uiFontFindExact("msx_thin"); return f >= 0 ? uiTextSh(f, x, y, c, s) : bnsT(x, y, c, s); }   // строки результатов: грань итогов по панели Роба (bonus_rows: msx_thin), нет её в пакете — bart
+static int bnsTK(int x, int y, unsigned c, const char *s, int k) { int f = bnsFont(); return f >= 0 ? uiTextShS(f, x, y, c, s, k) : uiText(0, x, y, c, s); }   // кратная грань (HUD гонки)
+static int bnsTR(int x, int y, unsigned c, const char *s) { int f = BONUSUI1145_OLD ? -1 : uiFontFindExact(BONUSFONT1179_OLD ? "msx_thin" : "msx_thin@1"); return f >= 0 ? uiTextSh(f, x, y, c, s) : bnsT(x, y, c, s); }   // строки результатов: грань итогов по панели Роба (bonus_rows: msx_thin), нет её в пакете — bart
 static int bnsTextW(const char *s) { int f = bnsFont(); return f >= 0 ? uiTextW(f, s) : uiText(0, 0, -100, 0x00000000u, s); }
 static void bnsTextC(int y, unsigned c, const char *s) { bnsT((SCR_W - bnsTextW(s)) / 2, y, c, s); }
+#ifndef BONUSHINT1198_OLD
+#define BONUSHINT1198_OLD 0   // аудит 05.11 п. 15: подсказка камеры на экране выбора трассы — по сетке правой колонки. 1 — прежнее положение
+#endif
+// GitHub #4 (konsolenschatz): подписи запасных экранов бонус-гонки (выбор трассы, итоги серии, «ещё заезд?», пауза, «LOADING») были зашиты по-английски. Теперь на французском, немецком и
+// испанском они берутся из lang/<буква>/bonuslabels.txt (tools/lang_bonus.py: строки текстовой библиотеки диска; «TRACK» и «CAR» отдельным словом на диске нет — слова диска для
+// этих понятий), по строке на подпись в порядке BL_*; нет файла или пустая строка — английский из кода. Строки без текста на диске (DIRECTION, CHARACTER, CAMERA, подсказки) остаются английскими.
+// BONUSLANG_OLD=1 — только английский, как было
+#ifndef BONUSLANG_OLD
+#define BONUSLANG_OLD 0
+#endif
+enum { BL_TITLE, BL_TRACK, BL_LAPS, BL_PRESS, BL_STANDINGS, BL_CAR, BL_WINS, BL_POINTS, BL_TOTAL, BL_BEST, BL_CONTINUE, BL_QUIT, BL_AGAIN, BL_YES, BL_NO, BL_LOADING, BL_GO, BL_CAMERA, BL_CAMTOP, BL_CAMBEHIND, BL_LAP, BL_NITRO, BL_PL1, BL_PL2, BL_PL3, BL_PL4, BL_N };
+static const char *const bnsLblEn[BL_N] = {"SELECT TRACK AND NUMBER OF LAPS", "TRACK", "LAPS", "PRESS START", "Race Series Standings", "CAR", "Wins", "Points", "Total Time", "Best Lap",
+                                           "CONTINUE", "QUIT GAME", "RACE AGAIN?", "YES", "NO", "LOADING", "GO!", "Camera", "top", "behind car", "LAP", "NITRO", "1st", "2nd", "3rd", "4th"};
+static char bnsLblTxt[BL_N][64]; static int bnsLblLang = -1;
+static int bnsLblOn(void) { return !BONUSLANG_OLD && gLangId > 0; }
+static const char *bnsLbl(int k) {
+  if (!bnsLblOn()) return bnsLblEn[k];
+  if (bnsLblLang != gLangId) {
+    bnsLblLang = gLangId; memset(bnsLblTxt, 0, sizeof bnsLblTxt);
+    char fn[256]; sibling(fn, "bonuslabels.txt"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
+    if (f >= 0) { static char b[BL_N * 64 + 64]; int n = sceIoRead(f, b, (int)sizeof b - 1); sceIoClose(f);
+      if (n > 0) { b[n] = 0; char *q = b; for (int i = 0; i < BL_N && *q; i++) { char *e = strchr(q, '\n'); if (e) *e = 0; snprintf(bnsLblTxt[i], sizeof bnsLblTxt[i], "%s", q); q = e ? e + 1 : q + strlen(q); } } }
+  }
+  return bnsLblTxt[k][0] ? bnsLblTxt[k] : bnsLblEn[k];
+}
+// заголовки столбцов итогов: каждый стоит над своим столбцом (x0), но целиком на экране и не наезжает на соседа справа (на английском сдвига нет)
+static void bnsHeads(const int *k, const int *x0, int n, int y, unsigned c) {
+  int x[8], w[8], lim = SCR_W - 6; if (n > 8) n = 8;
+  for (int i = 0; i < n; i++) { x[i] = x0[i]; w[i] = bnsTextW(bnsLbl(k[i])); }
+  if (bnsLblOn()) for (int i = n - 1; i >= 0; i--) { if (x[i] + w[i] > lim) x[i] = lim - w[i]; lim = x[i] - 6; }
+  for (int i = 0; i < n; i++) bnsT(x[i], y, c, bnsLbl(k[i]));
+}
 
 // ---------------------------------------------------------------- служебные флаги сценария
+static void bonusOpenSet(unsigned m, const char *src);   // main_save.h
 static void bnsFlag(const SmokeCmd *sc) {
   if (sc->op != 2) return;
   if (!strcmp(sc->name, "bonusauto")) bnsAuto = sc->a != 0.f;
@@ -150,6 +211,11 @@ static void bnsFlag(const SmokeCmd *sc) {
   else if (!strcmp(sc->name, "bonusgo")) bnsGo = 1;
   else if (!strcmp(sc->name, "bonusshots")) bnsShots = sc->a != 0.f;
   else if (!strcmp(sc->name, "bonusquit")) bnsQuit = sc->a != 0.f;
+  else if (!strcmp(sc->name, "bonusquitat")) bnsQuitAt = sc->a;
+  else if (!strcmp(sc->name, "bonuscode")) bnsCodeOn = sc->a != 0.f;   // №1185
+  else if (!strcmp(sc->name, "bonusveh")) { int n = (int)sc->a; if (n >= 0 && n < BNS_NVEH) bsel.veh = n; }   // служебное: машина игрока по номеру в списке bnsVeh
+  else if (!strcmp(sc->name, "bonusfrag")) fragHeapMB = (unsigned)sc->a;   // №1167 тест: куча раздроблена до N МБ наибольшего куска перед загрузкой трассы (как у Роба после долгой игры; main_levels.h fragHeap)
+  else if (!strcmp(sc->name, "bonusopen")) { bonusSvcAll = 1; bonusOpenSet(bonusOpen, "scenario"); }   /* только включает: «flag bonusopen» без числа раньше выключал */   // и пункт MINI GAME главного меню включается сразу (в туре меню уже построено серым)   // №1168: все трассы открыты и из сценария (прежде — только файлом bonusopen рядом с EBOOT)
   else if (!strcmp(sc->name, "bonusagain")) bnsAgainYes = (int)sc->a;   // круг 6: сколько раз в смоуке ответить «RACE AGAIN?» — ДА (серия очков должна жить между заездами)
 }
 
@@ -215,12 +281,20 @@ static void bnsBudget(const char *kind, unsigned start, unsigned io0, unsigned s
   (void)kind; (void)start; (void)io0; (void)sim; (void)simIo;
 #endif
 }
+// №1181 (Роб 04.11: «странный момент ожидания других игроков, которые с PS2; у нас не может быть других игроков»): оригинал после выбора машины первым игроком включает таймер ожидания остальных
+// трёх (по его исходному поведению: гонка стартует сразу, когда выбрали все четыре места, иначе по концу таймера; запись PS2 тоже показывает отсчёт 6 при одном контроллере). На PSP игрок один —
+// после подтверждения машины гонка начинается сразу, без экрана ожидания. BONUSWAIT1181_OLD=1 — прежние 6 с ожидания
+#ifndef BONUSWAIT1181_OLD
+#define BONUSWAIT1181_OLD 0
+#endif
 static void bnsMenuNativeDraw(int phase, int focus, int chrReady, float waitReady, void **fbp) {
+  GE_NEST_GUARD("bnsMenuNativeDraw");   // №1186/№1188
   unsigned budgetT0 = sceKernelGetSystemTimeLow(), budgetIo0 = smkIoUs;
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
   for (int k = 0; k < 5; k++) { uiScrSetRow(k, k == bsel.chr); uiScrShow(BUI_MMCHAR, buiTag[k], k == bsel.chr); }   // лицо: кадр _s — выбран
   for (int k = 0; k < 5; k++) uiScrShow(BUI_MMCHAR, buiLockTag[k], chrReady && k == bsel.chr);
+  uiScrShow(BUI_MMCHAR, UI_T_COINS, phase == 0);   // подпись «Change Character» — только на экране выбора игрока (под выбором трассы она просвечивала)
   uiScrShow(BUI_MMCHAR, UI_T_ACTION, waitReady >= 0.f);
   uiScrShow(BUI_MMCHAR, UI_T_COUNTDOWN, waitReady >= 0.f);
   uiScrSetRow(8, waitReady >= 0.f ? (int)ceilf(waitReady) : 0);
@@ -235,7 +309,7 @@ static void bnsMenuNativeDraw(int phase, int focus, int chrReady, float waitRead
     uiScrSetRow(9, bsel.laps); uiScrSetRow(10, bsel.rev);
     uiScrDraw(BUI_MMTRACK, 0, bnsUiT, 0); resetState();
     // ПРАВИЛО ПОРТА: строка камеры (расширение порта по слову Роба, в данных её нет) — под «□ Change Track Direction», мелко
-    const char *cm = bsel.cam ? "SELECT  Camera: behind car" : "SELECT  Camera: top"; bnsT(14, SCR_H - 24, 0xc0d0d0d0u, cm);
+    char cm[96]; snprintf(cm, sizeof cm, "SELECT  %s: %s", bnsLbl(BL_CAMERA), bnsLbl(bsel.cam ? BL_CAMBEHIND : BL_CAMTOP)); if (BONUSHINT1198_OLD) bnsT(14, SCR_H - 24, 0xc0d0d0d0u, cm); else bnsT(27, 250 - uiFontLh(bnsFont()), 0xc0d0d0d0u, cm);   // аудит п. 15: строка на линии BACK правой колонки (низ 250), левый край — по значку □ (27)   // №1182: на F/G/S по-своему (lang/<буква>/bonuslabels.txt)
   }
   uiScrDraw(BUI_MMHINTS, 0, bnsUiT, 0);
   resetState(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
@@ -247,6 +321,10 @@ static int bnsMenuNative(void **fbp) {   // 1 — старт гонки, 0 — �
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(); int phase = BONUS_SETUP_PS2_OLD ? 0 : 1, focus = 0, phLog = -1, chrReady = 0; float waitReady = -1.f; char s[200];
   if (bsel.veh < 0) bsel.veh = bnsVehOf(BONUS_SETUP_PS2_OLD ? bnsCharCar[bsel.chr] : "famil_v");
   bsel.track = bonusTrackPick(bonusOpenMask(), bsel.track);
+  if (!BONUSMENUMUS1212_OLD && !BONUS_SOUND_OLD && sndLevel != -2) {   // №1212: звук мини-игры (bonus/audio) на всё время её меню и гонок, как отдельная «игра» у оригинала
+    char ad_[256]; sibling(ad_, "bonus/audio/"); sndShutdown(); if (sndInit(ad_) == 0) { sndLevel = -2; cfgApply(); uiSfxInit(smkWrite); bbThForgetAudio(); } }
+  if (!BONUSMENUMUS1212_OLD && !BONUS_SOUND_OLD) { int t_ = audioTrack(brAudioTuneNameDir(bsel.track, 0)); if (t_ >= 0) audioMusic(t_, .5f);
+    char m_[96]; snprintf(m_, sizeof m_, "BONUS ev=menumusic tune=%s t=%.1f\n", t_ >= 0 ? audioTrackName(t_) : "-", smkT); bnsLog(m_); }
   bnsRatings();
   snprintf(s, sizeof s, "BONUS ev=menu track=%d laps=%d rev=%d cam=%d char=%s car=%s ui=1 open=%02x t=%.1f\n", bsel.track, bsel.laps, bsel.rev, bsel.cam,
            bnsChar[bsel.chr], bnsVeh[bsel.veh], bonusOpenMask(), smkT); bnsLog(s);
@@ -273,7 +351,7 @@ static int bnsMenuNative(void **fbp) {   // 1 — старт гонки, 0 — �
         uiPopHookFire(UI_EV_ACCEPT);
         if (BONUS_SETUP_PS2_OLD) phase = 1;
         else if (!chrReady) { chrReady = 1; focus = 1; snprintf(s, sizeof s, "BONUS ev=confirm kind=character char=%s t=%.1f\n", bnsChar[bsel.chr], smkT); bnsLog(s); }
-        else if (bonusTrackIsOpen(bsel.track)) { snprintf(s, sizeof s, "BONUS ev=confirm kind=vehicle car=%s t=%.1f\n", bnsVeh[bsel.veh], smkT); bnsLog(s); waitReady = 6.f; bnsUiLog("waitplayers"); }
+        else if (bonusTrackIsOpen(bsel.track)) { snprintf(s, sizeof s, "BONUS ev=confirm kind=vehicle car=%s t=%.1f\n", bnsVeh[bsel.veh], smkT); bnsLog(s); if (BONUSWAIT1181_OLD) { waitReady = 6.f; bnsUiLog("waitplayers"); } else { bnsUiLog("start_single"); return 1; } }
       } else if (hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE)) {
         uiPopHookFire(UI_EV_BACK);
         if (BONUS_SETUP_PS2_OLD) return 0;
@@ -304,31 +382,32 @@ static int bnsMenuNative(void **fbp) {   // 1 — старт гонки, 0 — �
 // ---------------------------------------------------------------- выбор: трасса, круги, направление, персонаж, машина, камера
 enum { BM_TRACK, BM_LAPS, BM_DIR, BM_CHAR, BM_CAR, BM_CAM, BM_N };
 static void bnsMenuDraw(int sel, int mainSel, void **fbp) {
+  GE_NEST_GUARD("bnsMenuDraw");   // №1186/№1188
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
   feDraw(mainSel); resetState();
   bnsRect(40, 28, SCR_W - 80, SCR_H - 56, 0xc0201008u);
-  bnsTextC(38, 0xff40e0ffu, "SELECT TRACK AND NUMBER OF LAPS");   // MiniMenu.pag SELECT_TRACK_AND_NUM_LAPS
+  bnsTextC(38, 0xff40e0ffu, bnsLbl(BL_TITLE));   // MiniMenu.pag SELECT_TRACK_AND_NUM_LAPS
   char t[96]; const char *veh = bnsVeh[bsel.veh >= 0 ? bsel.veh : bnsVehOf(bnsCharCar[bsel.chr])];
   for (int r = 0; r < BM_N; r++) {
     switch (r) {
-      case BM_TRACK: snprintf(t, sizeof t, "TRACK  %d", bsel.track); break;   // правка 421: без BONUS_UNLOCK_OLD — номера 1..7 ниже
-      case BM_LAPS: snprintf(t, sizeof t, "LAPS  x %d", bsel.laps); break;                       // MiniMenu.pag NumLaps "x N"
+      case BM_TRACK: snprintf(t, sizeof t, "%s  %d", bnsLbl(BL_TRACK), bsel.track); break;   // правка 421: без BONUS_UNLOCK_OLD — номера 1..7 ниже
+      case BM_LAPS: snprintf(t, sizeof t, "%s  x %d", bnsLbl(BL_LAPS), bsel.laps); break;                       // MiniMenu.pag NumLaps "x N"
       case BM_DIR: snprintf(t, sizeof t, "DIRECTION  %s", bsel.rev ? "REVERSE" : "NORMAL"); break;   // «Change Track Direction»
       case BM_CHAR: snprintf(t, sizeof t, "CHARACTER  %s", bnsChar[bsel.chr]); break;          // «Change Character»
-      case BM_CAR: snprintf(t, sizeof t, "CAR  %s", veh); break;
+      case BM_CAR: snprintf(t, sizeof t, "%s  %s", bnsLbl(BL_CAR), veh); break;
       default: snprintf(t, sizeof t, "CAMERA  %s", bsel.cam ? "BEHIND CAR" : "TOP (ORIGINAL)"); break;
     }
     int y = 70 + r * 24; unsigned c = r == sel ? 0xff40ffffu : 0xffd0d0d0u;
     if (r == sel) bnsRect(60, y - 3, SCR_W - 120, 20, 0x60ffffffu);
     if (r == BM_TRACK && !BONUS_UNLOCK_OLD) {   // правка 421: «TRACK  1 2 3 4 5 6 7» — выбранная яркая, открытые светлые, закрытые тёмные
-      char d[4]; int w = bnsTextW("TRACK  "), dw = bnsTextW("0 "), x = (SCR_W - w - 7 * dw) / 2;
-      bnsT(x, y, c, "TRACK  "); x += w;
+      char d[4], tl[72]; snprintf(tl, sizeof tl, "%s  ", bnsLbl(BL_TRACK)); int w = bnsTextW(tl), dw = bnsTextW("0 "), x = (SCR_W - w - 7 * dw) / 2;
+      bnsT(x, y, c, tl); x += w;
       for (int k = 1; k <= 7; k++, x += dw) { snprintf(d, sizeof d, "%d", k);
         bnsT(x, y, k == bsel.track ? 0xff40ffffu : bonusTrackIsOpen(k) ? 0xffd0d0d0u : 0xff404040u, d); }
     } else bnsTextC(y, c, t);
   }
-  bnsTextC(SCR_H - 50, 0xffffffffu, "PRESS START");   // MiniMenu.pag PRESS_START
+  bnsTextC(SCR_H - 50, 0xffffffffu, bnsLbl(BL_PRESS));   // MiniMenu.pag PRESS_START
   bnsTextC(SCR_H - 30, 0xffa0a0a0u, "< > CHANGE    TRIANGLE BACK");
   sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
   sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
@@ -386,11 +465,53 @@ static void bnsEnvPano(const float eye[3]) {
     if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "BONUSENV track=%d pano=%u anchor=%.0f,%.0f off=%.0f,%.0f t=%.1f\n", bsel.track, pnoN, cx, cz, bnsEnvOff[0], bnsEnvOff[2], smkT); bnsLog(s_); } }
   pano917Draw(eye[0] + bnsEnvOff[0], eye[1] + bnsEnvOff[1], eye[2] + bnsEnvOff[2]);
 }
-static int bnsLoad(void **fbp) {
+// №1168 (Роб 03.11 на PSP: «бонус-игре плюс лодинга там не было и ченскрэч ничего там не было»): запись PS2 (ps2_bonus_b01_vehicle_accept, кадр 776) — между выбором машины и гонкой
+// чёрный экран LoadingFE (Itchy & Scratchy, фитиль к бомбе, надпись LOADING), тот же, что при выходе из игры в меню; без газеты уровня. Раньше у порта был кадр с одним словом LOADING и обрыв
+// картинки на гонку. Теперь: меню гаснет (8 кадров), LoadingFE идёт на всё чтение трассы (ходом загрузки, как у игры), огонь доходит до динамита не раньше минимального показа, трасса
+// открывается из чёрного (10 кадров). На выходе — то же: гонка гаснет, LoadingFE на время чтения гостиной (уже было), меню. BONUSLOAD1168_OLD=1 — прежнее (слово LOADING, резкая смена)
+#ifndef BONUSLOAD1168_OLD
+#define BONUSLOAD1168_OLD 0
+#endif
+#define BNS_FADEIN_FRAMES 10
+static void mem1060Fade(void **fbp);   // mem1060.h (подключён позже): мир гаснет за 8 кадров поверх последнего кадра
+static int bnsFadeIn;   // кадров осталось до конца появления трассы из чёрного (bnsFrame накладывает чёрный слой)
+static int bnsKeepLv = -1;   // номер уровня игры на время загрузки трассы (gameLevel ставится в 1 раньше, чем loadBegin)
+static int bnsLoadIn(void **fbp) {   // 1 — LoadingFE открыт и идёт; 0 — пакет load.shr не открылся (старый кадр LOADING)
+  bnsUiClose();   // mini.shr — до load.shr: пакет экранов один
+  int rc = scrOpen1065("bonus"); if (rc != 0) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "BONUS ev=loadscr fe=0 rc=%d t=%.1f\n", rc, smkT); bnsLog(s_); } return 0; }
+  scrTvOver = 0; bnsKeepLv = gameLevel; gameLevel = 1; bonusTrack = bsel.track;   // levelFile трассы уже сейчас: loadBegin читает заголовок level.shr через него (levelPreread)
+  ldScr1060 = UI_LOAD_FE; ldMenuNew = 0; ldBase = LOAD_RES_SHARE; scrT0 = sceKernelGetSystemTimeLow();
+  scrFrame(UI_LOAD_FE, 0, 1, fbp); loadBegin(fbp);
+  return 1;
+}
+static void bnsLoadOut(void **fbp, int ok) {   // чтение кончилось: огонь доходит до динамита (не раньше минимального показа), экран закрыт
+  unsigned t0 = sceKernelGetSystemTimeLow();
+  loadFuseIoEnd(); fuseProbeFlush(); ldWarmStep_ = 0;
+  while (ldOn && ldShown < 1000) { scrFrame(ldScr1060, ldProgress(1000), 1, fbp); if (ldShown > 500) { sceDisplayWaitVblankStart(); sceDisplayWaitVblankStart(); bnsShot(6, "bonus_load"); } }   // снимок экрана загрузки (flag bonusshots 1)
+  ldOn = 0; ldBase = 0; ldWarmOn = 0; ldMenuNew = 0;
+  SCR_CLOSE(); ldScr1060 = UI_LOAD_LEVEL;
+  if (bnsKeepLv >= 0) gameLevel = bnsKeepLv; bnsKeepLv = -1;
+  if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "BONUS ev=loadscr fe=1 ok=%d hold_ms=%.0f heap=%u t=%.1f\n", ok, (sceKernelGetSystemTimeLow() - t0) / 1000.f, heapFreeBytes(), smkT); bnsLog(s_); }
+}
+static int bnsLoad0(void **fbp, int fe);
+static int bnsLoad1(void **fbp);
+static int bnsLoad(void **fbp) { unsigned t0_ = sceKernelGetSystemTimeLow(); int r_ = bnsLoad1(fbp); xnEnd("bonus_load", t0_, (int)gameLevel); return r_; }   // №1206: время перехода
+static int bnsLoad1(void **fbp) {
+  if (BONUSLOAD1168_OLD) return bnsLoad0(fbp, 0);
+  mem1060Fade(fbp);   // меню (или «RACE AGAIN?») гаснет, не обрывается
+  int fe = bnsLoadIn(fbp); int ok = bnsLoad0(fbp, fe);
+  if (fe) bnsLoadOut(fbp, ok);
+  if (ok) bnsFadeIn = BNS_FADEIN_FRAMES;
+  return ok;
+}
+static int bnsLoad0(void **fbp, int fe) {
+  GE_NEST_GUARD_RET("bnsLoad0", 0);   // №1186/№1188
   unsigned t0 = sceKernelGetSystemTimeLow(); char s[200], fn[256];
   // правка 420: кадр «LOADING» над тёмным фоном, пока читается трасса (экран загрузки игры — газета уровня, у мини-игры своей нет)
+  if (!fe) {
   sceGuStart(GU_DIRECT, list); resetState(); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
-  bnsTextC(SCR_H / 2 - 8, 0xffffffffu, "LOADING"); sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
+  bnsTextC(SCR_H / 2 - 8, 0xffffffffu, bnsLbl(BL_LOADING)); sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
+  }
   snprintf(fn, sizeof fn, BONUS_BNS, bsel.track); { char p[256]; sibling(p, fn); strcpy(fn, p); }
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0;
   int n = (int)sceIoLseek32(f, 0, PSP_SEEK_END); sceIoLseek32(f, 0, PSP_SEEK_SET);
@@ -398,13 +519,13 @@ static int bnsLoad(void **fbp) {
   if (!bnsMem || sceIoRead(f, bnsMem, (unsigned)n) != n) { sceIoClose(f); return 0; }
   sceIoClose(f);
   if (bnsParse(&BT, bnsMem, (unsigned)n)) { snprintf(s, sizeof s, "BONUS ev=load bad=bns track=%d t=%.1f\n", bsel.track, smkT); bnsLog(s); return 0; }
-  int keepLevel = gameLevel; gameLevel = 1; bonusTrack = bsel.track;   // набор трассы: levelFile -> bonus/ (miss — пакета нет, модуль молчит)
+  int keepLevel = bnsKeepLv >= 0 ? bnsKeepLv : gameLevel; gameLevel = 1; bonusTrack = bsel.track;   // набор трассы: levelFile -> bonus/ (miss — пакета нет, модуль молчит)
   if (loadedLevel) levelUnload();   // в памяти уровень игры (выход в меню из игры) — в кучу; menuRun прочтёт его снова (loadedLevel 0)
   if(!BONUS_SOUND_OLD){sndShutdown();sndLevel=-1;} // track is an audio namespace, even when previous level wasL1
   levelLoad(fbp); gameLevel = keepLevel;
   if (!haveCol) { snprintf(s, sizeof s, "BONUS ev=load bad=col track=%d t=%.1f\n", bsel.track, smkT); bnsLog(s); return 0; }
-  float c[3] = {spawnP[0], spawnP[1], spawnP[2]}; int cells = cellsRingAt(c, 0, fbp);   // трасса целиком (100–250 м) — до первого кадра
-  for (unsigned i = 0; i < ncell; i++) if (!cl[i].state) { SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); loadCell(fd, i); sceIoClose(fd); cells++; }
+  float c[3] = {spawnP[0], spawnP[1], spawnP[2]}; int cells = cellsRingAt(c, ldOn ? 1 : 0, fbp);   // трасса целиком (100–250 м) — до первого кадра
+  for (unsigned i = 0; i < ncell; i++) if (!cl[i].state) { SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); loadCell(fd, i); sceIoClose(fd); cells++; if (ldOn) loadPump(); }
   snprintf(s, sizeof s, "BONUS ev=load track=%d cells=%d ncell=%u col=%d ms=%.0f heap=%u t=%.1f\n", bsel.track, cells, ncell, haveCol,
            (sceKernelGetSystemTimeLow() - t0) / 1000.f, heapFreeBytes(), smkT); bnsLog(s);
   return 1;
@@ -434,10 +555,14 @@ static void bnsPickAi(void) {   // bnsCarName[1..3], bnsRacerChr[1..3]
       char nm[16]; bnsLower(bnsAiCars[bnsRnd() % BNS_NAICARS], nm, 16);
       int dup = 0; for (int j = 0; j < i; j++) if (!strcmp(bnsCarName[j], nm)) dup = 1;
       if (dup || !bnsHasCar(nm)) continue;
-      strcpy(bnsCarName[i], nm); break;
+      BNS_CPY16(bnsCarName[i], nm); break;
     }
-    if (!bnsCarName[i][0]) strcpy(bnsCarName[i], bnsCharCar[c]);   // нет подходящей модели в пакете — машина персонажа
+    if (!bnsCarName[i][0]) BNS_CPY16(bnsCarName[i], bnsCharCar[c]);   // нет подходящей модели в пакете — машина персонажа
   }
+}
+static McCar bnsSecCar; static McEnv bnsSecEnv;
+static int bnsSecPlan(void *u, const float pos[3], float hdg, const float g[3], float (*out)[3], int cap) {   // №1185: план маршрута для листа секторов — как у водителя соперника
+  (void)u; bnsSecCar.car.x = pos[0]; bnsSecCar.car.y = pos[1]; bnsSecCar.car.z = pos[2]; bnsSecCar.car.h = hdg; return mcPlanFor(&BM, &bnsSecEnv, &bnsSecCar, g, out, cap);
 }
 static void bnsRaceInit(void) {
   // машина игрока — car1, соперники — car2..car4 (правило порта); ходовые игрока — .con выбранной машины, кузов — модель пакета
@@ -449,7 +574,7 @@ static void bnsRaceInit(void) {
   carInit(&car, &P, &world, p[0], p[1], p[2], h); BR.grow[0] = car.p.halfW; chase.init = 0;
   mcInit(&BM); mcPlanHook = 0; mcSprint = 0; bnsRoads = 0;
   // №1116 (сверка g03-aicars, правка Роба 1116): соперники ведутся по дорогам трассы от точки WPR (обратный ход — WPL) к следующей, как у оригинала
-  // (WaypointAI по Road/RoadSegment файла трассы); дорога и путь планируются тем же планировщиком msncar.c, что и улицы уровней. Было: свой плотный
+  // (по дорогам файла трассы); дорога и путь планируются тем же планировщиком msncar.c, что и улицы уровней. Было: свой плотный
   // путь порта (bnsPlan -> brPlan, tools/bonus/nav.py). BONUS_ROADS_OLD=1 или файл без хвоста дорог — прежнее
   if (!BONUS_ROADS_OLD && BT.rd && trafficInitMem(&bnsTr, (void *)BT.rd, BT.rdSize, 0) == 0 && (bsel.rev ? BT.h->nwpr : BT.h->nwpf) >= 2) { bnsRoads = 1; mcSprint = 1; }
   else mcPlanHook = bnsPlan;
@@ -461,8 +586,8 @@ static void bnsRaceInit(void) {
     if (!BONUS_NPC_MODELS_OLD && bsel.track == 1 && bsel.chr == 0) {
       static const int nativeChr[3] = {2, 3, 1}; // P2 Homer, P3 Marge, P4 Bart
       bnsRacerChr[i] = nativeChr[i - 1];
-      strcpy(bnsCarName[i], bnsNpcCar[i - 1]);
-    } else strcpy(bnsCarName[i], bnsCharCar[k]); k++;
+      BNS_CPY16(bnsCarName[i], bnsNpcCar[i - 1]);
+    } else BNS_CPY16(bnsCarName[i], bnsCharCar[k]); k++;
     aiPicked:;
     char con[24]; snprintf(con, sizeof con, "bonus/bg%d_%d", bsel.track, i);   // ходовые соперников — bgT_K.con (данные)
     brStart(&BR, i, p, &h);
@@ -472,7 +597,13 @@ static void bnsRaceInit(void) {
   if (bnsRoads) { const BnsWp *w_ = bsel.rev ? BT.wpr : BT.wpf; int nw_ = (int)(bsel.rev ? BT.h->nwpr : BT.h->nwpf);   // точки WPR/WPL в порядке круга (экспорт: lap_cycle)
     for (int k = 0; k < nw_; k++) mcWaypoint(&BM, k, w_[k].p, BR_LAPS_MAX + 1); }
   else for (int k = 0; k < BR.nwp; k++) mcWaypoint(&BM, k, BR.wp[k], BR_LAPS_MAX + 1);   // круги считает brUpdate
-  memset(&bnsBot, 0, sizeof bnsBot); bnsBot.mode = MC_RACE; strcpy(bnsBot.name, bnsCarName[0]);
+  bnsSec.n = bnsSec.nsec = 0; bnsCodeLast = 0;   // №1185: сектора — по следу круга лидера гонки полигона (bonus/bNN.sec, tools/bonus/sec_export.sh); файла нет — по плану маршрута водителя соперника
+  { char fn_[256]; snprintf(fn_, sizeof fn_, "bonus/b%02d.sec", bsel.track); char p_[256]; sibling(p_, fn_); SceUID f_ = sceIoOpen(p_, PSP_O_RDONLY, 0);
+    if (f_ >= 0) { static unsigned char sb_[BSC_MAXP * 12 + 16]; int n_ = sceIoRead(f_, sb_, sizeof sb_); sceIoClose(f_); if (n_ > 8) bscLoad(&bnsSec, sb_, (unsigned)n_); } }
+  if (bnsSec.nsec < 1 && bnsRoads && BT.h->nwpf >= 2 && BT.pf && BT.h->npathf > 0 && BM.n >= 1) {   // запасной путь: план — копия водителя первого соперника
+    bnsSecCar = BM.c[0]; memset(&bnsSecEnv, 0, sizeof bnsSecEnv); bnsSecEnv.w = &world; bnsSecEnv.tr = &bnsTr;
+    bscInitRoute(&bnsSec, bnsSecPlan, 0, BT.wpf, (int)BT.h->nwpf, BT.pf[0].p); }
+  memset(&bnsBot, 0, sizeof bnsBot); bnsBotS = 0.f; bnsBotLine = 0; bnsBotWi = -1; bnsBotProgT = 0.f; bnsBot.mode = MC_RACE; BNS_CPY16(bnsBot.name, bnsCarName[0]);
   bonusCarsPtr = &BM; bonusPlayerModel = bnsCarName[0];
   bnsRacerChr[0] = bsel.chr;
   if (!BONUS_SCREENS_OLD) bnsUiOpen();   // экраны пакета (пауза, итоги): load.shr трассы его закрыл
@@ -531,6 +662,7 @@ static void bnsEffects(int i, Car *k, float thr, float dt) {
 // ---------------------------------------------------------------- кадр
 static unsigned bnsTris; static float bnsTopDist;
 static BrAudio bnsAudio;
+#include "bonus_driver.h"
 static void bnsCarDraw(const Car *k, const char *name, float wheel, uint32_t tint) {
   const McrModel *M = mcrGet(name); if (!M) return;
   // свет зоны (Event 65): цвет вершин машины × множитель зоны — освещение GE без источников, окружающий свет = множитель,
@@ -538,6 +670,7 @@ static void bnsCarDraw(const Car *k, const char *name, float wheel, uint32_t tin
   if (tint) { sceGuEnable(GU_LIGHTING); for (int l = 0; l < 4; l++) sceGuDisable(GU_LIGHT0 + l);
     sceGuModelColor(0, 0xffffffffu, 0, 0); sceGuColorMaterial(GU_AMBIENT); sceGuAmbient(brLightMul(tint)); }
   int b = (int)(mcrTexBase + M->tex0); trafficDrawModel(M->M, M->pc, M->vt, k, wheel, 0, mcDrawPiece, &b, &mcrTris);
+  bnsDriverDraw(k, name, M);   // №1219: фигура водителя (под тем же светом зоны)
   if (tint) sceGuDisable(GU_LIGHTING);
 }
 // №1148 (Роб, бонус-игра: «у нитро на трассе нет свечения — как у гаечного ключа»): блик нитро — тот же векторный шейп (glintshape941.h), ход слоёв (glintmotion970.h), размер и прозрачность, что у ключа
@@ -614,16 +747,82 @@ static void bnsSprops(float ex, float ey, float ez, float maxD) {
   if (nb) { sceGuTexScale(128.f, 128.f); if (bsel.cam) sceGuEnable(GU_FOG); else sceGuDisable(GU_FOG);
     sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0); resetState(); }
 }
+// №1182 (эталон PS2 от emu-ps2: в гонке у оригинала нет ни кругов, ни времени — единственный ориентир цветной ярлык «P1…P4» с треугольником над каждой машиной: красный, голубой, жёлтый, зелёный).
+// Круги, место и нитро у нас остаются по слову Роба (№1145/№1179), ярлыки добавлены к ним. Вид сверху; BONUSMARK1182_OLD=1 — без ярлыков
+#ifndef BONUSMARK1182_OLD
+#define BONUSMARK1182_OLD 0
+#endif
+static float bnsPUp[3]; static int bnsMarkMode, bnsHudQuiet;   // «вверх» кадра гонки и «рисовать ли ярлыки» (задаёт bnsFrame)
+// аудит типографики 05.11 п. 11 и 21: метка игрока P1 поверх остальных (рисуется последней), у каждой метки чёрная тень 1 px, на паузе меток нет. BONUSMARK1198_OLD=1 — прежнее
+#ifndef BONUSMARK1198_OLD
+#define BONUSMARK1198_OLD 0
+#endif
+static void bnsMarkers(void) {
+  if (BONUSMARK1182_OLD || !bnsMarkMode || bsel.cam) return;
+  const float *u = bnsPUp, f[3] = {cfX, cfY, cfZ};
+  float r[3] = {f[1] * u[2] - f[2] * u[1], f[2] * u[0] - f[0] * u[2], f[0] * u[1] - f[1] * u[0]}, rl = sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+  if (rl < 1e-4f) return;
+  for (int k = 0; k < 3; k++) r[k] /= rl;
+  float t[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};   // истинный «вверх» кадра
+  float th = tanf(curFovY * .5f * (GU_PI / 180.f));
+  static const unsigned col[4] = {0xff3030e6u, 0xffe0c820u, 0xff20d8f0u, 0xff30c850u};   // ABGR: красный, голубой, жёлтый, зелёный (как на PS2)
+  for (int ii = 0; ii < 4; ii++) {
+    int i = BONUSMARK1198_OLD ? ii : 3 - ii;
+    const Car *c = i == 0 ? &car : (i - 1 < BM.n ? &BM.c[i - 1].car : 0); if (!c) continue;
+    float d[3] = {c->x - eyeX, c->y + .5f - eyeY, c->z - eyeZ}, z = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+    if (z < 1.f) continue;
+    float sx = SCR_W * .5f + (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / z / (th * ASPECT) * SCR_W * .5f;
+    float sy = SCR_H * .5f - (d[0] * t[0] + d[1] * t[1] + d[2] * t[2]) / z / th * SCR_H * .5f;
+    if (sx < 14.f || sx > SCR_W - 14.f || sy < 22.f || sy > SCR_H - 8.f) continue;
+    char s[4]; snprintf(s, sizeof s, "P%d", i + 1);
+    int w = bnsTextW(s), x0 = (int)sx - w / 2, y0 = (int)sy - 24;
+    bnsT(x0, y0, col[i], s);
+    if (!BONUSMARK1198_OLD) for (int q = 0; q < 5; q++) bnsRect((int)sx - (4 - q) + 1, y0 + 12 + q + 1, 2 * (4 - q) + 1, 1, 0xff000000u);   // тень треугольника
+    for (int q = 0; q < 5; q++) bnsRect((int)sx - (4 - q), y0 + 12 + q, 2 * (4 - q) + 1, 1, col[i]);   // треугольник вниз, остриём на машину
+  }
+}
+#ifndef BONUSCODE1198_OLD
+#define BONUSCODE1198_OLD 0   // аудит 05.11 п. 14: код места на паузе — белый непрозрачный, угол как у паузы основной игры. 1 — прежнее
+#endif
+// №1185: код места на трассе («B4-12») — служебная строка R+SELECT во время гонки и на паузе у человека (как код места «L1 J4-5» основной игры); viewer/bnssector.h, гейт tests/bonus1167/sector.sh.
+// Строка BONUSSECTOR в журнале — при каждой смене сектора машины игрока. flag bonuscode 1 — показать без кнопок (смоук). BONUSSECTOR1185_OLD=1 — кода нет
+static int bnsCodePause;
+static void bnsSectorDraw(void) {
+  if (BONUSSECTOR1185_OLD || bnsSec.nsec < 1) return;
+  char c[16]; bscCode(&bnsSec, bsel.track, car.x, car.y, car.z, c, sizeof c);
+  int k = bscSector(&bnsSec, car.x, car.y, car.z);
+  if (smkOn && k != bnsCodeLast) { char s_[96]; snprintf(s_, sizeof s_, "BONUSSECTOR code=%s pos=%.1f,%.1f t=%.1f\n", c, car.x, car.z, smkT); bnsLog(s_); } bnsCodeLast = k;
+  if (bnsCodeOn) { resetState();
+    if (BONUSCODE1198_OLD) bnsT(SCR_W - 10 - bnsTextW(c), 10, 0xb0ffffffu, c);
+    else if (bnsCodePause) bnsT(10, 259 - uiFontLh(bnsFont()), 0xffffffffu, c);   // аудит п. 14: пауза — тот же угол (внизу слева, низ строки 259 вровень с ACCEPT), что у кода места паузы основной игры; белый, тень 1 px
+    else bnsT(SCR_W - 10 - bnsTextW(c), 10, 0xffffffffu, c); }   // №1182: справа вверху — слева внизу подсказка паузы, слева вверху HUD гонки
+}
+// №1196 (Роб: «место и круги — теми же рисованными цифрами, что в HUD уличных гонок; третья строка нитро — нашим пиксельным шрифтом; место на финише и прочие надписи — как в основной игре»):
+// круг, место и время — метки HUD основной игры (UI_T_LAP / UI_T_POSITION / UI_T_TIMER, их стопка и шрифт), нитро — строка нашей гранью под стопкой. BONUSHUD1196_OLD=1 — прежние строки пиксельным шрифтом
+#ifndef BONUSHUD1196_OLD
+#define BONUSHUD1196_OLD 0
+#endif
+#ifndef BONUSNITRO1211_OLD
+#define BONUSNITRO1211_OLD 0   // №1211 (Роб 05.11: «пиксельным оно слишком большое… в обычный размер мелким, нитро 3»); 1 — нитро ×2, как было
+#endif
 static void bnsHud(int paused, int psel) {
-  char t[96]; const BrRacer *r = &BR.r[0];
-  static const char *const plc[4] = {"1st", "2nd", "3rd", "4th"};   // MiniSummary.pag строки 1ST…4TH
-  const int bf_ = bnsFont(), ly0 = bf_ >= 0 ? 10 : 10, lstep = bf_ >= 0 ? uiFontLh(bf_) + 3 : 20;   // №1145: строки HUD гонки шагом высоты грани; плашки под ними нет — как у цифр HUD основной игры (тень на пиксель)
+  char t[96]; const BrRacer *r = &BR.r[0]; unsigned hudT_ = 0; int hudFin_ = 0;
+  if (BONUSMARK1198_OLD || !bnsHudQuiet) bnsMarkers();   // аудит 05.11 п. 21: на паузе ярлыки машин прячутся вместе с HUD
+  if (bnsHudQuiet) return;   // пауза: круги, место и нитро не рисуются (доска паузы закрывала их наполовину); ярлыки машин остаются
+  const int bf_ = bnsFont(), hk_ = BONUSHUDK1179 < 1 ? 1 : BONUSHUDK1179, ly0 = 10, lstep = bf_ >= 0 ? uiFontLh(bf_) * hk_ + 3 : 20;   // №1145: строки HUD гонки шагом высоты грани; плашки под ними нет — как у цифр HUD основной игры (тень на пиксель)
   if (bf_ < 0) bnsRect(6, 6, 150, BR_NITRO3_OLD ? 46 : 64, 0x80000000u);   // круг 5 (P07:17): строка запаса нитро
-  snprintf(t, sizeof t, "LAP %d/%d", r->lap + (r->finished ? 0 : 1) > BR.laps ? BR.laps : r->lap + (r->finished ? 0 : 1), BR.laps);
-  bnsT(12, ly0, 0xffffffffu, t);
-  snprintf(t, sizeof t, "%s  %d:%05.2f", plc[(r->place - 1) & 3], (int)(r->totalT / 60.f), fmodf(r->totalT, 60.f));
-  bnsT(12, ly0 + lstep, 0xff40ffffu, t);
-  if (!BR_NITRO3_OLD) { snprintf(t, sizeof t, "NITRO %d", BR.nitro[0]); bnsT(12, ly0 + 2 * lstep, BR.nitro[0] > 0 ? 0xff40ff40u : 0xff808080u, t); }   // гудок (↑ крестовины) тратит заряд; свечение над машиной — вид, решает Роб
+  if (!BONUSHUD1196_OLD) {
+    int lap_ = r->lap + (r->finished ? 0 : 1); if (lap_ > BR.laps) lap_ = BR.laps;
+    uiHudSet(UI_F_LAP, lap_); uiHudSet(UI_F_LAPS, BR.laps); uiHudSet(UI_F_POSITION, r->place); uiHudSet(UI_F_RACERS, BR.n); uiHudSet(UI_F_TIMER, (int)(r->totalT * 1000.f));
+    uiHudShow(UI_T_LAP, 1); uiHudShow(UI_T_POSITION, 1); uiHudShow(UI_T_TIMER, 1);
+    hudT_ = 1u << UI_T_LAP | 1u << UI_T_POSITION | 1u << UI_T_TIMER;   // рисуются одним вызовом HUD вместе с отсчётом (ниже): разные маски в одном кадре перезапускали всплытие цифры
+  } else {
+  snprintf(t, sizeof t, "%s %d/%d", bnsLbl(BL_LAP), r->lap + (r->finished ? 0 : 1) > BR.laps ? BR.laps : r->lap + (r->finished ? 0 : 1), BR.laps);
+  bnsTK(12, ly0, 0xffffffffu, t, hk_);
+  snprintf(t, sizeof t, "%s  %d:%05.2f", bnsLbl(BL_PL1 + ((r->place - 1) & 3)), (int)(r->totalT / 60.f), fmodf(r->totalT, 60.f));
+  bnsTK(12, ly0 + lstep, 0xff40ffffu, t, hk_);
+  if (!BR_NITRO3_OLD) { snprintf(t, sizeof t, "%s %d", bnsLbl(BL_NITRO), BR.nitro[0]); bnsTK(12, ly0 + 2 * lstep, BR.nitro[0] > 0 ? 0xff40ff40u : 0xff808080u, t, hk_); }
+  }   // гудок (↑ крестовины) тратит заряд; свечение над машиной — вид, решает Роб
   { int nx_ = BONUSCAM1109_OLD ? !bsel.cam : camBonusNext(bsel.cam, g10bViewNext(camBonusCv(bsel.cam), !strcmp(car.p.name, "dune_v"), 0));   // №1109: что даст Select
     const char *nm_ = BONUSCAM1109_OLD ? (bsel.cam ? "SELECT: TOP" : "SELECT: CHASE") : nx_ == 0 ? "SELECT: TOP" : nx_ == 1 ? "SELECT: FAR" : nx_ == 2 ? "SELECT: BUMPER" : "SELECT: NEAR";
     if (BONUSSELLABEL1150_OLD) bnsT(SCR_W - 10 - bnsTextW(nm_), 10, 0xa0ffffffu, nm_); }   // №1150: подпись вида Робу не нужна; №1145: шрифт bnsT (сведение)
@@ -632,14 +831,18 @@ static void bnsHud(int paused, int psel) {
     if (BR.state == BR_COUNT) { int dg_ = brCountdownDigit(BR.count); if (dg_ != cd_) { cd_ = dg_; uiCountdownText(0); uiHudSet(UI_F_COUNTDOWN, dg_); } uiHudShow(UI_T_COUNTDOWN, 1); }
     else if (BR.time < (BONUS_GO_OLD ? 1.f : .5f) && BR.state == BR_RACE) { if (cd_ != 0) { cd_ = 0; uiCountdownText("GO!"); } uiHudShow(UI_T_COUNTDOWN, 1); }
     else if (cd_ != -1) { cd_ = -1; uiHudShow(UI_T_COUNTDOWN, 0); cdHide_ = sceKernelGetSystemTimeLow() | 1u; }
-    if (cd_ >= 0 || (cdHide_ && (unsigned)(sceKernelGetSystemTimeLow() - cdHide_) < 1500000u)) uiDrawCountdownOnly();
+    if (cd_ >= 0 || (cdHide_ && (unsigned)(sceKernelGetSystemTimeLow() - cdHide_) < 1500000u)) { if (BONUSHUD1196_OLD) uiDrawCountdownOnly(); else hudT_ |= 1u << UI_T_COUNTDOWN; }
   } else
   if (BR.state == BR_COUNT) {
     char digit[4]; snprintf(digit, sizeof digit, "%d", brCountdownDigit(BR.count));
     bnsTextC(SCR_H / 2 - 30, 0xff40ffffu, BONUS_COUNT_PS2_OLD ? "READY" : digit);
   }                 // SLES_518.97 «READY»
-  else if (BR.time < (BONUS_GO_OLD ? 1.f : .5f)) bnsTextC(SCR_H / 2 - 30, 0xff40ff40u, "GO!");   // сверка g07b P17-22: 0,5 с (было 1 с)                     // SLES_518.97 «GO!»
-  if (r->finished && BR.state != BR_DONE) bnsTextC(SCR_H / 2 - 30, 0xffffffffu, plc[(r->place - 1) & 3]);
+  else if (BR.time < (BONUS_GO_OLD ? 1.f : .5f)) bnsTextC(SCR_H / 2 - 30, 0xff40ff40u, bnsLbl(BL_GO));   // сверка g07b P17-22: 0,5 с (было 1 с)                     // SLES_518.97 «GO!»
+  if (r->finished && BR.state != BR_DONE) {
+    if (BONUSHUD1196_OLD) bnsTextC(SCR_H / 2 - 30, 0xffffffffu, bnsLbl(BL_PL1 + ((r->place - 1) & 3)));
+    else { char pl_[16]; snprintf(pl_, sizeof pl_, "%s", bnsLbl(BL_PL1 + ((r->place - 1) & 3))); for (char *q_ = pl_; *q_; q_++) if (*q_ >= 'a' && *q_ <= 'z') *q_ -= 32;   // место крупным рисованным шрифтом отсчёта и слова GO!, как у уличных гонок
+      uiCountdownText(pl_); uiHudShow(UI_T_COUNTDOWN, 1); hudT_ |= 1u << UI_T_COUNTDOWN; hudFin_ = 1; }
+  }
   if (!BONUS_END_COUNT_OLD && !BR_DNF10_OLD && BR.state == BR_RACE && BR.dnfOn && BR.finishedN < BR.n) {   // сверка g07b P17-15: отсчёт 10…0, каждая секунда
     int left = (int)floorf(BR_DNF10_S - BR.dnfT); if (left < 0) left = 0; if (left > 9) left = 9;   // число 10 держится не больше кадра: сразу 9…0
     char dg[12]; snprintf(dg, sizeof dg, "%d", left); bnsTextC(SCR_H / 2 - 4, 0xff40ffffu, dg);
@@ -648,14 +851,21 @@ static void bnsHud(int paused, int psel) {
     int left = (int)floorf(BR_DNF_S - BR.sinceFirst); if (left < 0) left = 0;
     char dg[12]; snprintf(dg, sizeof dg, "%d", left); bnsTextC(SCR_H / 2 - 4, 0xff40ffffu, dg);
   }
+  if (!BONUSHUD1196_OLD && hudT_) {   // №1196: круг, место, время и отсчёт — одним вызовом HUD основной игры; нитро — строкой нашей гранью под стопкой
+    resetState(); uiDrawHudTags(hudT_);
+    uiHudShow(UI_T_LAP, 0); uiHudShow(UI_T_POSITION, 0); uiHudShow(UI_T_TIMER, 0); if (hudFin_) uiHudShow(UI_T_COUNTDOWN, 0);
+    { int tg_[8], rc_[8][4], n_ = uiOverlayBoxes(tg_, rc_, 8), bot_ = 6, lx_ = 12; for (int k = 0; k < n_; k++) { if (rc_[k][3] > bot_) bot_ = rc_[k][3]; if (k == 0 || rc_[k][0] < lx_) lx_ = rc_[k][0]; }
+      resetState(); if (!BR_NITRO3_OLD) { snprintf(t, sizeof t, "%s %d", bnsLbl(BL_NITRO), BR.nitro[0]); bnsTK(lx_ + 2, bot_ + 3, BR.nitro[0] > 0 ? 0xff40ff40u : 0xff808080u, t, BONUSNITRO1211_OLD ? hk_ : 1); } }   // №1211: нитро пиксельной гранью обычного мелкого размера (было ×2)
+  }
   if (paused) {
     bnsRect(SCR_W / 2 - 90, SCR_H / 2 - 30, 180, 64, 0xc0000000u);
-    bnsTextC(SCR_H / 2 - 22, psel == 0 ? 0xff40ffffu : 0xffd0d0d0u, "CONTINUE");             // MiniPause.pag
-    bnsTextC(SCR_H / 2 + 4, psel == 1 ? 0xff40ffffu : 0xffd0d0d0u, "QUIT GAME");
+    bnsTextC(SCR_H / 2 - 22, psel == 0 ? 0xff40ffffu : 0xffd0d0d0u, bnsLbl(BL_CONTINUE));             // MiniPause.pag
+    bnsTextC(SCR_H / 2 + 4, psel == 1 ? 0xff40ffffu : 0xffd0d0d0u, bnsLbl(BL_QUIT));
   }
 }
 static void bnsSummaryUi(void);
 static void bnsFrame(int mode, int psel, void **fbp) {   // mode BF_*: гонка с HUD, пауза, облёт (без HUD), итоги поверх трассы
+  GE_NEST_GUARD("bnsFrame");   // №1186/№1188
   unsigned budgetT0 = sceKernelGetSystemTimeLow(), budgetIo0 = smkIoUs;
   float eye[3], at[3], up[3] = {0.f, 1.f, 0.f}, fovy, zn, zf;
   int paused = mode != BF_RACE, fly = mode == BF_FLY && bnsFly.n > 1, chaseLike = bsel.cam || fly;
@@ -693,6 +903,7 @@ static void bnsFrame(int mode, int psel, void **fbp) {   // mode BF_*: гонк�
     floorNearFrame(0, 0, eye[0], eye[1], eye[2], f[0], f[1], f[2], fovy); zn = frameNear(0, 0); camFollow = 0;
   }
   eyeX = eye[0]; eyeY = eye[1]; eyeZ = eye[2]; cfX = f[0]; cfY = f[1]; cfZ = f[2]; curFovY = fovy;
+  bnsPUp[0] = up[0]; bnsPUp[1] = up[1]; bnsPUp[2] = up[2]; bnsMarkMode = (mode == BF_RACE || mode == BF_PAUSE) && !fly;   // №1182: ярлыки P1…P4 над машинами
   drawDist = chaseLike ? DIST_LONG : zf;
   smkPose[0] = car.x; smkPose[1] = car.y; smkPose[2] = car.z; smkPose[3] = car.h;
   setupPlanes(f[0], f[1], f[2]); cullCity(1);
@@ -725,14 +936,17 @@ static void bnsFrame(int mode, int psel, void **fbp) {   // mode BF_*: гонк�
   resetState();
   bnsSprops(eye[0], eye[1], eye[2], bsel.cam ? drawDist : 1e4f);   // подборы, ловушки, объекты трассы (SPR1)
   resetState();
+  memcpy(bdrvEye, eye, sizeof bdrvEye); bdrvDrawn = 0;
   if (BONUSCAM1109_OLD || bsel.cam != 2) bnsCarDraw(&car, bnsCarName[0], BR.r[0].lap * 0.f + car.wheelSpin[0], bnsTint[0]);   // №1109: от первого лица своей машины в кадре нет (как в городе)
   for (int i = 0; i < BM.n; i++) if (BM.c[i].on) bnsCarDraw(&BM.c[i].car, BM.c[i].name, BM.c[i].wheelAng, i < 3 ? bnsTint[i + 1] : 0);
   resetState(); tqFlush(); resetState();
   sceGuDisable(GU_FOG);
   if (mode == BF_RACE || (mode == BF_FLY && !BONUS_COUNT_PS2_OLD)) bnsHud(0, 0);
-  else if (mode == BF_PAUSE && bnsUi) { bnsHud(0, 0); resetState(); uiScrMenuFlags(2); uiScrDrawMenu(BUI_MINIPAUSE, psel, bnsUiT); resetState(); }   // MiniPause.scr
+  else if (mode == BF_PAUSE && bnsUi) { bnsHudQuiet = !BONUSFONT1179_OLD; bnsHud(0, 0); bnsHudQuiet = 0; resetState(); uiScrMenuFlags(2); uiScrDrawMenu(BUI_MINIPAUSE, psel, bnsUiT); resetState(); }   // MiniPause.scr
   else if (mode == BF_PAUSE) bnsHud(1, psel);
   else if (mode == BF_SUMMARY && bnsUi) { resetState(); bnsSummaryUi(); resetState(); }   // MiniSummary.scr поверх трассы
+  if (bnsFadeIn > 0) { resetState(); bnsRect(0, 0, SCR_W, SCR_H, (unsigned)(255 * bnsFadeIn / BNS_FADEIN_FRAMES) << 24); bnsFadeIn--; }   // №1168: трасса открывается из чёрного
+  if (mode != BF_FLY && mode != BF_SUMMARY) { if (mode == BF_PAUSE) { int on_ = bnsCodeOn; bnsCodeOn = 1; bnsCodePause = 1; bnsSectorDraw(); bnsCodePause = 0; bnsCodeOn = on_; } else bnsSectorDraw(); }   // №1185
   bnsTris = (unsigned)drawnTris;
   sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
   sceGuFinish(); sceGuSync(0, 0);
@@ -814,7 +1028,8 @@ static int bnsRace(void **fbp) {   // 1 — гонка до конца (итог
       bnsUiT += dt; brAudioFrame(&bnsAudio,&BR,&car,bnsCarName[0],&BM,dt,0,1);bnsFrame(BF_PAUSE, psel, fbp); continue;
     }
     unsigned stepBudgetT0 = sceKernelGetSystemTimeLow(), stepBudgetIo0 = smkIoUs;
-    if ((hit & PSP_CTRL_SELECT) && (BONUS_SELECT_ANY_OLD || BR.state == BR_RACE)) bsel.cam = BONUSCAM1109_OLD ? !bsel.cam : camBonusNext(bsel.cam, g10bViewNext(camBonusCv(bsel.cam), !strcmp(car.p.name, "dune_v"), 0));   // сверка g07b P17 Д6: вид — только в состоянии «гонка идёт»
+    if ((hit & PSP_CTRL_SELECT) && (pad.Buttons & PSP_CTRL_RTRIGGER) && !BONUSSECTOR1185_OLD) { bnsCodeOn = !bnsCodeOn; uiPopHookFire(UI_EV_SCROLL); }   // №1185: R+SELECT — код сектора, а не смена вида
+    else if ((hit & PSP_CTRL_SELECT) && (BONUS_SELECT_ANY_OLD || BR.state == BR_RACE)) bsel.cam = BONUSCAM1109_OLD ? !bsel.cam : camBonusNext(bsel.cam, g10bViewNext(camBonusCv(bsel.cam), !strcmp(car.p.name, "dune_v"), 0));   // сверка g07b P17 Д6: вид — только в состоянии «гонка идёт»
     if (bsel.cam != camLast) { camLast = bsel.cam; chase.init = 0; csPrevOn = csOfsOn = 0; csNearPrevOk = 0;   /* №1146: переключение вида — срез, без перелёта от прошлого глаза */
       snprintf(s, sizeof s, "BONUS ev=cam mode=%d t=%.1f\n", bsel.cam, smkT); bnsLog(s); }
     // машина игрока
@@ -823,7 +1038,15 @@ static int bnsRace(void **fbp) {   // 1 — гонка до конца (итог
     McEnv e; memset(&e, 0, sizeof e); e.w = &world; e.player = &car; e.driving = 1; e.noNpcCollide = AIAI1147_OLD; e.ppos[0] = car.x; e.ppos[1] = car.y; e.ppos[2] = car.z;
     { const Car *pc_[4] = {&car, 0, 0, 0}; for (int i = 0; i < BM.n && i < 3; i++) pc_[i + 1] = &BM.c[i].car; brSetPeers(&BR, pc_, 1 + (BM.n < 3 ? BM.n : 3)); }   // №1147
     e.hold = BR.state == BR_COUNT; if (bnsRoads) e.tr = &bnsTr;
-    if (bnsAuto && !BR.r[0].finished) {   // служебное: водитель ИИ за машиной игрока по тому же пути (гейт: круги игрока)
+    if (bnsAuto && !BR.r[0].finished && bnsRoads && !BONUSBOT1180_OLD) {   // №1180в: водитель за игрока едет по дорогам трассы к центру ЖДАННОГО чекпойнта (по порядку данных), как человек: вход в чужой объём — «читер», круг не засчитан, пока не пройден нужный
+      const BnsCp *cp_ = &BR.t.cp[BR.order[BR.r[0].next]]; (void)bnsBotWi; float goal_[3]; memcpy(goal_, cp_->c, 12);
+      { static int cps_; static float stallT_, cheatT_; int cps0 = BR.r[0].cps;   // водитель по линии включается, когда цель-чекпойнт не работает: «читер» дольше 3 с или нет нового чекпойнта 15 с; выключается с новым чекпойнтом
+        if (cps0 != cps_) { cps_ = cps0; stallT_ = cheatT_ = 0.f; bnsBotLine = 0; } else { stallT_ += dt; cheatT_ = BR.r[0].cheated ? cheatT_ + dt : 0.f; if ((stallT_ > 6.f || cheatT_ > .4f) && !bnsBotLine && bnsSec.nsec > 0) { bnsBotLine = 1; float dd_; bnsBotS = bscArc(&bnsSec, cp_->c[0], cp_->c[1], cp_->c[2], &dd_) - 25.f; if (bnsBotS < 0.f) bnsBotS = 0.f; } } }   // линия — с участка перед ждущим чекпойнтом
+      if (bnsSec.nsec > 0 && !BONUSBOTSEC1180_OLD && bnsBotLine) {   // есть линия секторов (след лидера, проходит чекпойнты по порядку): цель — точка линии впереди (чистое преследование), а не центр чекпойнта — тот лежит рядом с другими объёмами у старта
+        float d_; bnsBotS = bscArcNear(&bnsSec, car.x, car.y + .5f, car.z, bnsBotS, 25.f, 45.f, &d_); float s_ = bnsBotS + 8.f + .6f * fabsf(car.v); if (s_ > bnsSec.len) s_ = bnsSec.len;   /* окно у прошлой позиции: на трассах, где путь проходит рядом сам с собой, не перескакивает на круг назад */ float dr_[2]; bscPointAt(&bnsSec, s_, goal_, dr_); }
+      bnsBot.car = car; bnsBot.mode = MC_RACE;
+      mcBotInput(&BM, &bnsBot, &e, goal_, dt, &in);
+    } else if (bnsAuto && !BR.r[0].finished) {   // служебное: водитель ИИ за машиной игрока по тому же пути (гейт: круги игрока)
       bnsBot.car = car; bnsBot.wp = brGoal(&BR, 0);
       float r[MC_ROUTE][3], pp[3] = {car.x, car.y, car.z}; int n = brPlan(&BR, bnsBot.wp, pp, r, MC_ROUTE);
       if (n > 0) mcBotInputPath(&BM, &bnsBot, &e, (const float (*)[3])r, n, dt, &in);
@@ -870,13 +1093,17 @@ static int bnsRace(void **fbp) {   // 1 — гонка до конца (итог
     bnsPerfSimUs = sceKernelGetSystemTimeLow()-stepBudgetT0; bnsPerfSimIo = smkIoUs-stepBudgetIo0;
     bnsFrame(BF_RACE, 0, fbp); frames++;
     if (tn - secT >= 1000000u) {   // раз в секунду: кадры и треугольники (сверка производительности на PSP — Роб)
-      snprintf(s, sizeof s, "BONUSFR fps=%.1f tris=%u cam=%d dist=%.0f place=%d lap=%d t=%.1f\n", frames * 1e6f / (float)(tn - secT), bnsTris,
-               bsel.cam, bsel.cam ? 0.f : bnsTopDist, BR.r[0].place, BR.r[0].lap, smkT); bnsLog(s); frames = 0; secT = tn; }
+      snprintf(s, sizeof s, "BONUSFR fps=%.1f tris=%u cam=%d dist=%.0f place=%d lap=%d t=%.1f heap=%u blk=%u track=%d pv=%.1f pxz=%.0f,%.0f cps=%d step=%d cheat=%d rsp=%d wi=%d\n", frames * 1e6f / (float)(tn - secT), bnsTris,
+               bsel.cam, bsel.cam ? 0.f : bnsTopDist, BR.r[0].place, BR.r[0].lap, smkT, heapFreeBytes(), memMaxBlock ? memMaxBlock() : 0u, bsel.track, car.v, car.x, car.z, BR.r[0].cps, BR.r[0].step, BR.r[0].cheated, BR.r[0].respawnN, bnsBotWi); bnsLog(s); 
+      { char a_[200]; int l_ = snprintf(a_, sizeof a_, "BONUSAI track=%d t=%.1f", bsel.track, smkT); for (int i_ = 0; i_ < BM.n && i_ < 3; i_++) l_ += snprintf(a_ + l_, sizeof a_ - (size_t)l_, " %.1f,%.1f", BM.c[i_].car.x, BM.c[i_].car.z);
+        snprintf(a_ + l_, sizeof a_ - (size_t)l_, "\n"); bnsLog(a_); }   // №1185: позиции соперников раз в секунду — проверка листа-карты (они едут по этому пути)
+      frames = 0; secT = tn; }
     if (bnsShots && BR.state == BR_RACE && BR.time > 1.f && !(bnsShotDone >> 4 & 1)) {   // гейт: вид гонки и пауза MiniPause
       bnsShot(3, "bonus_top"); bnsUiLog("pause"); bnsFrame(BF_PAUSE, 0, fbp); bnsShot(4, "bonus_pause");
       if (bnsQuit) { bnsQuit = 0; snprintf(s, sizeof s, "BONUS ev=quit t=%.1f\n", smkT); bnsLog(s); return 0; }
       last = sceKernelGetSystemTimeLow();
     }
+    if (bnsQuitAt > 0.f && BR.state == BR_RACE && BR.time >= bnsQuitAt) { bnsQuitAt = 0.f; snprintf(s, sizeof s, "BONUS ev=quit race_t=%.1f heap=%u blk=%u t=%.1f\n", BR.time, heapFreeBytes(), memMaxBlock ? memMaxBlock() : 0u, smkT); bnsLog(s); return 0; }   // №1168: сцена тура
     if (BR.state == BR_DONE) {
       brAudioResult(&bnsAudio,BR.r[0].place==1&&!BR.r[0].dnf);
       for (int i = 0; i < 4; i++) { if (BR.r[i].dnf) BR.r[i].place = 4; bnsPts[i] += BR.r[i].dnf ? 0 : brPoints(BR.r[i].place); if (BR.r[i].place == 1 && !BR.r[i].dnf) bnsWins[i]++; }
@@ -918,10 +1145,12 @@ static void bnsSummaryUi(void) {
     for (int r = 0; r < 4; r++) uiScrRowText(sc, 2 + r, t[r]);
     bnsSumKing[k][0] = i == bt; bnsSumKing[k][1] = i == bl;
     uiScrShow(sc, BUI_KING_TOTAL, i == bt); uiScrShow(sc, BUI_KING_LAP, i == bl);
+    uiScrShow(sc, UI_T_RADAR, i == 0);   // №1183: красная метка «P1» — только у строки игрока (как на PS2)
     uiScrDraw(sc, 0, bnsUiT, 0);
   }
 }
 static void bnsSummary(void **fbp) {   // итоги серии (MiniSummary.pag: место, победы, очки, общее время, лучший круг)
+  GE_NEST_GUARD("bnsSummary");   // №1186/№1188
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(); float shown = 0.f; int logged = 0;
   for (;;) {
@@ -942,18 +1171,16 @@ static void bnsSummary(void **fbp) {   // итоги серии (MiniSummary.pag
       continue;
     }
     sceGuStart(GU_DIRECT, list); resetState(); sceGuClearColor(0xff102040u); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
-    bnsTextC(20, 0xff40e0ffu, "Race Series Standings");   // MiniSummary.pag RACE_SUMMARY
-    bnsT(40, 50, 0xffa0a0a0u, "CAR"); bnsT(190, 50, 0xffa0a0a0u, "Wins"); bnsT(245, 50, 0xffa0a0a0u, "Points");
-    bnsT(315, 50, 0xffa0a0a0u, "Total Time"); bnsT(405, 50, 0xffa0a0a0u, "Best Lap");
+    bnsTextC(20, 0xff40e0ffu, bnsLbl(BL_STANDINGS));   // MiniSummary.pag RACE_SUMMARY
+    { static const int hk[5] = {BL_CAR, BL_WINS, BL_POINTS, BL_TOTAL, BL_BEST}, hx[5] = {40, 190, 245, 315, 405}; bnsHeads(hk, hx, 5, 50, 0xffa0a0a0u); }
     int ord[4] = {0, 1, 2, 3};
     for (int a = 0; a < 4; a++) for (int b = a + 1; b < 4; b++) if (BR.r[ord[b]].place < BR.r[ord[a]].place) { int t = ord[a]; ord[a] = ord[b]; ord[b] = t; }
-    static const char *const plc[4] = {"1st", "2nd", "3rd", "4th"};
     for (int k = 0; k < 4; k++) { int i = ord[k]; char t[64]; int y = 76 + k * 34; unsigned c = i == 0 ? 0xff40ffffu : 0xffffffffu;
-      bnsTR(12, y, c, BR.r[i].dnf ? "DNF" : plc[k]); bnsTR(40, y, c, bnsCarName[i]);
+      bnsTR(12, y, c, BR.r[i].dnf ? "DNF" : bnsLbl(BL_PL1 + k)); bnsTR(40, y, c, bnsCarName[i]);
       snprintf(t, sizeof t, "%d", bnsWins[i]); bnsTR(200, y, c, t); snprintf(t, sizeof t, "%d", bnsPts[i]); bnsTR(260, y, c, t);
       if (BR.r[i].finished) { snprintf(t, sizeof t, "%.2f", BR.r[i].finishT); bnsTR(320, y, c, t); }
       snprintf(t, sizeof t, "%.2f", BR.r[i].bestLap); bnsTR(410, y, c, t); }
-    bnsTextC(SCR_H - 26, 0xffffffffu, "CONTINUE");   // MiniSummary.scr Continue.pag
+    bnsTextC(SCR_H - 26, 0xffffffffu, bnsLbl(BL_CONTINUE));   // MiniSummary.scr Continue.pag
     sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
     sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
@@ -966,6 +1193,7 @@ static void bnsSummary(void **fbp) {   // итоги серии (MiniSummary.pag
 #define BONUS_AGAIN_OLD 0
 #endif
 static int bnsAgain(void **fbp) {
+  GE_NEST_GUARD_RET("bnsAgain", 0);   // №1186/№1188
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(); float shown = 0.f; int sel = 0;
   for (;;) {
@@ -978,9 +1206,9 @@ static int bnsAgain(void **fbp) {
     if (hit & PSP_CTRL_CROSS) { char s[80]; snprintf(s, sizeof s, "BONUS ev=again yes=%d t=%.1f\n", sel == 0, smkT); bnsLog(s); return sel == 0; }
     if (hit & (PSP_CTRL_CIRCLE | PSP_CTRL_TRIANGLE)) return 0;
     sceGuStart(GU_DIRECT, list); resetState(); sceGuClearColor(0xff102040u); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
-    bnsTextC(SCR_H / 2 - 50, 0xff40e0ffu, "RACE AGAIN?");
-    bnsTextC(SCR_H / 2 - 10, sel == 0 ? 0xff40ffffu : 0xffd0d0d0u, "YES");
-    bnsTextC(SCR_H / 2 + 20, sel == 1 ? 0xff40ffffu : 0xffd0d0d0u, "NO");
+    bnsTextC(SCR_H / 2 - 50, 0xff40e0ffu, bnsLbl(BL_AGAIN));
+    bnsTextC(SCR_H / 2 - 10, sel == 0 ? 0xff40ffffu : 0xffd0d0d0u, bnsLbl(BL_YES));
+    bnsTextC(SCR_H / 2 + 20, sel == 1 ? 0xff40ffffu : 0xffd0d0d0u, bnsLbl(BL_NO));
     sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
     sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
@@ -994,21 +1222,28 @@ static void bonusRun(int mainSel, void **fbp) {
     if (!again && !BONUS_AGAIN_OLD) { memset(bnsWins, 0, sizeof bnsWins); memset(bnsPts, 0, sizeof bnsPts); }   // круг 5 P17-23: новый заезд из меню — серия с нуля
     again = 0;
     feFree();                                    // гостиная — в кучу на время гонки (как NEW GAME), потом читается снова
+    bnsGo = 0;   // №1180: просроченный «flag bonusgo» не стартует следующую гонку без выбора
     int ok = bnsLoad(fbp);
     if (ok) { bnsRaceInit(); if (bnsRace(fbp)) { bnsSummary(fbp); if (!BONUS_AGAIN_OLD) again = bnsAgain(fbp); } }
+    if (ok && !BONUSLOAD1168_OLD) { mem1060Fade(fbp); bnsFadeIn = 0; }   // №1168: гонка (итоги, пауза) гаснет перед выходом, не обрывается
     uiHudShow(UI_T_COUNTDOWN, 0); uiCountdownText(0);   // №1149: метка отсчёта не остаётся в HUD игры
     brAudioStop(&bnsAudio);bonusCarsPtr = 0; bonusPlayerModel = 0; mcPlanHook = 0; mcSprint = 0; bnsRoads = 0;
     free(bnsMem); bnsMem = 0; memset(&BT, 0, sizeof BT);
     levelUnload(); bonusTrack = 0; pano917Force = 1; bnsEnvT = -1;   // №1109: выход из трассы — панорамы уровня игры читаются заново   // loadedLevel = 0: NEW/LOAD прочтут уровень игры заново (menuRun: sw)
-    if(!BONUS_SOUND_OLD){
+    if(!BONUS_SOUND_OLD && BONUSMENUMUS1212_OLD){   // №1212: звук главного меню возвращается при выходе из мини-игры (конец bonusRun), не после каждой гонки
       sndShutdown();sndLevel=-1;char ad[256];levelFile(ad,"audio/");
       if(sndInit(ad)==0){sndLevel=gameLevel;cfgApply();uiSfxInit(smkWrite);bbThForgetAudio();}
     }
     snprintf(s, sizeof s, "BONUS ev=exit ok=%d heap=%u t=%.1f\n", ok, heapFreeBytes(), smkT); bnsLog(s);
     bnsUiClose(); free(bnsFly.f); memset(&bnsFly, 0, sizeof bnsFly);
     feLoadShown(UI_LOAD_FE, "load", fbp);
-    sndMode(SND_MODE_NORMAL); sndMusic(SND_MUS_FRONTEND);
+    sndMode(SND_MODE_NORMAL); if (BONUSMENUMUS1212_OLD) sndMusic(SND_MUS_FRONTEND);   // №1212: мелодию меню мини-игры ставит bnsMenuNative (ниже по циклу), главное меню — после выхода из мини-игры
+    bnsGo = 0;   // №1180: флаг-страховка тура, пришедший после старта гонки, не пропускает выбор следующей трассы
   }
   bnsUiClose();   // главное меню — без пакета экранов мини-игры (куча как до BONUS GAME)
+  if (!BONUSMENUMUS1212_OLD && !BONUS_SOUND_OLD && sndLevel == -2) { sndShutdown(); sndLevel = -1; char ad_[256]; levelFile(ad_, "audio/");   // №1212: назад в главное меню — его звук и музыка
+    if (sndInit(ad_) == 0) { sndLevel = gameLevel; cfgApply(); uiSfxInit(smkWrite); bbThForgetAudio(); }
+    { char fn_[256]; sibling(fn_, FE_AUDIO_FILE); feAudioLoad(fn_); } }   // реплики сценок гостиной — к звуку главного меню заново (иначе молчат)
+  if (!BONUSMENUMUS1212_OLD) { sndMode(SND_MODE_NORMAL); sndMusic(SND_MUS_FRONTEND); }
   for (int r = 0; r < 12; r++) uiScrSetRow(r, rowKeep[r]);
 }

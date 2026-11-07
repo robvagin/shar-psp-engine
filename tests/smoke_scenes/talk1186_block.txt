@@ -1,0 +1,94 @@
+### TEST89 №1186/№1188 (g10b-loop): разговор-старт (последний этап вступления) -> ✕ Start Mission -> уход карточки -> ирис talk_out, на каждом уровне. Прежний код вешал видеочип (STALL phase=ui, SceGeQueue) именно здесь.
+### Проверка: строки TALKSKIP start=1 и IRIS why=talk_out phase=close f=0.00 в smoke.txt по одной на сцену, GE NESTED = 0 по всему туру, снимки _a и _b после ✕ разные (экран идёт). Красный контроль: EBOOT TEST88 встаёт после TALKSKIP (нет END).
+### Код этапа: M*100+S со знаком минус = вступление (фаза 0); L1,L2,L4,L5,L7 — m0 этап 1; L3 — m0 этап 2; L6 — m1 этап 1 (по прогону tests/smoke_scenes/talk1186_l<N>.txt)
+scene F_TALK1186_GO1
+flag golevel 1
+wait 40
+scene F_TALK1186_L1
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_a
+wait 8
+shot talk1186_l1_b
+scene F_TALK1186_GO2
+flag golevel 2
+wait 40
+scene F_TALK1186_L2
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l2_a
+wait 8
+shot talk1186_l2_b
+scene F_TALK1186_GO3
+flag golevel 3
+wait 40
+scene F_TALK1186_L3
+flag msnmainat -2
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l3_a
+wait 8
+shot talk1186_l3_b
+scene F_TALK1186_GO4
+flag golevel 4
+wait 40
+scene F_TALK1186_L4
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l4_a
+wait 8
+shot talk1186_l4_b
+scene F_TALK1186_GO5
+flag golevel 5
+wait 40
+scene F_TALK1186_L5
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l5_a
+wait 8
+shot talk1186_l5_b
+scene F_TALK1186_GO6
+flag golevel 6
+wait 40
+scene F_TALK1186_L6
+flag msnmainat -101
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l6_a
+wait 8
+shot talk1186_l6_b
+scene F_TALK1186_GO7
+flag golevel 7
+wait 40
+scene F_TALK1186_L7
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l7_a
+wait 8
+shot talk1186_l7_b

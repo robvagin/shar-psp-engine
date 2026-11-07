@@ -3,7 +3,8 @@
 #   1 новая игра -> отметка прогресса -> пауза -> SAVE GAME -> слот 1 -> QUIT GAME (вопрос о записи) — эмулятор закрывается
 #   2 новый запуск -> LOAD GAME -> слот 1 -> прогресс тот же (tests/savegame/emu_check.py)
 #   3 новый запуск -> RESUME GAME (самое свежее сохранение, прочитанное при запуске) -> тот же прогресс
-#   4 DATA.BIN слота 1 испорчен -> игра не падает, сообщает, удаляет запись, NEW GAME с нуля
+#   5 (№1170) «обрыв питания» посреди записи слота файлом: слот остаётся целым (EMU_CUT=0 — пропустить: EBOOT без хука svcut)
+#   4 DATA.BIN слота 1 испорчен -> игра не падает, слот серый («нет данных»), запись остаётся (P14-5), NEW GAME с нуля
 #   tests/savegame/emu.sh [DIR]              DIR — EBOOT + данные (по умолчанию build/ship_stage); первая строка итог, код 0 = OK
 #   tests/savegame/emu.sh --negative [DIR]   красный: «сборка без записи» (flag svnowrite в прогоне 1) — сверка обязана упасть
 # Сохранения эмулятора: ~/.config/ppsspp/PSP/SAVEDATA (SV_SAVEDATA=... — другой путь); трогаются только папки SLES51897NN
@@ -44,9 +45,16 @@ EOF
 fi
 D4=$(run tests/savegame/emu_corrupt.txt)
 GONE=1; [ -f "$SD/SLES5189700/DATA.BIN" ] && GONE=0
-R=$(python3 tests/savegame/emu_check.py "$D1" "$D2" "$D3" "$D4"); RC=$?
+# прогон 5 (№1170): «обрыв питания» посреди записи слота файлом (flag svcut 1 в EBOOT с правкой №1170); слот обязан остаться целым. EMU_CUT=0 — без этого прогона (EBOOT без хука svcut,
+# например база TEST89: прежний порядок записи, прогон 5 для неё не имеет смысла). Утилита сохранений в этом прогоне отвергает всё (flag saveutiloff 1), слот живёт файлом;
+# готовая запись кладётся рядом с EBOOT (SMOKE_SAVEFILES), эмуляторная карта не нужна
+D5=""
+if [ "${EMU_CUT:-1}" != 0 ]; then
+  clean; D5=$(SMOKE_MAXT=900 SMOKE_SAVEFILES="$ROOT/tests/savegame/fixtures/seed_save00_shv3.bin=save00.bin" run tests/savegame/emu_cut.txt)
+fi
+R=$(python3 tests/savegame/emu_check.py "$D1" "$D2" "$D3" "$D4" $D5); RC=$?
 [ -n "$F" ] || { R="FAIL: после прогона 1 нет папки SLES5189700 в $SD; $R"; RC=1; }
-[ $GONE = 1 ] || { R="$R; испорченная запись осталась на карте"; RC=1; }
-echo "$R"; echo "карта после прогона 1: SLES5189700/ $L1; после прогона 4 запись удалена: $GONE"
-echo "прогоны: ${D1#$ROOT/} ${D2#$ROOT/} ${D3#$ROOT/} ${D4#$ROOT/}"
+[ $GONE = 0 ] || { R="$R; испорченная запись пропала с карты (в PS2 загрузка её не удаляет)"; RC=1; }
+echo "$R"; echo "карта после прогона 1: SLES5189700/ $L1; после прогона 4 запись удалена (ждём 0): $GONE"
+echo "прогоны: ${D1#$ROOT/} ${D2#$ROOT/} ${D3#$ROOT/} ${D4#$ROOT/} ${D5#$ROOT/}"
 clean; exit $RC

@@ -211,6 +211,10 @@ static float avoidCost(int r) { float c = r < 256 && roadBad[r] ? BLOCKED : 0.f;
 #define MC_LEDGE_OLD 0
 #endif
 int mcLedgeOld = MC_LEDGE_OLD;
+#ifndef RACE_JAM_OLD
+#define RACE_JAM_OLD 0   // правка 1205: 1 — заклинивший соперник гонки не возвращается на путь (сверка 02.11, прежнее до правки)
+#endif
+int mcRaceJamOld = RACE_JAM_OLD;
 // правка Роба 486 (вопрос В92, замер tools/cartest/ledge.c по рисунку и коллизии, 10.10): «уступы по ходу дороги» на L1–L7 — не дыры под
 // эстакадой, а настоящие нарисованные уступы: на 8 местах по ходу 6 «wall» (внизу рисунка нет, верх уступа нарисован: L1/L4 дорога 548
 // 2,28 м у (−174; 233); L2/L5 дорога 80 0,99 м; L7 дорога 682 4,48 м у (333; −31)), 2 «ghost» (L3/L6: опора выше без рисунка, 2,2–2,7 м),
@@ -998,6 +1002,11 @@ static void replan(McCar *c, const MsnCars *m, const McEnv *e, const float g[3])
   c->routeCut = dx * dx + dz * dz > 1.f;
   (void)m;
 }
+// №1185: тот же план маршрута, что у водителя (replan: срезы, штраф встречной полосы, проба мира), для машины-копии c в её текущем месте и с курсом c->car.h; c — копия настоящего McCar соперника
+// (режим, ходовые .con), на настоящую машину вызов не влияет. out/cap — точки плана; возвращает их число
+int mcPlanFor(const MsnCars *m, const McEnv *e, McCar *c, const float g[3], float (*out)[3], int cap) {
+  replan(c, m, e, g); int n = c->nroute < cap ? c->nroute : cap; for (int i = 0; i < n; i++) memcpy(out[i], c->route[i], 12); return n;
+}
 // дорога, на которую машина не может въехать (упирается второй раз): та, где следующая точка маршрута, — в объезд
 static void avoidNext(McCar *c, const Traffic *t) {
   const float *q = c->route[c->seg + 1 < c->nroute ? c->seg + 1 : c->nroute - 1]; int r, l; float s_;
@@ -1469,6 +1478,23 @@ static void drive(MsnCars *m, McCar *c, const McEnv *e, float dt) {
     if (1.f - 2.f * (k->q[1] * k->q[1] + k->q[3] * k->q[3]) <= .2588f) {   // вертикаль кузова из кватерниона (pitch и roll вверх колёсами нули)
       if ((c->flipHoldT += dt) >= 1.f) { carPlace(k, e->w, k->x, k->y + .5f, k->z, k->h); c->flipHoldT = 0.f; c->resets++; c->nroute = 0; }
     } else c->flipHoldT = 0.f;
+  }
+  // Правка Роба 1205 (05.11, «в уличных гонках проверить соперничество»): соперник гонки, заклинивший у забора трассы, остаётся там навсегда. L7 sr2: cHears на 22–33 м/с срезает поворот у (66; 650), встаёт в забор (73; 643),
+  // потом качается у угла забора (102; 617) ±3 м со скоростью ±5…12 м/с 190 с подряд — свои 7 застреваний svStuck не набирает (машина то едет, то нет: счёт на скорости выше 14 м/с обнуляется),
+  // поставить на дорогу «на месте» (тот же угол) не помогает, а две другие машины гонки к 217 с прошли 15 из 21 точек. Правило g03 «10 с без приближения на 8 м — на свой путь» убрано сверкой 02.11
+  // вместе с остальным прежним водителем (см. выше); как оригинал ведёт себя на этом углу — не измерено. ПРАВИЛО ПОРТА, как до сверки, только для соперников гонки (MC_RACE и машины с догонялкой
+  // гонки), вне вида игрока: не сдвинулась на 8 м от точки отсчёта и точка пути та же NOPROG_T (10) с, игрок дальше RESET_FAR (60) м — на свой путь на 25+ м вперёд (не на 2 точки: у забора
+  // ближайшие точки маршрута лежат по ту же сторону). RACE_JAM_OLD=1 / «flag racejamold 1» — как было (сверка 02.11)
+  if (!mcRaceJamOld && (c->mode == MC_RACE || c->hasRc) && c->mode != MC_CHASE) {
+    if (c->progWp != c->wp || d2xz(c->progRef, k->x, k->z) > 64.f) { c->progWp = c->wp; c->progRef[0] = k->x; c->progRef[1] = k->y; c->progRef[2] = k->z; c->progT = 0.f; }
+    else c->progT += dt;
+    if (c->progT > NOPROG_T && d2xz(e->ppos, k->x, k->z) > RESET_FAR * RESET_FAR && c->nroute > 1) {
+      int j = c->seg + 1; float acc = 0.f;   // первая точка маршрута не ближе 25 м вперёд вдоль него от проекции машины
+      while (j < c->nroute - 1 && acc < 25.f) { acc += sqrtf(d2xz(c->route[j], c->route[j + 1][0], c->route[j + 1][2])); j++; }
+      const float *a = c->route[j], *b = c->route[j + 1 < c->nroute ? j + 1 : j];
+      float h = (j + 1 < c->nroute) ? atan2f(b[0] - a[0], b[2] - a[2]) : atan2f(goal[0] - a[0], goal[2] - a[2]);
+      carPlace(k, e->w, a[0], a[1] + .5f, a[2], h); c->stuckN = 0; c->resets++; c->nroute = 0; c->progT = 0.f; c->stkOn = 0; c->stkT = 0.f; c->backT = 0.f; c->stopHold = 0; c->turning = 0;
+    }
   }
 #endif
   k->p.topSpeed = top; k->p.gasScale = c->baseGas;   // параметры .con — как в данных (множитель — только на кадр)

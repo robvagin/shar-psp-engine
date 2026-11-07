@@ -38,6 +38,12 @@ _Static_assert(sizeof(SpInst) == 32, "SpInst");
 #define SP_SMASH_LOSS 0.3f   // потеря скорости машины при разрушении: 0.3 * m / (M + m)
 #define SP_FX_RATE 20.f      // частиц в секунду, пока открыто окно EFX
 #define SP_FX_BURST 8        // и столько сразу при входе в окно
+// №1175 (Роб 03.11, L5 C1-6: «деревянные ограждения на автостраде при ударе, помимо звука, должны ещё разваливаться, как деревья»): у барьеров 0x3F0000F (donotenter, gatesmasha, railcross, туннельный забор —
+// все AnimDynaPhys с вызовом BREAK) удар переводит предмет в состояние 1: вызов BREAK запускает обломок строки ATC (BreakableObject: у donotenter он без кусков, только система частиц
+// l2_donotenter_fx_13Shape, у переезда — 4 куска и частицы). Частицы обломка (kind 1) при nativeBreakFx не слались никому: их должен был запустить вызывающий (fxBurstBreakable), но так делает только путь
+// предметов (onPropKickFx), у стейтпропов вызывающего нет — оставался звук и 6 щепок запасного пресета. Теперь обломок, запущенный вызовом BREAK, играет свои частицы сам (ownFx).
+// BARRIERFX1175_OLD=1 — как в TEST87: звук и 6 щепок пресета
+static int breakOwnFx_;
 #define SP_ZCONE 0.61f       // _Z-монеты: конус ±35° вокруг +Z пропа
 // Правка Роба 297 (04.10, трамплин у L1 K2-6 к горе покрышек: «квадратные стоги сена — у оригинала разбиваются, у нас
 // неразбиваемые»). Скорость удара о проп — сближение по оси, через которую кузов вошёл в объём последним (откат по скорости
@@ -113,17 +119,28 @@ static void mulRR(const float A[9], const float B[9], float o[9]) {
 #ifndef BUSHFALL1137_OLD
 #define BUSHFALL1137_OLD 0
 #endif
+#ifndef BUSHAIR1201_OLD
+#define BUSHAIR1201_OLD 0
+#endif
 #define BUSH_BODY_K .8f
+// №1201б (дирижёр 05.11: «если тип 78 не растение — правило №1137 к нему не применять»): тип 78 L1 (52 на L2, 58 на L3…) — подбираемый гаечный ключ (tools/prp2_export.py add_wrenches: класс 2, масса 0, ATC 0, 14–20 экземпляров на уровень на крышах и башнях),
+// остальные безмассовые типы класса 2 без объёма — карточки и подборы. Тело куста получает только то, что в данных кустом и является: звук удара hit_shrub (ATC 10, масса 5: l*_shrubround). BUSHCLS1201_OLD=1 — правило №1137 по размеру, как в TEST85…90
+#ifndef BUSHCLS1201_OLD
+#define BUSHCLS1201_OLD 0
+#endif
+static int isBushType(const SpType *T) {
+  return T->cls == 2 && !T->kind && !T->nCol && T->nPiece && 2.f * T->h[1] >= .4f && 2.f * T->h[1] <= 3.f && fmaxf(T->h[0], T->h[2]) <= 2.5f && (BUSHCLS1201_OLD || (T->atc == 10 && T->mass > 0.f));
+}
 static void bushBodies(StateProps *sp, unsigned ncol) {
   if (BUSHFALL1137_OLD || !sp->ntype) return;
   unsigned nc = 0;
-  for (unsigned t = 0; t < sp->ntype; t++) { const SpType *T = &sp->type[t]; if (T->cls == 2 && !T->kind && !T->nCol && T->nPiece && 2.f * T->h[1] >= .4f && 2.f * T->h[1] <= 3.f && fmaxf(T->h[0], T->h[2]) <= 2.5f) nc++; }
+  for (unsigned t = 0; t < sp->ntype; t++) { const SpType *T = &sp->type[t]; if (isBushType(T)) nc++; }
   if (!nc) return;
   SpCol *arr = (SpCol *)calloc(ncol + nc, sizeof(SpCol)); SpType *ty = (SpType *)malloc(sp->ntype * sizeof(SpType)); if (!arr || !ty) { free(arr); free(ty); return; }
   if (ncol) memcpy(arr, sp->col, ncol * sizeof(SpCol));
   memcpy(ty, sp->type, sp->ntype * sizeof(SpType)); sp->typeOwn = ty; sp->type = ty;
   unsigned k = 0;
-  for (unsigned t = 0; t < sp->ntype; t++) { SpType *T = &ty[t]; if (!(T->cls == 2 && !T->kind && !T->nCol && T->nPiece && 2.f * T->h[1] >= .4f && 2.f * T->h[1] <= 3.f && fmaxf(T->h[0], T->h[2]) <= 2.5f)) continue;
+  for (unsigned t = 0; t < sp->ntype; t++) { SpType *T = &ty[t]; if (!isBushType(T)) continue;
     SpCol *C = &arr[ncol + k]; C->kind = 0; C->second = 0; memcpy(C->c, T->c, sizeof C->c);
     C->a[0] = 1.f; C->a[4] = 1.f; C->a[8] = 1.f; C->h[0] = T->h[0] * BUSH_BODY_K; C->h[1] = T->h[1]; C->h[2] = T->h[2] * BUSH_BODY_K;
     T->firstCol = (uint16_t)(ncol + k); T->nCol = 1; k++; }
@@ -443,6 +460,7 @@ int spBreakDir(StateProps *sp, unsigned spType, const float pos[3], const float 
   SpRun *r = &sp->run[best];
   r->x = pos[0]; r->y = pos[1]; r->z = pos[2]; quatR(q, r->R); r->alive = 1;
   enter(sp, best, 1);
+  r->ownFx = (uint8_t)breakOwnFx_;
   breakDirSetup(sp, (unsigned)best, v);
   return sp->type[spType].nPiece > 0;
 }
@@ -513,14 +531,16 @@ static void doCall(StateProps *sp, unsigned i, const SpCall *C, const ColWorld *
       int broken = 0;
       for (unsigned t = 0; t < sp->ntype; t++)
         if (sp->type[t].kind == 1 && sp->type[t].bindex == C->arg) {
-          broken = spBreakDir(sp, t, p, sp->inst[i].q, r->hv);   // №923: осколки по ходу машины (hv — ноль, если машина предмет не била)
+          breakOwnFx_ = !BARRIERFX1175_OLD;   // №1175: частицы обломка играет он сам
+          broken = spBreakDir(sp, t, p, sp->inst[i].q, r->hv);
+          breakOwnFx_ = 0;   // №923: осколки по ходу машины (hv — ноль, если машина предмет не била)
           sp->breaks++;
           break;
         }
 #ifndef FENCE_BREAK_OLD
       // №588 (метка #19): у деревянных заборчиков (arg=16 eBigBarrierBreaking) при разрушении
       // спавним частицы разлетающихся деревянных щепок (анимация разваливания)
-      if (!broken && C->arg == 16) {
+      if (!broken && C->arg == 16 && BARRIERFX1175_OLD) {   // №1175: теперь частицы даёт сам обломок (родная система или пресет его состояния); 6 щепок — только как в TEST87
         for (int k = 0; k < 6; k++) {
           float pt[3] = {p[0] + (sfr() - .5f) * 1.5f, p[1] + (sfr() - .2f) * 0.8f, p[2] + (sfr() - .5f) * 1.5f};
           fxPush(sp, SPFX_WOOD, pt, r->R[6], r->R[8], k == 0);
@@ -674,7 +694,7 @@ static void stepInst(StateProps *sp, unsigned i, float dt, const ColWorld *world
   }
   // частицы: окно кадров контроллера EFX = время работы эмиттера
   int first = r->burst; r->burst = 0;
-  if (T->kind == 1 && sp->nativeBreakFx) return;   // обломок: родные частицы уже запустил вызывающий (fxBurstBreakable)
+  if (T->kind == 1 && sp->nativeBreakFx && !r->ownFx) return;   // обломок: родные частицы уже запустил вызывающий (fxBurstBreakable)
   for (unsigned k = 0; k < S->nFx; k++) {
     const SpFx *F = &S->fx[k];
     if (!stSlot(sp, T, S, F->slot)) continue;
@@ -945,6 +965,10 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
 #endif
   // сверка g11, P11-08 (С): куст-шар (тип 2) — жёсткое неподвижное тело, машина сталкивается с ним как со стеной, контакт не отменяется (удар с импульсом больше 100 даёт HIT/VEHICLE_HIT — куст трясётся и
   // возвращается через 1,3 с). SPBUSH_SV_OLD=1 (по умолчанию, ждём слова Роба) — насквозь с тряской
+  // №1201 (Роб на TEST89: «некоторые трамплины воспринимаются по-другому»; бисекция tests/jumps/twin.sh по версиям): с TEST85 кусты-стейтпропы получили тело (№1137), и машина в ПОЛЁТЕ, задев такое тело (L1 F12-6: предмет типа 78 на башне, y 11,9; jumpzone4, 100 км/ч),
+  // теряла 60 % скорости (BUSH_BRAKE) и падала на 14,8 м вместо 39,9 м (запись PS2 32,7 м, итог 101,5 м; TEST84 110,5 м). Куст-тело работает только пока хоть одно колесо стоит на земле или кузов лежит на опоре: в воздухе машина проходит сквозь.
+  // BUSHAIR1201_OLD=1 — как в TEST85…TEST90 (куст тормозит и в полёте)
+  if (!BUSHAIR1201_OLD && T->cls == 2 && SPBUSH_SV_OLD && car->wheels == 0 && !car->grounded) return;
   const int bushMid = T->cls == 2 && SPBUSH_SV_OLD && !BUSHMID1101_OLD;   // №1101: середина между «насквозь» и «стена»
   int bushSolid = (!SPBUSH_SV_OLD || bushMid) && T->cls == 2;
   if (bushMid && r->alive && r->colOn) {

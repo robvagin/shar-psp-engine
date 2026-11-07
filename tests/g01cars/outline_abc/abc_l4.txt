@@ -1,0 +1,46 @@
+flag camdet 1
+scene start
+wait 3
+scene L4_load
+flag golevel 4
+wait 30
+flag repair
+flag hulldiag 1
+flag caroutline 0
+scene L4_v0
+flag caroutline 0
+wait 3.4
+shot L4n_v0
+camrel -2.6 1.0 -2.2 0.75 -0.2 0.6 70
+wait 0.8
+shot L4f_v0
+camrel 2.6 1.0 -2.2 -0.75 -0.2 0.6 70
+wait 0.8
+shot L4s_v0
+cam off
+wait 0.3
+scene L4_v1
+flag caroutline 1
+wait 3.4
+shot L4n_v1
+camrel -2.6 1.0 -2.2 0.75 -0.2 0.6 70
+wait 0.8
+shot L4f_v1
+camrel 2.6 1.0 -2.2 -0.75 -0.2 0.6 70
+wait 0.8
+shot L4s_v1
+cam off
+wait 0.3
+scene L4_v2
+flag caroutline 2
+wait 3.4
+shot L4n_v2
+camrel -2.6 1.0 -2.2 0.75 -0.2 0.6 70
+wait 0.8
+shot L4f_v2
+camrel 2.6 1.0 -2.2 -0.75 -0.2 0.6 70
+wait 0.8
+shot L4s_v2
+cam off
+wait 0.3
+end

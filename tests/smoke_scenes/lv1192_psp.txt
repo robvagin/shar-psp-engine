@@ -1,0 +1,46 @@
+# №1192 для PSP (самостоятельный, ≈ 6 мин): NEW GAME из меню -> flag realend 1 (конец уровня как у игрока: Level Complete, газета) -> flag lvwin.
+# Порядок (без служебного golevel, правило проекта): L1->L2 (lvwin, 45 с на L2); на L2 настоящий конец уровня с межуровневым роликом: flag msnsel 7 (последняя сюжетная m8, цель fmv: movies/fmv3.smv, как tests/levels/fmv_levelend.txt) -> START пропуск -> конец уровня -> L3;
+# затем L3->L4, L4->L5, L5->L6, L6->L7 (lvwin, по 45 с на новом уровне (на коротких 35 с lvwin последнего перехода L6->L7 в эмуляторе не срабатывал: вступление уровня ещё идёт)). Журнал: REALEND, LVWIN, MSN level-complete, MSNFMV, LEVELDONE, LEVELUP, LEVEL ev=free/load, BBSTALL, GE NESTED.
+# flag startcam 1: облёт стартовой камеры уровня (mission1camShape, «вид сверху на площадь» у игрока) идёт и в служебном запуске — по разбору arch-fable (ПЕРЕХОД_УРОВНЯ_1192) это совпадает по времени с зависанием.
+# №1199: логотипы Fox/Gracie после L1 по умолчанию НЕ играют. Прогоны на PSP: А — по умолчанию (как TEST90); Б — с пустым файлом lvlogoson рядом с EBOOT (логотипы как у игрока TEST88, №1192); В — Б + пустой meaudiooff; при желании nome. Зависнет без STALL — последнее в blackbox.txt/shar_report.txt.
+flag menu
+flag lvset 1
+scene LV1192P_BOOT
+wait 1.5
+press cross
+wait 10
+flag realend 1
+flag startcam 1
+scene LV1192P_L1_TO_L2
+flag lvwin
+wait 45
+shot lv1192p_l2
+scene LV1192P_L2_FMV3
+flag msnsel 7
+wait 4
+shot lv1192p_fmv3
+press start
+wait 6
+flag lvshot 1.5
+wait 8
+flag lvlog
+wait 15
+shot lv1192p_l3
+scene LV1192P_L3_TO_L4
+flag lvwin
+wait 45
+shot lv1192p_l4
+scene LV1192P_L4_TO_L5
+flag lvwin
+wait 45
+shot lv1192p_l5
+scene LV1192P_L5_TO_L6
+flag lvwin
+wait 45
+shot lv1192p_l6
+scene LV1192P_L6_TO_L7
+flag lvwin
+wait 45
+shot lv1192p_l7
+flag realend 0
+end

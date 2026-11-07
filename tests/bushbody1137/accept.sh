@@ -6,10 +6,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"; OUT=build/bushbody1137;
 T=$HOME/Downloads/shar-psp-integ/build/test71tour/PSP/GAME/SHARTEST15
 LV=(build/level.shr $T/l2/level.shr $T/l3/level.shr $T/l4/level.shr $T/l5/level.shr $T/l6/level.shr $T/l7/level.shr)
 b() { cc -std=c11 -O2 -w -DSKIN_HOST -I $V "$@" tests/bushbody1137/host.c $V/props.c $V/stateprops.c $V/col.c $V/car.c $V/coins.c -lm -o "$OUT/$NAME" && "$OUT/$NAME" "${LV[@]}" > "$OUT/$NAME.txt"; }
-NAME=green; b; NAME=old; b -DBUSHFALL1137_OLD=1
+NAME=green; b; NAME=old; b -DBUSHCLS1201_OLD=1
 g() { grep "^$2 " "$OUT/$1.txt" | cut -d' ' -f2; }
 echo "зелёный: кустов $(g green bushes), без тела $(g green bare); куст J9-5 (индекс $(g green bush_found)): 3 м/с проехала $(g green slow_crossed), 12 м/с проехала $(g green fast_crossed); старое: без тела $(g old bare), 3 м/с проехала $(g old slow_crossed)"
-ok() { [ "$(g $1 bush_found)" -ge 0 ] && [ "$(g $1 bare)" = 0 ] && [ "$(g $1 slow_crossed)" = 0 ] && [ "$(g $1 fast_crossed)" = 1 ]; }
+# №1201б: предмет у L7 J9-5 (156,7; 159,9) — гаечный ключ (подбор, класс 2, ATC 0): машина проезжает его насквозь на любой скорости; тело куста у него было ошибкой (BUSHCLS1201_OLD=1 — красный)
+ok() { [ "$(g $1 bush_found)" -ge 0 ] && [ "$(g $1 bare)" = 0 ] && [ "$(g $1 slow_crossed)" = 1 ] && [ "$(g $1 fast_crossed)" = 1 ]; }
 fail=0; ok green || { echo "FAIL зелёный"; fail=1; }
-ok old && { echo "КРАСНЫЙ BUSHFALL1137_OLD НЕ ПОЙМАН"; fail=1; } || echo "красный BUSHFALL1137_OLD=1: упал, как должен"
+ok old && { echo "КРАСНЫЙ BUSHCLS1201_OLD НЕ ПОЙМАН"; fail=1; } || echo "красный BUSHCLS1201_OLD=1 (ключи с телом, как в TEST85…90): упал, как должен"
 [ $fail -eq 0 ] && { echo PASS; exit 0; }; echo FAIL; exit 1

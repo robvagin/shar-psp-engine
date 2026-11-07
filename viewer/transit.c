@@ -11,6 +11,7 @@
 #include "transit.h"
 #include "ui.h"        // сверка g09a-hud круг 5 (M2:36): надпись LOADING на долгом чёрном экране
 #include "blackbox.h"   // правка 103: bbBeatTick — кадр ириса показан (сторож самописца, main.c)
+#include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после include pspgu)
 
 #define TR_W 480
 #define TR_H 272
@@ -141,8 +142,10 @@ static void drawMesh(float w) {
   for (int i = 0; i < 7; i++) sceGuSetStatus(st[i], sv[i]);
 }
 
+volatile int geListOpen; unsigned geNestedN;
 int transitClose(void **fbp, const char *why) {
   if (!transitReady()) return 0;
+  GE_NEST_GUARD_RET(why ? why : "transitClose", 0);   // №1186: внутри открытого списка кадра — отказ (взаимное ожидание очереди видеочипа)
   T.why = why; T.active = 0; T.mode = 0; int shown = 0;
   T.cur = (why && !strncmp(why, "car_", 4) && T.slow == IRIS_SLOW) ? IRIS_CAR_SLOW : T.slow;   // правка 333
   unsigned vram = (unsigned)sceGeEdramGetAddr(), t0 = sceKernelGetSystemTimeLow();
@@ -188,6 +191,7 @@ static void drawBlack(float a) {   // чёрный прямоугольник н
 }
 int transitFade(void **fbp, const char *why, float sec) {
   if (!transitFadeReady() || sec <= 0.f) return 0;
+  GE_NEST_GUARD_RET(why ? why : "transitFade", 0);   // №1186
   T.why = why; T.active = 0; T.mode = 0; int shown = 0; float sf = fadeSlow();
   unsigned vram = (unsigned)sceGeEdramGetAddr(), front0 = *fbp ? 0u : T.fbBytes;
   // застывший кадр — копией в основную память: каждый кадр затемнения рисуется от него (не от уже затемнённого: двойная буферизация)

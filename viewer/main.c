@@ -22,7 +22,9 @@
 #include "main_frontend.h"
 #include "main_save.h"
 #include "main_scrap.h"   // №1105: SCRAP BOOK целиком
+#include "dalimp.h"   // ориентиры дали (Д1 разбора arch-fable): башни и щиты вдали не режутся таблицей дали
 #include "dal877.h"   // №877: таблица дали бота-репортёра
+#include "sign1178.h"   // №1178: вывески и щиты вдали резче (боковая таблица sign1178.bin)
 #include "drip770.h"   // №770: капли из труб — векторным столбом света
 #include "main_levels.h"
 #include "halftone.h"     // полутон теней и света (слово Роба 17.10)

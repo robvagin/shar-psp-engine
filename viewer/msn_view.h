@@ -108,6 +108,8 @@ void mvSetState(int transition, int arrested, const char *entering);   // све
 int mvShopAllowed(void);                    // сверка g10b-loop круг 2 (P05:11): 1 — лавка и гардероб разрешены (вступление миссии и вне миссий)
 int mvSummon(void);                           // правка 62: будка — своя машина (0 — на машине миссии нельзя)
 void mvSetInterior(const char *name);        // КРЮЧОК КОМНАТ: имя интерьера как в скриптах ("KwikEMart"), NULL — город
+void mvSetRoomGo(int (*roomGo)(const float p[3], float out[3], int interior));   // служебное (06.11): бот к двери комнаты цели / к выходу своей
+int  mvSvcDoorWant(void);   // служебное (06.11): бот поставлен к двери или выходу — помощник жмёт △ (вход / выход)
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)); // №376: комната по настоящему полу SHI1, а не высоте города
 int  mvTeleported(float pos[3]);             // 1 — сценарий переставил игрока (старт/повтор/выбор миссии): камера, экран загрузки
 int  mvAmbMissingAt(float x, float y, float z);   // №1076: то же у точки (вход в комнату — у её старта)
@@ -189,6 +191,9 @@ void mvTalkCamPlant(int how);            // служебное, отрицате
 // far > 0 — отрицательный контроль: встать на far м дальше от цели (цель обязана НЕ засчитаться)
 void mvServiceGo(float far);
 int  mvServiceBot(void);   // flag msnbot: 1 — этап ждёт △ пешком, 2 — этап машинный, а Гомер пешком (0 — ничего)
+int  mvStageKey(void);   // служебное: ключ текущего этапа (миссия, фаза, этап), -1 — миссия не идёт
+int  mvServicePass(const char *why);   // служебное (06.11): засчитать текущий этап, как выполненная цель (flag msnpass, помощник msnbotpass)
+int  mvServicePlace(int fresh);   // служебное (06.11): помощник msnbotpass ставит игрока к цели этапа перед зачётом (0) и к машине слежки после зачёта (1)
 void mvServiceSwitchOld(const char *what, int on);   // №943: msnswitchold / mscursorold — прежняя смена миссии / курсор MISSION SELECT (красный контроль)
 void mvServiceHud(void);                     // №943: строка MSNHUD (цель рантайма, цель HUD, маркер, пузырь); служебное flag msnhud
 void mvStartFirstIfIdle(void);               // №943: миссий нет (стартовая цель уровня отложена, выбранная строка не стартовала) — стартовать отложенную

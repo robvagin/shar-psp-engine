@@ -37,16 +37,18 @@ static inline int groundCoverFog(const GroundCover *g){return !GROUND_COVER_OLD&
 // Infinite under-world plane projected as its horizon half-plane. A finite quad
 // would miss distant cracks: its ray intersection can be beyond the far clip.
 // Depth 3 is behind city geometry and ahead of sky's authored depth range 2..0.
-static inline int groundCoverBackground(const GroundCover *g,float fy,float ry,float uy,float focal,GroundCoverVertex*v) {
+// shiftPx — №1160 (Car Aim): картинка сдвинута по вертикали на shiftPx экранных пикселей вниз (> 0), луч через строку a[1] идёт как через строку a[1] − shiftPx несдвинутого кадра
+static inline int groundCoverBackgroundShift(const GroundCover *g,float fy,float ry,float uy,float focal,float shiftPx,GroundCoverVertex*v) {
   if(GROUND_COVER_OLD||!g->ready||!isfinite(focal)||focal<=0)return 0;
   float p[4][2]={{0,0},{480,0},{480,272},{0,272}};int count=0;
   for(int i=0;i<4;i++){
     float* a=p[i],*b=p[(i+1)%4];
-    float da=fy+(a[0]-240)*ry/focal-(a[1]-136)*uy/focal;
-    float db=fy+(b[0]-240)*ry/focal-(b[1]-136)*uy/focal;
+    float da=fy+(a[0]-240)*ry/focal-(a[1]-136-shiftPx)*uy/focal;
+    float db=fy+(b[0]-240)*ry/focal-(b[1]-136-shiftPx)*uy/focal;
     if(da<=0)v[count++]=(GroundCoverVertex){g->rgb|0xff000000u,a[0],a[1],3};
     if((da<=0)!=(db<=0)){float t=da/(da-db);v[count++]=(GroundCoverVertex){g->rgb|0xff000000u,a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1]),3};}
   }
   return count;
 }
+static inline int groundCoverBackground(const GroundCover *g,float fy,float ry,float uy,float focal,GroundCoverVertex*v) { return groundCoverBackgroundShift(g,fy,ry,uy,focal,0.f,v); }
 #endif

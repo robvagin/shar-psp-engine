@@ -30,9 +30,11 @@ chk('P18-02 L1: «только машина» рельсы не в пакете 
 # P11-12 / P16-19: вызов 11 всегда 5 монет против оси Z
 chk('P11-12 SPAWN_25_COINS_Z -> 5 монет Z', P.call_op('SPAWN_25_COINS_Z') == (P.OP_COINS_Z, 5))
 chk('P11-12 SPAWN_5_COINS_Z -> 5 монет Z', P.call_op('SPAWN_5_COINS_Z') == (P.OP_COINS_Z, 5))
-# P11-13: eSpark без частиц, коды 7/24/26 есть
-chk('P11-13 eSpark не в таблице частиц', 'eSpark' not in P.PARTICLE_CODE)
-chk('P11-13 ePineTreeNeedles/eParkingMeter/ePopsicles = 7/24/26', (P.PARTICLE_CODE.get('ePineTreeNeedles'), P.PARTICLE_CODE.get('eParkingMeter'), P.PARTICLE_CODE.get('ePopsicles')) == (7, 24, 26))
+# P11-13: искры без частиц, коды 7/24/26 есть (04.11: свои ключи вместо имён систем; строка ATC находится по хешу, имена в коде не пишутся)
+chk('P11-13 искры не в таблице частиц', 'spark' not in P.PARTICLE_CODE)
+chk('P11-13 иголки/счётчик/мороженое = 7/24/26', (P.PARTICLE_CODE.get('needles'), P.PARTICLE_CODE.get('meter'), P.PARTICLE_CODE.get('popsicle')) == (7, 24, 26))
+_seen = {P.atc_particle_key(t['particle']) for t in P.atc_table()}
+chk('P11-13 по строкам ATC диска находятся ключи частиц: искры, звёзды, кусты, мусор, листья, почта, счётчик, мороженое (хеш не промахивается)', {'spark', 'stars', 'shrub', 'trash', 'leaves', 'mail', 'meter', 'popsicle'} <= _seen)
 # P16-26 / P18-15: строка 0 ATC
 r0 = PE.atc_rows()[0]; t0 = P.atc_table()[0]
 chk('P16-26 строка 0 ATC: smash, eNull, масса 100', r0[0] == 'smash' and r0[1] == 'eNull' and r0[3][1] == 100.0)

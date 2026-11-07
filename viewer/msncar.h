@@ -88,7 +88,7 @@ extern "C" {
 #ifndef MC_FREEZE_OLD       // круг 2, g10 СВЕРКА_С_ИСХОДНИКОМ:2.8: во время разговора полиция стоит (McEnv.freeze)
 #define MC_FREEZE_OLD MC_SVERKA_OLD
 #endif
-#ifndef MC_LOOP_OLD         // круг 7, WaypointAI: дойдя до последней точки, ИИ идёт по кругу заново (не стоит); finished остаётся признаком «дошёл» для миссий. Гонка (MC_RACE) — как раньше
+#ifndef MC_LOOP_OLD         // круг 7, ведение ИИ по пути: дойдя до последней точки, ИИ идёт по кругу заново (не стоит); finished остаётся признаком «дошёл» для миссий. Гонка (MC_RACE) — как раньше
 #define MC_LOOP_OLD MC_SVERKA_OLD
 #endif
 #ifndef POLICE_STAND27_OLD  // СВЕРКА_С_ИСХОДНИКОМ 2.10: стоп в 27 м от стоящего игрока (замер PS2) — 1 вернёт его; 0 — полиция всегда едет, как в исходнике
@@ -253,6 +253,7 @@ int mcRacePlaceRob(MsnCars *m, const float (*pts)[3], int n, int laps, int pk, c
                    int *racers);
 extern int mcRacePos300;   // 1 — место по остатку метров (правка 300; красный контроль 326: flag racepos300 1 / -DRACEPOS_300=1)
 extern int mcLedgeOld;   // правка 347: 1 — путь ИИ и вверх по уступам срезов (прежнее; flag ledgeold 1 / -DMC_LEDGE_OLD=1)
+extern int mcRaceJamOld;   // правка 1205: 1 — заклинивший соперник гонки не возвращается на свой путь (прежнее; RACE_JAM_OLD / flag racejamold 1)
 extern int mcLedgeFwdOld;   // правка 486: 1 — по ходу дороги уступ не судить (прежнее правило 347; -DMC_LEDGE_FWD_OLD=1)
 extern int mcBotPassOld;   // правка 347: 1 — бот careful не обгоняет соперника (прежнее; MISSIONER_PASS_OLD=1)
 extern int mcBotRamOld;   // правка 347: 1 — бот-таран тормозит и под машины ДАЛЬШЕ цели в коридоре (прежнее; MISSIONER_RAM_OLD=1)
@@ -262,6 +263,7 @@ void mcPlanAvoid(const short *r, int n);   // служебное (гейт tests
 extern int mcRoadPlanOld;
 extern int mcPolice723Old;   // №723: 1 — полиция подъезжает к стоящему игроку вплотную (как до правки); 0 — не ближе 27 м, как PS2
 extern int mcAiSubstepOld;   // 1 — подшаги ИИ-машин всегда полные (AI_SUBSTEP_OLD)   // 1 — прежний поиск пути planRoadsOld (ROADPLAN_OLD)
+int mcPlanFor(const MsnCars *m, const McEnv *e, McCar *c, const float g[3], float (*out)[3], int cap);   // №1185: план маршрута как у водителя (копия McCar)
 int mcPlan(const Traffic *tr, float x, float y, float z, float h, const float g[3], int shortcuts, float out[][3], int cap, int *offroad);
 int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]);   // RESET CAR по дорогам: точка и курс на оси ближней полосы по ходу; 0 — нет
 float mcLaneDist(const Traffic *tr, float x, float z);   // до оси ближней полосы (любой дороги), м; 1e9 — дорог нет

@@ -1,0 +1,52 @@
+# №1179/1182/1183: каждый родной экран бонус-игры (пакет bonus/mini.shr): выбор игрока, выбор трассы, загрузка, облёт, отсчёт, HUD гонки, пауза, финиш, итоги, «ещё заезд»
+flag menu
+flag bonusopen
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusshots 1
+flag bonusquit 0
+flag bonustrack 2
+wait 2
+shot mm_menu
+press left
+wait 0.6
+shot mm_menu2
+press cross
+wait 5
+shot mm_track
+press cross
+wait 1
+shot mm_char
+press cross
+wait 1
+shot mm_veh
+press cross
+wait 2
+shot mm_wait
+wait 5
+shot ld
+wait 3
+shot fly
+wait 4
+shot cd
+wait 1
+shot go
+wait 10
+shot hud1
+wait 10
+shot hud2
+wait 6
+shot hud3
+wait 4
+shot fin1
+wait 1
+shot fin2
+wait 1
+shot sum1
+wait 1
+shot sum2
+wait 1
+shot ag1
+wait 1
+shot ag2
+end

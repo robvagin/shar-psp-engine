@@ -392,7 +392,7 @@ static void uiFlashCb(void *u, int what, const char *text) {
 static int failStore;
 // сверка g07b-msnview круг 2 (g07-missions, P06 Д3 / P07-12 «не выходи из машины»; P06-4 / P07-4 пар-время ставки; P06-10 SetIrisWipe): показ событий рантайма.
 // OUTOFVEHICLE: игрок вышел — таймер окна «сядь в машину» (HUD-таймер со своими секундами, value = окно) и строка; вернулся/сброс — таймер прячется.
-// PAR_LATE: ставка дольше пар-времени — раз в секунду текст GAMBLING_RACE_FAILURE (и секунды до провала). IRIS: закрыть на конце этапа (1,0 с) и открыть на старте следующего — слоем затемнения msn_view.
+// PAR_LATE: ставка дольше пар-времени — раз в секунду текст «ставка проигрывается» из банка текстов (ключ ищется по хешу 82030faf, без имени в коде) и секунды до провала. IRIS: закрыть на конце этапа (1,0 с) и открыть на старте следующего — слоем затемнения msn_view.
 // Было: событий никто не показывал. SV_EVENTS2_OLD=1 — прежнее
 #ifndef SV_EVENTS2_OLD
 #define SV_EVENTS2_OLD 0
@@ -925,7 +925,7 @@ static void eventCb(void *u, const MsnEvent *e) {
       else if (fadeA > 0.f) { fadeDir = -1; fadeLen = 1.f; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f; }
       logf_("MSN iris %s t=%.1f\n", e->index ? "close" : "open", clock_); break;
     case MSN_EV_PAR_LATE: if (SV_EVENTS2_OLD) break;
-      { const char *t = msn_text(&M.f, "GAMBLING_RACE_FAILURE"); char b[160]; snprintf(b, sizeof b, "%s %d", t && *t ? t : "TOO SLOW", (int)e->value); uiMessage(b, -1, 1.1f); }
+      { const char *t = msn_text_h(&M.f, 0x82030fafu);   /* ключа в пакете нет — запасной текст "TOO SLOW" (раньше msn_text отдавал сам ключ) */ char b[160]; snprintf(b, sizeof b, "%s %d", t && *t ? t : "TOO SLOW", (int)e->value); uiMessage(b, -1, 1.1f); }
       logf_("MSN par-late over=%d left=%.0f t=%.1f\n", e->index, e->value, clock_); break;
     case MSN_EV_OUTOFVEHICLE: if (SV_EVENTS2_OLD) break;
       oovOn = e->index != 0; oovWin = e->value; oovT0 = clock_;
@@ -1068,10 +1068,17 @@ void mvBusted(void) {
 void mvMusicResume(void) { if (active) msnAudioSuffix(&M.audio, "_start"); }   // правка 235
 // №бот миссий (окно «Меню», 24.10; flag msnbot 1, дорожка laneD ночного цикла tools/night): чего ждёт текущий этап от игрока — 1: △ (пешком: разговор / посадка),
 // 2: сесть в машину (машинный этап, а Гомер пешком: после △ «в машине» или выхода). Только чтение состояния рантайма, ничего не двигает
+static int svcOutCar;   // 06.11: цель в комнате, а игрок в машине (mvServiceGo) — помощник выходит из машины (△)
+#ifndef MSNBOTROOM_OLD2
+#define MSNBOTROOM_OLD2 0
+#endif
 int mvServiceBot(void) {
   if (!active || M.rt.status != MSN_RUNNING) return 0;
   if (M.rt.obj == MSN_OBJ_TALKTO) return 1;   // собеседник: пешком △ говорит, в машине △ выходит из неё (миссии m6/m7 начинаются с игроком за рулём)
+  if (!MSNBOTROOM_OLD2 && (M.rt.obj == MSN_OBJ_INTERIOR || svcOutCar) && !gameOnFoot(M.g)) { svcOutCar = 0; return 1; }   // цель в комнате — из машины (△), дальше к двери
+  svcOutCar = 0;
   if (!gameOnFoot(M.g)) return 0;
+  if (!MSNBOTROOM_OLD2 && M.rt.obj == MSN_OBJ_GOTO && M.rt.st && (M.rt.st->flags & MSN_SF_MUSTACTION)) return 1;   // 06.11: цель «с действием» (сесть на диван и т. п.) — △ на месте
   switch (M.rt.obj) {
     case MSN_OBJ_GETIN: return 1;
     case MSN_OBJ_GOTO: case MSN_OBJ_RACE: case MSN_OBJ_FOLLOW: case MSN_OBJ_LOSETAIL: case MSN_OBJ_DELIVERY: case MSN_OBJ_DUMP: case MSN_OBJ_DESTROY: case MSN_OBJ_DESTROYBOSS: return 2;
@@ -1197,6 +1204,9 @@ int mvWantsAction(void) { return active && !H.failed && gameMsnWantsAction(&M); 
 void mvSetInterior(const char *name) { M.interior = name; }
 static const char *(*npcRoomAt)(float x, float y, float z);
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)) { npcRoomAt = roomAt; }
+static int (*npcRoomGo)(const float p[3], float out[3], int interior); static int svcDoor;
+void mvSetRoomGo(int (*roomGo)(const float p[3], float out[3], int interior)) { npcRoomGo = roomGo; }
+int mvSvcDoorWant(void) { int r = svcDoor; svcDoor = 0; return r; }
 int mvMsnSetup(void) { return active && M.inSetup; }   // №1072: окно подготовки фазы открыто — перенос игрока ещё может прийти
 int mvTeleported(float out[3]) {   // сценарий переставил игрока с прошлого вызова: где он теперь
   if (!active || M.teleports == seenTeleports) return 0;
@@ -1768,6 +1778,13 @@ void mvHud(float dt) {
       b[n] = 0;
       logf_("RACEPOS t=%.2f pos=%d/%d px=%.1f pz=%.1f pk=%d dp=%.1f%s\n", clock_, pos, racers, w.player.x, w.player.z,
             M.rt.lap * M.rt.nitems + M.rt.next_item, M.raceDp, b); } }
+  { static float progT = -1e9f;   // служебное (правка 1205): ход гонки раз в секунду — у каждого соперника пройдено своих точек (wp) и точек гонки игрока (rk), скорость, доехал ли
+    if (logFn && pos > 0 && clock_ - progT >= 1.f) { progT = clock_; char b[560]; MsnWorld w; gameMsnWorld(&M, &w);
+      int n = snprintf(b, sizeof b, "RACEPROG t=%.1f pos=%d/%d px=%.0f pz=%.0f pk=%d dp=%.0f on=%d", clock_, pos, racers, w.player.x, w.player.z,
+                       M.rt.lap * M.rt.nitems + M.rt.next_item, M.raceDp, !w.on_foot);
+      for (int i = 0; i < M.cars.n && n < 440; i++) { const McCar *c = &M.cars.c[i]; if (!c->on || c->rAhead < 0) continue;
+        n += snprintf(b + n, sizeof b - (size_t)n, " %s x=%.0f z=%.0f v=%.0f wp=%d rk=%d d=%.0f a=%d f=%d%s", c->name, c->car.x, c->car.z, c->car.v, c->wp, c->rk, c->rDist, c->rAhead, c->finished, c->waiting ? " W" : ""); }
+      snprintf(b + n, sizeof b - (size_t)n, "\n"); logFn(b); } }
   MVPF(6);
   const McCar *tc = M.rt.status == MSN_RUNNING ? gameMsnTargetCar(&M) : 0; int obj = M.rt.obj;
   uiSetDamage(tc && (obj == MSN_OBJ_DESTROY || obj == MSN_OBJ_DUMP) ? tc->car.damage : 0.f);
@@ -2107,6 +2124,12 @@ void mvServiceMain(int mi) {   // служебное (гейт tests/aicar/emu.s
   MsnEvent e; memset(&e, 0, sizeof e); e.type = MSN_EV_CLEANUP; M.rt.host.event(M.rt.host.user, &e);
   M.rt.cp_phase = 1; M.rt.cp_stage = 0; msn_start_mission(&M.rt, mi, 1);
 }
+int mvStageKey(void) { return active && M.rt.status == MSN_RUNNING ? (M.rt.cur + 1) * 10000 + M.rt.phase * 100 + M.rt.stage : -1; }   // служебное: этап сменился?
+int mvServicePass(const char *why) {   // служебное (06.11): засчитать текущий этап, как выполненная цель — проверка переходов, реплик, наград и конца миссии
+  if (!active || M.rt.status != MSN_RUNNING) return 0;
+  logf_("MSN pass %s %d.%d obj=%s why=%s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), M.rt.phase, M.rt.stage, msn_objective_name[M.rt.obj], why ? why : "-", clock_);
+  return msn_service_pass(&M.rt);
+}
 void mvServiceMainAt(int code) {   // служебное (правка 302): основная часть миссии code/100 с этапа code%100 (как чекпоинт этапа)
   int ph0 = code < 0; if (ph0) code = -code;   // отрицательный код — вступительная часть (фаза 0)
   int mi = code / 100, st = code % 100;
@@ -2249,14 +2272,33 @@ void mvServiceGo(float far) {
   }
   MsnVec3 p; MsnWorld w; gameMsnWorld(&M, &w);
   if (!msn_nav_target(rt, &w, &p)) { logf_("MSNGO none obj=%d\n", rt->obj); return; }
+#ifndef MSNBOTTRIG_OLD
+#define MSNBOTTRIG_OLD 0   // 1 — как до 06.11: бот к точке локатора; зона срабатывания (объём) у части целей смещена от неё — этап не засчитывался (msnflow4: «DRIVE TO THE SCHOOL» и др.)
+#endif
+  if (!MSNBOTTRIG_OLD && rt->st && rt->obj != MSN_OBJ_FOLLOW && far == 0.f) {   // этап с условием «держись рядом» (followdistance: L5 m1 «DRIVE TO THE COLA TRUCK…») — перенос оторвал бы от цели и дал провал: не переносить
+    for (unsigned i_ = 0; i_ < rt->st->ncond; i_++) if (M.f.conds[rt->st->cond_first + i_].type == MSN_COND_FOLLOWDISTANCE) { logf_("MSNGO hold obj=%d followdistance\n", rt->obj); return; }
+  }
+  if (!MSNBOTTRIG_OLD && (rt->obj == MSN_OBJ_GOTO || rt->obj == MSN_OBJ_GOOUTSIDE) && rt->c_dest) {   // к центру первой зоны срабатывания локатора
+    const MsnLoc *l_ = msn_arg_loc(&M.f, rt->c_dest, 0);
+    if (l_ && l_->ntrig) { const MsnTrig *t_ = &M.f.trigs[l_->first_trig]; p.x = t_->center[0]; p.y = t_->center[1]; p.z = t_->center[2]; }
+  }
   const char *targetRoom = npcRoomAt ? npcRoomAt(p.x, p.y, p.z) : NULL;
+#ifndef MSNBOTROOM_OLD
+#define MSNBOTROOM_OLD 0   // 1 — как до 06.11: цель в комнате / этап «войти» — «комнаты не в этой сборке», этап засчитывал только помощник (142 из 520 зачётов msnflow3)
+#endif
+  if (!MSNBOTROOM_OLD && npcRoomGo && gameOnFoot(g)) {   // цель в другой комнате или в городе, а игрок в комнате: к двери / к выходу, △ жмёт помощник (mvSvcDoorWant)
+    float q_[3] = {p.x, p.y, p.z}, o_[3]; int r_ = npcRoomGo(q_, o_, rt->obj == MSN_OBJ_INTERIOR);
+    if (r_) { homerPlace(g->pHomer, r_ == 1 ? g->pWorld : NULL, o_[0], o_[1] + .5f, o_[2], g->pHomer->h); svcDoor = 1;
+      logf_("MSNGO %s obj=%d to %.1f %.1f %.1f\n", r_ == 1 ? "door" : "exit", rt->obj, o_[0], o_[1], o_[2]); return; }
+  }
   if (rt->obj != MSN_OBJ_INTERIOR && targetRoom && pointVisible(p.x, p.y, p.z, NULL) && gameOnFoot(g)) {   // та же настоящая комната:
     Homer *H = g->pHomer; float dx = H->x - p.x, dz = H->z - p.z, d = sqrtf(dx * dx + dz * dz);   // по линии от Гомера к цели,
     if (d < .01f) { dx = 1.f; dz = 0.f; d = 1.f; }                                                  // в 1,8 м от неё, лицом к ней
     float k = (1.8f + far) / d; homerPlace(H, NULL, p.x + dx * k, H->y, p.z + dz * k, atan2f(-dx, -dz));
     logf_("MSNGO room obj=%d to %.1f %.1f %.1f far=%.1f\n", rt->obj, p.x, p.y, p.z, far); return;
   }
-  if (rt->obj == MSN_OBJ_INTERIOR || targetRoom) { logf_("MSNGO room obj=%d (комнаты не в этой сборке)\n", rt->obj); return; }
+  if (rt->obj == MSN_OBJ_INTERIOR || targetRoom) { if (!MSNBOTROOM_OLD && !gameOnFoot(g)) { svcOutCar = 1; logf_("MSNGO room obj=%d из машины\n", rt->obj); return; }
+    logf_("MSNGO room obj=%d (комнаты не в этой сборке)\n", rt->obj); return; }
   float off = 1.5f;   // правка 345: к собеседнику — в его радиус разговора (1,3 м по умолчанию), как подошёл бы игрок
   if (rt->obj == MSN_OBJ_TALKTO) { float r = msn_talk_reach(rt, rt->c_talk) - .4f; if (r < off) off = r; }
   if (gameOnFoot(g)) homerPlace(g->pHomer, g->pWorld, p.x + off + far, p.y + .5f, p.z, g->pHomer->h);
@@ -2265,4 +2307,18 @@ void mvServiceGo(float far) {
     carPlace(g->pCar, g->pWorld, cx, p.y + 1.f, cz, h);
   }
   logf_("MSNGO obj=%d to %.1f %.1f %.1f far=%.1f\n", rt->obj, p.x, p.y, p.z, far);
+}
+int mvServicePlace(int fresh) {   // служебное (06.11, помощник msnbotpass): поставить игрока туда, где его оставил бы пройденный этап; 1 — поставил
+  if (!active || M.rt.status != MSN_RUNNING) return 0;
+  MsnRuntime *rt = &M.rt; Game *g = M.g;
+  if (fresh) {   // зачтённый этап не довёз игрока: слежка проваливается на дальности в первые кадры — к машине-цели на 15 м
+    MsnVec3 p; MsnWorld w; gameMsnWorld(&M, &w);
+    int keep_ = rt->obj == MSN_OBJ_FOLLOW;   // слежка — и любой этап с условием «держись рядом» (L3 m5 dump «FOLLOW SNAKE AND COLLECT EVIDENCE»)
+    for (unsigned i_ = 0; !keep_ && rt->st && i_ < rt->st->ncond; i_++) keep_ = M.f.conds[rt->st->cond_first + i_].type == MSN_COND_FOLLOWDISTANCE;
+    if (!keep_ || gameOnFoot(g) || !msn_nav_target(rt, &w, &p)) return 0;
+    float dx = g->pCar->x - p.x, dz = g->pCar->z - p.z; if (dx * dx + dz * dz < 30.f * 30.f) return 0;
+    mvServiceGo(15.f); return 1;
+  }
+  if (rt->obj != MSN_OBJ_GOTO && rt->obj != MSN_OBJ_TALKTO && rt->obj != MSN_OBJ_DELIVERY && rt->obj != MSN_OBJ_PICKUPITEM && rt->obj != MSN_OBJ_GETIN && rt->obj != MSN_OBJ_INTERIOR) return 0;
+  mvServiceGo(0.f); return 1;   // цели-места: к ним; машины-цели (гонка, погоня, уничтожить) не трогаем — машина встала бы в чужую
 }

@@ -41,6 +41,8 @@ SETTINGS_PAGES = os.environ.get('SETTINGS_PAGES_OLD') != '1'
 # №1151: раздел CAMERA паузы — страница настроек камеры (машина: высота, дальность, наклон, угол обзора; пешком: высота, дальность; «по умолчанию»), переход на неё — строка «Adjust Camera»
 # внизу страницы CAMERA, как Cartoon на PICTURE. CAMMENU1151_OLD=1 — прежняя страница CAMERA с Height / Distance, без новой страницы
 CAMMENU1151_OLD = os.environ.get('CAMMENU1151_OLD') == '1'
+# №1160: седьмая строка CAMERA, Car Aim (сдвиг кадра по высоте). CARAIM1160_OLD=1 — страница CAMERA как в TEST86 (шесть строк)
+CARAIM1160_OLD = os.environ.get('CARAIM1160_OLD') == '1'
 SUBPAGES = ['pausecamera', 'pausegame', 'pausepicture', 'pausecartoon'] + ([] if CAMMENU1151_OLD else ['pausecamadj']) if SETTINGS_PAGES else []
 PACKS = {'menu': ['options', 'sound'] + ([] if os.environ.get('MENU_OLD') else ['viewcredits', 'viewmovies']),
          'pmenu': ['pauseoptions', 'pausesound', 'pausesettings'] + SUBPAGES,
@@ -229,13 +231,13 @@ CARSHADOW1003_OLD = os.environ.get('CARSHADOW1003_OLD') == '1'
 # №1064 (Роб 28.10: «текстуру бордюра поставить родную и иметь возможность это настроить в настройках»): строка Curbs на странице PICTURE после Draw Distance (Original / Tinted). CURB1064_OLD=1 — страница PICTURE как в TEST76
 CURB1064_OLD = os.environ.get('CURB1064_OLD') == '1'
 # №1151: подписи порта (их нет в текстовой библиотеке диска) на языке игры; нет перевода — английская (LANG_BIBLE: E F G S)
-_PT = {'F': {'Car Height': 'Hauteur voiture', 'Car Distance': 'Distance voiture', 'Car Tilt': 'Inclinaison voiture', 'Car View': 'Champ voiture', 'Foot Height': 'Hauteur à pied', 'Foot Distance': 'Distance à pied',
+_PT = {'F': {'Car Height': 'Hauteur voiture', 'Car Distance': 'Distance voiture', 'Car Tilt': 'Inclinaison voiture', 'Car View': 'Champ voiture', 'Car Aim': 'Cadrage voiture', 'Up 2': 'Haut 2', 'Up 1': 'Haut 1', 'Down 1': 'Bas 1', 'Down 2': 'Bas 2', 'Foot Height': 'Hauteur à pied', 'Foot Distance': 'Distance à pied',
              'Adjust Camera': 'Régler la caméra', 'Reset to Default': 'Par défaut', 'Low': 'Bas', 'Lower': 'Plus bas', 'Normal': 'Normal', 'Higher': 'Plus haut', 'High': 'Haut', 'Near': 'Près', 'Nearer': 'Plus près',
              'Farther': 'Plus loin', 'Far': 'Loin', 'Narrow': 'Étroit', 'Narrower': 'Plus étroit', 'Wider': 'Plus large', 'Wide': 'Large'},
-       'G': {'Car Height': 'Höhe Auto', 'Car Distance': 'Abstand Auto', 'Car Tilt': 'Neigung Auto', 'Car View': 'Sichtfeld Auto', 'Foot Height': 'Höhe zu Fuß', 'Foot Distance': 'Abstand zu Fuß',
+       'G': {'Car Height': 'Höhe Auto', 'Car Distance': 'Abstand Auto', 'Car Tilt': 'Neigung Auto', 'Car View': 'Sichtfeld Auto', 'Car Aim': 'Bildlage Auto', 'Up 2': 'Hoch 2', 'Up 1': 'Hoch 1', 'Down 1': 'Tief 1', 'Down 2': 'Tief 2', 'Foot Height': 'Höhe zu Fuß', 'Foot Distance': 'Abstand zu Fuß',
              'Adjust Camera': 'Kamera einstellen', 'Reset to Default': 'Standard', 'Low': 'Tief', 'Lower': 'Tiefer', 'Normal': 'Normal', 'Higher': 'Höher', 'High': 'Hoch', 'Near': 'Nah', 'Nearer': 'Näher',
              'Farther': 'Weiter', 'Far': 'Fern', 'Narrow': 'Eng', 'Narrower': 'Enger', 'Wider': 'Weiter', 'Wide': 'Weit'},
-       'S': {'Car Height': 'Altura coche', 'Car Distance': 'Distancia coche', 'Car Tilt': 'Inclinación coche', 'Car View': 'Campo coche', 'Foot Height': 'Altura a pie', 'Foot Distance': 'Distancia a pie',
+       'S': {'Car Height': 'Altura coche', 'Car Distance': 'Distancia coche', 'Car Tilt': 'Inclinación coche', 'Car View': 'Campo coche', 'Car Aim': 'Encuadre coche', 'Up 2': 'Arriba 2', 'Up 1': 'Arriba 1', 'Down 1': 'Abajo 1', 'Down 2': 'Abajo 2', 'Foot Height': 'Altura a pie', 'Foot Distance': 'Distancia a pie',
              'Adjust Camera': 'Ajustar cámara', 'Reset to Default': 'Por defecto', 'Low': 'Baja', 'Lower': 'Más baja', 'Normal': 'Normal', 'Higher': 'Más alta', 'High': 'Alta', 'Near': 'Cerca', 'Nearer': 'Más cerca',
              'Farther': 'Más lejos', 'Far': 'Lejos', 'Narrow': 'Estrecho', 'Narrower': 'Más estrecho', 'Wider': 'Más ancho', 'Wide': 'Ancho'}}
 def PT(s):
@@ -259,6 +261,7 @@ NEW_ROWS = {
         'CarDist': (PT('Car Distance'), [PT(v) for v in ['Near', 'Nearer', 'Normal', 'Farther', 'Far']]),
         'CarTilt': (PT('Car Tilt'), ['-10', '-5', '0', '+5', '+10']),
         'CarFov': (PT('Car View'), [PT(v) for v in ['Narrow', 'Narrower', 'Normal', 'Wider', 'Wide']]),
+        **({} if CARAIM1160_OLD else {'CarAim': (PT('Car Aim'), [PT(v) for v in ['Up 2', 'Up 1', 'Normal', 'Down 1', 'Down 2']])}),   # №1160: viewer/main_save.h cfgSlot "CAR AIM" — где машина в кадре: Up 2 / Up 1 — выше, Normal — как было, Down 1 / Down 2 — ниже (сдвиг кадра)
         'FootHeight': (PT('Foot Height'), [PT(v) for v in ['Low', 'Lower', 'Normal', 'Higher', 'High']]),
         'FootDist': (PT('Foot Distance'), [PT(v) for v in ['Near', 'Nearer', 'Normal', 'Farther', 'Far']]),
     }),
@@ -284,7 +287,7 @@ OPT_ROWS = ([('Picture', 'PICTURE')] if OPT_PICTURE_FIRST else []) + [('Sound', 
 _LINK_ROW = [] if CARTOON_PAGE_OLD or MENU_FLAT_OLD else ['CartoonLink']
 PAGE_ROWS = {
     'pausecamera': ['Camera', 'JumpCamera', 'InvertCamControl'] + ([] if CAMCFG996_OLD else ['CamHeight', 'CamDist'] if CAMMENU1151_OLD else ['CamAdjLink']),
-    'pausecamadj': ['CarHeight', 'CarDist', 'CarTilt', 'CarFov', 'FootHeight', 'FootDist', 'CamReset'],
+    'pausecamadj': ['CarHeight', 'CarDist', 'CarTilt'] + ([] if CARAIM1160_OLD else ['CarAim']) + ['CarFov', 'FootHeight', 'FootDist', 'CamReset'],
     'pausegame': ['IntersectNavSystem', 'Radar', 'Tutorial'],
     'pausepicture': (_LINK_ROW if CARTOON_FIRST else []) + (['Textures'] if os.environ.get('TEXTURES_ROW_OLD') != '1' else []) + ['Colour', 'Contrast', 'TreeShadows'] + ([] if CARSHADOW1003_OLD else ['CarShadows'])
                     + ([] if os.environ.get('DRAWDIST_ROW_OLD') == '1' else ['DrawDist']) + ([] if CURB1064_OLD else ['CurbStyle'])
@@ -639,6 +642,11 @@ def credits(its):
 # подписи ползунков SOUND — грань пунктов паузы (PAUSE_FONT), не мельче остального семейства;
 # SOUND и SETTINGS (BigBoard) — строки из данных (подпись, значение, стрелки, ползунок) одним блоком по центру, шаг ровный:
 # у SOUND — из данных (37 px), у SETTINGS — PAUSE_SETTINGS_PITCH (в данных 40 источника = 22,7 px: 22/23 вперемешку)
+OPTIONS_PAD1176 = 23   # №1176: поле страницы OPTIONS (px PSP): на экране 19 px от линии рамки до букв первой и последней строки, как у главной страницы паузы (18..20)
+def pause_items_pitch():   # №1176: шаг пунктов главной страницы паузы в игре — из панели Роба (pause_items.pitch), 26 по умолчанию
+    import ui_typo
+    cfg = ui_typo.load() or {}
+    return int(((cfg.get('groups') or {}).get('pause_items') or {}).get('pitch') or 26)
 PAUSE_TITLES = {'pauseoptions': 'OPTIONS', 'pausesound': 'SOUND', 'pausesettings': 'SETTINGS',
                 'pausecamera': 'CAMERA', 'pausegame': 'GAME', 'pausepicture': 'PICTURE', 'pausecartoon': 'CARTOON', 'pausecamadj': 'CAMERA'}   # №777: заголовки подстраниц
 HINT_IN_PAD = 8          # px PSP: подписи кнопок внутри доски VIEW MOVIES — от края заливки (правка 163)
@@ -738,8 +746,14 @@ def pause_fit(sc, its, assets):
                     it.update(font=U.PAUSE_FONT, halign='centre', valign='top', wrap=False)
         # №807 (Роб 18.10: «отступы сверху и снизу одинаковые, строки свободнее»): пункты OPTIONS (SOUND / CAMERA / GAME / PICTURE) — шаг 30 px вместо 26
         # (просвет между заглавными 20 px), поля сверху и снизу равные (board_fit). OPTIONS_PITCH_OLD=1 — шаг паузы 26
-        pitch_ = U.PAUSE_MENU_PITCH + (4 if sc == 'pauseoptions' and SETTINGS_PAGES and not MENU_FLAT_OLD and os.environ.get('OPTIONS_PITCH_OLD') != '1' else 0)
-        fb = U.board_fit(its, rws, 'XSmallBoard.pag', U.PAUSE_K, pitch=pitch_, pad_y=U.PAUSE_MENU_PAD_Y, width=U.pause_board_width(), centre_each=True,
+        # №1176 (Роб, TEST87 на PSP: «в меню паузы в опционах очень большой межстрок: больше, чем отступы от верха и от низа к PICTURE и к GAME. Так у нас не может быть. Ритм такой же, как в основном меню паузы»):
+        # страница OPTIONS шла с шагом 32 (28 + 4 по №807) и полем 16: на экране промежуток между буквами строк 21 px при поле от рамки 12 px. Основная страница паузы в игре идёт
+        # по панели Роба (docs/typography/ui_typo_ROB.json, pause_items.pitch = 26, не 28 статической раскладки): промежуток 15 px, поле 18..20 px от линии рамки. OPTIONS теперь
+        # с тем же шагом из панели и полем 23 (на экране 19 px от линии рамки: рамка толще на 4 px, как у главной страницы). OPTIONS_RHYTHM1176_OLD=1 — прежнее (шаг 32, поле 16)
+        rhythm1176 = sc == 'pauseoptions' and SETTINGS_PAGES and not MENU_FLAT_OLD and os.environ.get('OPTIONS_RHYTHM1176_OLD') != '1' and os.environ.get('OPTIONS_PITCH_OLD') != '1'
+        pitch_ = U.PAUSE_MENU_PITCH + (4 if sc == 'pauseoptions' and SETTINGS_PAGES and not MENU_FLAT_OLD and os.environ.get('OPTIONS_PITCH_OLD') != '1' and not rhythm1176 else 0)
+        if rhythm1176: pitch_ = pause_items_pitch()
+        fb = U.board_fit(its, rws, 'XSmallBoard.pag', U.PAUSE_K, pitch=pitch_, pad_y=(OPTIONS_PAD1176 if rhythm1176 else U.PAUSE_MENU_PAD_Y), width=U.pause_board_width(), centre_each=True,
                           images=assets.images)
     else:
         if sc == 'pausesound':   # подписи ползунков (boulder_16 данных: заглавная ~6 px на PSP, мельче всего семейства) — грань пунктов паузы

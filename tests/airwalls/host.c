@@ -112,7 +112,7 @@ static int load(const char *path) {
 }
 
 typedef struct { float lat, dh, kmh; } RunArg;
-typedef struct { int airHits, airHitsInvis, groundHits, stuck, recov; float maxAlong, maxY, endV, worstInvisV; int worstType; unsigned worstIdx; float wx, wy, wz, wtop; } RunRes;
+typedef struct { int airHits, airHitsInvis, groundHits, stuck, recov; float maxAlong, maxY, endV, worstInvisV; int worstType; unsigned worstIdx; float wx, wy, wz, wtop; float ex, ey, ez; } RunRes;
 static PropState *st0;
 static int verbose;
 static RunRes run(float x, float y, float z, float hdeg, RunArg a, float secs) {
@@ -149,7 +149,7 @@ static RunRes run(float x, float y, float z, float hdeg, RunArg a, float secs) {
     float hv = hypotf(car.vel[0], car.vel[2]);
     if (hv < 2.f && fr > 30) { if (++stopped > 90) { r.stuck = 1; break; } } else stopped = 0;
   }
-  r.recov = car.recoveries - rec0; r.endV = hypotf(car.vel[0], car.vel[2]) * 3.6f;
+  r.recov = car.recoveries - rec0; r.endV = hypotf(car.vel[0], car.vel[2]) * 3.6f; r.ex = car.x; r.ey = car.y; r.ez = car.z;
   return r;
 }
 static int range(const char *s, float *a, float *b, float *st) { return sscanf(s, "%f:%f:%f", a, b, st) == 3; }
@@ -177,7 +177,7 @@ int main(int argc, char **argv) {
       if (verbose) printf("run lat %.1f dh %.0f kmh %.0f\n", lat, dh, k);
       RunRes r = run(x, y, z, hd, a, secs); n++; nInv += r.airHitsInvis > 0; nStuck += r.stuck;
       printf("lat %5.1f dh %4.0f kmh %4.0f: along %5.1f maxY %5.1f endV %4.0f air hits %d (invisible %d) ground hits %d%s%s",
-             lat, dh, k, r.maxAlong, r.maxY, r.endV, r.airHits, r.airHitsInvis, r.groundHits, r.stuck ? " STUCK" : "", r.recov ? " RECOVER" : "");
+             lat, dh, k, r.maxAlong, r.maxY, r.endV, r.airHits, r.airHitsInvis, r.groundHits, r.stuck ? " STUCK" : "", r.recov ? " RECOVER" : ""); printf(" | end (%.1f %.1f %.1f)", r.ex, r.ey, r.ez);
       if (r.worstType >= 0) printf(" | worst invisible: prim %d#%u v %.1f at (%.1f %.1f %.1f) top %.1f", r.worstType, r.worstIdx, r.worstInvisV, r.wx, r.wy, r.wz, r.wtop);
       printf("\n");
     }

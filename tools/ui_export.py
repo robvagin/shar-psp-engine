@@ -1501,7 +1501,15 @@ def build_items(screen):
         items.insert(items.index(cont) + 1, rc)
         items = pause_layout(items)
     if screen == 'pausemsn':   # пункты PauseMission.pag сверху вниз в той же рамке и тем же шагом, что у паузы свободной езды
-        items = pause_layout(items)
+        # правка Роба «межстрок уродский» (пауза в задании, TEST89 на PSP): рамка по пяти строкам (не на 7 строк паузы свободной езды), строки тем же ровным шагом 26 по центру рамки, как у паузы
+        # свободной езды; прежде — рамка на 7 строк и шаг 39 (правка 856). PAUSEMSN1194_OLD=1 — прежнее
+        keep_ = PAUSE_MIN_ROWS
+        if os.environ.get('PAUSEMSN1194_OLD') != '1':
+            globals()['PAUSE_MIN_ROWS'] = 0
+        try:
+            items = pause_layout(items)
+        finally:
+            globals()['PAUSE_MIN_ROWS'] = keep_
     if screen == 'levelstats':
         items = levelstats_layout(items)
     if screen == 'viewcards':
@@ -3946,6 +3954,13 @@ def pack(out=None, spec=None):
     # №926 (Роб 24.10: «в Scrapbook слева внизу LEVEL и L/R, но там стоит знак (вопросительный?)»): подпись уровня альбома ставит код (viewer/main_save.h scrapRun,
     # «LEVEL N» и «L / R» гранью uiFontFind("boulder_16") основного пакета ui.shr — там «boulder_16*2», пунктов меню); её атлас — только буквы строк пакета и «?»:
     # цифр и «/» не было, вместо них запасной знак. Цифры, «/» и буквы L E V R (после №925 у пунктов паузы другая грань, и V из «LEVEL PROGRESS» в этой выпала) добавляются в атлас граней boulder_16 (15 ячеек). SCRAP926_OLD=1 — как было
+    # TEST90 (HUD бонус-гонки на языке игры, viewer/bonus_play.h): круг, место и нитро ставит код гранью bart_16bit@1 основного пакета; в атласе, урезанном до букв строк пакета, нет заглавных
+    # с диакритикой и знаков места (2ÈME, 1º, 3ª) — вместо них «?». Буквы, цифры и эти знаки добавляются в атлас грани bart_16bit. BONUSHUDCH_OLD=1 — как было
+    if os.environ.get('BONUSHUDCH_OLD') != '1':
+        import accents
+        for face in list(subset):
+            if face.startswith('bart_16bit') and subset[face] is not None:
+                subset[face] = subset[face] | {ord(c) for c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 /:.-'} | {accents.code_of(c) for c in 'ÈÉÀÂÇÊÎÔÛÙÜÄÖºª'}
     if os.environ.get('SCRAP926_OLD') != '1':
         for face in list(subset):
             if face.startswith('boulder_16') and subset[face] is not None:

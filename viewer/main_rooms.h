@@ -38,6 +38,14 @@ static int inRoom(void) { return rg.mem && rs.room >= 0; }
 #ifndef ZONE_MSN_SET_OLD
 #define ZONE_MSN_SET_OLD 0
 #endif
+// №1215 (Роб 05.11: «в тестах Апу появляется посреди пустоты, где ездят машины», L5): набор зон миссии принимался, если хоть один его регион есть
+// в клетке игрока; у старта этапа «Get into your vehicle» (−155, 29, −482) клетка карты регионов — 3, 7, 8, набор этапа 0062 (2, 6, 7) — совпал один
+// регион 7, и регионы 3 и 8 под ногами выключались: из 61 клетки вокруг рисовались 8, машины трафика (своя подгрузка) ездили по пустоте.
+// Теперь к набору миссии добавляется набор места, где стоит игрок (тот, что игра ставит при переносе сюда): город под ногами не выключается. Все регионы клетки карты
+// (regAt) брать нельзя: эмулятор, разговоры L5 — куча до 1,85 МБ, кусок 1,06 МБ. ZONEUNDER1215_OLD=1 — как было
+#ifndef ZONEUNDER1215_OLD
+#define ZONEUNDER1215_OLD 0
+#endif
 static unsigned zgMsnSeq, zgMsnMask; static int zgMsnFr;
 static unsigned zoneMsnMask(const char *fl) {
   unsigned m = 0;
@@ -64,14 +72,14 @@ static void zoneGatesFrame(void) {
     unsigned sq; const char *fl = mvDynaFiles(&sq);
     if (sq != zgMsnSeq) {
       zgMsnSeq = sq; unsigned m = fl[0] ? zoneMsnMask(fl) : 0;
-      if (m && (regAt(px, pz) & m)) { zgMsnMask = m; zgMsnFr = 120; regRes = m; zgInit = 0; }
+      if (m && (regAt(px, pz) & m)) { zgMsnMask = m; zgMsnFr = 120; regRes = m | (ZONEUNDER1215_OLD ? 0u : zonePlaceNear(zp, nzp, px, pz, 0xFFFFu)); zgInit = 0; }
       else zgMsnMask = 0;
       if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "ZONE msn \"%.60s\" mask %04x ok %d t=%.1f\n", fl, m, zgMsnMask != 0, smkT); smkWrite(s_); }
     }
   }
   if (zgStart || jump) {   // старт уровня или перенос: набор ближайшего места (оригинал при телепорте ставит набор места)
     unsigned b = regRes; regRes = zonePlaceNear(zp, nzp, px, pz, 0xFFFFu); zgStart = 0; zgInit = 0;
-    if (!ZONE_MSN_SET_OLD && zgMsnFr > 0 && zgMsnMask && (regAt(px, pz) & zgMsnMask)) regRes = zgMsnMask;   // круг 5 (P12-10): сразу после команды миссии её набор главнее места
+    if (!ZONE_MSN_SET_OLD && zgMsnFr > 0 && zgMsnMask && (regAt(px, pz) & zgMsnMask)) regRes = zgMsnMask | (ZONEUNDER1215_OLD ? 0u : regRes);   // №1215: regRes здесь — набор места (строка выше)   // круг 5 (P12-10): сразу после команды миссии её набор главнее места
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "ZONE %s res %04x -> %04x at %.0f %.0f t=%.1f\n", jump ? "jump" : "start", b, regRes, px, pz, smkT); smkWrite(s); }
   }
   if (!zgInit) {   // въезды считаются с этого места: объёмы, в которых игрок уже стоит, не срабатывают
@@ -164,8 +172,38 @@ static int roomAnimTex(int t) {
     return RTEX0 + a->tx[k]; }
   return t;
 }
-static void roomClose(void) {   // блоб комнаты — обратно в кучу (GE прошлый кадр закончил: sceGuSync в конце кадра)
+// ТЕСТ90 П1 (ROOMIO_OLD / SYNCREAD_P1_OLD / файл syncreadp1old): блоб комнаты читается фоном заранее, когда Гомер пешком подошёл к двери ближе ROOM_PF_DIST;
+// roomOpen под закрытым ирисом берёт готовый буфер (не готов — ждёт его, не больше 0,4 с; нет буфера — прежнее синхронное чтение). Кучи мало — не читает впрок
+#ifndef ROOMIO_OLD
+#define ROOMIO_OLD 0
+#endif
+#ifndef SYNCREAD_P1_OLD
+#define SYNCREAD_P1_OLD 0
+#endif
+static int syncReadP1Old = SYNCREAD_P1_OLD;   // и для гэгов (main_collect.h); файл syncreadp1old / flag syncreadp1old 1
+#ifndef ROOMIO_ON_DEFAULT
+#define ROOMIO_ON_DEFAULT 1   // 0 — предчтение комнат по умолчанию выключено, включается файлом roomiop1on рядом с EBOOT (пара для тура); гэги от этого не зависят
+#endif
+static int roomPfOn = ROOMIO_ON_DEFAULT && !ROOMIO_OLD;   // файл roomiop1on / flag roomiop1on 1 включает, syncreadp1old выключает
+#define ROOM_PF_DIST 14.f       // с какого расстояния до двери начинать читать комнату
+#define ROOM_PF_KEEP 25.f       // дальше этого от двери буфер отпускается
+#define ROOM_PF_READ_US 3000000u  // чтение впрок не пришло за 3 с — отмена, комната откроется синхронно под ирисом
+#define ROOM_PF_IDLE_US 60000000u // комната прочитана, но Гомер не вошёл за 60 с — буфер отпускается
+#define ROOM_PF_HEAP_MIN (3u << 20)  // впрок только при куче не меньше размер + 3 МБ; держим — отпускаем при куче < 1,5 МБ
+static struct { int room, state; unsigned char *m; unsigned sz; SceUID fd; unsigned t0; } rpf = { -1, 0, 0, 0, -1, 0 };   // state: 0 нет, 1 читается, 2 готово
+unsigned roomPfStarts, roomPfHits, roomPfWaits, roomPfDrops, roomPfTimeouts; static int rpfFail = -1;
+static void roomPrefetchDrop(void) {
+  if (rpf.state == 1) { SceInt64 r_; sceIoCancel(rpf.fd); sceIoWaitAsync(rpf.fd, &r_); }   // отмена, потом конец: буфер освобождается только после неё
+  if (rpf.fd >= 0) sceIoClose(rpf.fd);
+  free(rpf.m); rpf.m = 0; rpf.fd = -1; rpf.state = 0; rpf.room = -1; rpf.sz = 0;
+}
+static void rdlFree(void);   // листы комнат (РОВНЫЕ_30 шаг 2): готовые листы GE комнаты (ниже), освобождаются вместе с комнатой
+static void roomClose1(void);
+static void roomClose(void) { unsigned t0_ = sceKernelGetSystemTimeLow(); roomClose1(); xnEnd("room_out", t0_, (int)gameLevel); }   // №1206: время перехода
+static void roomClose1(void) {   // блоб комнаты — обратно в кучу (GE прошлый кадр закончил: sceGuSync в конце кадра)
+  rpfFail = -1; roomPrefetchDrop();   // ТЕСТ90 П1: незаконченное чтение впрок не переживает комнату и уровень
   if (rg.mem) bbOp("room-", rg.room >= 0 && rg.room < rooms.nroom ? rooms.room[rg.room].name : "-", 0);   // правка 103: самописец
+  rdlFree();
   toneBlkDel(rg.mem); free(rg.pc); free(rgTex); free(rg.mem); nrcam = 0; rcs.cur = -1; roomCamOn = 0;
   roomAnN = 0;   // круг 5 (P16-11)
   rg.pc = 0; rgTex = 0; rgNtex = 0; rg.mem = 0; rg.npc = 0; rg.room = -1; bound = -2;
@@ -177,15 +215,42 @@ static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0
 #define NPC_WAIT1076_OLD 0
 #endif
 static int npcWaitOld;
-static int roomOpen(void *u, int room) {
+// №1209 (тур TEST90 на PSP): «foot X Z H Y» с Y под городом, когда Гомер ещё не в комнате, ставил его в город под землю — падение без конца. Теперь пропуск.
+// FOOTROOM1209_OLD=1 / flag footroom1209old 1 — как было
+#ifndef FOOTROOM1209_OLD
+#define FOOTROOM1209_OLD 0
+#endif
+static int footRoom1209Old;
+// ag/loadorder: пропуск foot по Y ниже −10 срабатывал и на низинах L3/L6 (город там лежит на −20…−77 м): точка вне комнаты тоже терялась без следа. Теперь пропуск — только если точка лежит на полу какой-нибудь комнаты
+// (npcRoomAt). FOOTLOWLAND1209_OLD=1 / «flag footlowland1209old» — как в №1209 (любая точка ниже −10 м пропускается)
+#ifndef FOOTLOWLAND1209_OLD
+#define FOOTLOWLAND1209_OLD 0
+#endif
+static int footLowland1209Old = FOOTLOWLAND1209_OLD;
+static int roomOpen1(void *u, int room);
+static int roomOpen(void *u, int room) { unsigned t0_ = sceKernelGetSystemTimeLow(); int r_ = roomOpen1(u, room); xnEnd("room_in", t0_, room); return r_; }   // №1206: время перехода
+static int roomOpen1(void *u, int room) {
   (void)u; bbOp("room+", rooms.room[room].name, 1);   // правка 103: самописец — ящик на карте ДО чтения комнаты
   unsigned t0 = sceKernelGetSystemTimeLow(), h0 = smkOn ? heapFreeBytes() : 0;
   const RoomGfxEnt *g = 0;
   for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) g = &rgEnt[i];
   int err = !g ? 1 : rgBad[room] ? 2 : 0; unsigned char *m = 0; Tex *tx = 0; Piece *pp = 0;
   unsigned sz = g ? g->size : 0, ntx = 0, np = 0, to = 0, ro = 0;
-  if (!err && !(m = memalign(16, sz))) err = 3;   // нет памяти — не «битый»: отойдёт от двери и вернётся — новая попытка
-  if (!err) {
+  int fromPf = 0;
+  if (!err && rpf.room == room && rpf.m && rpf.sz == sz && roomPfOn && !syncReadP1Old) {   // ТЕСТ90 П1: прочитано впрок (или читается — ждём здесь, под ирисом)
+    unsigned w0 = sceKernelGetSystemTimeLow();
+    while (rpf.state == 1 && sceKernelGetSystemTimeLow() - w0 < 400000u) {
+      SceInt64 r_ = -1; int pr = sceIoPollAsync(rpf.fd, &r_);
+      if (pr <= 0) { rpf.state = pr == 0 && r_ == (SceInt64)sz ? 2 : 0; if (pr < 0 || r_ != (SceInt64)sz) { free(rpf.m); rpf.m = 0; } break; }
+      sceKernelDelayThread(2000); roomPfWaits++;
+    }
+    if (rpf.state == 1) { SceInt64 r2_; sceIoCancel(rpf.fd); sceIoWaitAsync(rpf.fd, &r2_); free(rpf.m); rpf.m = 0; }   // не успело за 0,4 с — отменить и читать по-старому
+    if (rpf.state == 2 && rpf.m) { m = rpf.m; rpf.m = 0; fromPf = 1; roomPfHits++; }
+    if (rpf.fd >= 0) { sceIoClose(rpf.fd); rpf.fd = -1; }
+    rpf.state = 0; rpf.room = -1; rpf.sz = 0;
+  }
+  if (!err && !m && !(m = memalign(16, sz))) err = 3;   // нет памяти — не «битый»: отойдёт от двери и вернётся — новая попытка
+  if (!err && !fromPf) {
     char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
     if (f < 0 || sceIoLseek32(f, g->off, PSP_SEEK_SET) != (int)g->off || sceIoRead(f, m, sz) != (int)sz) err = 4;
     if (f >= 0) sceIoClose(f);
@@ -233,8 +298,45 @@ static int roomOpen(void *u, int room) {
   if (!NPC_WAIT1076_OLD && !npcWaitOld) { unsigned w0 = sceKernelGetSystemTimeLow(); int n0 = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]), nl = n0;
     while (nl > 0 && sceKernelGetSystemTimeLow() - w0 < 1500000u) { sceKernelDelayThread(5000); nl = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]); }
     if (smkOn && n0) { char s_[96]; snprintf(s_, sizeof s_, "NPCWAIT1076 room=%s pending0=%d left=%d ms=%u\n", rooms.room[room].name, n0, nl, (sceKernelGetSystemTimeLow() - w0) / 1000u); smkWrite(s_); } }
-  rg.ms = (sceKernelGetSystemTimeLow() - t0) / 1000.f; rg.heap0 = h0; rg.heap1 = smkOn ? heapFreeBytes() : 0;
+  rg.ms = (sceKernelGetSystemTimeLow() - t0) / 1000.f; rg.heap0 = h0;
+  if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "ROOMPF room=%s fromPf=%d starts=%u hits=%u waits=%u drops=%u timeouts=%u ms=%.0f t=%.1f\n", rooms.room[room].name, fromPf, roomPfStarts, roomPfHits, roomPfWaits, roomPfDrops, roomPfTimeouts, rg.ms, smkT); smkWrite(s_); } rg.heap1 = smkOn ? heapFreeBytes() : 0;
   return 1;
+}
+// ТЕСТ90 П1: каждый кадр на улице пешком — не пора ли читать комнату ближайшей двери. Не в комнате, не в переходе, куча с запасом
+static void roomPrefetchTick(void) {
+  if (!roomPfOn || syncReadP1Old || !rooms.nroom || !rgN || !haveHomer || !onFoot() || rs.room >= 0 || rg.mem) { if (rpf.state && (rs.room >= 0 || rg.mem)) roomPrefetchDrop(); return; }
+  unsigned now = sceKernelGetSystemTimeLow();
+  // держим буфер, пока Гомер не дальше ROOM_PF_KEEP от двери этой комнаты, не дольше ROOM_PF_IDLE_US и пока в куче есть запас; чтение в пути — не дольше ROOM_PF_READ_US
+  if (rpf.state) {
+    float kd = 1e9f; for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == rpf.room) { float dx = rooms.door[d].p[0] - homer.x, dz = rooms.door[d].p[2] - homer.z, q = dx * dx + dz * dz; if (q < kd) kd = q; }
+    if (kd > ROOM_PF_KEEP * ROOM_PF_KEEP || (rpf.state == 2 && (now - rpf.t0 > ROOM_PF_IDLE_US || heapFreeBytes() < (3u << 19)))) {
+      if (rpf.state == 2 && kd <= ROOM_PF_KEEP * ROOM_PF_KEEP) rpfFail = rpf.room;   // простой или куча: рядом с дверью заново не читать, пока не отошёл
+      roomPfDrops++; roomPrefetchDrop(); return;
+    }
+    if (rpf.state == 1) {
+      SceInt64 r_ = -1; int pr = sceIoPollAsync(rpf.fd, &r_);
+      if (pr <= 0) { if (pr == 0 && r_ == (SceInt64)rpf.sz) { rpf.state = 2; rpf.t0 = now; } else { sceIoClose(rpf.fd); rpf.fd = -1; free(rpf.m); rpf.m = 0; rpf.state = 0; rpfFail = rpf.room; rpf.room = -1; } }
+      else if (now - rpf.t0 > ROOM_PF_READ_US) { roomPfTimeouts++; rpfFail = rpf.room; roomPrefetchDrop(); }   // не пришло: отмена, дескриптор закрыт, комната — синхронно под ирисом
+      return;
+    }
+    return;
+  }
+  if (rpfFail >= 0) {   // отказавшая комната: снова только после того, как Гомер отошёл дальше ROOM_PF_KEEP от её двери
+    float kd = 1e9f; for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == rpfFail) { float dx = rooms.door[d].p[0] - homer.x, dz = rooms.door[d].p[2] - homer.z, q = dx * dx + dz * dz; if (q < kd) kd = q; }
+    if (kd > ROOM_PF_KEEP * ROOM_PF_KEEP) rpfFail = -1;
+  }
+  int best = -1; float bd = ROOM_PF_DIST * ROOM_PF_DIST;
+  for (int d = 0; d < rooms.ndoor; d++) { float dx = rooms.door[d].p[0] - homer.x, dz = rooms.door[d].p[2] - homer.z, q = dx * dx + dz * dz; if (q < bd && rooms.door[d].room >= 0 && rooms.door[d].room < rooms.nroom) { bd = q; best = d; } }
+  if (best < 0) return;
+  int room = rooms.door[best].room;
+  if (room == rpfFail) return;
+  const RoomGfxEnt *g = 0;
+  for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) g = &rgEnt[i];
+  if (!g || rgBad[room] || heapFreeBytes() < g->size + ROOM_PF_HEAP_MIN) return;
+  unsigned char *m = memalign(16, g->size); if (!m) return;
+  char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
+  if (f < 0 || sceIoLseek32(f, g->off, PSP_SEEK_SET) != (int)g->off || sceIoReadAsync(f, m, g->size) < 0) { if (f >= 0) sceIoClose(f); free(m); rpfFail = room; return; }
+  rpf.room = room; rpf.m = m; rpf.sz = g->size; rpf.fd = f; rpf.state = 1; rpf.t0 = now; roomPfStarts++;
 }
 // метка этапа buyskin (viewer/rooms.c roomsSpotTarget, game_msn.c shSkinSpot): ближайший гардероб skins.txt или дверь его комнаты
 #include "wardrobe_view.h"
@@ -256,16 +358,46 @@ static int roomHoldActive(float dt) { if (roomHoldT <= 0.f) return 0; roomHoldT 
 // последнего SetDynaLoadData, иначе любая; «в комнате» — под точкой сценария пол этой комнаты (комнаты под городом, в стороне).
 // Перенос сценарием из комнаты в город — выход из комнаты. Зовётся на старте уровня / загрузке и после переноса сценарием
 static int roomFloorAt(int i, float x, float y, float z) { float g, n[3]; return colGround(&rooms.room[i].col, x, z, y + 1.5f, y - 3.f, &g, n); }
+// ag/loadorder: точка переноса сценария лежит в комнате -> дверь этой комнаты в городе (куда выйдет игрок; вокруг неё читается город). 1 — нашли; rk — номер комнаты
+static int roomDoorOf(const float p[3], float out[3], int *rk) {
+  for (int k = 0; k < rooms.nroom; k++) if (roomFloorAt(k, p[0], p[1], p[2]))
+    for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == k) { memcpy(out, rooms.door[d].p, 3 * sizeof(float)); if (rk) *rk = k; return 1; }
+  return 0;
+}
 static const char *npcRoomAt(float x, float y, float z) {
   for (int i = 0; i < rooms.nroom; i++) if (roomFloorAt(i, x, y, z)) return rooms.room[i].name;
   return NULL;
 }
+// служебное (06.11, бот «начало-конец миссий»): куда встать, чтобы попасть туда же, где цель p. 1 — out = дверь комнаты цели (игрок в городе), 2 — out = выход
+// своей комнаты (игрок в комнате, цель не в ней), 0 — цель там же, где игрок. interior — этап «войти»: точка цели может стоять у двери снаружи, тогда комната — ближайшей двери (до 20 м)
+static int svcRoomGo(const float p[3], float out[3], int interior) {
+  int tr = -1; for (int k = 0; k < rooms.nroom && tr < 0; k++) if (roomFloorAt(k, p[0], p[1], p[2])) tr = k;
+  if (rs.room >= 0) { if (tr == rs.room || rs.room >= rooms.nroom) return 0; memcpy(out, rooms.room[rs.room].exit, 3 * sizeof(float)); return 2; }
+  if (tr < 0 && interior) { float bd = 20.f * 20.f; for (int d = 0; d < rooms.ndoor; d++) { float dx = rooms.door[d].p[0] - p[0], dz = rooms.door[d].p[2] - p[2], q = dx * dx + dz * dz; if (q < bd && rooms.door[d].room >= 0) { bd = q; tr = rooms.door[d].room; } } }
+  if (tr < 0) return 0;
+  for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == tr) { memcpy(out, rooms.door[d].p, 3 * sizeof(float)); return 1; }
+  return 0;
+}
+// ag/loadorder (№1209, класс «поставили раньше, чем открылась комната»): сценарий миссии ставит Гомера в карман комнат, пока мир города (G.pHomerWorld = 0). Пола комнаты в городе нет: Гомер падает на 6 м (HOMER_VOID_DROP), срабатывает
+// возврат на «надёжное место» (homer.c), и так пилой между y −20 и −26 с периодом 0,7 с, пока перенос ждёт (выезд карточки брифинга 1,0 с, ирис, MS_SETUP_CAP кадров). msnRoomSync искал пол комнаты только в окне
+// от 1,5 м выше точки до 3 м ниже: в нижней части «пилы» (около половины периода) пол оказывался выше окна, комната не находилась, Гомер оставался в городе под землёй, как в туре №1209.
+// Теперь, если окно не нашло комнату, а миссия назвала комнату (SetDynaLoadData), её пол ищется выше Гомера до 25 м: он провалился под собственный пол; Гомер встаёт на него и комната открывается.
+// MSNROOMDEEP1209_OLD=1 / «flag msnroomdeep1209old 1» — как было
+#ifndef MSNROOMDEEP1209_OLD
+#define MSNROOMDEEP1209_OLD 0
+#endif
+static int msnRoomDeep1209Old = MSNROOMDEEP1209_OLD;
+static int roomFloorAbove(int i, float x, float y, float z, float *gy) { float n[3]; return colGround(&rooms.room[i].col, x, z, y + 25.f, y - 1.f, gy, n); }
 static void msnRoomSync(void) {
   char s[128];
   if (!rooms.nroom || !haveHomer || !onFoot()) return;
-  const char *nm = mvDynaRoom(); int i = -1;
+  const char *nm = mvDynaRoom(); int i = -1; float gDeep = 0.f; int deep = 0;
   for (int k = 0; k < rooms.nroom && i < 0; k++) if (nm[0] && !strcmp(rooms.room[k].name, nm) && roomFloorAt(k, homer.x, homer.y, homer.z)) i = k;
   for (int k = 0; k < rooms.nroom && i < 0; k++) if (roomFloorAt(k, homer.x, homer.y, homer.z)) i = k;
+  if (i < 0 && !msnRoomDeep1209Old && nm[0] && !(rs.room >= 0 && rg.mem)) {   // Гомер провалился под пол названной комнаты (карман комнат в мире города)
+    for (int k = 0; k < rooms.nroom && i < 0; k++) if (!strcmp(rooms.room[k].name, nm) && roomFloorAbove(k, homer.x, homer.y, homer.z, &gDeep)) i = k;
+    if (i >= 0) { deep = 1; if (smkOn) { snprintf(s, sizeof s, "ROOM ev=msnrescue room=%s below=%.1f t=%.1f\n", rooms.room[i].name, gDeep - homer.y, smkT); smkWrite(s); } }
+  }
   if (i < 0) { if (rs.room >= 0 || rg.mem) { roomLeave(); snprintf(s, sizeof s, "ROOM ev=msnout t=%.1f\n", smkT); smkWrite(s); } return; }
   if (rs.room == i && rg.mem) return;
   if (rs.room >= 0 || rg.mem) roomClose();
@@ -274,7 +406,7 @@ static void msnRoomSync(void) {
   rs.room = i; rs.exitArmed = 0; rs.doorArmed = 1; rs.lastDoor = -1;
   for (int d = 0; d < rooms.ndoor; d++) if (rooms.door[d].room == i) { rs.lastDoor = d; break; }
   G.pHomerWorld = &rooms.room[i].col;
-  homerPlace(&homer, G.pHomerWorld, homer.x, homer.y + 1.f, homer.z, homer.h);   // точка сценария — на пол комнаты
+  homerPlace(&homer, G.pHomerWorld, homer.x, deep ? gDeep : homer.y + 1.f, homer.z, homer.h);   // точка сценария — на пол комнаты (deep — на пол, найденный глубже)
   chase.init = 0; roomLog(ROOM_EV_ENTER);
 }
 static void roomLog(int ev) {   // smoke.txt: вход/выход, куча до/после (гейт: 5 кругов без утечки), позиция Гомера
@@ -320,6 +452,143 @@ static int rdMirVis(const float *b) {
   return visBox(r, 0, 0, 0);
 }
 static int roomNameIs(const char *n, const char *w) { if (!n) return 0; for (; *n && *w; n++, w++) if ((*n | 32) != *w) return 0; return !*n && !*w; }
+// ТЕСТ90 (РОВНЫЕ_30 §3 п.2, «листы комнат»): комната — 263 куска дома Симпсонов каждый кадр отдельными вызовами (177–250 sceGuDrawArray по 25–60 мкс процессора: каждый — вызов ядра), листов не было.
+// Теперь при входе в комнату куски, которые рисуются обычным непрозрачным путём (не полупрозрачные, не небо и не сложение, не полосы, текстура комнаты), запекаются в листы GE — по одному на группу
+// «(флаги & 3, текстура)», как сортировка roomDraw; в листе у каждого куска те же команды, что дал бы drawPiece (привязка, флаги, матрица модели, рисование). Матрица модели — перенос = центр - глаз (№1083),
+// он меняется каждый кадр: три слова переноса каждого куска перезаписываются перед вызовом листа теми же числами, что считал бы drawPiece (побитно); кусок, не прошедший пирамиду видимости, получает
+// вместо команды рисования пустую команду (порядок и состав видимых кусков те же, что у прямого пути). Кадр: на видимую группу один вызов листа вместо вызова на кусок. Кусок под особым случаем в этом кадре
+// (у стены: отсечение у камеры; анимированная текстура; срез по полосе ggOn/ggForce; диагностика) — вся группа идёт прямым путём, как раньше. Лист живёт, пока Гомер в комнате (rdlFree в roomClose).
+// Два экземпляра листа (чётный и нечётный кадр): правятся слова листа, который видеочип в этом кадре ещё не читал. ROOMDL_OLD=1 / файл roomdlold рядом с EBOOT / «flag roomdl 0» — прямой путь, как до правки
+#ifndef ROOM_TEXSORT_OLD
+#define ROOM_TEXSORT_OLD 0
+#endif
+#ifndef ROOMDL_OLD
+#define ROOMDL_OLD 1   // ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО до зелёного гейта tests/rooms/roomdl1190.py; включить сборкой -DROOMDL_OLD=0 или «flag roomdl 1» в сценарии
+#endif
+static int roomDlOn = !ROOMDL_OLD;
+#define RDL_MAXG 160
+#define RDL_MAXP 4096
+#define RDL_MAXPRIM 6
+typedef struct { unsigned short pi, np; unsigned mw, tris; unsigned pw[RDL_MAXPRIM], pv[RDL_MAXPRIM]; } RdlP;   // pi — номер куска комнаты; mw — слово первой из трёх команд переноса; pw/pv — слова и значения команд рисования
+typedef struct { unsigned short p0, n; unsigned nw, off; unsigned *w[2]; } RdlG;   // off — начало листа группы (слов) в общем блоке rdlBase; w[0], w[1] — два экземпляра
+static RdlP rdlP[RDL_MAXP]; static RdlG rdlG[RDL_MAXG]; static short rdlGOf[2048], rdlPOf[RDL_MAXP]; static int rdlN, rdlReady, rdlPar; static unsigned rdlBytes, rdlSig, rdlCalls, rdlDirect, rdlPcs;
+static int rdlLo, rdlHi = 1 << 20; static unsigned rdlMask;   // служебно (flag roomdlmask N): куски с такими флагами в листы не идут (поиск причины различий)
+static int rdlOnly = -1, rdlOnlyHi;   // lo, hi: куски lo..hi-1; hi = 0 — один кусок lo
+static inline int rdlOnlyOk(int i) { return rdlOnly < 0 || (rdlOnlyHi ? i >= rdlOnly && i < rdlOnlyHi : i == rdlOnly); }   // служебно (flag roomdlonly N): в листы идёт только кусок N, остальные куски его группы — прямым путём после вызова листа
+static int rdlDump;   // служебно (flag roomdldump 1): слова листа группы 0 в журнал
+static int rdlBug;   // служебно (flag roomdlbug 1): перенос кусков в листе не обновляется — красный контроль гейта tests/rooms/roomdl1190.py
+static int rdlCalledNow;   // в этом кадре хоть раз вызван лист комнаты
+static unsigned *rdlBase; static unsigned char rdlVis[RDL_MAXP]; static const void *rdlFor;   // rdlBase — один блок под все листы комнаты (меньше дробления кучи)
+   // rdlFor — для какой комнаты (rg.mem) собраны листы
+static unsigned rdlSigNow(void) { return (unsigned)opt * 2654435761u ^ (unsigned)(int)(mipBias * 64.f) * 40503u ^ (unsigned)layerBias * 97u ^ (unsigned)flatOn * 7919u ^ (unsigned)mipAuto * 31u; }   // что запечено в листе из настроек: сменилось — пересборка
+static void rdlFree(void) {
+  free(rdlBase); rdlBase = 0; for (int g = 0; g < rdlN; g++) rdlG[g].w[0] = rdlG[g].w[1] = 0;
+  if (smkOn && rdlReady) { char l_[160]; snprintf(l_, sizeof l_, "ROOMDL ev=free groups=%d pieces=%u bytes=%u calls=%u direct=%u t=%.1f\n", rdlN, rdlPcs, rdlBytes, rdlCalls, rdlDirect, smkT); smkWrite(l_); }
+  rdlN = 0; rdlReady = 0; rdlBytes = 0; rdlPcs = 0; rdlCalls = rdlDirect = 0; rdlFor = 0;
+}
+static int rdlPieceOk(const Piece *d) {   // кусок рисуется обычным непрозрачным путём и его команды не зависят от глаза
+  if (d->r.flags & (2 | 4 | F_ADDITIVE | F_STRIP) || d->r.tex < RTEX0 || (d->r.flags & rdlMask)) return 0;
+  return d->r.ni > 0 && d->r.ni <= 65535 && d->r.sc > 0.f;
+}
+static void rdlEmit(Piece *d) {   // те же команды, что drawPiece при ровном переносе от глаза: c = 1, s = 0, перенос по умолчанию 0 (перезаписывается перед вызовом)
+  float c = 1.f, s = 0.f, tx = 0.f, ty = 0.f, tz = 0.f, k = d->r.sc, ox = d->r.ox, oy = d->r.oy, oz = d->r.oz;
+  ScePspFMatrix4 m = {
+    {c * k, 0, -s * k, 0}, {0, k, 0, 0}, {s * k, 0, c * k, 0},
+    {tx + c * ox + s * oz, ty + oy, tz - s * ox + c * oz, 1}};
+  phAllow = d->r.owner == 0; NZP(d); bindTexLean(d->r.tex); phAllow = 0; setFlags(d->r.flags);
+  sceGuSetMatrix(GU_MODEL, &m); drawGeo(d, 0, d->r.ni);
+}
+static void rdlBuild(void) {
+  rdlFree(); memset(rdlGOf, 0xff, sizeof rdlGOf); rdlSig = rdlSigNow();
+  if (!roomDlOn || rg.npc == 0 || rg.npc > RDL_MAXP || diagOn || flatOn || ROOM_TEXSORT_OLD || TVGAP1083_OLD) return;
+  unsigned t0 = sceKernelGetSystemTimeLow(); unsigned h0 = heapFreeBytes();
+  static unsigned char bad[2048]; static unsigned short gn[RDL_MAXG]; memset(bad, 0, sizeof bad);
+  for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; if (d->r.ni <= 0 || !pieceOk(d, 0)) continue;   // ничего не рисует — группе не мешает
+    if (!rdlPieceOk(d) && rdlOnly < 0) bad[((d->r.flags & 3) << 9) | rdTexKey(d->r.tex)] = 1; }
+  memset(gn, 0, sizeof gn);
+  for (unsigned i = 0; i < rg.npc; i++) { Piece *d = &rg.pc[i]; rdlPOf[i] = -1; if (d->r.ni <= 0 || !pieceOk(d, 0) || !rdlPieceOk(d) || !rdlOnlyOk((int)i)) continue;
+    int key = ((d->r.flags & 3) << 9) | rdTexKey(d->r.tex); if (bad[key]) continue;
+    if (rdlGOf[key] < 0) { if (rdlN >= RDL_MAXG) { rdlFree(); return; } rdlGOf[key] = (short)rdlN; memset(&rdlG[rdlN], 0, sizeof rdlG[rdlN]); rdlN++; }
+    gn[rdlGOf[key]]++; rdlPOf[i] = (short)rdlGOf[key]; }
+  unsigned off = 0; for (int g = 0; g < rdlN; g++) { rdlG[g].p0 = (unsigned short)off; rdlG[g].n = 0; off += gn[g]; }
+  static unsigned short fill[RDL_MAXG]; memset(fill, 0, sizeof fill);
+  unsigned gcap = rg.npc * 160u + (unsigned)rdlN * 8u + 64u, goff = 0;   // gacc — листы всех групп подряд (временно), потом один блок на два экземпляра
+  unsigned *tmpP = (unsigned *)memalign(16, 4096 * 4), *acc = 0, *gacc = (unsigned *)malloc(gcap * 4);   // tmpP — список одного куска; acc — список группы
+  if (!tmpP || !gacc) { free(tmpP); free(gacc); rdlFree(); return; }
+  dlLost(); int fail = 0; unsigned total = 0, npc = 0;
+  for (int g = 0; g < rdlN && !fail; g++) {
+    unsigned cap = (unsigned)gn[g] * 160u + 64u; acc = (unsigned *)malloc(cap * 4); if (!acc) { fail = 1; break; }
+    unsigned nw = 0;
+    for (unsigned i = 0; i < rg.npc && !fail; i++) { if (rdlPOf[i] != g) continue; Piece *d = &rg.pc[i];
+      sceKernelDcacheWritebackInvalidateRange(tmpP, 4096 * 4); sceGuStart(GU_CALL, tmpP); if (!dlNoDepth) sceGuDepthRange(65535, 0); rdlEmit(d); unsigned sz = (unsigned)sceGuFinish();   // у контекста листа свои границы глубины (нули): без этого sceGuDepthOffset слоёв (setBias) в листе портил границы глубины видеочипа для всего кадра (как у листов клеток и пропов) unsigned sz = (unsigned)sceGuFinish();
+      unsigned n = sz / 4u; const volatile unsigned *u = (const volatile unsigned *)((unsigned)tmpP | 0x40000000u);
+      if (n < 2 || n > 4000 || (u[n - 1] >> 24) != 0x0bu || nw + n > cap) { fail = 1; break; }   // последнее слово — возврат из листа (RET)
+      RdlP *P = &rdlP[rdlG[g].p0 + fill[g]++]; memset(P, 0, sizeof *P); P->pi = (unsigned short)i; P->tris = (unsigned)d->r.ni / 3u; P->mw = 0xffffffffu;
+      for (unsigned q = 0; q < n - 1; q++) { unsigned w = u[q], op = w >> 24; acc[nw + q] = w;
+        if (op == 0x3a) { /* WORLDN */ if (q + 12 < n - 1 && (u[q + 1] >> 24) == 0x3b) P->mw = nw + q + 1 + 9; }   // перенос — последние три из двенадцати слов матрицы
+        else if (op == 0x04) { if (P->np < RDL_MAXPRIM) { P->pw[P->np] = nw + q; P->pv[P->np] = w; P->np++; } else fail = 1; } }   // PRIM
+      if (P->mw == 0xffffffffu || !P->np) fail = 1;
+      nw += n - 1; npc++; }
+    if (fail) { free(acc); acc = 0; break; }
+    unsigned nw1_ = nw + 1;
+    { unsigned nw1 = (nw + 1 + 3u) & ~3u; if (goff + nw1 > gcap) { free(acc); acc = 0; fail = 1; break; }
+      memcpy(gacc + goff, acc, nw * 4u); for (unsigned q = nw; q < nw1; q++) gacc[goff + q] = q == nw ? 0x0b000000u : 0u;   // RET, добор до 16 байт нулями
+      rdlG[g].off = goff; rdlG[g].nw = nw + 1; rdlG[g].n = gn[g]; goff += nw1; }
+    free(acc); acc = 0;
+    if (smkOn && rdlDump && g == 0) { for (unsigned q = 0; q < nw1_; q += 8) { char l_[200]; int o = snprintf(l_, sizeof l_, "RDLW %u:", q); for (unsigned r = q; r < q + 8 && r < nw1_; r++) o += snprintf(l_ + o, sizeof l_ - (size_t)o, " %08x", gacc[rdlG[g].off + r]); snprintf(l_ + o, sizeof l_ - (size_t)o, "\n"); smkWrite(l_); } }
+    if (smkOn && g == 0) { char l_[400]; int o = snprintf(l_, sizeof l_, "ROOMDL ev=g0pieces"); for (unsigned q = 0; q < gn[g] && o < 360; q++) o += snprintf(l_ + o, sizeof l_ - (size_t)o, " %u", (unsigned)rdlP[rdlG[g].p0 + q].pi); snprintf(l_ + o, sizeof l_ - (size_t)o, "\n"); smkWrite(l_); }
+    if (smkOn) { const Piece *f0_ = &rg.pc[rdlP[rdlG[g].p0].pi]; unsigned tr_ = 0; for (unsigned q = 0; q < gn[g]; q++) tr_ += rdlP[rdlG[g].p0 + q].tris; char l_[200]; snprintf(l_, sizeof l_, "ROOMDL ev=grp g=%d tex=%d fl=%x n=%u tris=%u words=%u ni0=%d sc=%.3f\n", g, f0_->r.tex, (unsigned)f0_->r.flags, (unsigned)gn[g], tr_, nw, f0_->r.ni, f0_->r.sc); smkWrite(l_); } }
+  if (phTfx) { sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA); phTfx = 0; }
+  dlLost(); free(tmpP);
+  if (!fail) {   // один блок: два экземпляра всех листов; запись только через некэшируемое зеркало, до неё — сброс строк кэша, оставшихся от прежнего хозяина памяти
+    unsigned bytes = goff * 4u; rdlBase = (unsigned *)memalign(16, bytes * 2u);
+    if (!rdlBase) fail = 1;
+    else { sceKernelDcacheWritebackInvalidateRange(rdlBase, bytes * 2u); volatile unsigned *dst = (volatile unsigned *)((unsigned)rdlBase | 0x40000000u);
+      for (unsigned q = 0; q < goff; q++) { dst[q] = gacc[q]; dst[goff + q] = gacc[q]; }
+      for (int g = 0; g < rdlN; g++) { rdlG[g].w[0] = rdlBase + rdlG[g].off; rdlG[g].w[1] = rdlBase + goff + rdlG[g].off; }
+      total = bytes * 2u; } }
+  free(gacc);
+  if (fail) { rdlFree(); if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "ROOMDL ev=fail room=%d t=%.1f\n", rg.room, smkT); smkWrite(l_); } return; }
+  rdlBytes = total; rdlPcs = npc; rdlReady = 1; rdlPar = 0; rdlFor = rg.mem;
+  if (smkOn) { unsigned hv[16], hn[16]; int nh = 0; for (unsigned i = 0; i < rg.npc; i++) { unsigned f = (unsigned)rg.pc[i].r.flags & 0xffffu; int q = 0; for (; q < nh; q++) if (hv[q] == f) break; if (q == nh && nh < 16) { hv[nh] = f; hn[nh] = 0; nh++; } if (q < nh) hn[q]++; }
+    char l_[400]; int o = snprintf(l_, sizeof l_, "ROOMDL ev=flags"); for (int q = 0; q < nh; q++) o += snprintf(l_ + o, sizeof l_ - (size_t)o, " %x:%u", hv[q], hn[q]); snprintf(l_ + o, sizeof l_ - (size_t)o, "\n"); smkWrite(l_); }
+  if (smkOn) { char l_[200]; int o_ = snprintf(l_, sizeof l_, "ROOMDL ev=anim n=%d", roomAnN); for (int q = 0; q < roomAnN; q++) o_ += snprintf(l_ + o_, sizeof l_ - (size_t)o_, " base=%d nk=%d fps=%.2f", roomAn[q].base, roomAn[q].nk, roomAn[q].fps); snprintf(l_ + o_, sizeof l_ - (size_t)o_, "\n"); smkWrite(l_); }
+  if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "ROOMDL ev=build room=%d groups=%d pieces=%u bytes=%u heap=%u ms=%.1f t=%.1f\n", rg.room, rdlN, npc, total, heapFreeBytes(), (sceKernelGetSystemTimeLow() - t0) * .001f, smkT); smkWrite(l_); (void)h0; }
+}
+static int rdlChk; static unsigned rdlChkN, rdlChkBad;   // служебно (flag roomdlchk 1): сверка слов переноса с тем, что дал бы drawPiece (те же выражения, c и s — настоящие переменные)
+__attribute__((noinline)) static void rdlRefMat(float tx, float ty, float tz, float c, float s, float k, float ox, float oy, float oz, float *w) {
+  ScePspFMatrix4 m = {{c * k, 0, -s * k, 0}, {0, k, 0, 0}, {s * k, 0, c * k, 0}, {tx + c * ox + s * oz, ty + oy, tz - s * ox + c * oz, 1}};
+  w[0] = m.w.x; w[1] = m.w.y; w[2] = m.w.z;
+}
+static inline unsigned rdlWord(float f) { unsigned u; memcpy(&u, &f, 4); return 0x3b000000u | (u >> 8); }   // как sendCommandf у libgu: 24 старших бита числа
+// вызов листа группы g: перенос видимых кусков = центр - глаз (те же числа, что drawPiece), невидимым — пустая команда вместо рисования
+static void rdlCall(int g, const float *E_) {
+  RdlG *G = &rdlG[g]; volatile unsigned *u = (volatile unsigned *)((unsigned)G->w[rdlPar] | 0x40000000u); unsigned long tris = 0; unsigned nv = 0;
+  for (unsigned q = 0; q < G->n; q++) { RdlP *P = &rdlP[G->p0 + q];
+    if (rdlVis[P->pi]) { Piece *d = &rg.pc[P->pi]; float c = 1.f, s = 0.f, tx = -E_[0], ty = -E_[1], tz = -E_[2], ox = d->r.ox, oy = d->r.oy, oz = d->r.oz;
+      if (rdlChk) { volatile float cv = 1.f, sv = 0.f; float w3[3]; rdlRefMat(tx, ty, tz, cv, sv, d->r.sc, ox, oy, oz, w3); rdlChkN++;
+        if (rdlWord(w3[0]) != rdlWord(tx + c * ox + s * oz) || rdlWord(w3[1]) != rdlWord(ty + oy) || rdlWord(w3[2]) != rdlWord(tz - s * ox + c * oz)) { rdlChkBad++; if (smkOn && rdlChkBad <= 8) { char l_[160]; snprintf(l_, sizeof l_, "ROOMDL ev=chkbad pi=%u ref=%.6f,%.6f,%.6f mine=%.6f,%.6f,%.6f\n", P->pi, w3[0], w3[1], w3[2], tx + c * ox + s * oz, ty + oy, tz - s * ox + c * oz); smkWrite(l_); } }
+        if (smkOn && !(rdlChkN & 1023u)) { char l_[100]; snprintf(l_, sizeof l_, "ROOMDL ev=chk n=%u bad=%u\n", rdlChkN, rdlChkBad); smkWrite(l_); } }
+      if (!rdlBug) { u[P->mw] = rdlWord(tx + c * ox + s * oz); u[P->mw + 1] = rdlWord(ty + oy); u[P->mw + 2] = rdlWord(tz - s * ox + c * oz); }
+      for (unsigned k = 0; k < P->np; k++) u[P->pw[k]] = P->pv[k];
+      tris += P->tris; nv++; gateCount(d->r.ni); }
+    else for (unsigned k = 0; k < P->np; k++) u[P->pw[k]] = 0u; }
+  if (!nv) return;
+  drawnTris += (long)tris; draws += (int)nv;
+  sceGuCallList(G->w[rdlPar]); dlLost(); rdlCalls++; rdlCalledNow = 1;
+}
+static void roomPiece(unsigned i, int rel_, const float *E_) {   // кусок комнаты прямым путём (как до листов комнат)
+  Piece *d = &rg.pc[i];
+  if (trLeft == TR_FRAMES && trDetail) {   // след 259: кусок комнаты в первом кадре камеры миссии — до отправки на GE
+    const Tex *x_ = texAt(d->r.tex); char t_[200];
+    int l_ = snprintf(t_, sizeof t_, "TRR i=%u fl=%x ni=%d v=%p idx=%p tex=%d pal=%p lv0=%p slv0=%p lv=%d list=%d\n", i, d->r.flags, d->r.ni, (void *)d->v, (void *)d->idx,
+                      d->r.tex, x_ ? (void *)x_->pal : 0, x_ ? (void *)x_->lv[0] : 0, x_ ? (void *)x_->slv[0] : 0, x_ ? x_->levels : -1, (int)sceGuCheckList());
+    trLine(t_, l_); }
+  int t0_ = d->r.tex; if (roomAnN) d->r.tex = roomAnimTex(t0_);   // круг 5 (P16-11): анимация текстуры
+  if (rel_ && !(tqOn && (d->r.flags & 2) && !(d->r.flags & 4))) drawPiece(d, 0, -E_[0], -E_[1], -E_[2], 1.f, 0.f);   // №1083: перенос = центр - глаз (полупрозрачное идёт в очередь с обычным видом, как у города)
+  else drawPiece(d, 0, 0.f, 0.f, 0.f, 1.f, 0.f);
+  d->r.tex = t0_;
+}
 static void roomDraw(void) {   // куски комнаты: пирамида видимости, ближняя версия; полупрозрачное — в очередь tq
   // правка Роба 27: камеры комнат оригинала стоят за стенами — оболочка повёрнута лицом в комнату и рисуется с отсечением
   // изнанки (флаг 128, tools/roomorient.py), мебель, видимая изнутри с обеих сторон, — двусторонняя (флаг 8); старый пакет
@@ -349,16 +618,30 @@ static void roomDraw(void) {   // куски комнаты: пирамида в
   ScePspFMatrix4 vAbs_; int rel_ = !TVGAP1083_OLD && (!roomMirrorOn || !MIRROR1106_OLD), mv_ = rel_ && !roomMirrorOn;   // mv_: вид меняем здесь (в отражённом проходе его уже задал roomDrawMirrored)
   const float *E_ = roomMirrorOn ? rdMirE : ggE;
   if (mv_) { sceGumMatrixMode(GU_VIEW); sceGumStoreMatrix(&vAbs_); sceGumMatrixMode(GU_MODEL); ScePspFMatrix4 vr_ = vAbs_; vr_.w.x = vr_.w.y = vr_.w.z = 0.f; sceGuSetMatrix(GU_VIEW, &vr_); }
-  for (unsigned j = 0; j < rdN; j++) { unsigned i = rdOrd[j]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? (roomMirrorOn ? (!(d->r.flags & 3) && rdMirVis(d->r.bb)) : visBox(d->r.bb, 0, 0, 0)) : 1) {
-      if (trLeft == TR_FRAMES && trDetail) {   // след 259: кусок комнаты в первом кадре камеры миссии — до отправки на GE
-        const Tex *x_ = texAt(d->r.tex); char t_[200];
-        int l_ = snprintf(t_, sizeof t_, "TRR i=%u fl=%x ni=%d v=%p idx=%p tex=%d pal=%p lv0=%p slv0=%p lv=%d list=%d\n", i, d->r.flags, d->r.ni, (void *)d->v, (void *)d->idx,
-                          d->r.tex, x_ ? (void *)x_->pal : 0, x_ ? (void *)x_->lv[0] : 0, x_ ? (void *)x_->slv[0] : 0, x_ ? x_->levels : -1, (int)sceGuCheckList());
-        trLine(t_, l_); }
-      int t0_ = d->r.tex; if (roomAnN) d->r.tex = roomAnimTex(t0_);   // круг 5 (P16-11): анимация текстуры
-      if (rel_ && !(tqOn && (d->r.flags & 2) && !(d->r.flags & 4))) drawPiece(d, 0, -E_[0], -E_[1], -E_[2], 1.f, 0.f);   // №1083: перенос = центр - глаз (полупрозрачное идёт в очередь с обычным видом, как у города)
-      else drawPiece(d, 0, 0.f, 0.f, 0.f, 1.f, 0.f);
-      d->r.tex = t0_; } }
+  int rdlUse = roomDlOn && rel_ && !roomMirrorOn && !ROOM_TEXSORT_OLD && rg.npc <= 4096 && !ggOn && !ggForce && !diagOn && !geOver(GE_HARD);   // листы комнат (РОВНЫЕ_30 шаг 2): листы комнаты (rdlBuild выше)
+  if (rdlUse && (!rdlReady || rdlFor != rg.mem || rdlSig != rdlSigNow())) rdlBuild();
+  rdlUse = rdlUse && rdlReady;
+  rdlCalledNow = 0;
+  if (rdlUse) { rdlPar ^= 1; memset(rdlVis, 0, rg.npc); for (unsigned j = 0; j < rdN; j++) rdlVis[rdOrd[j]] = 1; }
+  unsigned j = 0;
+  while (j < rdN) {
+    unsigned e = j + 1; int g = -1;
+    if (rdlUse) {   // серия кусков одной группы «(флаги & 3, текстура)»: все годные — один вызов листа; особый случай хоть у одного — вся серия прямым путём
+      Piece *d0 = &rg.pc[rdOrd[j]]; int key = ((d0->r.flags & 3) << 9) | rdTexKey(d0->r.tex);
+      while (e < rdN) { Piece *d1 = &rg.pc[rdOrd[e]]; if ((((d1->r.flags & 3) << 9) | rdTexKey(d1->r.tex)) != key) break; e++; }
+      g = rdlGOf[key];
+      if (g >= 0) for (unsigned k = j; k < e; k++) { Piece *dk = &rg.pc[rdOrd[k]]; if (rdlPOf[rdOrd[k]] < 0) continue;   // кусок, который ничего не рисует
+        if (camClipNear(dk) || (roomAnN && roomAnimTex(dk->r.tex) != dk->r.tex)) { g = -1; break; } }
+    }
+    if (g >= 0 && (g < rdlLo || g >= rdlHi)) g = -1;   // служебно (flag roomdlrange): листы только у части групп
+    if (g >= 0) { rdlCall(g, E_); if (rdlOnly >= 0) for (unsigned k = j; k < e; k++) if (rdlPOf[rdOrd[k]] < 0) roomPiece(rdOrd[k], rel_, E_); j = e; continue; }
+    unsigned e2 = rdlUse ? e : j + 1; if (rdlUse) rdlDirect += e - j;
+    for (unsigned k = j; k < e2; k++) { unsigned i = rdOrd[k]; Piece *d = &rg.pc[i]; if (ROOM_TEXSORT_OLD ? (roomMirrorOn ? (!(d->r.flags & 3) && rdMirVis(d->r.bb)) : visBox(d->r.bb, 0, 0, 0)) : 1) roomPiece(i, rel_, E_); }
+    j = e2;
+  }
+  if (rdlUse && rdlCalledNow) {   // листы комнат (РОВНЫЕ_30 шаг 2): после листа в видеочипе остаётся состояние последнего куска ЛИСТА (он мог быть невидим), а прямой путь оставляет состояние последнего нарисованного куска; Гомер и прочее дальше полагаются на это состояние —
+    for (int jj = (int)rdN - 1; jj >= 0; jj--) { Piece *dl_ = &rg.pc[rdOrd[jj]]; if (dl_->r.ni <= 0 || (tqOn && (dl_->r.flags & 2) && !(dl_->r.flags & 4)) || !pieceOk(dl_, 0)) continue;   // ставим флаги последнего нарисованного куска, как оставил бы прямой путь
+      setFlags(dl_->r.flags | (camClipNear(dl_) ? F_LSIDE : 0)); break; } }
   if (mv_) sceGuSetMatrix(GU_VIEW, &vAbs_);
 }
 // №1118 (правка Роба: отражение без героя не нужно): отражённый проход Moe's и BartRoom выключен, вместо него на панели зеркала — холодный оттенок стекла и мягкий блик, медленно

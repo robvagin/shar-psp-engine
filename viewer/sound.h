@@ -223,7 +223,7 @@ void sndMaster(float vol);
 void sndUserVolumes(float music, float effects, float vehicle, float voice);   // меню Sound: громкость игрока 0..1
 
 typedef struct {
-  int musicState, ambZone, posEmitter, dialogPlaying, voices, underruns;
+  int musicState, ambZone, posEmitter, dialogPlaying, voices, underruns, loops, dropped;
   int modeApplied;   // набор шин тюнера, который сейчас слышен (пауза и полосы поверх режима)
   float cpu, mixUsMax;
   const char *music, *ambience, *positional, *dialog;

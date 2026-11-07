@@ -329,9 +329,12 @@ const char *uiMenuLabel(int menu, int item);
 int  uiText(int font, int x, int y, unsigned abgr, const char *s);
 int  uiTextSh(int font, int x, int y, unsigned abgr, const char *s);   // №1145: то же с тенью HUD (0,78 чёрного, 1 px вправо-вниз)
 int  uiTextW(int font, const char *s);                                  // №1145: ширина строки гранью font, без рисования
+int  uiTextShS(int font, int x, int y, unsigned abgr, const char *s, int k);   // №1179: то же, каждая точка грани — квадрат k x k (целый кратный)
+int  uiTextWS(int font, const char *s, int k);                                 // №1179: ширина при кратности k
 int  uiFontFindExact(const char *name);                                 // №1145: грань ровно по имени, -1 — нет
 int  uiFontLh(int font);                                                // №1145: высота строки грани
 void uiDrawCountdownOnly(void);                                         // №1149: HUD рисует только отсчёт (3-2-1, слово)
+void uiDrawHudTags(unsigned tagBits);                                    // №1196: HUD рисует только метки из набора (1u << UI_T_*), как у уличных гонок основной игры
 const char *uiFontName(int font);
 int uiFontFind(const char *name);                 // номер шрифта по грани ("Tt2001m__14"; её вариант для миссий «*k» — первым), 0 — нет
 
@@ -433,4 +436,5 @@ UiStats uiLastStats(void);
 void uiResetFlash(void);   // сверка g09a-hud: белая вспышка сброса машины
 #endif
 extern void (*uiPakProgress1060)(unsigned done, unsigned total);   // №1060б: вызывается после каждого куска чтения пакета (NULL — нет)
+void uiZoneSet(int ui, int news);   // TEST91 1А шаг 1: 1 — слот, 0 — из кучи, -1 — не менять (файлы zoneuiold, zonenewson)
 void uiPakSegMax1051(unsigned bytes);   // №1051: потолок куска при чтении пакета (0 — 1 МБ), будка в тесной куче ставит 256 КБ

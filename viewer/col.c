@@ -215,6 +215,16 @@ static int fenceFlags(ColWorld *w) {
 #ifndef COL_HEDGE_CAPSULE_SOLID
 #define COL_HEDGE_CAPSULE_SOLID 0
 #endif
+// №1204 (Роб выбрал «как оригинал» по записи PS2 L7 J9-5, 05.11.2026: x=145 на 15 и 40–50 км/ч изгородь держит, машина встаёт носом на z 161,0; x=135 заезд поверх, где земля подходит вплотную к верху изгороди, с потерей скорости 40–50 %;
+// прежние правки 71/173/304 «проезжать кусты насквозь» заменены): лежачие капсулы-изгороди (материал листва, ось не круче 0,3) — твёрдая преграда в лоб с земли; переезд — только когда верх изгороди выше земли рядом не больше COL_FOL_RIDE_E (горб).
+// Пересечение кузовом листвы по-прежнему вязнет (car.c, FOLIAGE_DRAG). Кусты-шары (ось вверх), ключи и подборы не затронуты. FOLIAGE_PS2_1154_OLD=1 — как в TEST85…90 (изгороди-капсулы проезжаются насквозь)
+#ifndef FOLIAGE_PS2_1154_OLD
+#define FOLIAGE_PS2_1154_OLD 0
+#endif
+#define COL_HEDGE_SOLID_EFF (COL_HEDGE_CAPSULE_SOLID || !FOLIAGE_PS2_1154_OLD)
+#ifndef COL_FOL_RIDE_E
+#define COL_FOL_RIDE_E 1.5f
+#endif   // м: верх изгороди над низом кузова не выше этого — переезжается (запись PS2 L7: низ кузова 6,0, верх 7,4 — переезд, 1,4 м; низ 4,8 — упор, 2,6 м)
 // №587 (16.10, humps D): латка J9-4 сделала зарытые капсулы 104/105 листвой (pad=1), а лист для колёс не опора: машина поперёк горба (2 м/с, правка 200) проваливалась
 // у края террасы на 1,2 м и садилась днищем (7 из 36 заездов стоят). Лежачая длинная капсула-листва (как горб: ось не круче 0,3, длина вдоль земли не меньше COL_HUMP_LEN)
 // остаётся опорой для колёс (материал листва: предел вертикальной скорости FOLIAGE_VY); тело машины сквозь неё проходит как прежде (colPassFol). HUMP_FOLIAGE_SUPPORT_OLD=1 — прежнее
@@ -227,7 +237,7 @@ static int cylLowHump(const ColCyl *C) {
 }
 static int cylBushPass(const ColCyl *C) {
   if (C->pad[0] != 1.f) return 0;
-  return COL_HEDGE_PASS_OLD || !COL_HEDGE_CAPSULE_SOLID || fabsf(C->axis[1]) >= COL_HEDGE_AXIS_Y;
+  return COL_HEDGE_PASS_OLD || !COL_HEDGE_SOLID_EFF || fabsf(C->axis[1]) >= COL_HEDGE_AXIS_Y;
 }
 // Правка 414 (L5 K8-2 «фантом», решение Роба 10.10): капсула COL1 с материалом 2 (tools/psp_export.py col_phantom_pillars — невидимый столб
 // посреди проезжей опоры) машину не держит ни боком, ни верхом; Гомер и пробы мира держат её как было. -DCOL_PHANTOM_OLD=1 — прежнее
@@ -453,7 +463,7 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
 #endif
     // короткая капсула — предмет (труба, бревно), не рельеф: остаётся стеной; низкая изгородь (куст) любой длины — переезжается
     // правка 421: изгородь (лежачая листва) — не горб: у оригинала машина в ней встаёт (сверка PS2), «переезжается» было правилом порта
-    if ((C->pad[0] != 1.f || (COL_HEDGE_CAPSULE_SOLID && !COL_HEDGE_PASS_OLD)) && 2.f * C->halfLen * axl < COL_HUMP_LEN && (GHOSTWALL1153_OLD || C->pad[0] == 1.f)) continue;   // №1140: короткие не-кусты остаются кандидатами (порог ниже)
+    if ((C->pad[0] != 1.f || (COL_HEDGE_SOLID_EFF && !COL_HEDGE_PASS_OLD)) && 2.f * C->halfLen * axl < COL_HUMP_LEN && (GHOSTWALL1153_OLD || C->pad[0] == 1.f)) continue;   // №1140: короткие не-кусты остаются кандидатами (порог ниже)
     S->humpAt[i] = bits; bits += 2u * ((uint32_t)ceilf(2.f * C->halfLen * axl / COL_HUMP_DS) + 1u);
   }
   S->hump = (uint8_t *)calloc(bits / 8 + 1, 1); if (!S->hump) { free(S->humpAt); S->humpAt = 0; return; }
@@ -469,7 +479,8 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
         if (!colGround(w, x, z, top + 1.f, top - 6.f, &g, 0)) continue;
         float e = top - g;
         // куст мягкий: крутизна у земли не важна (правка 71, правило порта: низкую изгородь в оригинале переезжают)
-        if (e <= COL_HUMP && (L >= COL_HUMP_LEN || C->pad[0] == 1.f || e <= GHOST_TOP) && ((C->pad[0] == 1.f && (COL_HEDGE_PASS_OLD || !COL_HEDGE_CAPSULE_SOLID)) || e <= C->r * (1.f - COL_WALK_NY))) { uint32_t bit = S->humpAt[i] + 2u * (uint32_t)k + (uint32_t)side; S->hump[bit >> 3] |= (uint8_t)(1u << (bit & 7)); }
+        const int folRide_ = C->pad[0] == 1.f && !FOLIAGE_PS2_1154_OLD && e <= COL_FOL_RIDE_E;   // №1204: изгородь, верх которой над землёй рядом не выше порога, переезжается
+        if ((e <= COL_HUMP || folRide_) && (L >= COL_HUMP_LEN || C->pad[0] == 1.f || e <= GHOST_TOP) && ((C->pad[0] == 1.f && (COL_HEDGE_PASS_OLD || !COL_HEDGE_SOLID_EFF || folRide_)) || e <= C->r * (1.f - COL_WALK_NY))) { uint32_t bit = S->humpAt[i] + 2u * (uint32_t)k + (uint32_t)side; S->hump[bit >> 3] |= (uint8_t)(1u << (bit & 7)); }
       }
     }
   }
@@ -478,7 +489,11 @@ static void humpFlags(ColWorld *w) {   // см. humpHere: один раз пос
 static void pocketInit(ColWorld *w);
 static void zcReset(void);
 static void railInit(const ColWorld *w); static int railIs(const ColWorld *w, uint32_t i);   // №1050 (Б): ниже, у evalShape
-int colInit(ColWorld *w, const void *section, unsigned size) {
+static int colBakeLoad(ColWorld *w, const uint8_t *b, unsigned size, unsigned key);
+static int cbUsed;
+int colBakeLastUsed(void) { return cbUsed; }
+int colInit(ColWorld *w, const void *section, unsigned size) { return colInitBake(w, section, size, 0, 0, 0); }
+int colInitBake(ColWorld *w, const void *section, unsigned size, const void *bake, unsigned bakeSize, unsigned key) {
   memset(w, 0, sizeof *w); zcReset();
   if (!section || size < sizeof(ColHdr)) return -1;
   if ((uintptr_t)section & 3) return -2;
@@ -511,8 +526,10 @@ int colInit(ColWorld *w, const void *section, unsigned size) {
   if (!s) return -8;
   memset(s, 0, sz);
   s->stamp = (uint16_t *)(s + 1); s->segFlags = (uint8_t *)(s->stamp + nprim); s->steep = s->segFlags + w->nseg; s->cur = 0;
-  for (uint32_t i = 0; i < w->ntri; i++) if (w->tri[i].n[1] <= COL_WALK_NY) s->steep[i >> 3] |= (uint8_t)(1u << (i & 7));
   w->scr = s;
+  int baked = bake && colBakeLoad(w, (const uint8_t *)bake, bakeSize, key) == 0; cbUsed = baked;   // №bake-3Б: steep, cellWall, segFlags, segNb, hump*, fol* из файла (хеш входа и записи сошлись), иначе всё считается ниже
+  if (!baked) {
+  for (uint32_t i = 0; i < w->ntri; i++) if (w->tri[i].n[1] <= COL_WALK_NY) s->steep[i >> 3] |= (uint8_t)(1u << (i & 7));
 #if !COLPROBE_FAST_OLD
   uint64_t ncells = (uint64_t)w->W * w->H;
   if (ncells <= 65536 * 4) {
@@ -537,6 +554,7 @@ int colInit(ColWorld *w, const void *section, unsigned size) {
   int r = fenceFlags(w);
   if (r) { colFree(w); return r; }
   humpFlags(w);
+  }
 #ifndef BUSH_SOFT_OLD
 #define BUSH_SOFT_OLD 0
 #endif
@@ -557,7 +575,7 @@ int colInit(ColWorld *w, const void *section, unsigned size) {
         C->pad[0] = 1.f;
     }
   }
-  folList(w);
+  if (!baked) folList(w);
   // блок JMP1 (зоны прыжка, подкидывающие точки): смещение в flags; битый/за концом секции — уровень без него
   if (h->flags && h->flags >= need && ((uint64_t)h->flags + 32) <= size && !(h->flags & 3)) {
     const char *j = (const char *)section + h->flags; uint32_t v[6]; memcpy(v, j + 4, 24);   // версия, зон, точек, ключей, будок, DEATH
@@ -681,6 +699,79 @@ int colBouncePadAt(const ColWorld *w, float x, float y, float z, float grow) {
   return -1;
 }
 
+
+// ---- №bake-3Б (04.11, разбор АРХИТЕКТУРА_ПАМЯТЬ_ЗАГРУЗКА §3.2): запечённый разбор COL1. colInit строит из секции производные массивы (steep, cellWall, segFlags, segNb, humpAt/hump, fol/folBox/folSeg);
+// их можно положить в файл colbake.shr и при совпадении хеша входа (key — хеш сырого COL1, mcColHash) и хеша самой записи взять готовыми. Печёт тот же код (colBakeDump после живого colInit
+// в эмуляторе), гейт — colBakeVerify (живое против файла, побайтно). Не сошлось что-то — colInit считает как раньше. Выключатель: nil bake в colInitBake (движок: COLBAKE_OLD)
+typedef struct { char magic[4]; uint32_t rev, key, W, H, ntri, nbox, ncyl, nseg, nfol, nfolSeg, nHump, flags, out; } ColBakeHd;   // flags: 1 cellWall, 2 segNb, 4 humpAt+hump, 8 fol+folBox
+#define CB_REV 1u
+static size_t cbAl(size_t n) { return (n + 3) & ~(size_t)3; }
+static size_t cbPayload(const ColBakeHd *h) {
+  return cbAl((h->ntri + 7) / 8) + ((h->flags & 1) ? cbAl((size_t)h->W * h->H) : 0) + cbAl(h->nseg) + ((h->flags & 2) ? 8u * h->nseg : 0) + ((h->flags & 4) ? 4u * h->ncyl + cbAl(h->nHump) : 0) +
+         ((h->flags & 8) ? 20u * h->nfol : 0) + 4u * h->nfolSeg;
+}
+static uint32_t cbHash(const uint8_t *p, size_t n) { uint32_t h = 2166136261u; for (size_t i = 0; i + 4 <= n; i += 4) { uint32_t v; memcpy(&v, p + i, 4); h = (h ^ v) * 16777619u; } return h; }
+// nHump — байт под биты горбов: humpFlags считает bits/8+1; в ColScratch размера не хранится, берём по тому же правилу из humpAt (последний горб + его число шагов): проще пересчитать
+static uint32_t cbHumpBytes(const ColWorld *w) {
+  const ColScratch *S = w->scr; if (!S->humpAt || !S->hump) return 0; uint32_t bits = 0;
+  for (uint32_t i = 0; i < w->ncyl; i++) if (S->humpAt[i] != ~0u) { const ColCyl *C = &w->cyl[i]; float axl = hypotf(C->axis[0], C->axis[2]); bits = S->humpAt[i] + 2u * ((uint32_t)ceilf(2.f * C->halfLen * axl / COL_HUMP_DS) + 1u); }
+  return bits / 8 + 1;
+}
+// собрать запись: out — буфер cap байт; возвращает размер или 0
+static unsigned cbBuild(const ColWorld *w, uint32_t key, uint8_t *out, unsigned cap) {
+  const ColScratch *S = w->scr; if (!S) return 0;
+  ColBakeHd h; memset(&h, 0, sizeof h); memcpy(h.magic, "CB1\0", 4); h.rev = CB_REV; h.key = key; h.W = (uint32_t)w->W; h.H = (uint32_t)w->H; h.ntri = w->ntri; h.nbox = w->nbox; h.ncyl = w->ncyl; h.nseg = w->nseg;
+  h.nfol = S->fol && S->folBox ? S->nfol : 0; h.nfolSeg = S->folSeg ? S->nfolSeg : 0;
+#if !COLPROBE_FAST_OLD
+  if (S->cellWall) h.flags |= 1;
+#endif
+  if (S->segNb) h.flags |= 2; if (S->humpAt && S->hump) { h.flags |= 4; h.nHump = cbHumpBytes(w); } if (S->fol && S->folBox) h.flags |= 8;
+  size_t pl = cbPayload(&h); if (sizeof h + pl > cap) return 0;
+  uint8_t *o = out + sizeof h; memset(o, 0, pl);
+  memcpy(o, S->steep, (h.ntri + 7) / 8); o += cbAl((h.ntri + 7) / 8);
+#if !COLPROBE_FAST_OLD
+  if (h.flags & 1) { memcpy(o, S->cellWall, (size_t)h.W * h.H); o += cbAl((size_t)h.W * h.H); }
+#endif
+  memcpy(o, S->segFlags, h.nseg); o += cbAl(h.nseg);
+  if (h.flags & 2) { memcpy(o, S->segNb, 8u * h.nseg); o += 8u * h.nseg; }
+  if (h.flags & 4) { memcpy(o, S->humpAt, 4u * h.ncyl); o += 4u * h.ncyl; memcpy(o, S->hump, h.nHump); o += cbAl(h.nHump); }
+  if (h.flags & 8) { memcpy(o, S->fol, 4u * h.nfol); o += 4u * h.nfol; memcpy(o, S->folBox, 16u * h.nfol); o += 16u * h.nfol; }
+  if (h.nfolSeg) { memcpy(o, S->folSeg, 4u * h.nfolSeg); o += 4u * h.nfolSeg; }
+  h.out = cbHash(out + sizeof h, pl); memcpy(out, &h, sizeof h);
+  return (unsigned)(sizeof h + pl);
+}
+unsigned colBakeSizeMax(const ColWorld *w) { return (unsigned)(sizeof(ColBakeHd) + cbAl((w->ntri + 7) / 8) + cbAl((size_t)w->W * w->H) + cbAl(w->nseg) + 8u * w->nseg + 4u * w->ncyl + 4u + cbAl(cbHumpBytes(w)) + 20u * (w->nbox + w->ncyl) + 4u * w->nseg + 64u); }
+unsigned colBakeDump(const ColWorld *w, uint32_t key, void *out, unsigned cap) { return cbBuild(w, key, (uint8_t *)out, cap); }
+// сверка: живой мир против файла; 0 — одинаково, иначе номер расхождения (1 — размер/заголовок, 2 — содержимое)
+int colBakeVerify(const ColWorld *w, uint32_t key, const void *bake, unsigned size) {
+  unsigned cap = colBakeSizeMax(w); uint8_t *tmp = (uint8_t *)malloc(cap); if (!tmp) return -1;
+  unsigned n = cbBuild(w, key, tmp, cap); int r = (n && n == size && !memcmp(tmp, bake, size)) ? 0 : (n == size ? 2 : 1); free(tmp); return r;
+}
+static int colBakeLoad(ColWorld *w, const uint8_t *b, unsigned size, unsigned key) {
+  ColBakeHd h; if (size < sizeof h) return -1; memcpy(&h, b, sizeof h);
+  if (memcmp(h.magic, "CB1\0", 4) || h.rev != CB_REV || h.key != key || h.W != (uint32_t)w->W || h.H != (uint32_t)w->H || h.ntri != w->ntri || h.nbox != w->nbox || h.ncyl != w->ncyl || h.nseg != w->nseg) return -2;
+  if (h.nfol > w->nbox + w->ncyl || h.nfolSeg > w->nseg) return -3;
+  size_t pl = cbPayload(&h); if (sizeof h + pl != size || cbHash(b + sizeof h, pl) != h.out) return -4;
+  ColScratch *S = w->scr; const uint8_t *o = b + sizeof h; int ok = 1;
+  memcpy(S->steep, o, (h.ntri + 7) / 8); o += cbAl((h.ntri + 7) / 8);
+#if !COLPROBE_FAST_OLD
+  if (h.flags & 1) { S->cellWall = (uint8_t *)malloc((size_t)h.W * h.H); if (S->cellWall) memcpy(S->cellWall, o, (size_t)h.W * h.H); else ok = 0; o += cbAl((size_t)h.W * h.H); }
+#endif
+  memcpy(S->segFlags, o, h.nseg); o += cbAl(h.nseg);
+  if (h.flags & 2) { S->segNb = (uint32_t *)malloc(8u * h.nseg + 4); if (S->segNb) memcpy(S->segNb, o, 8u * h.nseg); else ok = 0; o += 8u * h.nseg; }
+  if (h.flags & 4) { S->humpAt = (uint32_t *)malloc(4u * (h.ncyl ? h.ncyl : 1)); S->hump = (uint8_t *)malloc(h.nHump ? h.nHump : 1);
+    if (S->humpAt && S->hump) { memcpy(S->humpAt, o, 4u * h.ncyl); o += 4u * h.ncyl; memcpy(S->hump, o, h.nHump); o += cbAl(h.nHump); } else ok = 0; }
+  if (h.flags & 8) { S->fol = (uint32_t *)malloc(4u * h.nfol); S->folBox = (float *)malloc(16u * h.nfol);
+    if (S->fol && S->folBox) { memcpy(S->fol, o, 4u * h.nfol); o += 4u * h.nfol; memcpy(S->folBox, o, 16u * h.nfol); o += 16u * h.nfol; S->nfol = h.nfol; } else ok = 0; }
+  if (h.nfolSeg) { S->folSeg = (uint32_t *)malloc(4u * h.nfolSeg); if (S->folSeg) { memcpy(S->folSeg, o, 4u * h.nfolSeg); S->nfolSeg = h.nfolSeg; } else ok = 0; }
+  if (!ok) {   // не хватило памяти: вернуть чистый ColScratch, колInit досчитает сам
+    free(S->segNb); free(S->humpAt); free(S->hump); free(S->fol); free(S->folBox); free(S->folSeg);
+#if !COLPROBE_FAST_OLD
+    free(S->cellWall); S->cellWall = 0;
+#endif
+    S->segNb = 0; S->humpAt = 0; S->hump = 0; S->fol = 0; S->folBox = 0; S->folSeg = 0; S->nfol = S->nfolSeg = 0; memset(S->steep, 0, (h.ntri + 7) / 8); memset(S->segFlags, 0, h.nseg); return -5; }
+  return 0;
+}
 void colFree(ColWorld *w) {
   zcReset();
   if (w->scr) {
@@ -996,7 +1087,7 @@ static int humpHere(const ColScratch *S, const ColCyl *C, uint32_t i, const Q *q
   // (до 0,9 м за кадр). Машина, чей низ уже на высоте верха капсулы (не ниже порога горба), переезжает её с любой стороны:
   // капсула под ней, не перед ней. Оригинал (близнец arch.py, 3 м/с) переезжает эту изгородь и бьёт стекло, без сноса вбок
   { float tc = t < 0.f ? 0.f : t > L ? L : t, top = C->c[1] + C->axis[1] * ((tc - L * .5f) / axl) + C->r;
-    float thr = C->pad[0] == 1.f ? COL_HUMP : fminf_(COL_HUMP, C->r * (1.f - COL_WALK_NY));
+    float thr = C->pad[0] == 1.f ? (FOLIAGE_PS2_1154_OLD ? COL_HUMP : COL_FOL_RIDE_E) : fminf_(COL_HUMP, C->r * (1.f - COL_WALK_NY));   // №1204: у изгороди порог переезда выше
     if (C->pad[0] != 1.f && L < COL_HUMP_LEN) thr = fminf_(thr, GHOST_TOP);   // №1140: короткая — только низкая
     // ось под кузовом (машина съезжает с изгороди, зад ещё над ней) — высота днища над осью по наклону кузова, иначе центр
     float axx = C->c[0] + ux * (tc - L * .5f), axz = C->c[2] + uz * (tc - L * .5f), ox = axx - cx, oz = axz - cz;

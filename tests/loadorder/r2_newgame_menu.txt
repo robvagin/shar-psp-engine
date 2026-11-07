@@ -1,0 +1,11 @@
+# ag/loadorder R2: NEW GAME L1 из главного меню (настоящий путь: меню -> ✕ -> экран загрузки -> игра), дыры рядом в первые секунды после загрузки
+flag menu
+flag lvset 1
+flag nosave
+scene LO2_MENU
+wait 1.5
+press cross
+wait 12
+scene LO2_PLAY
+wait 6
+end

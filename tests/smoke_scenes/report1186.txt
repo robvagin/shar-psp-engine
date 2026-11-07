@@ -1,0 +1,7 @@
+scene F_REP
+flag repair
+wait 4
+flag freeze 6500
+wait 4
+shot rep_a
+end

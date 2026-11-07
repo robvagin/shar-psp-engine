@@ -140,6 +140,7 @@ static void smkFlush(void) {
   smkBufN = 0; smkFlushes++; smkFlushT = sceKernelGetSystemTimeLow();
   smkIoUs += sceKernelGetSystemTimeLow() - t;
 }
+static void (*smkSecHook)(void);   // 1Б: хук раз в секунду (строка CELLPOOL), ставит cpFlagRead
 static void smkWrite(const char *s) {
   if (!smkFile[0]) return;
   smkLines++;
@@ -576,7 +577,9 @@ static void smokeSecond(float fps, float work, float workMax, float cpu, long tr
 #if LEAK696_TRACE && defined(LT_ABS)
   { static int ltN_; if (++ltN_ % 6 == 0) { extern void lt696Dump(void (*)(const char *), const char *); char tg_[40]; snprintf(tg_, sizeof tg_, "%.1f", smkT); lt696Dump(smkWrite, tg_); } }   // №962 (служебно): раз в 6 строк HEAPB все живые группы выделений по вызывающему
 #endif
+  if (smkSecHook) smkSecHook();   // 1Б: строка CELLPOOL (viewer/cellpool.h)
   { char hb_[200]; struct mallinfo mi_ = mallinfo(); snprintf(hb_, sizeof hb_, "HEAPB t=%.1f scene=%s bytes=%u blk=%u used=%u arena=%u free=%u\n", smkT, smkScene, heapFreeBytes(), memMaxBlock ? memMaxBlock() : 0u, (unsigned)mi_.uordblks, (unsigned)mi_.arena, (unsigned)mi_.fordblks); smkWrite(hb_); }   // №930 служебно (приёмка кучи)
+  { SndStats sv_; sndStats(&sv_); char sb_[120]; snprintf(sb_, sizeof sb_, "SNDV t=%.1f scene=%s voices=%d loops=%d dropped=%d under=%d\n", smkT, smkScene, sv_.voices, sv_.loops, sv_.dropped, sv_.underruns); smkWrite(sb_); }   // №1174: сколько голосов занято и сколько из них петли (утечка петли = loops растёт)
   if (!PHSEC_OLD && smkPhN) {
     char p[1800]; double k = 1.0 / smkPhN;
     snprintf(p, sizeof p, "PHSEC t=%.1f scene=%s n=%u ph0=%.2f ph1=%.2f ph2=%.2f ph3=%.2f ph4=%.2f ph5=%.2f ph6=%.2f ph7=%.2f build=%.2f gesync=%.2f vbl=%.2f x_car=%.2f x_vis=%.2f x_homer=%.2f x_city=%.2f x_car3d=%.2f x_npc=%.2f x_trf=%.2f x_mcr=%.2f x_props=%.2f x_fx=%.2f x_ui=%.2f\n", smkT, smkScene, smkPhN,

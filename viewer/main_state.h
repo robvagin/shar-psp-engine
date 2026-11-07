@@ -1,7 +1,11 @@
 // SHAR PSP v8: город клетками 40x40 м подгружается по мере езды, PVS, отсечение пирамидой видимости,
 // swizzle текстур, HUD через GE, тест-прогон v2 (кнопка O).
+#define UIDIAG_NOMACRO 1   // №1186: в главном файле sceGuDrawArray не подменяется (только данные проверки)
+#include "uidiag.h"
+#include "bootmark.h"   // №1192: шаги старта на карту
 #include "bisect.h"
 #include "lang.h"   // №1111: язык игры
+#include "memguard.h"   // №1170: выделения таблиц при загрузке с проверкой (mgCallocN)
 #include "menu_rules.h"
 #include "g10b_calc.h"   // сверка g10b-loop круг 6: чистые правила главного цикла (проверяет tests/g10b)
 #include "sverka_shared.h"   // сверка g10b-loop: общие точки окон (svBoom — взрыв машины, svSurfaceAt — поверхность земли)
@@ -53,6 +57,7 @@
 #include "police_fx.h"
 #include "bonus_audio.h"
 #include "msn_view.h"
+#include "bnssector.h"   // №1185: коды секторов трасс бонус-игры
 #include "bonus.h"      // правка 420: бонус-игра — правила гонки (viewer/bonus.c), игра — viewer/bonus_play.h
 #include "bonus_unlock.h"   // правка 421: трасса N открыта — собраны все карточки уровня N (одна правда; BONUS_UNLOCK_OLD=1 — как было)
 #include "game_msn.h"      // машины миссий: дороги для их пути (gameMsnSetRoads)
@@ -82,6 +87,7 @@ static unsigned fpuBoot = ~0u, fpuApplied = ~0u, fpuSeenTold;   // FCR31 гла�
 extern unsigned skinWProf, skinW[5], skinNB[2];   // №914: слова GE по стадиям skinDrawPal (skin.c)
 extern unsigned trfProf, trfPoseUs, trfDrawUs, trfPoseN, trfWords;   // №914: разложение цены пешеходов (traffic.c)
 #include "animobj.h"     // объекты уровня AnimCollision/Anim: грузовик Duff, ветка, платформы АЭС — действия и живая коллизия (ANM1)
+#include "savefile.h"     // №1170: svAtomicWrite/svAtomicRecover (настройки)
 #include "savemenu.h"     // сохранения оригинала на карте памяти PSP (viewer/savemenu.c, savegame.c; fsave.shr / psave.shr)
 #include "msncam.h"       // правка 40: камеры старта миссий — «наезды» (msncam.shr, tools/msncam_export.py)
 #include "convcam.h"      // правка 40: камеры разговора по данным этапа (SetConversationCam, SetCamBestSide)
@@ -262,6 +268,24 @@ static unsigned int __attribute__((aligned(64))) list[(GE_BUDGET + GE_TAIL) / si
 #define GE_SOFT 80
 #define GE_HARD 90
 static unsigned geCap = GE_BUDGET;   // служебное «flag gelist N» (КБ): искусственно маленький бюджет — гейт защиты
+// №1206: время каждого перехода (склейки) для тура PSP: строка XITION name=… ms=… (journal smoke.txt; в ящик — только если ≥ 500 мс). Имена: level (смена уровня целиком), movie, room_in, room_out, bonus_load
+static void bbNote(const char *line);   // main_frontend.h
+static void xnEnd(const char *name, unsigned t0, int a) {
+  unsigned ms = (sceKernelGetSystemTimeLow() - t0 + 500u) / 1000u;
+  char l[96]; snprintf(l, sizeof l, "XITION %s ms=%u a=%d t=%.1f\n", name, ms, a, smkT);
+  if (smkOn) smkWrite(l);
+  if (ms >= 500u) bbNote(l);
+}
+// №1208в: нарочный вылет для проверки экрана вылета на железе: файл crashnow рядом с EBOOT (через 12 с игры) или «flag crashnow 1» (через 1,5 с). Только в туре (SHR_KEEP_SMOKE или не релиз):
+// в публичной сборке код не собирается. Запись по нулевому адресу -> исключение -> sharexc (картинка, crash.txt, строка CRASH в ящик). CRASHNOW_OLD=1 — выключено и в туре
+#ifndef CRASHNOW_OLD
+#define CRASHNOW_OLD 0
+#endif
+#define CRASHNOW_OK (!CRASHNOW_OLD && (SHR_KEEP_SMOKE || !SHR_REL))
+static unsigned crashNowAt;   // момент (мкс системных часов), когда вылетать; 0 — не взведено
+static int pendTalkOut;
+static int lvLogosOn;   // №1199: логотипы Fox/Gracie после конца уровня 1 — только с файлом lvlogoson или «flag lvlogoson 1» (проверка на железе)
+static int realLevelEnd;   // №1192: служебный «flag realend 1/2» — конец уровня как у игрока (ролики Fox/Gracie; 2 — ещё вопрос «сохранить?»)   // №1186: ирис «talk_out» отложен на границу кадра
 static unsigned gePeakSec, gePeakShown, geNow, geOverBudget;   // пик заполнения за секунду и в последнем кадре, байт; кадров за бюджетом
 static int geOver(int pct) { if ((unsigned)sceGuCheckList() <= geCap / 100u * (unsigned)pct) return 0; smkGeSkip++; return 1; }
 static int geRoom(unsigned bytes) { return (unsigned)sceGuCheckList() + bytes <= geCap / 100u * GE_SOFT; }   // частицы (fx.c)
@@ -303,8 +327,9 @@ static double rbldSum[BBP_N + 1]; static unsigned rbldN, rbldT;
 enum { UIPH_PRE, UIPH_HUDSET, UIPH_MVHUD, UIPH_RADARADD, UIPH_MISC, UIPH_COLL, UIPH_FADE, UIPH_SCREEN, UIPH_EXTRA, UIPH_TAIL, UIPH_TRANSIT, UIPH_HUDDBG, UIPH_OVERLAY, UIPH_GECHECK, UIPH_N };
 static const char *const UIPH_NAMES[UIPH_N] = {"pre", "hudset", "mvhud", "radaradd", "misc", "coll", "fade", "screen", "extra", "tail", "transit", "huddbg", "overlay", "gecheck"};
 static unsigned uiPhUs[UIPH_N], uiPhN, uiPhT;
-#define UIPH_START() do { if (smkOn && !UIPH_OLD) { uiPhT = sceKernelGetSystemTimeLow(); uiPhN++; } } while (0)
-#define UIPH(k) do { if (smkOn && !UIPH_OLD) { unsigned n_ = sceKernelGetSystemTimeLow(); uiPhUs[k] += n_ - uiPhT; uiPhT = n_; } } while (0)
+static unsigned uiPhGe[UIPH_N], uiPhW;   // №1186: прирост списка GE (байт) в подфазе, максимум за секунду
+#define UIPH_START() do { if (smkOn && !UIPH_OLD) { uiPhT = sceKernelGetSystemTimeLow(); uiPhW = (unsigned)sceGuCheckList(); uiPhN++; } } while (0)
+#define UIPH(k) do { if (smkOn && !UIPH_OLD) { unsigned n_ = sceKernelGetSystemTimeLow(); uiPhUs[k] += n_ - uiPhT; uiPhT = n_; unsigned w_ = (unsigned)sceGuCheckList(); if (w_ >= uiPhW && w_ - uiPhW > uiPhGe[k]) uiPhGe[k] = w_ - uiPhW; uiPhW = w_; } } while (0)
 static unsigned rbcCull, rbcVis, rbcDraw, rbcDrawM;   // счётчики вызовов за секунду (не таймеры): cullPiece, visBox, drawPiece, drawPieceM — в строке RBLD
 #define RBC(x) do { if (!RBLD_OLD) (x)++; } while (0)
 static void rbldTick(int n) {
@@ -314,7 +339,14 @@ static void rbldTick(int n) {
   if (n == BBP_CITY) rbldN++;
   rbldT = now;
 }
-#define BBP(n) (flatOff(), rbldTick(n), smkBbp(n, draws, drawnTris, binds, (int)sceGuCheckList()), bbPhase = (n), trLeft > 0 ? trPhase(n) : (void)0)   // RBLD (подфазы сборки) + PHDRAW (вызовы по фазам)
+// №1186: пик списка GE по фазам кадра за секунду (UIPEAK): gePkEnd — наибольшее заполнение к концу фазы, gePkUse — наибольший прирост за фазу (байт)
+static unsigned gePkEnd[BBP_N], gePkUse[BBP_N], gePkMark; static float geSyncPk; static unsigned geSyncSlowN, geSyncSlowT;
+static inline void gePkPh(void) {
+  unsigned w = (unsigned)sceGuCheckList(); int p = (int)bbPhase;
+  if (p >= 0 && p < BBP_N) { if (w >= gePkMark && w - gePkMark > gePkUse[p]) gePkUse[p] = w - gePkMark; if (w > gePkEnd[p]) gePkEnd[p] = w; }
+  gePkMark = w;
+}
+#define BBP(n) (gePkPh(), flatOff(), rbldTick(n), smkBbp(n, draws, drawnTris, binds, (int)sceGuCheckList()), bbPhase = (n), trLeft > 0 ? trPhase(n) : (void)0)   // RBLD (подфазы сборки) + PHDRAW (вызовы по фазам)
 void bbBeatTick(void) { bbBeat++; }
 // Правка Роба 293 (04.10, «в самом начале наезда к газете мигает пол»; повторы 244, 265 — каждый раз в другой момент перелёта).
 // Смена буфера кадра должна попасть в обратный ход луча: sceGuSwapBuffers ставит новый буфер «со следующего кадрового импульса»
@@ -590,8 +622,8 @@ static void onPropKickFx(void *u, unsigned i, const float pos[3], float carV, fl
     else coinsDrop(&coins, KRUSTY_GLASS_COINS, pos[0], pos[1], pos[2], fl);
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "COINS krusty-glass n=%d at=%.1f,%.1f,%.1f floor=%.1f t=%.1f\n", KRUSTY_GLASS_COINS, pos[0], pos[1], pos[2], fl, smkT); smkWrite(s); }
   }
-  // сверка g11 круг 2 (P11-13 от g12-data): оригинал знает девять имён частиц удара; eSpark (фонари, светофоры) — «нет частиц» (14 искр убраны), eStars — 10 жёлтых штрихов и 10 серых клубков пыли,
-  // eParkingMeter (24), ePineTreeNeedles (7), ePopsicles (26) — по их системам (если в l0N_fx.p3d систем нет — частиц нет). PROPFX_SV_OLD=1 — 14 искр у типа 1, звёзд нет
+  // сверка g11 круг 2 (P11-13 от g12-data): оригинал знает девять видов частиц удара (мусор, кусты, листья дуба, почта, иголки сосны, звёзды, счётчик парковки, взрыв машины, мороженое); искры (фонари, светофоры) — «нет частиц» (14 искр убраны), звёзды — 10 жёлтых штрихов и 10 серых клубков пыли,
+  // счётчик парковки (24), иголки сосны (7), мороженое (26) — по их системам (если в l0N_fx.p3d систем нет — частиц нет). PROPFX_SV_OLD=1 — 14 искр у типа 1, звёзд нет
 #ifndef PROPFX_SV_OLD
 #define PROPFX_SV_OLD 0
 #endif
@@ -610,6 +642,7 @@ void uiRadarInCar(int on) __attribute__((weak));
 void uiPauseMissionGrey(int off) __attribute__((weak));
 static int jmRoomOn;   // круг 2: 1 — режим «только музыка» включён на переходе в помещение
 static float lbConvT = -1.f;   // круг 3 (M2:23): время сходящихся полос после разговора, с; <0 — не идут
+static int camBExit;   // №1170: 1 — идёт переход после наезда: перелёт глаза правилом объектива не отстаёт от дуги (см. main_frontend.h, CAMEXIT1170_OLD)
 static int camBArc;   // круг 3 (P08:11): 1 — переход камеры идёт по дуге вокруг точки взгляда (угол и расстояние отдельно), не по прямой; ставит камера разговора
 static int lvSaveAsk;   // сверка g10b-loop (P13:4): номер следующего уровня, пока открыт вопрос «сохранить?» после пройденного уровня; 0 — вопроса нет
 static int movieNoSkipSv;   // сверка g10b-loop (P14:14): 1 — ролик идёт без пропуска по START (ставит menuStartGame на время ролика новой игры, читает msnMovie)
@@ -674,6 +707,7 @@ static void dashDust847(void) {
 }
 static void spFxOut(void *u, const SpFxOut *o0) {   // частицы стейтпропов: родная система окна EFX или пресет
   (void)u; SpFxOut o = *o0;
+  if (smkOn) { static int n_; if (n_ < 400) { n_++; char s_[112]; snprintf(s_, sizeof s_, "SPFX sys=%d preset=%d at=%.1f,%.1f,%.1f t=%.1f\n", (int)o.sys, (int)o.preset, o.x, o.y, o.z, smkT); smkWrite(s_); } }   // №1175/№1161 служебно: что сыграли частицы стейтпропа (не более 400 строк)
   if (o.sys >= 0) { float p3[3] = {o.x, o.y, o.z}; fxBurstAt(o.sys, p3, NULL, o.t0); return; }   // правка 80: с кадра окна EFX
   float r1 = rand() * (1.f / RAND_MAX) - .5f, r2 = rand() * (1.f / RAND_MAX), r3 = rand() * (1.f / RAND_MAX) - .5f;
   switch (o.preset) {
@@ -681,7 +715,8 @@ static void spFxOut(void *u, const SpFxOut *o0) {   // частицы стейт
     case SPFX_FIRE: fxSpawn(FX_FIRE, o.x, o.y, o.z, r1 * 1.5f, r2 * 2.f + 1.f, r3 * 1.5f); break;
     case SPFX_SMOKE: fxSpawn(FX_DARK, o.x, o.y, o.z, r1, r2 + .5f, r3); break;
     case SPFX_WATER: fxSpawn(FX_SMOKE, o.x, o.y, o.z, r1 * 1.5f, r2 * 3.f + 5.f, r3 * 1.5f); break;
-    default: fxSpawn(FX_SMOKE, o.x, o.y, o.z, r1 * 4.f, r2 * 3.f + .5f, r3 * 4.f); break;   // пыль, щепа, листья, сено, томаты
+    default: if (!BITFX1161_OLD && fxPropBit(o.preset, o.x, o.y, o.z, r1 * 4.f, r2 * 3.f + .5f, r3 * 4.f)) break;   // №1161: щепа, листья, сено, томаты, пыль — по материалу, не дымом машины
+             fxSpawn(FX_SMOKE, o.x, o.y, o.z, r1 * 4.f, r2 * 3.f + .5f, r3 * 4.f); break;   // (BITFX1161_OLD=1 или нет пакета) пыль, щепа, листья, сено, томаты
   }
 }
 static void spChangeSnd(void *u, unsigned i, float speed) { (void)u; sndObjectHit(SND_SET_SPROPS, i, sprops.run[i].x, sprops.run[i].y, sprops.run[i].z, speed); }
@@ -758,10 +793,12 @@ static int cbThread(SceSize a, void *b) {
   int id = sceKernelCreateCallback("exit", exitCb, NULL);
   sceKernelRegisterExitCallback(id); sceKernelSleepThreadCB(); return 0;
 }
+static void bbReportWrite(const char *why, unsigned ms, int ph);   // main_frontend.h: shar_report.txt
 static void fail(const char *msg) {
   // №775: сторож через 5 с печатает STALL поверх этого экрана и закрывает текст ошибки — текст уходит в шаг (stall.txt: STALLSTEP FAIL …, экран: step=FAIL …)
   static char failStep[96]; snprintf(failStep, sizeof failStep, "FAIL %s", msg ? msg : "-"); bbStep = failStep;
   pspDebugScreenInit(); pspDebugScreenPrintf("SHAR PSP\n\n%s\n\nPress HOME to exit.", msg);
+  bbReportWrite("FAIL", 0, bbPhase);   // после экрана ошибки: запись на карту не прячет текст
   sceKernelSleepThread();
 }
 static void sibling(char *out, const char *name) {   // путь к файлу рядом с EBOOT
@@ -782,7 +819,7 @@ static char levelShr[256];   // level.shr уровня gameLevel (у уровн�
 #ifndef BONUS_OLD
 #define BONUS_OLD 0
 #endif
-static int msnBot; static float msnBotT;   // №бот миссий (flag msnbot 1, MSNBOT_OLD): помощник игрока для ночного бота миссий — пропуск реплик и брифинга, △ и посадка по этапу
+static int msnBot; static float msnBotT, msnBotPass;   // №бот миссий (flag msnbot 1, MSNBOT_OLD): помощник игрока для ночного бота миссий — пропуск реплик и брифинга, △ и посадка по этапу
 static int bonusTrack, mainMini = -1, mainScrap = -1, endingPending;   // endingPending — №860: титры игры ждут главного меню (menuRun)   // mainScrap — №862: SCRAP BOOK главного меню (альбом карточек)
 static const MsnCars *bonusCarsPtr; static const char *bonusPlayerModel;   // машины гонки (рисование моделей пакета msncars)
 // правка 421: открытые трассы игры в памяти (бит N-1 — трасса N, viewer/bonus_unlock.h). До первой игры — по самому свежему
@@ -798,6 +835,12 @@ static int bonusAvailable(void) {
   if (sceIoGetstat(fn, &st) < 0) return 0;
   sibling(fn, BONUS_CARS); return sceIoGetstat(fn, &st) >= 0;
 }
+// №1167 (Роб 03.11 на PSP: «выбрал четвёртую трассу, зависла и вылетела игра»): у бонус-трассы в файле b0N.shr нет хвоста, поэтому секция предметов разбирается прямо в разделах, ДО выделения таблицы
+// текстур tex (main_levels.h, calloc после разделов), а пометка кусков для заливки пишет в tex[t] при ненулевом ntex: запись по адресу около нуля (0x215 = 125 + 3·136), на PSP это вылет.
+// Теперь пометка откладывается до выделения таблицы (propFlatMark1167). BONUSPRP1167_OLD=1 — прежнее (вылет на каждой трассе)
+#ifndef BONUSPRP1167_OLD
+#define BONUSPRP1167_OLD 0
+#endif
 #ifndef BONUSENV1109_OLD
 #define BONUSENV1109_OLD 0   // сверка g12-data №1109: 1 — бонус-трассы без кольца-панорамы уровня (прежнее; фон неба — в данных трассы, BONUSENV1109_OLD в tools/bonus/export.py)
 #endif

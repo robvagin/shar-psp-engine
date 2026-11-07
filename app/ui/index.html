@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hit &amp; Run PSP Builder</title>
+<style>
+  @font-face { font-family: "Inter Tight"; font-weight: 400; src: url("fonts/inter-tight-latin-400-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Inter Tight"; font-weight: 500; src: url("fonts/inter-tight-latin-500-normal.woff2") format("woff2"); }
+  @font-face { font-family: "Inter Tight"; font-weight: 600; src: url("fonts/inter-tight-latin-600-normal.woff2") format("woff2"); }
+  :root {
+    --ground: #f6f5f2;
+    --ink: #1a1a1a;
+    --ink-2: rgba(26, 26, 26, .62);
+    --ink-3: rgba(26, 26, 26, .38);
+    --line: rgba(26, 26, 26, .14);
+    --accent: #e2462c;
+    --accent-tint: #f8d8d0;
+    --ease: cubic-bezier(.22, .61, .36, 1);
+    --t: 400ms;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--ground); color: var(--ink);
+    font: 400 15px/1.45 "Inter Tight", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+    display: grid; grid-template-rows: 1fr auto; user-select: none; overflow: hidden;
+  }
+  main { display: grid; place-items: center; padding: 48px 40px 16px; }
+
+  /* консоль: чертёж и экран поверх него, в долях рисунка (app/ui/psp-front.svg — «PSP 2000 White», CC0, в линию; viewBox 19 18.9 1960.4 828.7, экран 436.17 86.71 1125.5×643.88, rx 8) */
+  .psp { position: relative; width: min(920px, 100%); aspect-ratio: 1960.4 / 828.7; container-type: inline-size; }
+  /* знак PSP внизу корпуса, как на консоли (Роб 06.11: «можно его»): между VOL+ и кнопкой экрана, центр 968.9/797 в осях рисунка, ширина 265 */
+  .psp img.mark { inset: auto; left: 48.46%; top: 93.9%; width: 13.52%; height: auto; transform: translate(-50%, -50%); }
+  .psp img { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .screen {
+    position: absolute; left: 21.280%; top: 8.183%; width: 57.412%; height: 77.698%;
+    border-radius: .71% / 1.24%; overflow: hidden; container-type: size;
+    display: grid; place-items: center; cursor: default; outline: none;
+    transition: background-color var(--t) var(--ease);
+  }
+  .screen.can-pick { cursor: pointer; }
+  .screen.over { background: color-mix(in srgb, var(--accent-tint) 55%, transparent); }
+  .screen:focus-visible { box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+  /* состояние — один слой на экране; смена — растворение и малый сдвиг */
+  .state { grid-area: 1 / 1; width: 100%; padding: 0 8cqw; text-align: center;
+           opacity: 0; transform: translateY(6px); pointer-events: none;
+           transition: opacity var(--t) var(--ease), transform var(--t) var(--ease); }
+  .state.on { opacity: 1; transform: none; pointer-events: auto; }
+
+  .title { font-weight: 600; font-size: clamp(18px, 7.2cqw, 40px); line-height: 1.08; letter-spacing: -.02em; text-wrap: balance; }
+  .title .quiet { font-weight: 400; color: var(--ink-2); }
+  .note { margin-top: 2.6cqh; font-size: clamp(11px, 2.25cqw, 14px); color: var(--ink-2); letter-spacing: .005em; text-wrap: balance; }
+  .eyebrow { font-weight: 500; font-size: clamp(10px, 1.8cqw, 11.5px); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 2.2cqh; }
+
+  /* прогресс: тонкая линия на всю ширину экрана, заливка — акцент */
+  .bar { position: relative; height: 2px; margin: 5.5cqh 0 2.2cqh; background: var(--line); }
+  .bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width 600ms var(--ease); }
+  .row { display: flex; justify-content: space-between; gap: 16px; font-size: clamp(11px, 2.25cqw, 14px); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .row b { font-weight: 500; color: var(--ink); }
+  .build .state-body { text-align: left; }
+
+  .actions { margin-top: 5cqh; display: flex; gap: 20px; justify-content: center; align-items: center; }
+  button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+  .primary { background: var(--accent); color: #fff; font-weight: 500; font-size: clamp(12px, 2.4cqw, 15px);
+             padding: 1.15em 1.6em; border-radius: 4px; letter-spacing: -.005em; transition: filter 200ms var(--ease); }
+  .primary:hover { filter: brightness(.94); }
+  .primary:focus-visible, .link:focus-visible { outline: 1.5px solid var(--ink); outline-offset: 3px; }
+  .link { font-size: clamp(11px, 2.25cqw, 14px); color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+  .link:hover { color: var(--ink); text-decoration-color: currentColor; }
+  .stop { position: absolute; right: 0; bottom: -3px; }
+
+  footer { padding: 0 24px 22px; text-align: center; font-size: 11.5px; color: var(--ink-3); letter-spacing: .01em; }
+
+  /* служебный показ состояний (только ?preview=1) */
+  .preview { position: fixed; top: 14px; right: 16px; display: none; gap: 6px; font-size: 11px; }
+  .preview.on { display: flex; }
+  .preview button { padding: 4px 9px; border-radius: 999px; background: rgba(26,26,26,.06); color: var(--ink-2); }
+  .preview button[aria-pressed="true"] { background: var(--ink); color: var(--ground); }
+
+  @media (prefers-reduced-motion: reduce) { :root { --t: 0ms; } .bar i { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="psp">
+    <img src="psp-front.svg" alt="">
+    <img class="mark" src="psp-logo.svg" alt="">
+    <div class="screen can-pick" id="screen" tabindex="0" role="button" aria-label="Choose your PS2 disc image">
+
+      <section class="state on" data-state="idle">
+        <p class="title">Drop here <span class="quiet">or click to choose</span></p>
+        <p class="note">Your own The Simpsons: Hit &amp; Run PS2 disc image (.iso), PAL or NTSC</p>
+      </section>
+
+      <section class="state" data-state="over">
+        <p class="title">Release to start</p>
+        <p class="note">The disc is checked first, nothing is copied yet</p>
+      </section>
+
+      <section class="state" data-state="check">
+        <p class="eyebrow">Checking</p>
+        <p class="title" id="checkTitle">Reading the disc</p>
+        <p class="note" id="checkNote">Looking for SLES 518.97 or SLUS 206.24</p>
+      </section>
+
+      <section class="state build" data-state="build">
+        <div class="state-body">
+          <p class="eyebrow" id="stepNo">Step 1 of 9</p>
+          <p class="title" id="stepTitle">Unpacking the disc</p>
+          <div class="bar"><i id="barFill"></i></div>
+          <div class="row" style="position: relative">
+            <span><b id="pct">0%</b>&nbsp; <span id="eta">about an hour left</span></span>
+            <button class="link" id="stopBtn" type="button">Stop</button>
+          </div>
+          <p class="note" style="text-align:left">Keep the computer plugged in and the Terminal window open. Run the same line again to pick up where it stopped</p>
+        </div>
+      </section>
+
+      <section class="state" data-state="done">
+        <p class="eyebrow">Ready</p>
+        <p class="title">SHAR for PSP is built</p>
+        <p class="note" id="doneNote">3.3 GB, seven levels, movies and sound</p>
+        <div class="actions">
+          <button class="primary" id="putBtn" type="button">Put on PSP</button>
+          <button class="link" id="showBtn" type="button">Show folder</button>
+        </div>
+      </section>
+
+      <section class="state build" data-state="copy">
+        <div class="state-body">
+          <p class="eyebrow">Memory Stick</p>
+          <p class="title" id="copyTitle">Copying to PSP</p>
+          <div class="bar"><i id="copyFill"></i></div>
+          <div class="row"><span><b id="copyPct">0%</b>&nbsp; only changed files</span></div>
+          <p class="note" style="text-align:left" id="copyNote">Do not unplug the PSP until this finishes</p>
+        </div>
+      </section>
+
+      <section class="state" data-state="onpsp">
+        <p class="eyebrow">On your PSP</p>
+        <p class="title">Unplug it and play</p>
+        <p class="note">Game › Memory Stick › The Simpsons Hit &amp; Run</p>
+      </section>
+
+      <section class="state" data-state="error">
+        <p class="eyebrow" style="color: var(--accent)">Not this disc</p>
+        <p class="title" id="errTitle">This is a different game</p>
+        <p class="note" id="errNote">Expected The Simpsons: Hit &amp;&nbsp;Run, SLES 518.97 (PAL) or SLUS 206.24 (NTSC)</p>
+        <div class="actions"><button class="link" id="againBtn" type="button">Choose another image</button></div>
+      </section>
+    </div>
+  </div>
+</main>
+<footer>Builds only from your own disc. Nothing from the game is inside this app</footer>
+
+<input type="file" id="pick" accept=".iso,.ISO" hidden>
+<nav class="preview" id="preview" aria-label="Preview states"></nav>
+
+<script>
+// Экран консоли — одна машина состояний. Сборку ведёт ядро (app/core, события progress/done/error); без ядра — показ на месте (?preview=1)
+const $ = id => document.getElementById(id);
+const screen = $('screen'), pick = $('pick');
+const STATES = ['idle', 'over', 'check', 'build', 'done', 'copy', 'onpsp', 'error'];
+let state = 'idle';
+function show(name) {
+  state = name;
+  document.querySelectorAll('.state').forEach(s => s.classList.toggle('on', s.dataset.state === name));
+  screen.classList.toggle('over', name === 'over');
+  screen.classList.toggle('can-pick', name === 'idle' || name === 'over' || name === 'error');
+  document.querySelectorAll('#preview button').forEach(b => b.setAttribute('aria-pressed', b.textContent === name));
+}
+function progress({step, total, title, pct, eta}) {
+  $('stepNo').textContent = `Step ${step} of ${total}`; $('stepTitle').textContent = title;
+  $('barFill').style.width = pct + '%'; $('pct').textContent = Math.round(pct) + '%'; $('eta').textContent = eta;
+}
+
+// ядро: местный сервер (app/server.py, страница открыта по http) — настоящая сборка; открыта файлом — показ
+const core = location.protocol.startsWith('http') ? serverCore() : demoCore();
+function render(s) {   // состояние сервера -> экран PSP
+  if (s.state === 'check') { $('checkTitle').textContent = s.title || 'Reading the disc'; $('checkNote').textContent = s.note || ''; show('check'); }
+  else if (s.state === 'build') { progress(s); show('build'); }
+  else if (s.state === 'done') { $('doneNote').textContent = [s.size, 'seven levels, movies and sound'].filter(Boolean).join(', '); show('done'); }
+  else if (s.state === 'copy') { $('copyTitle').textContent = s.title; $('copyNote').textContent = s.note || ''; $('copyFill').style.width = (s.pct || 0) + '%'; $('copyPct').textContent = Math.round(s.pct || 0) + '%'; show('copy'); }
+  else if (s.state === 'error') { $('errTitle').textContent = s.title; $('errNote').textContent = s.note || ''; show('error'); }
+  else if (STATES.includes(s.state) && s.state !== 'over') show(s.state);
+}
+function serverCore() {
+  const post = p => fetch(p, {method: 'POST'});
+  const es = new EventSource('api/events'); es.onmessage = e => render(JSON.parse(e.data));
+  return {
+    start(file) {   // образ уходит местному серверу; ход копии — до первых событий сервера
+      const x = new XMLHttpRequest(); x.open('POST', 'api/disc'); x.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+      x.upload.onprogress = e => { if (e.lengthComputable && state === 'check') $('checkNote').textContent = `Copying the image, ${Math.round(e.loaded * 100 / e.total)}%`; };
+      x.send(file);
+    },
+    stop: () => post('api/stop'), put: () => post('api/put'), show: () => post('api/show'),
+  };
+}
+
+// бросить файл / выбрать
+const canPick = () => state === 'idle' || state === 'over' || state === 'error';
+['dragenter', 'dragover'].forEach(e => window.addEventListener(e, ev => { ev.preventDefault(); if (canPick()) show('over'); }));
+window.addEventListener('dragleave', ev => { if (!ev.relatedTarget && state === 'over') show('idle'); });
+window.addEventListener('drop', ev => { ev.preventDefault(); if (!canPick()) return; const f = ev.dataTransfer.files[0]; f ? begin(f) : show('idle'); });
+screen.addEventListener('click', () => { if (canPick()) pick.click(); });
+screen.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && canPick()) { ev.preventDefault(); pick.click(); } });
+pick.addEventListener('change', () => { if (pick.files[0]) begin(pick.files[0]); pick.value = ''; });
+$('stopBtn').addEventListener('click', ev => { ev.stopPropagation(); core.stop(); show('idle'); });
+$('putBtn').addEventListener('click', ev => { ev.stopPropagation(); core.put(); });
+$('showBtn').addEventListener('click', ev => { ev.stopPropagation(); core.show(); });
+$('againBtn').addEventListener('click', ev => { ev.stopPropagation(); pick.click(); });
+function begin(file) { $('checkTitle').textContent = 'Reading the disc'; $('checkNote').textContent = 'Looking for SLES 518.97 or SLUS 206.24'; show('check'); core.start(file); }
+
+// показ без ядра: те же события, что пришлёт ядро
+function demoCore() {
+  const STEPS = ['Unpacking the disc', 'Setting up the tools', 'Building level 1', 'Building levels 2 to 4', 'Building levels 5 to 7',
+                 'Converting the movies', 'Converting the sound', 'Packing the game', 'Checking the build'];
+  let timer = null;
+  return {
+    start(file) {
+      const name = file.name || ''; clearInterval(timer);
+      setTimeout(() => {
+        if (/fail|bad/i.test(name)) { show('error'); return; }
+        $('checkTitle').textContent = 'PAL disc found'; $('checkNote').textContent = 'SLES 518.97, version 1.02';
+        setTimeout(() => { show('build'); let p = 0;
+          timer = setInterval(() => { p = Math.min(100, p + .6); const i = Math.min(STEPS.length - 1, Math.floor(p / (100 / STEPS.length)));
+            progress({step: i + 1, total: STEPS.length, title: STEPS[i], pct: p, eta: p < 98 ? `about ${Math.max(1, Math.round((100 - p) * .7))} min left` : 'almost done'});
+            if (p >= 100) { clearInterval(timer); setTimeout(() => show('done'), 500); } }, 120); }, 1200);
+      }, 900);
+    },
+    stop() { clearInterval(timer); },
+    put() { show('copy'); let p = 0; const t = setInterval(() => { p = Math.min(100, p + 2.5); $('copyFill').style.width = p + '%'; $('copyPct').textContent = Math.round(p) + '%';
+      if (p >= 100) { clearInterval(t); setTimeout(() => show('onpsp'), 500); } }, 80); },
+    show() {},
+  };
+}
+// служебный показ состояний: ?preview=1
+if (new URLSearchParams(location.search).has('preview')) {
+  const nav = $('preview'); nav.classList.add('on');
+  STATES.forEach(s => { const b = document.createElement('button'); b.type = 'button'; b.textContent = s;
+    b.onclick = () => { if (s === 'build') progress({step: 4, total: 9, title: 'Building levels 2 to 4', pct: 41, eta: 'about 38 min left'});
+      if (s === 'copy') { $('copyFill').style.width = '64%'; $('copyPct').textContent = '64%'; } show(s); }; nav.append(b); });
+  const st = new URLSearchParams(location.search).get('state'); const btn = st && [...nav.children].find(b => b.textContent === st);
+  btn ? btn.click() : show('idle');
+}
+</script>
+</body>
+</html>

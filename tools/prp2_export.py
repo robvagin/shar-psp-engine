@@ -819,22 +819,29 @@ def wrap_prp2(prp1, spr, type_fx=b'', anm=b''):
         struct.pack_into('<I', out, 40, len(out)); struct.pack_into('<2I', out, 52, aoff, len(anm))
     return bytes(out)
 
-# частицы ATC (колонка «частицы») -> код таблицы частиц типов (номера InstParticleSystem одинаковы на всех уровнях, docs/fx_spec.md §3)
-PARTICLE_CODE = {'eSpark': 1, 'eStars': 2, 'eShrub': 3, 'eGarbage': 4, 'eOakTreeLeaves': 5, 'eMail': 6}
-# сверка g12-data P11-13 (02.11.2026): оригинал знает девять имён частиц удара (eGarbage, eShrub, eOakTreeLeaves, eMail, ePineTreeNeedles, eStars,
-# eParkingMeter, eCarExplosion, ePopsicles); любое другое (eSpark на фонарях и светофорах) — «нет частиц». Было: eSpark = 14 искр на каждый удар
-# (придумано по впечатлению от PS2), ePineTreeNeedles / eParkingMeter / ePopsicles в таблицу не попадали. Стало: eSpark -> 0, добавлены коды 7, 24, 26
-# (номера систем, которых нет в l0N_fx.p3d: рисует код — окно g11-objects, viewer/main_state.h). PRP2_PARTICLES_OLD=1 — прежняя таблица
+# частицы ATC (колонка «частицы») -> код таблицы частиц типов (номера систем частиц одинаковы на всех уровнях, docs/fx_spec.md §3)
+# 04.11 (чистота): в коде нет имён систем частиц, только свои ключи; строку из ATC находим по хешу FNV-1a 32 (имя читается из данных диска, в код не пишется)
+PARTICLE_CODE = {'spark': 1, 'stars': 2, 'shrub': 3, 'trash': 4, 'leaves': 5, 'mail': 6}
+ATC_PARTICLE_HASH = {0xf640b62d: 'spark', 0xf8ee43a9: 'stars', 0xc2cba550: 'shrub', 0x1808b053: 'trash', 0xf1483f51: 'leaves', 0x0a5974a7: 'mail',
+                     0xb823977a: 'needles', 0xf17179a1: 'meter', 0x6ddd3ebc: 'popsicle', 0x79cb2d01: 'carboom'}
+def atc_particle_key(name):
+    """строка частиц из ATC -> свой ключ (None — система нам неизвестна)"""
+    h = 2166136261
+    for b in str(name).encode(): h = ((h ^ b) * 16777619) & 0xffffffff
+    return ATC_PARTICLE_HASH.get(h)
+# сверка g12-data P11-13 (02.11.2026): оригинал знает девять видов частиц удара (мусор, кусты, листья дуба, почта, иголки сосны, звёзды, счётчик парковки, взрыв машины, мороженое);
+# любой другой (искры на фонарях и светофорах) — «нет частиц». Было: искры = 14 на каждый удар (придумано по впечатлению от PS2), иголки / счётчик / мороженое в таблицу не попадали.
+# Стало: искры -> 0, добавлены коды 7, 24, 26 (номера систем, которых нет в l0N_fx.p3d: рисует код — окно g11-objects, viewer/main_state.h). PRP2_PARTICLES_OLD=1 — прежняя таблица
 if os.environ.get('PRP2_PARTICLES_OLD') != '1':
-    del PARTICLE_CODE['eSpark']
-    PARTICLE_CODE.update({'ePineTreeNeedles': 7, 'eParkingMeter': 24, 'ePopsicles': 26})
+    del PARTICLE_CODE['spark']
+    PARTICLE_CODE.update({'needles': 7, 'meter': 24, 'popsicle': 26})
 def type_fx_table(prop_types, atc_rows):
     """prop_types: dict с 'mat' (physProp = строка ATC). -> bytes по 2 Б на тип (см. wrap_prp2)."""
     out = bytearray()
     for ty in prop_types:
         m = ty.get('mat', -1)
         row = atc_rows[m] if 0 <= m < len(atc_rows) else None
-        part = PARTICLE_CODE.get(row['particle'], 0) if row else 0
+        part = PARTICLE_CODE.get(atc_particle_key(row['particle']), 0) if row else 0
         brk = BREAK_BY_ATC.get(row['breakable'], 0xFF) if row else 0xFF
         out += bytes((part, brk))
     return bytes(out)

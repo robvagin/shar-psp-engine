@@ -289,11 +289,14 @@ int meAudioBoot(const char *dir, int emu, char *out, int outN) {
 }
 // Правка 313: частицы и свечение на ME (viewer/fxdsp.h, исполнитель viewer/fx.c) — флаг-файл «mefx» рядом с EBOOT
 int fxMeAttach(void);
+void fxMeEnable(int on);
 int meFxBoot(const char *dir, int emu, char *out, int outN) {
   out[0] = 0; char c = 0;
-  if (!svFlag(dir, "mefx", &c)) return 0;
+  int pairOnly = 0;   // файл mefxpair: служба поднята, но частицы на ME только после «flag mefx 1» (A/B-пара в туре); по умолчанию (ни одного файла) ME частицам не отдаётся
+  if (!svFlag(dir, "mefx", &c)) { if (!svFlag(dir, "mefxpair", &c)) return 0; pairOnly = 1; }
   char s1[200]; if (svBoot(dir, emu, c, "fx", s1, sizeof s1) < 0) { snprintf(out, outN, "%s", s1); return -1; }
   int r = fxMeAttach();
+  if (!r && pairOnly) fxMeEnable(0);
   int l = snprintf(out, outN, "%s", s1); if (l > 0 && out[l - 1] == '\n') out[--l] = 0;
   snprintf(out + l, outN - l, " fx=%s\n", r ? "off:attach" : "on");
   return r;

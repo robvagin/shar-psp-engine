@@ -1,0 +1,54 @@
+# №1170: старт L5 с камерой старта (flag startcam), кадр каждые 0,3 с
+scene A1170_L5S
+flag camdet 1
+flag startcam 1
+flag golevel 5
+wait 0.3
+shot s00
+wait 0.3
+shot s01
+wait 0.3
+shot s02
+wait 0.3
+shot s03
+wait 0.3
+shot s04
+wait 0.3
+shot s05
+wait 0.3
+shot s06
+wait 0.3
+shot s07
+wait 0.3
+shot s08
+wait 0.3
+shot s09
+wait 0.3
+shot s10
+wait 0.3
+shot s11
+wait 0.3
+shot s12
+wait 0.3
+shot s13
+wait 0.3
+shot s14
+wait 0.3
+shot s15
+wait 0.3
+shot s16
+wait 0.3
+shot s17
+wait 0.3
+shot s18
+wait 0.3
+shot s19
+wait 0.3
+shot s20
+wait 0.3
+shot s21
+wait 0.3
+shot s22
+wait 0.3
+shot s23
+end

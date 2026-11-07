@@ -1,0 +1,19 @@
+# ag/loadorder R8: L3, площадки переброса Teleport (R5T01/lightport/Z5T1): настоящим △ на площадке, ирис, перенос на 2-57 м (вниз до 29 м), потом смотрим дыры рядом
+flag nosave
+scene LO8_BOOT
+wait 3
+flag golevel 3
+wait 14
+scene LO8_PAD2
+foot 48.2 -324.7 0 -20
+wait 1.5
+press triangle 0.2
+wait 6
+scene LO8_PAD0
+foot 178.1 -230.9 0 -25
+wait 1.5
+press triangle 0.2
+wait 6
+scene LO8_END
+wait 2
+end

@@ -82,6 +82,9 @@
 #define GAME_C2_DMG_OLD 0      // круг 2, СВЕРКА_МАШИНЫ:7.2, P07 Д6: цель «разбить» получает урон только от машины игрока; follow/dump — цель неуязвима; dump с несколькими — и машина игрока
 #endif
 #ifndef GAME_C2_CELEB_OLD
+#ifndef GATEDFANFARE_OLD
+#define GATEDFANFARE_OLD 0    // ТЕСТ90 (МУЗЫКА_ПО_МЕСТУ п.2): запертый этап не пройден (нет нужной машины или костюма) — вставка Gated_Mission (Horn_Blast), как у оригинала при отказе смены этапа; 1 — молча
+#endif
 #define GAME_C2_CELEB_OLD 0    // круг 2, g04: Гомер празднует (homerCelebrate): этап со вспышкой — малый клип, миссия — большой
 #endif
 #ifndef GAME_C2_CAMGOAL_OLD
@@ -1539,12 +1542,22 @@ static void c2Event(GameMsn *m, const MsnEvent *e) {
     }
     if (e->type == MSN_EV_STAGE_COMPLETE && rt->st && rt->obj == MSN_OBJ_GOTO && !(rt->st->flags & MSN_SF_GOTODIALOGOFF)) sndSay(SND_SAY_ARRIVE, 0);   // g08 P07:33: цель достигнута (шанс 20 % внутри)
     if (e->type == MSN_EV_MISSION_COMPLETE && e->index == 2) { const char *tr; sndMusicEvent("Win_3Street_Races", &tr); }   // g08 P09:Д4: все три уличные гонки
+    if (!GATEDFANFARE_OLD && e->type == MSN_EV_LOCKED_HINT) { const char *tr; sndMusicEvent("Gated_Mission", &tr); }   // ТЕСТ90: запертый этап кончился, нужной машины/костюма нет — фанфара закрытого этапа
   }
 #else
   (void)rt;
 #endif
 }
 int gameMsnResetAlways;   // отрицательный контроль правки 61: перенос на точку сброса и после пройденной миссии (как раньше)
+// Правка Роба 1205 (05.11: «в уличных гонках проверить соперничество»). Уличная гонка (sr1, sr2, sr3) — отдельная миссия после вступления (разговор «sr3sd»): у оригинала на загрузке
+// любой такой миссии зовётся сброс игрока при загрузке миссии — машина игрока ставится на SetMissionResetPlayerInCar, а он сам садится в неё (посадка в машину). Данные уровней 1–4, 6, 7 это
+// дублируют в этапе (PlacePlayerCar + PutMFPlayerInCar), данные УРОВНЯ 5 (sr1, sr2, sr3) — нет: у нас SetMissionResetPlayerInCar в окне подготовки основной фазы пропускался (plReset: не
+// startArmed), Гомер оставался пешком там, где кончился разговор, а вернее — на месте до разговора, машина стояла на старте. Игрок пешком не гоняет: соперники уезжали, а ждущая гонка
+// (sr3: дальше 300 м от игрока соперник встаёт на ручник) не двигалась вовсе (L5 sr3 bart_v «не едет», L5 sr1–sr3 у ботов «застрял»). RACE_RESET_OLD=1 / «flag raceresetold 1» — как было
+#ifndef RACE_RESET_OLD
+#define RACE_RESET_OLD 0
+#endif
+int gameMsnRaceResetOld = RACE_RESET_OLD;
 static void onEvent(void *u, const MsnEvent *e) {   // окно подготовки фазы и старт/повтор (см. plReset)
   switch (e->type) {
     // Правка Роба 61 (29.09: «вышли от Апу — сразу перенесло к дому; должен быть путь домой своим ходом»): SetMissionReset* —
@@ -1553,6 +1566,7 @@ static void onEvent(void *u, const MsnEvent *e) {   // окно подготов
     case MSN_EV_MISSION_START: GM->startArmed = gameMsnResetAlways || !(e->name2 && !strcmp(e->name2, "continue")); break;
     case MSN_EV_CLEANUP: GM->startArmed = 1; break;
     case MSN_EV_PHASE_START: GM->inSetup = 1;   // правка 40: окно старта фазы — до второго этапа (гонки ставят игрока в этапе 0)
+      if (!gameMsnRaceResetOld && e->index == 1 && GM->rt.cur >= 0 && (unsigned)GM->rt.cur < GM->f.nmissions && (GM->f.missions[GM->rt.cur].flags & MSN_MF_STREETRACE)) GM->startArmed = 1;   // правка 1205: основная фаза уличной гонки — ResetPlayer оригинала
       GM->scam.cam = 0; GM->scam.phase = e->name; GM->scam.arm = !GM->scam.quiet; GM->scam.quiet = 0; GM->scam.placed = 0;
       GM->scam.stages = 0; GM->scam.req = 0; break;
     case MSN_EV_STAGE_START: GM->inSetup = 0; GM->startArmed = 0; talkReset(GM); GM->nsafe = 0;   // команды этапа придут следом
@@ -1835,7 +1849,7 @@ static int msnWants(GameMsn *m, const MsnWorld *wp) {   // △ нужен сам
     MsnEntity e; memset(&e, 0, sizeof e);
     if (!entity(m, rt->target, &e)) return 0;
     float dx = w.player.x - e.pos.x, dy = w.player.y - e.pos.y, dz = w.player.z - e.pos.z;
-    return sqrtf(dx * dx + dy * dy + dz * dz) < msn_talk_reach(rt, rt->c_talk);
+    return sqrtf(dx * dx + dy * dy + dz * dz) < msn_talk_reach_w(rt, rt->c_talk, &w);   // в комнате не меньше 2,6 м
   }
   if (rt->obj == MSN_OBJ_GOTO && (rt->st->flags & MSN_SF_MUSTACTION) && rt->c_dest) {   // точка «нажми действие»
     const MsnLoc *l = msn_arg_loc(&m->f, rt->c_dest, 0);

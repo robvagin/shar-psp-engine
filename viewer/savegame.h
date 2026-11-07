@@ -46,15 +46,18 @@ extern "C" {
 #define SV_WORLDCOINS 512         // бит i — монета мира i собрана (уровень 1: 207)
 #define SV_VERSION 2               // версия ГОЛОВЫ (байты 0..255): 2 (29.09) + купленное за монеты (owned); запись версии 1 читается
 // №1114 (Роб 02.11.2026: «старые сохранения можно не читать»): запись переписана целиком под всё, что хранит оригинал (docs/handoff/СОХРАНЕНИЯ_1114.md). Подпись "SHV3", версия 3,
-// размер SV_BYTES = 1536 Б, одна сверка CRC-32 на всё после байта 16; прежние записи ("SHSV" и 256/768 Б) не читаются — слот показывается «< Damaged Save >».
+// размер SV_BYTES = 1536 Б, одна сверка CRC-32 на всё после байта 16; прежние записи ("SHSV" 256 и 768 Б) читаются с переводом в SHV3 (SAVEV3CONV, 03.11; до этого они показывались «< Damaged Save >»).
 // SAVEV3_1114_OLD=1 — прежний формат (голова 256 Б + хвост 512 Б, 768 Б)
 #ifndef SAVEV3_1114_OLD
 #define SAVEV3_1114_OLD 0
 #endif
 // Перевод прежних записей (просьба дирижёра 03.11.2026: у Роба на PSP и в эмуляторе лежат записи "SHSV", прогресс не терять): запись "SHSV" (256 Б до 05.10 или 768 Б с хвостом) читается
 // и переводится в память как есть; чего в ней не было (лучшие времена, попытки) пусто. Первая же запись игры ложится в SHV3. SAVEV3CONV_OLD=1 — прежние записи не читаются («< Damaged Save >»)
+#ifndef SAVEOLDREAD_OLD
+#define SAVEOLDREAD_OLD 0   // №1170: общий выключатель чтения прежних раскладок (SHSV 256/768 Б), то же, что SAVEV3CONV_OLD; 1 — как до перевода: прежняя запись «Damaged»
+#endif
 #ifndef SAVEV3CONV_OLD
-#define SAVEV3CONV_OLD 0
+#define SAVEV3CONV_OLD SAVEOLDREAD_OLD
 #endif
 #if SAVEV3_1114_OLD
 #define SV_BYTES 768              // правка 334: размер DATA.BIN — голова 256 Б (как до 05.10) + хвост 512 Б со своей проверкой
@@ -161,7 +164,7 @@ void svMsnProgress(const SaveGame *s, struct MsnProgress *p);
 int  svProgressText(const SaveGame *s, char *out, int n);
 // число пройденных миссий (биты маски) — для PARAM.SFO
 int  svMissionsDone(const SaveGame *s);
-// №1114: лучшие времена и попытки (как CharacterSheet оригинала). Живая таблица игры: svBestNote — миссия уровня L (запись slot 0..SV_MREC_N-1) пройдена за sec секунд; true — новый рекорд
+// №1114: лучшие времена и попытки (как таблица рекордов оригинала). Живая таблица игры: svBestNote — миссия уровня L (запись slot 0..SV_MREC_N-1) пройдена за sec секунд; true — новый рекорд
 // (меньше — лучше). svAttemptNote — миссия начата. svBestLive / svAttemptsLive — прочитать. svCapture переносит таблицу в запись, svApply — обратно; svBestReset — новая игра
 int  svBestNote(int level, int slot, int sec);
 int  svBestLive(int level, int slot);

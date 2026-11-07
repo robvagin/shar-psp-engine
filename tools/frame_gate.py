@@ -56,7 +56,10 @@ def main():
         per = [r['trf'] / r['fr'] / r['cars'] for r in st]
         put('б', len(st) >= 3 and sum(per) / len(per) >= 2.0, f'трафик: секунд с машинами {len(st)} (нужно 3), кусков на машину ' + (f'{sum(per) / len(per):.1f} (порог 2)' if per else 'нет'))
         pd = [r for r in ride if r['peds'] > 0]; sk = sum(r['skin'] for r in pd); bad = sum(r['skinbad'] for r in pd)
-        put('в', sk > 0 and bad <= .05 * sk, f'прохожие: секунд с ними {len(pd)}, пачек скелетных моделей {sk}, с битой текстурой {bad}')
+        # №1159 (TEST86: нуль прохожих в езде оказался ошибкой сна съехавших машин, а не случайностью): в FG_static служебный прохожий (flag pedtest) стоит в 3 м перед Гомером — в каждой из последних 3 секунд сцены peds >= 1
+        stp = [r for r in ride if r['sc'] == 'FG_static']
+        stok = len(stp) >= 3 and all(r['peds'] >= 1 for r in stp[-3:])
+        put('в', sk > 0 and bad <= .05 * sk and stok, f'прохожие: секунд с ними {len(pd)}, пачек скелетных моделей {sk}, с битой текстурой {bad}; в FG_static в последних 3 с с прохожим ' + (f'{sum(1 for r in stp[-3:] if r["peds"] >= 1)} из 3' if stp else 'нет секунд'))
         pp = sum(r['props'] / r['fr'] for r in street) / len(street) if street else 0
         put('г', pp >= 5, f'предметы у дороги: {pp:.0f} кусков на кадр (порог 5)')
         cty = sum(r['city'] / r['fr'] for r in street) / len(street) if street else 0

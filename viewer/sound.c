@@ -711,6 +711,10 @@ void sndCoin(void) { sndPlay2D(rCoin, 1.f); }
 // elevator — позиционные (пара дальностей из positionalsettings.spt в пакет не выгружается — 3–100 м по умолчанию). Звать при запуске клипа объекта
 static float swT = -1.f;
 void sndSwitchPress(void) { if (ready) swT = 0.3f; }
+int audioResLoops(int id);   // audio.c: ресурс банка с петлёй (№1174)
+#ifndef SNDANIMLEAK1174_OLD
+#define SNDANIMLEAK1174_OLD 0
+#endif
 #ifndef ANIMOBJ_RANGE_OLD
 #define ANIMOBJ_RANGE_OLD 0   // круг 6 (g08, P05:8): дальность звуков подвижных объектов по настройкам диска (платформа 14-20 м, кран 25-45, лифт 50-75, рука-робот 10-25); 1 — общие 3-100 м
 #endif
@@ -738,7 +742,12 @@ int sndAnimObj(const char *obj, float x, float y, float z) {
       animStreamT = audioTrackSeconds(t) + 0.02f; emitCur = -2; return 1;   // круг 7: дорожка позиционного потока зациклена в пакете — период ровно на длину клипа, чтобы второй проход не начался
     }
     sfxWhy = "animobj";
+    // №1174: платформы (platform_01/02, aplatform6) в банке — петли: голос живёт, пока его не остановят, а запуск идёт на каждый круг клипа и никто не останавливает.
+    // Один голос на запись таблицы: прежний (если ещё звучит) гасим перед новым. SNDANIMLEAK1174_OLD=1 — как в TEST87
+    static int animH[32];
+    if (!SNDANIMLEAK1174_OLD && i < 32 && animH[i] && audioResLoops(id)) { if (audioPlaying(animH[i])) audioStop(animH[i]); animH[i] = 0; }
     int h = !T[i].pos ? sndPlay2D(id, 1.f) : ANIMOBJ_RANGE_OLD ? sndPlayId(id, x, y, z, 1.f) : audioPlayAtGain(id, 1.f, x, y, z, T[i].mn, T[i].mx);
+    if (!SNDANIMLEAK1174_OLD && i < 32) animH[i] = audioResLoops(id) ? h : 0;
     sfxWhy = "fx"; return h;
   }
   return 0;
@@ -1461,7 +1470,7 @@ void sndStats(SndStats *s) {
   s->musicState = mState; s->ambZone = ambZone; s->posEmitter = emitCur;
   s->modeApplied = pauseMode ? SND_MODE_PAUSE : lbMode ? SND_MODE_LETTERBOX : curMode;
   s->dialogPlaying = a.track[AUDIO_ST_DIALOG] >= 0;
-  s->voices = a.voices; s->underruns = a.underruns; s->cpu = a.cpu; s->mixUsMax = a.mixUsMax;
+  s->voices = a.voices; s->underruns = a.underruns; s->loops = a.loops; s->dropped = a.dropped; s->cpu = a.cpu; s->mixUsMax = a.mixUsMax;
   s->music = a.track[0] >= 0 ? audioTrackName(a.track[0]) : "-";
   s->ambience = a.track[1] >= 0 ? audioTrackName(a.track[1]) : "-";
   s->dialog = a.track[2] >= 0 ? audioTrackName(a.track[2]) : "-";

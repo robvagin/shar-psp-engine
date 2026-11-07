@@ -1,0 +1,8 @@
+### ТЕСТ90: синхронное чтение главного потока не возвращается (skinLoad/header/комната — любое sceIoRead главного). Новое: сторож через 5 с пишет в stall.txt и на экран «Memory Stick read error» + строку READHANG fd= ms=; старое — обычный STALL без слов про карту
+wait 12
+flag cfgdefaults 1
+wait 5
+flag readhangsync 1
+flag golevel 2
+wait 40
+end

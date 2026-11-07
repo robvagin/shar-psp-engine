@@ -1,0 +1,10 @@
+# Красный контроль различения TIMEOUT / зависание (tests/gates/outcome.sh): игра идёт 6 секунд и намертво встаёт (flag hang = главный поток в бесконечном ожидании). END не будет никогда.
+scene spawn
+wait 3
+shot spawn
+scene hang_here
+wait 2
+flag hang
+wait 5
+shot never
+end

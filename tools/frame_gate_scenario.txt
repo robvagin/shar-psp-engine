@@ -82,6 +82,7 @@ wait 2
 flag trfahead 14
 flag trfstill
 flag pedahead 24
+flag pedtest 1
 wait 3
 shot fg_static_a
 wait 2

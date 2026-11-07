@@ -1,0 +1,60 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1_load0
+flag golevel 1
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L4_load1
+flag golevel 4
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L5_load2
+flag golevel 5
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L2_load3
+flag golevel 2
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L3_load4
+flag golevel 3
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L6_load5
+flag golevel 6
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L7_load6
+flag golevel 7
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+scene L1_load7
+flag golevel 1
+wait 40
+flag drive 20
+wait 22
+flag stop
+wait 1
+end

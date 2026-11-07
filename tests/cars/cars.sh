@@ -32,6 +32,7 @@ $CC -I $G/stale -I viewer $G/stale/car.c tests/cars/params_host.c viewer/col.c -
 V=viewer; . tools/bots/lib.sh
 $CC -DSKIN_HOST -I viewer -I tools/bots tests/cars/drive_host.c $BOTS_LIB -lm -o $G/drive_host || exit 1
 HOMER=build/homer.shr
+tools/fresh_homer.sh || exit $?   # 04.11 (gates): свежесть build/homer.shr (штамп входов; устарел — пересборка, нельзя — код 77 НЕ СВИДЕТЕЛЬ, не FAIL)
 
 chk() {   # chk HOST LEVEL SHR — параметры движка и сверка с диском
   "$1" "$3" > "$3.params.txt" || return 1

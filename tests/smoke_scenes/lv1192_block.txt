@@ -1,0 +1,35 @@
+### №1192 (g10b-loop): естественные переходы уровней L1->L2->...->L7 цепочкой, КАК У ИГРОКА: flag realend 1 (ролики Fox/Gracie на L1, экран Level Complete, газета, выгрузка/загрузка, перенос записи), flag lvwin — «последнее задание пройдено».
+### Журнал по сцене: REALEND, LVWIN, MSN level-complete, MSNFMV (foxlogo, gracie), LEVELDONE, LEVELUP from=N to=N+1, LEVEL ev=free/load (heap, mx), BBSTALL, GE NESTED, MEMFAILSZ, END. Гейт: tests/g10b/lv1192.sh.
+### Для PSP: прогнать дважды, по умолчанию и с пустым файлом meaudiooff (ME звуку не отдаётся), потом с nome (ME целиком): совпадение зависания с файлом называет ME. Если встаёт без STALL — последние шаги в blackbox.txt/shar_report.txt.
+scene LV1192_L1_WIN
+flag realend 1
+flag startcam 1
+flag lvwin
+wait 75
+shot lv1192_l1_to_l2
+scene LV1192_L2_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l2_to_l3
+scene LV1192_L3_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l3_to_l4
+scene LV1192_L4_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l4_to_l5
+scene LV1192_L5_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l5_to_l6
+scene LV1192_L6_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l6_to_l7
+flag realend 0

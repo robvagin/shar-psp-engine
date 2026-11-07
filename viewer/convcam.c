@@ -63,6 +63,13 @@ int convShotFor(const char *const *cams, int ncam, int line, int pcSpeaks, int *
   return pcSpeaks ? CONV_PC_NEAR : CONV_NPC_NEAR;          // сверка g06 (g06-camera:21, 23): ближний план говорящего, с первой реплики
 }
 
+// Аудит 04.11 (g06, находка из эмулятора: L5, брифинг Апу — крупный план телевиком 0,49 рад по горизонтали обрезает лоб и макушку Апу, «крупный план перед лбом»). Данные оригинала (0,49 и 1,0 рад) заданы для кадра 4:3; №650/№647 держат
+// ГОРИЗОНТАЛЬНЫЙ угол в 16:9, поэтому по вертикали видно на 25 % меньше (16,0° вместо 21,3° у крупного плана), и вместе с полосами letterbox голова высокого героя (Апу, голова 1,8 м) уходит за верх кадра: камера на 6,2 м, цель на 1,25 м.
+// convVFov43 = 1 (flag convvfov43 1, или CONVVFOV43=1 при сборке): вертикальный угол как у оригинала на 4:3 (tan(v/2) = tan(h/2) · 3/4), по горизонтали шире. По умолчанию выключено: прежний кадр решён Робом (№650), включение — только по его слову
+#ifndef CONVVFOV43
+#define CONVVFOV43 1   // Роб 05.11: «кадр как в оригинале» — по умолчанию включено (лоб Апу не режется); 0 — прежний кадр №650
+#endif
+int convVFov43 = CONVVFOV43;
 static float headOf(const ConvScene *s, int who) { float h = who ? s->npcHead : s->pcHead; return h > .05f ? h : FACE_DEF; }
 int convSide(const ConvScene *s, const float prevEye[3]) {
   float ax = s->npc[0] - s->pc[0], az = s->npc[2] - s->pc[2], lx = az, lz = -ax;   // лево оси = up x a
@@ -82,7 +89,7 @@ static void poseSv(const ConvScene *s, int shot, int side, float eye[3], float l
   float head = onPc ? (s->pcHead > .05f ? s->pcHead : FACE_DEF) : (s->npcHead > .05f ? s->npcHead : FACE_DEF), low = CONV_CHILD_SV_OLD && head < SV_CHILD_HEAD ? .4f : 0.f;   // круг 7: в оригинале отметка «ребёнок» из команды миссии до камеры не доходит (команда связана не с тем объектом), в данных диска её нет — камера не опускается никогда
   eye[0] = mx + D * (ax * sinf(th) + vx * cosf(th)); eye[2] = mz + D * (az * sinf(th) + vz * cosf(th)); eye[1] = my + hE - low;
   look[0] = mx + ax * shift; look[2] = mz + az * shift; look[1] = my + hT - low;
-  *fovY = 2.f * atanf(tanf(hf * .5f) * 9.f / 16.f) * (180.f / 3.14159265f);
+  *fovY = 2.f * atanf(tanf(hf * .5f) * (convVFov43 ? .75f : 9.f / 16.f)) * (180.f / 3.14159265f);   // аудит 04.11: convVFov43 — вертикальный угол как у оригинала на 4:3 (данные 0,49 и 1,0 рад — по горизонтали 4:3)
 }
 void convPose(const ConvScene *s, int shot, int side, float eye[3], float look[3], float *fovY) {
   if (!CONV_SV_OLD) { poseSv(s, shot, side, eye, look, fovY); return; }

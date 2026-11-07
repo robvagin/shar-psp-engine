@@ -1,0 +1,238 @@
+# разбор «плохая даль» L5 автострада и L4: один вид вдаль, варианты порта (tests/fardiag/far_views.txt)
+flag camdet 1
+scene start
+wait 3
+scene L5_load
+flag golevel 5
+wait 40
+flag repair
+cam off
+goto -584 -320 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam -584.0 38.0 -320.0 0.00 0.12 -1.00 60
+wait 5
+shot far_p1_a
+cam off
+goto -584 -320 0
+wait 5
+flag dal 0
+cam -584.0 38.0 -320.0 0.00 0.12 -1.00 60
+wait 5
+shot far_p1_b
+cam off
+goto -584 -320 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam -584.0 38.0 -320.0 0.00 0.12 -1.00 60
+wait 5
+shot far_p1_c
+cam off
+goto -584 -320 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam -584.0 38.0 -320.0 0.00 0.12 -1.00 60
+wait 5
+shot far_p1_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+cam off
+goto -442 -540 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam -442.0 44.0 -540.0 0.00 0.10 -1.00 60
+wait 5
+shot far_p2_a
+cam off
+goto -442 -540 0
+wait 5
+flag dal 0
+cam -442.0 44.0 -540.0 0.00 0.10 -1.00 60
+wait 5
+shot far_p2_b
+cam off
+goto -442 -540 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam -442.0 44.0 -540.0 0.00 0.10 -1.00 60
+wait 5
+shot far_p2_c
+cam off
+goto -442 -540 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam -442.0 44.0 -540.0 0.00 0.10 -1.00 60
+wait 5
+shot far_p2_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+cam off
+goto -23 -388 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam -23.0 32.0 -388.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_p3_a
+cam off
+goto -23 -388 0
+wait 5
+flag dal 0
+cam -23.0 32.0 -388.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_p3_b
+cam off
+goto -23 -388 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam -23.0 32.0 -388.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_p3_c
+cam off
+goto -23 -388 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam -23.0 32.0 -388.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_p3_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+cam off
+goto -590 -651 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam -590.0 42.0 -651.0 0.00 -0.02 1.00 60
+wait 5
+shot far_p4_a
+cam off
+goto -590 -651 0
+wait 5
+flag dal 0
+cam -590.0 42.0 -651.0 0.00 -0.02 1.00 60
+wait 5
+shot far_p4_b
+cam off
+goto -590 -651 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam -590.0 42.0 -651.0 0.00 -0.02 1.00 60
+wait 5
+shot far_p4_c
+cam off
+goto -590 -651 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam -590.0 42.0 -651.0 0.00 -0.02 1.00 60
+wait 5
+shot far_p4_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+scene start
+wait 3
+scene L4_load
+flag golevel 4
+wait 40
+flag repair
+cam off
+goto 140 -312 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam 140.0 12.0 -312.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q1_a
+cam off
+goto 140 -312 0
+wait 5
+flag dal 0
+cam 140.0 12.0 -312.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q1_b
+cam off
+goto 140 -312 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam 140.0 12.0 -312.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q1_c
+cam off
+goto 140 -312 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam 140.0 12.0 -312.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q1_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+cam off
+goto 255 570 0
+wait 5
+flag dal 1
+flag horizon 0
+flag silh 0
+cam 255.0 3.0 570.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q2_a
+cam off
+goto 255 570 0
+wait 5
+flag dal 0
+cam 255.0 3.0 570.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q2_b
+cam off
+goto 255 570 0
+wait 5
+flag dal 1
+flag horizon 1
+flag silh 1
+cam 255.0 3.0 570.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q2_c
+cam off
+goto 255 570 0
+wait 5
+flag dal 0
+flag drawdist 200
+cam 255.0 3.0 570.0 -1.00 -0.02 0.00 60
+wait 5
+shot far_q2_d
+flag dal 1
+flag horizon 0
+flag silh 0
+flag drawdist 100
+cam off
+end

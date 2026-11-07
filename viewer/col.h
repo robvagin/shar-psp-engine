@@ -105,6 +105,12 @@ extern int colGatherCacheOld;   // №984: 1 — без кэша «пусто» 
 extern int colRampRail1050;   // №1050 (Б): у бортов большого трамплина L5 нет торцов (flag ramprail1050 0 — как было)
 extern int colRamp1050;   // №1050: 1 — торец тонкой стенки не гасит машину в ноль, а отводит вбок (RAMP1050_OLD=1 / flag ramp1050 0 — как было)
 int colInit(ColWorld *w, const void *section, unsigned size);
+// №bake-3Б: colInit с запечённым разбором (colbake.shr); bake == 0 / не сошёлся хеш — как colInit. key — хеш сырого COL1 (движок: mcColHash)
+int colInitBake(ColWorld *w, const void *section, unsigned size, const void *bake, unsigned bakeSize, unsigned key);
+unsigned colBakeSizeMax(const ColWorld *w);                                          // верхняя граница размера записи (буфер под colBakeDump)
+unsigned colBakeDump(const ColWorld *w, uint32_t key, void *out, unsigned cap);       // после живого colInit: запись для файла (0 — не влезло)
+int colBakeLastUsed(void);                                                      // 1 — последний colInitBake взял запечённое
+int colBakeVerify(const ColWorld *w, uint32_t key, const void *bake, unsigned size);  // живой мир против файла: 0 — совпало
 void colFree(ColWorld *w);
 const char *colError(int code);
 

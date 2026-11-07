@@ -42,6 +42,7 @@ static int scrapOpenPack(const char *fn) {
 static float scrapEase(float x) { x = x < 0.f ? 0.f : x > 1.f ? 1.f : x; return x < .5f ? 4.f * x * x * x : 1.f - powf(-2.f * x + 2.f, 3.f) * .5f; }   // плавно в обе стороны (кубическая)
 // один кадр альбома: мир (гостиная), экран scr с прозрачностью al (0 — только мир)
 static void scrapPresent(int mainSel, int scr, int selv, float t, float al, void **fbp, const char *tag) {
+  GE_NEST_GUARD("scrapPresent");   // №1186/№1188
   unsigned budgetT0 = sceKernelGetSystemTimeLow(), budgetIo0 = smkIoUs;
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
@@ -103,6 +104,7 @@ static int scrapGridMove(int sel, unsigned hit) {
 // ---- галереи (этап 2): пакет уровня lN/scrapgal.shr (tools/menu_export.py --pack scrapgal; экраны 0 миссии, 1 костюмы, 2 машины), на время галереи пакет альбома закрыт ----
 static SaveGame scrapStartSave; static int scrapStartRow = -1;   // запрос «начать эту миссию» из галереи: запись-перенос и строка MISSION SELECT (0..6); читает main_levels.h
 static int scrapAskStart(int mainSel, void **fbp) {   // «Would you like to load this mission?» Yes / No (курсор на No): 1 — Yes. Пакет галереи на время вопроса закрыт (вопрос берёт fsave.shr)
+  GE_NEST_GUARD_RET("scrapAskStart", 0);   // №1186/№1188
   if (!svmOn() || svmAskOpen(SVM_ASK_STARTMSN)) return 1;
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(), t0 = last; int r;

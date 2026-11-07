@@ -13,6 +13,7 @@
 #include "audio.h"
 #include <pspiofilemgr.h>
 #include "menu_access.h"   // пункт ДОБИВКИ 26: состав и порядок галереи, звёзды и Accept у закрытой (запись PS2 ps2_v105_booth_access)
+#include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после include pspgu)
 
 enum { PV_T_LOCKED = UI_T_GAMBLE, PV_T_STATS = UI_T_STREETRACE, PV_T_ARROWS = UI_T_SKIP, PV_T_DAMAGE = UI_T_DAMAGE,
        PV_T_ACCEPT = UI_T_ACTION };   // ACTION — подсказка Accept (Accept.pag; tools/shop_export.py TAG_ACCEPT)

@@ -1,0 +1,26 @@
+# ag/loadorder R4: L4, старт в доме (m1), выход на улицу дверью, выбор миссии m1 снова (старт в комнате, ирис msn + msnTeleport + msnRoomSync), потом выход дверью: город у двери должен быть на месте
+flag nosave
+scene LO4_BOOT
+wait 3
+flag golevel 4
+wait 12
+scene LO4_OUT1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+scene LO4_RESEL_M1
+flag msnsel 0
+wait 6
+scene LO4_OUT2
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 10
+scene LO4_END
+wait 4
+end

@@ -47,6 +47,7 @@ static unsigned *sbBuildDl(const SbRec *r, int mode) {   // лист-вызов:
 static int sbCmp(const void *a, const void *b) { unsigned x = *(const unsigned *)a, y = *(const unsigned *)b; return x < y ? -1 : x > y; }
 static unsigned short *sbShot;
 static void sbFrame(int mode, int var, int reps, unsigned *tCpu, unsigned *tTot, void **fbp, int grab) {
+  GE_NEST_GUARD("sbFrame");   // №1186/№1188
   unsigned t0 = sceKernelGetSystemTimeLow();
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuViewport(2048, 2048, SCR_W, SCR_H); sceGuScissor(0, 0, var ? 1 : SCR_W, var ? 1 : SCR_H);

@@ -1,0 +1,9 @@
+#!/bin/bash
+# Linux shim: BSD "sed -i '' EXPR FILE" -> GNU "sed -i EXPR FILE"
+REAL=/usr/bin/sed; [ -x "$REAL" ] || REAL=/bin/sed
+args=(); n=$#; i=0; prev=""
+for a in "$@"; do
+  if [ "$prev" = -i ] && [ -z "$a" ]; then prev="$a"; continue; fi   # drop the empty backup suffix
+  args+=("$a"); prev="$a"
+done
+exec "$REAL" "${args[@]}"

@@ -8,6 +8,7 @@
 #   tools/tour_me492.sh --list      показать, что будет сделано
 #   tools/tour_me492.sh --deploy    собрать пакет-источник и положить обе апки на PSP (PSP по USB, сверка cmp)
 #   tools/tour_me492.sh --fetch     забрать отчёты обеих апок в build/psp-tour/
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/linux_env.sh"   # Linux: обёртки stat/cp/sed под синтаксис macOS (tools/linux_env.sh)
 set -u
 cd "$(dirname "$0")/.."
 SRC="${TOUR_SRC_BASE:-build/build3}"; STG=build/tour-src-me492

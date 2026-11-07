@@ -1,0 +1,24 @@
+# №1192: конец уровня 5 КАК У ИГРОКА (flag realend 1: ролики Fox/Gracie на L1; 2 — ещё вопрос «сохранить?») -> Level Complete -> газета -> старт L6, 70 с после. Журнал: REALEND, LVWIN, MSNFMV, LEVELUP, LEVEL ev=load, IRIS, STALL, GE NESTED, MEMFAILSZ
+flag menu
+flag lvset 5
+scene lv_boot
+wait 1.5
+press cross
+wait 9
+scene LV5_REAL
+flag realend 1
+flag lvwin
+wait 12
+shot lv5_a
+wait 12
+shot lv5_b
+wait 12
+shot lv5_c
+wait 12
+flag lvlog
+shot lv5_d
+wait 20
+shot lv5_e
+wait 20
+shot lv5_f
+end

@@ -64,8 +64,8 @@ static Res runPort(float lx, float ly, float lz, float dx, float dz, float x0, f
     int sample=(int)((fr+1)*25/60)!=(int)(fr*25/60);
     if (sample || JUMP_METRIC_HZ_OLD) { T[n] = t; A[n] = along; Y[n] = car.y; VY[n] = car.vel[1]; Ground[n]=car.grounded;n++; }
     if (trace && sample)   // трасса по 0.04 с, как у оригинала
-      fprintf(trace, "%.2f\t%.3f\t%.3f\t%.3f\t%.2f\t%.3f\t%.3f\t%d\t%.2f\t%.2f\t%d\n", t, car.x, car.y, car.z, along, v, car.vel[1], car.grounded,
-              car.pitch * 57.2958f, car.roll * 57.2958f, car.wheels);   // №406: тангаж/крен (сверка с pitch_ps2.tsv), колёс на земле
+      fprintf(trace, "%.2f\t%.3f\t%.3f\t%.3f\t%.2f\t%.3f\t%.3f\t%d\t%.2f\t%.2f\t%d\t%.3f\t%.3f\t%.3f\t%.3f\n", t, car.x, car.y, car.z, along, v, car.vel[1], car.grounded,
+              car.pitch * 57.2958f, car.roll * 57.2958f, car.wheels, car.comp[0], car.comp[1], car.comp[2], car.comp[3]);   // №1200: сжатие подвески колёс (0,1 — передние порта)   // №406: тангаж/крен (сверка с pitch_ps2.tsv), колёс на земле
   }
   // те же правила, что tools/twins/jumpref.py: вершина — до первого удара; посадка — удар (скачок vy вверх больше 2 м/с при
   // падении быстрее 1 м/с), кроме касания вскользь (подскочила выше места удара на 0,5 м и улетела дальше 5 м ниже него на 1,5 м)

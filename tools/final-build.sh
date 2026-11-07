@@ -18,6 +18,7 @@
 #              RELEASE_KEEP_RESET=1 (SELECT=RESET CAR в машине)
 # Переменные: BASE (папка базы пакета), PKG (куда класть пакет), PSPDEV, MAXJOBS (по умолчанию 1: последовательно)
 # Правила: тяжёлые процессы по одному; перед каждым экспортом ждём, пока не закончится ЧУЖОЙ psp_export (pgrep); без push; на PSP не кладёт.
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/linux_env.sh"   # Linux: обёртки stat/cp/sed под синтаксис macOS (tools/linux_env.sh)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 LIST=0; RESUME=0; SKIP=" "; RELEASE=0

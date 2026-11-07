@@ -1,0 +1,16 @@
+# №1161: страница CAMERA паузы открывается на любом языке; движок пишет строку OPT scr=3 (rows: «x» — строка выключена). Ждём rows=0x,1,1,0 (Camera N/A, Jump Cameras, Invert, Adjust Camera)
+scene drive
+wait 3
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 0.8
+press down
+wait 0.3
+press down
+wait 0.3
+press cross
+wait 1
+end

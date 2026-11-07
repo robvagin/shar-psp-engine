@@ -29,7 +29,8 @@ ND = int(sys.argv[sys.argv.index('--diagpoints') + 1]) if '--diagpoints' in sys.
 # №922 (разбор 24.10): flag diaglog 1 стоит ≈0,3 с на секунду игры (DIAGS diag_us, ≈10 мс на кадр) — все «медленные кадры» исследователя были его ценой. Основной круг идёт с diaglog 0
 # (кадры, недогруз клеток), выброс GE меряет отдельный короткий круг explore_diag_L{N} (те же имена точек P###, первые ND точек выбора), diaglog 1
 head = lambda L, diag=0: ['wait 12'] + ([] if L == 1 else ['scene LOAD', f'flag golevel {L}', 'wait 40']) + ['flag cfgdefaults 1', f'flag diaglog {diag}']
-for L in range(1, 8):
+MONLY = '--missions-only' in sys.argv   # 06.11 (Роб: «быстрый прогон начала и конца каждой миссии»): только missions_L*, без точек разведчика (build/scout) и без погони
+for L in ([] if MONLY else range(1, 8)):
     s = head(L) + ['flag camin 1']
     for i, p in enumerate(points(L, NP)):
         s += [f'scene P{i:03d}', f'foot {p[0]:.1f} {p[2]:.1f} 0', 'wait 1.6']
@@ -63,10 +64,12 @@ for L in range(1, 8):
 STORY = {1: 8, 2: 8, 3: 7, 4: 7, 5: 8, 6: 8, 7: 8}   # сюжетных миссий в level0N.msn (m0..m7 у L1, m1..m7/m8 у остальных), бонусных везде 5 (sr1 sr2 sr3 gr1 bm1)
 CYC = int(sys.argv[sys.argv.index('--cycles') + 1]) if '--cycles' in sys.argv else 16   # циклов прохода на миссию (~3 с игрового времени каждый)
 cycle = ['flag msngo', 'wait 3']
+PASS_S = float(sys.argv[sys.argv.index('--pass') + 1]) if '--pass' in sys.argv else 0.0   # 06.11: помощник засчитывает этап, стоящий дольше PASS_S с (flag msnbotpass; MSN pass … why=stuck) — прогон «начало-конец миссий»
 BONUS = [('sr1', 0, []), ('sr2', 0, []), ('sr3', 0, []), ('gr1', 0, ['flag coins 99']), ('bm1', 1, [])]   # (метка, этап для flag msnmainat, подготовка)
+if PASS_S > 0: BONUS[-1] = ('bm1', 0, [])   # 06.11: с помощником — с первого этапа, как игрок: этап 1 продолжает таймер этапа 0, прыжок на него давал «Timed out» через 0,1 с (L3, L7)
 for L in range(1, 8):
     nst = STORY[L] - (1 if L == 7 else 0)
-    m = head(L) + ['flag msn', 'flag msnbot 1', 'wait 3']
+    m = head(L) + ['flag msn', 'flag msnbot 1'] + ([f'flag msnbotpass {PASS_S}'] if PASS_S > 0 else []) + ['wait 3']
     steps = [(t, ['flag cfgdefaults 1'] + pre + [f'flag msnmainat {(STORY[L] + k) * 100 + st}']) for k, (t, st, pre) in enumerate(BONUS)] + [('m%d' % k, [f'flag msnsel {k}']) for k in range(nst)]
     for tag, start in steps:
         m += [f'scene MS_{tag}_start'] + start + ['wait 3', f'shot ms_{tag}_a']
@@ -74,14 +77,14 @@ for L in range(1, 8):
             m += [f'scene MS_{tag}_c{c:02d}'] + cycle
             if c % 4 == 3: m += [f'shot ms_{tag}_c{c:02d}']
         m += ['flag msn', 'wait 1.5']
-    for i, p in enumerate(points(L, 3)[::-1]):   # погоня: розыск 100 %, автопилот, трафик и полиция вокруг
+    for i, p in enumerate([] if MONLY else points(L, 3)[::-1]):   # погоня: розыск 100 %, автопилот, трафик и полиция вокруг
         # №922: прежде `foot` ставил Гомера пешком в точку, а flag drive пересаживал его в машину на спавне — второй прыжок на сотни метров (JUMPRUSH ≈1,9 МБ, ph5 130–300 мс в первую секунду погони;
         # настоящая езда 90 с без пиков). Теперь: посадка в машину (flag drive 2 — короткая езда, PILOT seat), машина goto в точку одним прыжком в сцене CHJ_i (подгрузка клеток после прыжка в счёт погони
         # не идёт), и только потом розыск и езда в сцене CH_i
         m += ['flag msnbot 0', 'flag drive 2', 'wait 3', 'flag stop', f'scene CHJ_{i}', f'goto {p[0]:.1f} {p[2]:.1f} 0', 'wait 3', f'scene CH_{i}', 'flag repair', 'flag hnr 100', 'flag drive 40', 'wait 10', f'shot ch{i}_a', 'wait 15', f'shot ch{i}_b', 'wait 15', f'shot ch{i}_c', 'flag stop', 'flag hnr 0', 'wait 2']
     (out / f'missions_L{L}.txt').write_text('\n'.join(m + ['end']) + '\n')
 s = ['wait 12', 'flag cfgdefaults 1']
-for rnd in range(5):
+for rnd in ([] if MONLY else range(5)):
     for L in range(1, 8):
         s += [f'scene R{rnd}_L{L}', f'flag golevel {L}', 'wait 40', 'press triangle 0.2', 'wait 3', 'flag drive 20', 'wait 120', 'flag stop', 'press triangle 0.2', 'wait 4']
 (out / 'soak.txt').write_text('\n'.join(s + ['end']) + '\n')

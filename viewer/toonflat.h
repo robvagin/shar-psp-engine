@@ -496,6 +496,7 @@ static void flatScan0(Tex *t, const unsigned char *pal, const unsigned *cnt) {
 typedef struct { unsigned c; short x, y, z; unsigned short cls; } MkVert;   // как читает GE: цвет 8888 + положение 16 бит (12 байт)
 // крупная разметка клетки (v, nbig вершин) читается вместе с клеткой; мелочь (sv, ns вершин) — только когда клетка ближе дальности мелочи: запрос главного потока, читает загрузчик; далеко — выгружается
 typedef struct { MkVert *v, *sv; unsigned nbig, ns, epoch, sepoch; volatile int ready, sready, sreq; } MkCell;
+#include "reliab.h"
 static SceUID marksFd = -1, marksSema = -1; static unsigned *marksTab, marksNcell, marksHdr, marksNcls, marksEpoch = 1; static MkCell *marksCell; static int marksOk;
 static unsigned char marksRgb[16][3]; static unsigned marksTone[16];   // исходные цвета классов и цвета после кривой тона (ABGR)
 static unsigned marksVertsLoaded, marksCellsLoaded, marksSmallLoads, marksSmallDrops, marksVertsResident;
@@ -513,7 +514,8 @@ static void marksClose(void) {
 static MkVert *marksRead(unsigned from, unsigned cnt) {
   if (!cnt) return 0;
   unsigned char *raw = (unsigned char *)malloc((size_t)cnt * 12u); MkVert *v = (MkVert *)memalign(16, (size_t)cnt * sizeof(MkVert)); int ok = raw && v;
-  if (ok) { sceKernelWaitSema(marksSema, 1, 0); ok = sceIoLseek32(marksFd, (int)(marksHdr + from * 12u), PSP_SEEK_SET) == (int)(marksHdr + from * 12u) && sceIoRead(marksFd, raw, (int)(cnt * 12u)) == (int)(cnt * 12u); sceKernelSignalSema(marksSema, 1); }
+  if (ok) { SceUInt wt_ = REL_LOCK_LIMIT_US; int wr_ = sceKernelWaitSema(marksSema, 1, relLockOld ? 0 : &wt_); if (wr_ < 0) { relNote("LOCK marks timeout rc=%08x: чтение разметки клетки пропущено", (unsigned)wr_); ok = 0; }   // №1195: предел 3 с
+    else { ok = sceIoLseek32(marksFd, (int)(marksHdr + from * 12u), PSP_SEEK_SET) == (int)(marksHdr + from * 12u) && sceIoRead(marksFd, raw, (int)(cnt * 12u)) == (int)(cnt * 12u); sceKernelSignalSema(marksSema, 1); } }
   if (!ok) { free(raw); free(v); return 0; }
   for (unsigned i = 0; i < cnt; i++) { const unsigned char *r = raw + i * 12; const short *p = (const short *)r; v[i].x = p[0]; v[i].y = p[1]; v[i].z = p[2];
     v[i].cls = (unsigned short)((r[9] < 16 ? r[9] : 0) | (r[6] >> 4) << 4 | (r[7] >> 4) << 8 | (r[8] >> 4) << 12); v[i].c = 0xff000000u; }

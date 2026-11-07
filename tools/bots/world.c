@@ -365,6 +365,25 @@ static size_t spMemSize(const StateProps *sp) {   // как calloc в spInit (vi
   size_t jtot = 0; for (unsigned i = 0; i < sp->ninst; i++) jtot += sp->type[sp->inst[i].type].nJoint;
   return (size_t)sp->ninst * sizeof(SpRun) + jtot * 12 * sizeof(float) + (size_t)sp->ntype * 32 * 3 + 16;
 }
+// 04.11 (ночные боты, L2 m1 «двойное освобождение» в spBreakDir): SpRun.jm0 (viewer/stateprops.c, №923) — отдельное выделение, а снимок копирует sp.mem
+// побайтно вместе с указателем. После bwLoad указатель оказывался на уже освобождённую память -> free дважды, SIGTRAP на первой же ломке обломка.
+// Снимок хранит свою копию jm0 каждого слота; загрузка освобождает живые jm0, возвращает память и выделяет jm0 заново. Игру не меняет.
+static unsigned jmCount(const StateProps *sp) { return sp->ninst; }
+static void jmSave(const StateProps *sp, float ***dst, unsigned *n) {
+  unsigned c = jmCount(sp);
+  if (*n != c) { for (unsigned i = 0; i < *n; i++) free((*dst)[i]); free(*dst); *dst = (float **)calloc(c + 1, sizeof(float *)); *n = c; }
+  for (unsigned i = 0; i < c; i++) {
+    free((*dst)[i]); (*dst)[i] = NULL;
+    if (sp->run[i].jm0) { size_t b = (size_t)sp->type[sp->inst[i].type].nJoint * 12 * sizeof(float); (*dst)[i] = (float *)malloc(b + 1); memcpy((*dst)[i], sp->run[i].jm0, b); }
+  }
+}
+static void jmFreeLive(StateProps *sp) { for (unsigned i = 0; i < sp->ninst; i++) { free(sp->run[i].jm0); sp->run[i].jm0 = NULL; } }
+static void jmRestore(StateProps *sp, float **src, unsigned n) {
+  for (unsigned i = 0; i < sp->ninst; i++) {
+    sp->run[i].jm0 = NULL;
+    if (i < n && src[i]) { size_t b = (size_t)sp->type[sp->inst[i].type].nJoint * 12 * sizeof(float); sp->run[i].jm0 = (float *)malloc(b + 1); memcpy(sp->run[i].jm0, src[i], b); }
+  }
+}
 void bwSaveAlloc(const BotWorld *w, BotSnap *s) {
   memset(s, 0, sizeof *s);
   s->npst = w->haveProps ? w->props.ninst : 0; s->ncoin = w->haveCoins ? w->coins.n : 0; s->nspmem = w->haveSP ? spMemSize(&w->sp) : 0;
@@ -380,8 +399,8 @@ void bwSave(const BotWorld *w, BotSnap *s) {
   s->w = *w;
   if (s->npst) memcpy(s->pst, w->props.st, sizeof(PropState) * s->npst);
   if (s->ncoin) memcpy(s->coin, w->coins.c, sizeof(Coin) * s->ncoin);
-  if (s->nspmem) memcpy(s->spmem, w->sp.mem, s->nspmem);
-  if (s->ncollmem) memcpy(s->collmem, w->coll.sp.mem, s->ncollmem);
+  if (s->nspmem) { memcpy(s->spmem, w->sp.mem, s->nspmem); jmSave(&w->sp, &s->spjm, &s->nspjm); }
+  if (s->ncollmem) { memcpy(s->collmem, w->coll.sp.mem, s->ncollmem); jmSave(&w->coll.sp, &s->colljm, &s->ncolljm); }
   if (s->ntrmem) trPut(s->trmem);
 #ifdef BW_HAVE_AO
   if (s->naomem) aoPut(w, s->aomem);
@@ -394,8 +413,8 @@ void bwLoad(BotWorld *w, const BotSnap *s) {
   *w = s->w;   // указатели на массивы модулей те же: мир тот же, что был сохранён
   if (s->npst) memcpy(w->props.st, s->pst, sizeof(PropState) * s->npst);
   if (s->ncoin && !BW_BREAK_LOAD) memcpy(w->coins.c, s->coin, sizeof(Coin) * s->ncoin);
-  if (s->nspmem) memcpy(w->sp.mem, s->spmem, s->nspmem);
-  if (s->ncollmem) memcpy(w->coll.sp.mem, s->collmem, s->ncollmem);
+  if (s->nspmem) { jmFreeLive(&w->sp); memcpy(w->sp.mem, s->spmem, s->nspmem); jmRestore(&w->sp, s->spjm, s->nspjm); }
+  if (s->ncollmem) { jmFreeLive(&w->coll.sp); memcpy(w->coll.sp.mem, s->collmem, s->ncollmem); jmRestore(&w->coll.sp, s->colljm, s->ncolljm); }
   if (s->ntrmem && !BW_BREAK_TRAFFIC_LOAD) trGet(s->trmem);
 #ifndef BW_BREAK_AO_LOAD
 #define BW_BREAK_AO_LOAD 0   // отрицательный контроль tools/bots/aocheck.c: загрузка не возвращает живые объёмы ANM1
@@ -404,7 +423,7 @@ void bwLoad(BotWorld *w, const BotSnap *s) {
   if (s->naomem && !BW_BREAK_AO_LOAD) aoGet(w, s->aomem);
 #endif
 }
-void bwSnapFree(BotSnap *s) { free(s->pst); free(s->coin); free(s->spmem); free(s->collmem); free(s->trmem); free(s->aomem); memset(s, 0, sizeof *s); }
+void bwSnapFree(BotSnap *s) { for (unsigned i = 0; i < s->nspjm; i++) free(s->spjm[i]); free(s->spjm); for (unsigned i = 0; i < s->ncolljm; i++) free(s->colljm[i]); free(s->colljm); free(s->pst); free(s->coin); free(s->spmem); free(s->collmem); free(s->trmem); free(s->aomem); memset(s, 0, sizeof *s); }
 
 static uint64_t fnv(uint64_t h, const void *p, size_t n) { const unsigned char *b = p; for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ULL; } return h; }
 uint64_t bwHash(const BotWorld *w) {   // состояние без указателей (адреса разные между процессами и после malloc)

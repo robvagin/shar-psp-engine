@@ -306,25 +306,45 @@ int carVisWheelJoint(const CarVis *v, int joint) {   // №867: сустав —
   for (int i = 0; i < 4; i++) if (v->wheelJ[i] == joint) return 1;
   return 0;
 }
-void carVisPieceMatrixEx(const CarVis *v, const Car *c, int joint, int variant, float ox, float oy, float oz, float sc, int noSpin, float m[16]) {
-  float B[16], lift = variant == 1 ? v->huskLift : carModelLift(c, v->lift);
+#ifndef CARMTX_OLD
+#define CARMTX_OLD 0   // ТЕСТ90: 1 — матрица каждого куска машины считается заново целиком (как в TEST89)
+#endif
+int carMtxOld = CARMTX_OLD; unsigned long carMtxCoreN;   // carMtxCoreN — сколько раз общая часть считалась с нуля (счётчик теста)
+// кэш общей части матриц на время одного рисования машины: ключ — сустав, вариант, качение; значение — тело B, R и t сустава, столбцы 3x3 до умножения на масштаб куска (масштаб у каждого куска свой)
+typedef struct { int joint, variant, noSpin; float B[16], R[9], t[3], M3[12]; } MtxEnt;
+static struct { const CarVis *v; const Car *c; int on, n; MtxEnt e[64]; } mtxS;
+void carVisMtxScope(const CarVis *v, const Car *c, int on) { mtxS.on = on && !carMtxOld; mtxS.v = v; mtxS.c = c; mtxS.n = 0; }
+static void pieceMatrixCore(const CarVis *v, const Car *c, int joint, int variant, int noSpin, float B[16], float R[9], float t[3], float M3[12]);
+// общая часть матрицы куска: тело B, поворот R и сдвиг t сустава, столбцы 3x3 (зависят от сустава, варианта и масштаба, не от смещения куска)
+static void pieceMatrixCore(const CarVis *v, const Car *c, int joint, int variant, int noSpin, float B[16], float R[9], float t[3], float M3[12]) {
+  carMtxCoreN++; float lift = variant == 1 ? v->huskLift : carModelLift(c, v->lift);
   if (SV_CARCOST1159_OLD) carPieceMatrix(c, lift, 0, 0, 0, 1, B);
   else {   // №1159: матрица тела одна на кадр для всех кусков (ключ: машина, положение, поворот, подъём)
     CarVis *vm = (CarVis *)v; const float key[8] = {c->x, c->y, c->z, c->q[0], c->q[1], c->q[2], c->q[3], lift};
     if (!vm->cOk || vm->cKeyCar != c || memcmp(vm->cKey, key, sizeof key)) { carPieceMatrix(c, lift, 0, 0, 0, 1, vm->cB); memcpy(vm->cKey, key, sizeof key); vm->cKeyCar = c; vm->cOk = 1; }
-    memcpy(B, vm->cB, sizeof B);
+    memcpy(B, vm->cB, 16 * sizeof(float));
   }
-  float R[9], t[3];
-  if (variant == 1) { memset(R, 0, sizeof R); R[0] = R[4] = R[8] = 1; t[0] = t[1] = t[2] = 0; }
+  if (variant == 1) { memset(R, 0, 9 * sizeof(float)); R[0] = R[4] = R[8] = 1; t[0] = t[1] = t[2] = 0; }
   else jointXf(v, c, joint, R, t, noSpin);
-  float p[3] = {t[0] + R[0] * ox + R[1] * oy + R[2] * oz, t[1] + R[3] * ox + R[4] * oy + R[5] * oz, t[2] + R[6] * ox + R[7] * oy + R[8] * oz};
   for (int col = 0; col < 3; col++) {                          // столбец col матрицы = B * (столбец col of R) * sc
     float rx = R[col], ry = R[3 + col], rz = R[6 + col];
-    for (int k = 0; k < 3; k++) m[4 * col + k] = (B[k] * rx + B[4 + k] * ry + B[8 + k] * rz) * sc;
-    m[4 * col + 3] = 0;
+    for (int k = 0; k < 3; k++) M3[3 * col + k] = B[k] * rx + B[4 + k] * ry + B[8 + k] * rz;
   }
+}
+// смещение куска: сдвиг в мире (m[12..14]) и сборка матрицы
+static void pieceMatrixFinish(const float B[16], const float R[9], const float t[3], const float M3[12], float ox, float oy, float oz, float sc, float m[16]) {
+  float p[3] = {t[0] + R[0] * ox + R[1] * oy + R[2] * oz, t[1] + R[3] * ox + R[4] * oy + R[5] * oz, t[2] + R[6] * ox + R[7] * oy + R[8] * oz};
+  for (int col = 0; col < 3; col++) { for (int k = 0; k < 3; k++) m[4 * col + k] = M3[3 * col + k] * sc; m[4 * col + 3] = 0; }
   for (int k = 0; k < 3; k++) m[12 + k] = B[12 + k] + B[k] * p[0] + B[4 + k] * p[1] + B[8 + k] * p[2];
   m[15] = 1;
+}
+void carVisPieceMatrixEx(const CarVis *v, const Car *c, int joint, int variant, float ox, float oy, float oz, float sc, int noSpin, float m[16]) {
+  if (mtxS.on && mtxS.v == v && mtxS.c == c) {   // ТЕСТ90: общая часть — из кэша кадра
+    int k = 0; for (; k < mtxS.n; k++) { const MtxEnt *e = &mtxS.e[k]; if (e->joint == joint && e->variant == variant && e->noSpin == noSpin) break; }
+    if (k == mtxS.n && mtxS.n < 64) { MtxEnt *e = &mtxS.e[mtxS.n++]; e->joint = joint; e->variant = variant; e->noSpin = noSpin; pieceMatrixCore(v, c, joint, variant, noSpin, e->B, e->R, e->t, e->M3); }
+    if (k < mtxS.n) { const MtxEnt *e = &mtxS.e[k]; pieceMatrixFinish(e->B, e->R, e->t, e->M3, ox, oy, oz, sc, m); return; }
+  }
+  float B[16], R[9], t[3], M3[12]; pieceMatrixCore(v, c, joint, variant, noSpin, B, R, t, M3); pieceMatrixFinish(B, R, t, M3, ox, oy, oz, sc, m);
 }
 
 int carVisJointWorld(const CarVis *v, const Car *c, int j, float out[3]) {

@@ -6,6 +6,7 @@
 #include "fxdsp.h"
 #include "sparkle937.h"
 #include "glintshape941.h"   // №941
+#include "bitfx1161.h"
 #include <pspgu.h>
 #include <pspkernel.h>
 #include <pspiofilemgr.h>
@@ -307,6 +308,26 @@ void fxSpawn(int kind, float x, float y, float z, float vx, float vy, float vz) 
     case FX_PAINT: if (sysPaint >= 0) spawn(S[sysPaint].firstEmit, -1, 0, 30.f, pos, I9, vel, NULL, 1.f); break;
     case FX_DUST:  if (sysDust >= 0) spawn(S[sysDust].firstEmit, -1, 0, 30.f, pos, I9, vel, NULL, 1.f); break;
   }
+}
+
+// №1161 (Роб, YouTube: «когда бьют ящики, как будто они горят»): пресеты частиц предметов без своей системы (щепа, пыль, листья, сено, томаты, обломки) шли спрайтом дыма машины
+// (car_damage3, smoke3 64x64, растёт до 3 раз, 3,3 с). Теперь по материалу: щепа, листья, сено, томаты — первая частица родной системы (woodchips.bmp, листья, hay, tomaco), прочее — клуб пыли
+// code_dust (cloud.tga, цвет пыли). Одна частица на вызов, как было (число на событие то же). Возврат: 1 — пущена, 0 — нет пакета (вызывающий решает). BITFX1161_OLD=1 — дым, как в TEST86
+static void dustSv(float x, float y, float z, float vx, float vy, float vz, float ak);
+int fxPropBit(int preset, float x, float y, float z, float vx, float vy, float vz) {
+  if (!ready) return 0;
+  int id = -1;
+  switch (bit1161Sprite(preset)) {
+    case BIT_WOOD:   id = fxFind("woodchipsShape"); break;
+    case BIT_LEAF:   id = fxFindInst(5); if (id < 0) id = fxFindInst(3); if (id < 0) id = fxFind("shrub_psShape"); break;
+    case BIT_HAY:    id = fxFind("hayShape"); break;
+    case BIT_TOMATO: id = fxFind("tomaco_effect3Shape"); break;
+  }
+  float pos[3] = {x, y, z};
+  if (id >= 0 && S[id].nEmit > 0) { spawn(S[id].firstEmit, -1, 0, S[id].fps, pos, I9, NULL, NULL, 1.f); return 1; }
+  if (sysDust < 0) return 0;
+  dustSv(x, y, z, vx * .5f, vy * .5f + .2f, vz * .5f, .5f);                                              // клуб пыли: прозрачность как у пыли удара о забор (fxCrashStars)
+  return 1;
 }
 
 // сверка g11, P02_гомер Д2 (С): пыль шага и приземления — россыпь клубов code_dust (cloud.tga). Шаг: желаемая скорость больше 1 м/с, от 3 до 11 клубов случайно у ступни,
@@ -709,6 +730,8 @@ int meSvcHeld(void); int meSvcSlept(void); void meSvcForget(int c);
 static MeBox fxBox __attribute__((aligned(64)));
 int fxMeActive(void);   // ящик частиц в памяти игры (схема ME_MEM_USER; в схемах 1–3 ящик — в ядре)
 static volatile int fxMeState;   // 0 — нет, 1 — частицы на ME, 2 — выключено до конца запуска
+static volatile int fxMeOn = 1;   // №1186+ (частицы на ME, A/B в туре): 0 — служба поднята, но частицы считает главный (файл mefxpair при старте, «flag mefx 0/1» на ходу)
+void fxMeEnable(int on) { fxMeOn = on != 0; }
 static unsigned fxMeSeq, fxMeJobs, fxMeMain, fxMeWaitMax; static char fxMeWhy[32] = "-";
 // правка 410 (09.10, docs/handoff/ME_ПЛАН_2026-10-09.md, К2 п.1): кадр без частиц на ME не отдаём — в нём только биллборды систем и
 // спрайты, их сборка на главном дешевле отдачи: T2 (частицы на главном) в секундах fx=0/0 upd_us 55, T3 (на ME) — 389 (~334 мкс на кадр
@@ -726,15 +749,16 @@ int fxMeAttach(void) {           // viewer/me/meprobe.c meFxBoot: служба M
   sceKernelDcacheWritebackInvalidateRange(vbuf, sizeof vbuf);   // в кэше главного ни строки буфера вершин (его пишет ME)
   fxMeState = 1; return 0;
 }
-int fxMeActive(void) { return fxMeState == 1; }   // №653: частицы на ME — клиент 1 занят, город на ME не отдаём
+int fxMeActive(void) { return fxMeState == 1 && fxMeOn; }   // №653: частицы на ME — клиент 1 занят, город на ME не отдаём
 int fxMeStateStr(char *out, int n) {   // «on123/4/0.6» — заданий ME за всё время / посчитано на главном (ME занят) / худшее ожидание, мс
-  if (fxMeState == 1) return snprintf(out, n, "on%u/%u/%.1f/e%u/z%u", fxMeJobs, fxMeMain, fxMeWaitMax / 1000.f, fxMeEmpty, fxMeNoPart);
+  if (fxMeState == 1) return snprintf(out, n, "%s%u/%u/%.1f/e%u/z%u", fxMeOn ? "on" : "pair0-", fxMeJobs, fxMeMain, fxMeWaitMax / 1000.f, fxMeEmpty, fxMeNoPart);
   return snprintf(out, n, "%s", fxMeState == 2 ? fxMeWhy : "-");
 }
 static void fjMainPtrs(void) { FJ.E = E; FJ.BB = BB; FJ.blob = blob; FJ.vout = VOUT; }
 extern int mePeakGate, mePeak;
 static int fxMeKick(void) {
   if (mePeakGate && !mePeak) return 0;   // вне пика частицы считает главный процессор (ME-доля, флаг-файл mepeak, audio.c mePeakStep)
+  if (!fxMeOn) return 0;   // A/B: половина «главный» — частицы считает главный процессор
   if (fxMeState == 1 && meSvcSlept()) { fxMeState = 2; meSvcForget(1); snprintf(fxMeWhy, sizeof fxMeWhy, "off:sleep"); }   // после сна ME не трогаем
   if (fxMeState != 1 || meSvcHeld()) return 0;
   if (!FX_ME_EMPTY_OLD && FJ.np == 0) { fxMeEmpty++; return 0; }   // правка 410: без частиц — на главном, без отдачи
@@ -777,6 +801,7 @@ static int fxMeCollect(void) {   // 1 — итог ME в FJ; 0 — считат�
 }
 #else
 int fxMeActive(void) { return 0; }
+void fxMeEnable(int on) { (void)on; }
 int fxMeStateStr(char *out, int n) { return snprintf(out, n, "-"); }
 #endif
 
@@ -988,10 +1013,12 @@ void fxDrawEnd(void) {
   if (!got) {
     static FxJob *K; static FxV *KV; static int primed;
     if (!K) { K = memalign(64, sizeof *K); KV = memalign(64, sizeof vbuf); }
+    if (K && KV) {   // №1170: нет памяти под копию задания (проверка только на Маке) — копия не делается, задание считается ниже на месте, а не memcpy в NULL
     if (!FX_JOB_RED || !primed) { memcpy(K, &FJ, sizeof *K); primed = 1; }
     memset(&FJ, 0xA5, sizeof FJ); K->vout = KV;
     fxdRun(K);
     memcpy(&FJ, K, sizeof FJ); memcpy(vbuf, KV, (unsigned)K->nq * 4u * sizeof(FxV)); FJ.vout = VOUT; got = 1;
+    }
   }
 #endif
 #ifdef __psp__

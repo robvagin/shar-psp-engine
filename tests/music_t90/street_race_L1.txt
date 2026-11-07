@@ -1,0 +1,16 @@
+### ТЕСТ90: музыка уличной гонки sr1 на L1. Ждём в smoke.txt: «MUSIC mission sr1», «MUSIC event StreetRace01_start -> …» (дорожка), строки STREAM; не должно быть «своей музыки в композиции нет (уличные гонки — не покрыто)». Старое (-DMUSIC_RACE_OLD=1): эта строка есть
+wait 12
+flag cfgdefaults 1
+flag msn
+flag msnbot 1
+wait 3
+flag msnmainat 800
+wait 3
+flag msngo
+wait 4
+flag msngo
+wait 4
+flag msngo
+wait 15
+shot sr_a
+end

@@ -22,6 +22,7 @@ int  transitLoad(const char *path);                       // iris.shr: 0 = ок
 void transitSetup(int psm, unsigned fbBytes, TransitLog log, const float *clock);   // формат кадра, байт на буфер, журнал
 int  transitReady(void);                                   // пакет есть и переходы не выключены
 int  transitSkipMsn(void);   // №625: по Continue снять ирис старта миссии, не раскрывая (карточка уезжает над миром); 1 — снят
+#include "genest.h"   // №1186: geListOpen, GE_NEST_GUARD
 int  transitClose(void **fbp, const char *why);            // закрыть над застывшим кадром (блокирует ~1/3 с); -> показано кадров развёртки
 void transitStep(float dt);                                // закрыто -> раскрытие над игрой
 void transitDraw(void);                                    // внутри открытого списка GE, после HUD

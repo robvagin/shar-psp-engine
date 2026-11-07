@@ -13,7 +13,8 @@ static int mainLoad = -1, mainResume = -1;   // LOAD GAME / RESUME GAME (сох�
 static int menuOn, toMenu, mainNew = -1, loadShot; static float loadShotAt, feShotAt;   // снимки экранов загрузки: «flag loadshot/feshot [с]» — держать до стольких секунд часов экрана (гейт кадров огня/анимации: в эмуляторе загрузка мгновенна); spStInit (память состояний стейтпропов) — у Game G
 static float spawnP[4]; static void *propSec; static unsigned propSecN;
 static int aoSoundCue(void *u, const char *cue, float x, float y, float z) {   // круг 5 (g11): звук объекта по имени (sound.c sndAnimObj) или реплика по названию клипа
-  (void)u; if (sndAnimObj(cue, x, y, z)) return 1; return sndId(cue) >= 0 ? sndPlay(cue, x, y, z, 1.f) != 0 : 0;
+  (void)u; int h_ = sndAnimObj(cue, x, y, z); if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "AOCUE t=%.1f cue=%s x=%.1f y=%.1f z=%.1f handle=%d\n", smkT, cue, x, y, z, h_); smkWrite(l_); }   // №1174: каждый запуск звука подвижного объекта
+  if (h_) return 1; return sndId(cue) >= 0 ? sndPlay(cue, x, y, z, 1.f) != 0 : 0;
 }
 static void aoBind(void) {   // ANM1 в PRP2: после spInit — к экземплярам SPR1 и живым объёмам COL1 (старый level.shr без таблицы — 1)
   int e = haveSP && haveCol ? aoInit(&ao, propSec, propSecN, &sprops, &world) : 1; haveAo = e == 0; aoAct = 0;
@@ -23,6 +24,7 @@ static void aoBind(void) {   // ANM1 в PRP2: после spInit — к экзе�
     if (f_ >= 0) { n_ = sceIoRead(f_, onBuf_, sizeof onBuf_); sceIoClose(f_); }
     int r_ = n_ > 32 ? aoNamesAdopt(&ao, &sprops, onBuf_, (unsigned)n_) : -2;
     ao.sound = aoSoundCue; ao.soundUser = NULL;
+    if (smkOn && ao.nm) for (unsigned k_ = 0; k_ < ao.nobj; k_++) { const AoObj *o_ = &ao.obj[k_]; if (!ao.nm[k_].name[0] || !o_->nInst) continue; const SpRun *r_ = &sprops.run[o_->firstInst]; char d_[160]; snprintf(d_, sizeof d_, "AOPOS k=%u name=%s act=%d nfr=%d fps=%.0f x=%.1f y=%.1f z=%.1f\n", k_, ao.nm[k_].name, (int)o_->action, (int)o_->nfr, o_->fps, r_->x, r_->y, r_->z); smkWrite(d_); }   // №1174: где стоят подвижные объекты с именем
     char t_[96]; snprintf(t_, sizeof t_, "AONAMES n=%d adopt=%d follow=%u birds=%d/%d\n", n_, r_, sprops.nfollow, ao.bA, ao.bB); smkWrite(t_);
   }
   char s[96]; snprintf(s, sizeof s, "AO init=%d obj=%u vol=%u\n", e, ao.nobj, ao.nvol); smkWrite(s);
@@ -85,13 +87,23 @@ static int msFlowOld = MS_FLOW1070_OLD, msMusPend, msSetupWait, msLateWin;
 #endif
 static int memLoad1065 = !MEMLOAD1065_OLD;
 static int scrFail1065;   // служебное «flag scrfail1065 N»: следующие N открытий load.shr отказывают (-3) — проверка повтора без тесной кучи
+// №1220 (прогон «начало-конец миссий» 06.11, L4: SCROPEN1065 site=teleport rc=-3->-3, MEMFAILSZ 1 045 632 Б при наибольшем куске 0,5–0,98 МБ): газета (load.shr)
+// читалась кусками по 1 МБ, в раздробленной куче такого нет и после освобождения места — перенос к миссии шёл без экрана загрузки. Теперь кусками по 256 КБ,
+// как в mem1060NewsIn. NEWSSEG1220_OLD=1 — как было
+#ifndef NEWSSEG1220_OLD
+#define NEWSSEG1220_OLD 0
+#endif
 static int scrOpen1065(const char *site) {
   char fn[256]; sibling(fn, "load.shr");
+  if (!NEWSSEG1220_OLD) uiPakSegMax1051(256u << 10);
   int rc = scrFail1065 > 0 ? (scrFail1065--, uiScrClose(), -3) : uiScrOpen(fn);
+  if (!NEWSSEG1220_OLD) uiPakSegMax1051(0);
   if (!memLoad1065 || rc != -3) return rc;
   unsigned f0 = heapFreeBytes(), b0 = memMaxBlock ? memMaxBlock() : 0;
   mem1060Pre(1u << 20, "load.shr");
+  if (!NEWSSEG1220_OLD) uiPakSegMax1051(256u << 10);
   int rc2 = scrFail1065 > 0 ? (scrFail1065--, uiScrClose(), -3) : uiScrOpen(fn);
+  if (!NEWSSEG1220_OLD) uiPakSegMax1051(0);
   if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "SCROPEN1065 site=%s rc=%d->%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", site, rc, rc2, f0 / 1048576.f, heapFreeBytes() / 1048576.f, b0 / 1048576.f, memMaxBlock ? memMaxBlock() / 1048576.f : 0.f, smkT); smkWrite(l_); }
   return rc2;
 }
@@ -104,7 +116,7 @@ static int msPackOpen(const char *fn) {
     bbOp("fail", s_, 1);
     if (smkOn) { snprintf(s_, sizeof s_, "MSNSEL openfail rc=%d try=%d level=%d free=%.2f t=%.1f\n", rc, t, gameLevel, smokeHeapFree(), smkT); smkWrite(s_); }
     if (t == 0) uiScrWarmClear();                                             // пакет будки в куче — первым
-    { LdWait lw_ = {0}; lqn = 0; __asm__ volatile("" ::: "memory"); while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }   // загрузчик — на месте
+    { LdWait lw_ = {0}; lqn = 0; __asm__ volatile("" ::: "memory"); while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe1", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }   // загрузчик — на месте
     if (t == 2) sceKernelDelayThread(100000);
     rc = msOpenTry(fn);
   }
@@ -150,6 +162,7 @@ static int loadBlinkOff, loadBlinkLast = -1, loadBlinkN;   // служебное
 static int ldScr1060 = UI_LOAD_LEVEL;
 static int ldOn;   // №833: объявлено ниже (загрузка уровня идёт) — scrFrame выбирает векторные лучи только на экране загрузки уровня
 static void scrFrame(int screen, int progress, int vsync, void **fbp) {
+  GE_NEST_GUARD("scrFrame");   // №1186/№1188
   scrLastProg = progress; scrLastT = (sceKernelGetSystemTimeLow() - scrT0) * 1e-6f;
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
@@ -338,6 +351,12 @@ static void loadWaitNote(const char *what) { bbOp("loadwait", what, 0); if (smkO
 #ifndef LOADDUCK_OLD
 #define LOADDUCK_OLD 0
 #endif
+// №1180 (Роб 04.11, тур TEST88: сценарий бонус-игры завис на экране выбора): перелёт камеры меню к пункту MINI GAME выбрасывал все команды сценария, и «flag bonusgo», пришедший в перелёте,
+// терялся — выбор трассы ждал нажатий вечно. Теперь флаги bonus* в перелёте доходят до bnsFlag. BONUSGO1180_OLD=1 — прежнее
+#ifndef BONUSGO1180_OLD
+#define BONUSGO1180_OLD 0
+#endif
+static void bnsFlag(const SmokeCmd *sc);   // bonus_play.h
 static int ldMenuNew, ldDuck;
 static void loadBegin(void **fbp) {   // Loading.scr открыт: газета влетает ровными кадрами, потом начинается чтение
   if (!LOADDUCK_OLD && !ldMenuNew && ldScr1060 == UI_LOAD_LEVEL) { sndLoadDuck(1); ldDuck = 1; }
@@ -488,6 +507,15 @@ static void firstCount(void) {   // показан кадр игры: видим
     if (smkOn) { char s[112]; snprintf(s, sizeof s, "FIRSTSEC level=%d frames=%d miss_frames=%d max=%d t=%.1f\n", gameLevel, firstFr, firstMissFr, firstMissMax, smkT); smkWrite(s); } }
 }
 
+// №1169 (Роб, TEST87 на PSP: «нажимаю resume game, камера подъезжает к телевизору, и в последний момент все равно виднеются верхние стрелки, влево вправо, resume game»):
+// после подлёта к ТВ по RESUME GAME цикл меню рисовал ещё один кадр с feFlying()=0 — полное меню (заголовок со стрелками, надпись, подсказка) поверх экрана ТВ, и он оставался на экране,
+// пока грузился уровень. Теперь с выбора RESUME GAME (камера уходит в игру) до выхода из меню строка, стрелки, подсказка и название уровня скрыты, как в подлёте: остаётся рамка-телевизор.
+// TVLEAVE1169_OLD=1 — прежнее (последний кадр с полным меню)
+#ifndef TVLEAVE1169_OLD
+#define TVLEAVE1169_OLD 0
+#endif
+static int menuHoldFly;   // 1 — камера ушла в игру (RESUME GAME): до выхода из меню рисуем кадр подлёта без строки меню
+static int tvHold;        // служебно (smoke «flag tvhold 1»): после выхода из цикла меню ещё 40 кадров полным menuFrame и снимок TV_leave — так выглядит кадр, что висит на PSP во время загрузки
 static int flyNoFrame;   // служебное (отрицательный контроль гейта tools/fe_gate.sh): в перелёте меню не рисуется совсем
 // Правка 20 (29.09) «звуки перелётов меню»: музыкальные события композиции уровня l?_music.rms (tools/rms.py) —
 // Loading_screen (play_region FE_trans01: один из FE_trans01..03) и Newspaper_Spin (FE_trans02: NewsPaper_Spin01/02); дорожки
@@ -569,13 +597,14 @@ static void menuBudget(unsigned t0,unsigned io0,const char *kind) {
 #endif
 }
 static void menuFrame(int sel, void **fbp) {   // главное меню Scrooby над 3D-гостиной (нет fe.shr — градиент), без служебного счётчика
+  GE_NEST_GUARD("menuFrame");   // №1186/№1188
   unsigned budgetT0=sceKernelGetSystemTimeLow(),budgetIo0=smkIoUs;
   sceGuStart(GU_DIRECT, list); resetState();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
   feDraw(sel); resetState(); uiMenuBackdrop(!feReady());
   // правка Роба 49: пока камера летит к предмету и обратно (после NEW GAME — к газете) рамка-телевизор TVFrame.pag остаётся,
   // как в оригинале; скрыты только строка меню, подсказка и название уровня. «flag flynoframe» — прежний код (без рамки)
-  uiMenuFlight(feFlying());
+  uiMenuFlight(feFlying() || (!TVLEAVE1169_OLD && menuHoldFly));
   if (!(flyNoFrame && feFlying())) uiDrawMenu(UI_MENU_MAIN, sel);
   if (smkOn && !feFlying() && uiMenuItemBox[0] >= 0.f) {   // правка 412: пульс выбранного пункта по кадрам (tests/menu/item_pulse.sh)
     char s_[160]; snprintf(s_, sizeof s_, "MENUITEM t=%.3f sel=%d ms=%.1f s=%.4f x0=%.2f y0=%.2f x1=%.2f y1=%.2f\n", smkT, sel, uiMenuItemBox[0], uiMenuItemBox[1],
@@ -596,6 +625,7 @@ static void menuFrame(int sel, void **fbp) {   // главное меню Scroob
 #define NEWASK_OLD 0
 #endif
 static int menuNewAsk(int loaded, int sel, void **fbp) {   // -> 1: ответ No, остаёмся в меню; 0: вопроса не было или Yes
+  GE_NEST_GUARD_RET("menuNewAsk", 0);   // №1186/№1188
   if (NEWASK_OLD || !loaded || !svmOn() || svmAskOpen(SVM_ASK_NEWGAME)) return 0;
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1);
   unsigned prev = pad.Buttons | smokePad(), last = sceKernelGetSystemTimeLow(), t0 = last; int r;
@@ -636,7 +666,7 @@ static int menuFlyRange(int a, int b, int sel, void **fbp) {   // -> 1, если
   unsigned last = sceKernelGetSystemTimeLow(); unsigned t0 = last;
   while (feFlying()) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
-    SmokeCmd sc; while (smokeNext(dt, &sc)) {}
+    SmokeCmd sc; while (smokeNext(dt, &sc)) if (!BONUSGO1180_OLD && sc.op == 2 && !strncmp(sc.name, "bonus", 5)) bnsFlag(&sc);   // №1180: служебные флаги бонус-игры не теряются во время перелёта
     menuFrame(sel, fbp);
   }
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "FEFLYRANGE %d-%d s=%.2f t=%.1f\n", a, b, (sceKernelGetSystemTimeLow() - t0) * 1e-6f, smkT); smkWrite(s_); }
@@ -712,20 +742,78 @@ static int cellsRingAt(const float *c, int bar, void **fbp) {
   return done + (int)bgN - relFreed;
 }
 static int cellsRing(int bar, void **fbp) { return cellsRingAt(spawnP, bar, fbp); }
+// №1213 (тур TEST91 №2 на PSP, L5 F_TALK1186_L5, 45-я минута: MEMFAILSZ 10 — клетки и запечка 7–130 КБ): перенос миссии читал круг новой точки
+// (122 клетки, 7 МБ за 3 с), пока город старой точки ещё лежал в памяти — на пике старое + новое. Теперь под экраном загрузки сначала уходят
+// клетки дальше радиуса круга + 40 м от новой точки (те же, что stream() выгрузил бы на следующих кадрах), потом читается круг.
+// MSNTELEFREE1213_OLD=1 / «flag msntelefree1213old 1» — как было
+#ifndef MSNTELEFREE1213_OLD
+#define MSNTELEFREE1213_OLD 0
+#endif
+static int msnTeleFree1213Old;
+static int cellsDropFar1213(const float *c, float r) {
+  int n = 0;
+  for (unsigned i = 0; i < ncell; i++) { Cell *q = &cl[i]; if (q->owner || q->state != 2) continue;
+    if (cellDist(q, c[0], c[1], c[2]) > r) { unloadCell(q); n++; } }
+  return n;
+}
 // пункт 8: сценарий миссии перенёс игрока далеко (старт миссии, MISSION SELECT, повтор с чекпоинта) — город вокруг новой
 // точки читается сразу, на экране загрузки (как в оригинале), а не дырами в кадре. Загрузчик сперва останавливается
 static void msnTeleport(float x, float y, float z, void **fbp) {
   lqn = 0; __asm__ volatile("" ::: "memory");
-  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
+  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe2", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
   scrOpen1065("teleport"); scrTvOver = 0;   // экран загрузки оригинала (Loading.scr) — на время чтения (№1065: отказ -> место и повтор)
-  float c[3] = {x, y, z}; int n = cellsRingAt(c, 1, fbp); stInit = 0;
+  float c[3] = {x, y, z};
+  if (!MSNTELEFREE1213_OLD && !msnTeleFree1213Old) {
+    float h0 = heapFreeBytes() / 1048576.f; int fr = cellsDropFar1213(c, DIST_LONG + 50.f);
+    if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "TELEFREE1213 cells=%d heap=%.2f->%.2f blk=%.2f\n", fr, h0, heapFreeBytes() / 1048576.f, memMaxBlockMB()); smkWrite(s_); }
+  }
+  int n = cellsRingAt(c, 1, fbp); stInit = 0;
   ldWarmC[0] = x; ldWarmC[1] = y; ldWarmC[2] = z; ldWarmOn = 1;
   loadEnd(fbp); SCR_CLOSE();
   char s[96]; snprintf(s, sizeof s, "MSNLOAD cells=%d at %.1f %.1f\n", n, x, z); smkWrite(s);
 }
+// ag/loadorder (№1209, «подгрузились раньше, чем подгрузился пол»): город у двери комнаты читается синхронно под закрытым ирисом, а не «потом стримом». Комната держит игрока в кармане x 480…520
+// вдали от города; клетки города у двери остаются в памяти только если комнату открыли дверью с улицы. После переноса миссии прямо в комнату (MISSION SELECT, старт L4/L7, школа L7) или после выгрузки
+// клеток под комнату (mem1060Pre) выход открывал ирис над пустотой: на карте 1500 КБ/с видимые клетки ближе 70 м появлялись через 1–2 с (журнал VOID1209). Теперь выход и перенос в комнату читают
+// клетки в радиусе ROOMRING_R вокруг двери (только не загруженные, только регионы места игрока и уже резидентные), нечего читать — ничего не стоит.
+// ROOMEXITRING1209_OLD=1 / файл roomexitring1209old / «flag roomexitring1209old 1» — выход как было (стрим); TELEDOOR1209_OLD=1 / «flag teledoor1209old 1» — перенос в комнату читает кольцо вокруг точки в кармане комнат, как было
+#ifndef ROOMEXITRING1209_OLD
+#define ROOMEXITRING1209_OLD 0
+#endif
+#ifndef TELEDOOR1209_OLD
+#define TELEDOOR1209_OLD 0
+#endif
+#define ROOMRING_R 100.f
+static int roomExitRing1209Old, teleDoor1209Old;
+static int cellsRingNear1209(const float *c, float r, int *outBytes) {
+  lqn = 0; __asm__ volatile("" ::: "memory");
+  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_ring1209", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
+  unsigned rm = regAt(c[0], c[2]) | regRes | regPre; int need = 0;
+  for (unsigned i = 0; i < ncell; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
+    if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
+    if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) need++; }
+  if (outBytes) *outBytes = 0;
+  if (!need) return 0;
+  short *idx = malloc((size_t)need * sizeof *idx); if (!idx) return -1;
+  int n = 0;
+  for (unsigned i = 0; i < ncell && n < need; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
+    if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
+    if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) idx[n++] = (short)i; }
+  SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); unsigned bytes = 0;
+  if (fd >= 0) { for (int a = 0; a < n; a += 24) { int m = n - a < 24 ? n - a : 24; cellsReadRuns(fd, idx + a, m, NULL); bytes += ringBytes; bbBeatTick(); } sceIoClose(fd); }
+  else n = -2;
+  free(idx); stInit = 0;
+  if (outBytes) *outBytes = (int)(bytes >> 10);
+  return n;
+}
+static void roomRing1209(const float *c, const char *why) {   // кольцо у двери комнаты под закрытым ирисом; why — строка журнала
+  if (!haveCol) return;
+  unsigned t0 = sceKernelGetSystemTimeLow(); int kb = 0; int n = cellsRingNear1209(c, ROOMRING_R, &kb);
+  if (smkOn) { char s[140]; snprintf(s, sizeof s, "ROOMRING1209 %s cells=%d kb=%d r=%.0f at=%.1f,%.1f ms=%u t=%.2f\n", why, n, kb, ROOMRING_R, c[0], c[2], (sceKernelGetSystemTimeLow() - t0) / 1000u, smkT); smkWrite(s); }
+}
 static void cellsDropAll(void) {   // выход в меню: очередь загрузчика пуста, он простаивает, клетки города выгружены
   lqn = 0; __asm__ volatile("" ::: "memory");
-  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
+  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe3", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
   for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner) unloadCell(&cl[i]);
   stInit = 0;
 }
@@ -846,7 +934,7 @@ static int benchLog1034;   // №1034: flag benchlog
 static int camBRel, camLogOn;   // 1 — поза начала в осях машины игрока, переход по экспоненте (camBDur — постоянная времени)
 static int camIrisCut;   // правка 333: посадка ирисом (car_in) — ирис раскрывается сразу на камере машины, без перехода 167 (запись PS2 869,8 с); выход — с переходом, как у записи 1085,8–1086,1 с
 static float camBFov, camBU; static int camBFovOn, footFovOld;   // угол кадра в начале перехода (0 — без смены угла), доля перехода этого кадра
-static void camBlendFrom(const float e[3], const float l[3], float dur) { memcpy(camBE, e, 12); memcpy(camBL, l, 12); camBT = 0.f; camBDur = dur; camBRel = 0; camBArc = 0; camBFov = curFovY; }
+static void camBlendFrom(const float e[3], const float l[3], float dur) { memcpy(camBE, e, 12); memcpy(camBL, l, 12); camBT = 0.f; camBDur = dur; camBRel = 0; camBArc = 0; camBExit = 0; camBFov = curFovY; }
 static void camCarAxes(const float p[3], float o[3], int toLocal) {   // мир <-> оси машины игрока (поворот по курсу car.h)
   float a = toLocal ? -car.h : car.h, c = cosf(a), sn = sinf(a), x = p[0], y = p[1], z = p[2];
   if (toLocal) { x -= car.x; y -= car.y; z -= car.z; }
@@ -1204,6 +1292,7 @@ static char *bbPutWait(char *p, const char *e, const SceKernelThreadInfo *ti) {
   }
   return p;
 }
+static int bbDogReadHang;   // ТЕСТ90: сторож нашёл главный/любой поток внутри чтения карты дольше WAITLIMIT_READ_MS — честный текст про карту памяти
 static void bbDogScreen(unsigned ms, int ph) {   // правка 194: улика на экране зависшей PSP (только целые и строки, без кучи)
   void *top = 0; int bw = 0, fmt = 0;
   if (sceDisplayGetFrameBuf(&top, &bw, &fmt, PSP_DISPLAY_SETBUF_IMMEDIATE) < 0 || !top) return;
@@ -1211,6 +1300,7 @@ static void bbDogScreen(unsigned ms, int ph) {   // правка 194: улика
   pspDebugScreenSetBackColor(0xFF000000u); pspDebugScreenSetTextColor(0xFF00FFFFu); pspDebugScreenSetXY(0, 0);
   char ln[96], *p, *e = ln + sizeof ln - 2;
   if (ph < 0 || ph >= BBP_N) ph = 0;
+  if (bbDogReadHang) { pspDebugScreenPuts("Memory Stick read error.\nThe card does not answer. Press HOME to exit.\n"); }
   p = bbPutS(ln, e, "STALL "); p = bbPutU(p, e, ms); p = bbPutS(p, e, "ms phase="); p = bbPutS(p, e, bbPhName[ph]);
   p = bbPutS(p, e, " op="); p = bbPutS(p, e, bbOpS); p = bbPutS(p, e, " heap="); p = bbPutU(p, e, memFreeNow == ~0u ? 0u : memFreeNow >> 10);
   p = bbPutS(p, e, "K\n"); *p = 0; pspDebugScreenPuts(ln);
@@ -1235,6 +1325,7 @@ static void bbDogWrite(unsigned ms, int ph, unsigned beat) {
   p = bbPutS(p, e, " list="); p = bbPutU(p, e, (unsigned)sceGuCheckList() >> 10); p = bbPutS(p, e, "K last="); p = bbPutU(p, e, geNow >> 10);
   p = bbPutS(p, e, "K heap="); p = bbPutU(p, e, memFreeNow == ~0u ? 0u : memFreeNow >> 10); p = bbPutS(p, e, "K msn="); p = bbPutS(p, e, bbMsn);
   p = bbPutS(p, e, " EBOOT " __DATE__ " " __TIME__ "\n");
+  if (bbDogReadHang) { p = bbPutS(p, e, "READHANG fd="); p = bbPutU(p, e, (unsigned)msioBusyFd); p = bbPutS(p, e, " ms="); p = bbPutU(p, e, (sceKernelGetSystemTimeLow() - msioBusySince) / 1000u); p = bbPutS(p, e, " (Memory Stick read error)\n"); }
   if (!BB_DOG_WAIT_OLD) {   // №775: последний законченный шаг загрузки и чего ждёт каждый поток (как на экране сторожа)
     p = bbPutS(p, e, "STALLSTEP "); p = bbPutS(p, e, bbStep); p = bbPutS(p, e, "\n");
     SceUID ids[40]; int n = 0;
@@ -1263,6 +1354,84 @@ static void bbDogWrite(unsigned ms, int ph, unsigned beat) {
   sceIoClose(f);
   if (!BB_DOG_WAIT_OLD) { sibling(fn, "stall.txt"); f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777); if (f >= 0) { msioWriteRaw(f, bbDogOut, used); sceIoClose(f); } }
 }
+// №1186 (зависание phase=ui, SceGeQueue, TEST88, PSP-3000): сторож пишет рядом с EBOOT ещё stall.txt — первые и последние 64 слова списка GE,
+// последняя привязка текстуры и последний PRIM/VADR/VTYPE из списка, заполнение списка, последний вызов рисования интерфейса (uidiag.h),
+// пики по фазам. Только целые и строки (куча может быть занята замком зависшего потока). Размер стоянки в UIDRAWBIG/GESYNC — ниже.
+static char stallBuf[6144];
+static char *bbPutX(char *p, const char *e, unsigned v, int dg) { for (int i = dg - 1; i >= 0 && p < e; i--) *p++ = "0123456789abcdef"[(v >> (4 * i)) & 15u]; return p; }
+static char *bbPutW(char *p, const char *e, const unsigned *w, int n) { for (int i = 0; i < n; i++) { p = bbPutX(p, e, w[i], 8); p = bbPutS(p, e, (i & 7) == 7 ? "\n" : " "); } return p; }
+static const char *geFmtName(unsigned f) { static const char *const n[] = {"5650", "5551", "4444", "8888", "T4", "T8", "T16", "T32", "DXT1", "DXT3", "DXT5"}; return f < 11u ? n[f] : "bad"; }
+static void bbDogStall(unsigned ms, int ph, unsigned beat) {
+  char *p = stallBuf, *e = stallBuf + sizeof stallBuf - 2;
+  unsigned fill = (unsigned)sceGuCheckList(), nw = fill / 4u, tot = (unsigned)(sizeof list / 4u);
+  if (nw > tot) nw = tot;
+  if (ph < 0 || ph >= BBP_N) ph = 0;
+  unsigned tbp = 0, tbw = 0, tsz = 0, tpf = 0, vty = 0, vad = 0, lastPrim = 0, nPrim = 0, nCall = 0, tex_n = 0;
+  for (unsigned i = 0; i < nw; i++) { unsigned w = list[i], c = w >> 24;
+    if (c == 0xA0) { tbp = w & 0xFFFFFFu; tex_n++; } else if (c == 0xA8) tbw = w & 0xFFFFFFu; else if (c == 0xB8) tsz = w & 0xFFFFu;
+    else if (c == 0xC3) tpf = w & 0xFFu; else if (c == 0x12) vty = w & 0xFFFFFFu; else if (c == 0x01) vad = w & 0xFFFFFFu;
+    else if (c == 0x04) { lastPrim = w & 0xFFFFFFu; nPrim++; } else if (c == 0x0A) nCall++; }
+  unsigned taddr = (tbp | ((tbw & 0xFF0000u) << 8)) & 0x0FFFFFFFu, twb = tbw & 0xFFFFu, tw = 1u << (tsz & 15u), th = 1u << ((tsz >> 8) & 15u);
+  int tbad = (tsz & 15u) > 9u || ((tsz >> 8) & 15u) > 9u || (tpf & 15u) > 10u;
+  p = bbPutS(p, e, "STALL2 ms="); p = bbPutU(p, e, ms); p = bbPutS(p, e, " phase="); p = bbPutS(p, e, bbPhName[ph]); p = bbPutS(p, e, " beat="); p = bbPutU(p, e, beat);
+  p = bbPutS(p, e, " op="); p = bbPutS(p, e, bbOpS); p = bbPutS(p, e, " " __DATE__ " " __TIME__ "\n");
+  p = bbPutS(p, e, "FILL bytes="); p = bbPutU(p, e, fill); p = bbPutS(p, e, " words="); p = bbPutU(p, e, nw); p = bbPutS(p, e, " cap="); p = bbPutU(p, e, geCap);
+  p = bbPutS(p, e, " arr="); p = bbPutU(p, e, (unsigned)sizeof list); p = bbPutS(p, e, " framepeak="); p = bbPutU(p, e, geNow); p = bbPutS(p, e, " secpeak="); p = bbPutU(p, e, gePeakSec);
+  p = bbPutS(p, e, " over="); p = bbPutU(p, e, geOverBudget); p = bbPutS(p, e, " addr=0x"); p = bbPutX(p, e, (unsigned)list, 8); p = bbPutS(p, e, "\n");
+  p = bbPutS(p, e, "TEX0 addr=0x"); p = bbPutX(p, e, taddr, 8); p = bbPutS(p, e, " bw="); p = bbPutU(p, e, twb); p = bbPutS(p, e, " size="); p = bbPutU(p, e, tw); p = bbPutS(p, e, "x"); p = bbPutU(p, e, th);
+  p = bbPutS(p, e, " fmt="); p = bbPutS(p, e, geFmtName(tpf & 15u)); p = bbPutS(p, e, " bad="); p = bbPutU(p, e, (unsigned)tbad); p = bbPutS(p, e, " binds="); p = bbPutU(p, e, tex_n); p = bbPutS(p, e, "\n");
+  p = bbPutS(p, e, "LASTCMD vtype=0x"); p = bbPutX(p, e, vty, 6); p = bbPutS(p, e, " vadr=0x"); p = bbPutX(p, e, vad, 6); p = bbPutS(p, e, " prim=0x"); p = bbPutX(p, e, lastPrim, 6);
+  p = bbPutS(p, e, " prims="); p = bbPutU(p, e, nPrim); p = bbPutS(p, e, " calls="); p = bbPutU(p, e, nCall); p = bbPutS(p, e, "\n");
+  { const UiLast *u = &uiLastDraw; p = bbPutS(p, e, "LASTUI "); p = bbPutS(p, e, u->fn ? u->fn : "-"); p = bbPutS(p, e, ":"); p = bbPutU(p, e, (unsigned)u->line);
+    p = bbPutS(p, e, " n="); p = bbPutU(p, e, (unsigned)u->n); p = bbPutS(p, e, " w="); p = bbPutU(p, e, (unsigned)u->w); p = bbPutS(p, e, " h="); p = bbPutU(p, e, (unsigned)u->h);
+    p = bbPutS(p, e, " vt=0x"); p = bbPutX(p, e, (unsigned)u->vt, 8); p = bbPutS(p, e, " ago="); p = bbPutU(p, e, uiDrawSeq - u->seq);
+    p = bbPutS(p, e, " frame_draws="); p = bbPutU(p, e, uiFrDraws); p = bbPutS(p, e, " verts="); p = bbPutU(p, e, uiFrVerts); p = bbPutS(p, e, " area_px="); p = bbPutU(p, e, uiFrAreaPx);
+    p = bbPutS(p, e, " maxverts="); p = bbPutU(p, e, uiFrMaxVerts); p = bbPutS(p, e, " maxarea_px="); p = bbPutU(p, e, uiFrMaxAreaPx); p = bbPutS(p, e, "\n"); }
+  p = bbPutS(p, e, "SYNCPK ms="); p = bbPutU(p, e, (unsigned)geSyncPk); p = bbPutS(p, e, " slow="); p = bbPutU(p, e, geSyncSlowN); p = bbPutS(p, e, "\nPK(end/use,KB)");
+  for (int k = 0; k < BBP_N; k++) { p = bbPutS(p, e, " "); p = bbPutS(p, e, bbPhName[k]); p = bbPutS(p, e, "="); p = bbPutU(p, e, gePkEnd[k] >> 10); p = bbPutS(p, e, "/"); p = bbPutU(p, e, gePkUse[k] >> 10); }
+  p = bbPutS(p, e, "\nFIRST64\n"); if (nw >= 64) p = bbPutW(p, e, list, 64); else p = bbPutW(p, e, list, (int)nw & ~7);
+  p = bbPutS(p, e, "LAST64\n"); if (nw >= 64) p = bbPutW(p, e, list + nw - 64, 64);
+  *p = 0;
+  char fn[256]; sibling(fn, "stall.txt"); SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777); if (f < 0) return;
+  sceIoWrite(f, stallBuf, (SceSize)(p - stallBuf)); sceIoClose(f);
+}
+// №1186+ (НАДЁЖНОСТЬ §6): один файл для присылки, shar_report.txt рядом с EBOOT. Пишется при STALL (сторож), fail() (после экрана ошибки) и чистом EXIT; перезаписывается.
+// Внутри: шапка (сборка, прошивка, модель, уровень, миссия, шаг, действие), последние 32 действия с возрастом, счётчики, кольцо отказов памяти (размер и адрес вызова —
+// строка по ELF: tools/crash_addr.py), при STALL — дамп списка GE и текстуры (stall.txt), кольцо ящика (≈ 40 с; сюда же попадают STACK/WARN/LOCK из reliab.c). Только целые и строки,
+// в кадре ничего не пишется. SHARREPORT_OLD=1 — отчёта нет
+#ifndef SHARREPORT_OLD
+#define SHARREPORT_OLD 0
+#endif
+#define BB_OPH 32
+static char bbOpH[BB_OPH][40]; static float bbOpHAt[BB_OPH]; static unsigned bbOpHN;
+static char repBuf[20480];
+static void bbReportWrite(const char *why, unsigned ms, int ph) {
+  if (SHARREPORT_OLD) return;
+  char *p = repBuf, *e = repBuf + sizeof repBuf - 2;
+  if (ph < 0 || ph >= BBP_N) ph = 0;
+  p = bbPutS(p, e, "SHAR_REPORT v1 why="); p = bbPutS(p, e, why); p = bbPutS(p, e, " ms="); p = bbPutU(p, e, ms); p = bbPutS(p, e, " phase="); p = bbPutS(p, e, bbPhName[ph]);
+  p = bbPutS(p, e, " beat="); p = bbPutU(p, e, bbBeat); p = bbPutS(p, e, "\nBUILD " __DATE__ " " __TIME__ " devkit=0x"); p = bbPutX(p, e, (unsigned)sceKernelDevkitVersion(), 8);
+  p = bbPutS(p, e, " cpu_mhz="); p = bbPutU(p, e, (unsigned)scePowerGetCpuClockFrequencyInt());   // модель PSP по ядру недоступна без kubridge: прошивка и частота
+  p = bbPutS(p, e, "\nWHERE level="); p = bbPutU(p, e, (unsigned)gameLevel); p = bbPutS(p, e, " msn="); p = bbPutS(p, e, bbMsn); p = bbPutS(p, e, " op="); p = bbPutS(p, e, bbOpS);
+  p = bbPutS(p, e, " step="); p = bbPutS(p, e, bbStep ? bbStep : "-"); p = bbPutS(p, e, "\nMEM free_k="); p = bbPutU(p, e, memFreeNow == ~0u ? 0u : memFreeNow >> 10);
+  p = bbPutS(p, e, " fails="); p = bbPutU(p, e, memFailsNow()); p = bbPutS(p, e, " cellmem="); p = bbPutU(p, e, smkAllocFail); p = bbPutS(p, e, " readerr="); p = bbPutU(p, e, smkReadErr);
+  p = bbPutS(p, e, "\nCNT ioclose_bad="); p = bbPutU(p, e, ioBadN); p = bbPutS(p, e, " steal="); p = bbPutU(p, e, ioStealN); p = bbPutS(p, e, " reopen="); p = bbPutU(p, e, loaderReopenN);
+  p = bbPutS(p, e, " stalls="); p = bbPutU(p, e, bbStalls); p = bbPutS(p, e, " geskip="); p = bbPutU(p, e, smkGeSkip); p = bbPutS(p, e, " gebad="); p = bbPutU(p, e, smkGeBad);
+  p = bbPutS(p, e, " geover="); p = bbPutU(p, e, geOverBudget); p = bbPutS(p, e, " genested="); p = bbPutU(p, e, geNestedN); p = bbPutS(p, e, " nanfix="); p = bbPutU(p, e, carNanFixes); p = bbPutS(p, e, "\n");
+  float now = bbNow(); p = bbPutS(p, e, "OPS newest first (age_ms op)\n");
+  for (unsigned k = 0; k < BB_OPH && k < bbOpHN; k++) { unsigned i = (bbOpHN - 1 - k) % BB_OPH; if (bbOpH[i][0] == 0) continue;
+    float a = now - bbOpHAt[i]; p = bbPutU(p, e, a > 0.f ? (unsigned)(a * 1000.f) : 0u); p = bbPutS(p, e, " "); p = bbPutS(p, e, bbOpH[i]); p = bbPutS(p, e, "\n"); }
+  p = bbPutS(p, e, "MEMFAILSZ ring (n bytes ra) ra по ELF: tools/crash_addr.py\n");
+  for (unsigned i = 0; i < 16u && i < memFailsNow(); i++) { unsigned b_ = 0, ra_ = 0; if (!memFailRingGet(i, &b_, &ra_)) break;
+    p = bbPutU(p, e, i + 1); p = bbPutS(p, e, " "); p = bbPutU(p, e, b_); p = bbPutS(p, e, " 0x"); p = bbPutX(p, e, ra_, 8); p = bbPutS(p, e, "\n"); }
+  if (why[0] == 'S') { p = bbPutS(p, e, "--- stall.txt (список GE, текстура, последний вызов интерфейса) ---\n"); for (const char *q = stallBuf; *q && p < e; q++) *p++ = *q; }
+  p = bbPutS(p, e, "--- ring ящика (старые сверху) ---\n");
+  for (unsigned k = 0; k < bbCnt && k < BB_N; k++) { const char *r = bbRing[(bbHead + BB_N - bbCnt + k) % BB_N]; unsigned l = (unsigned)strnlen(r, BB_LINE);
+    if (p + l + 1 > e) break; memcpy(p, r, l); p += l; if (l == 0 || r[l - 1] != '\n') *p++ = '\n'; }
+  *p = 0;
+  char fn[256]; sibling(fn, "shar_report.txt"); SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777); if (f < 0) return;
+  sceIoWrite(f, repBuf, (SceSize)(p - repBuf)); sceIoClose(f);
+}
 static int bbDogThread(SceSize a, void *b) {
   (void)a; (void)b; unsigned last = bbBeat, still = 0; int told = 0; fpuThreadInit();   // правка 252: ловушки FPU потока
   for (;;) {
@@ -1271,7 +1440,7 @@ static int bbDogThread(SceSize a, void *b) {
     unsigned now = bbBeat;
     if (now != last || !bbDogOn) { if (told) bbStallMs = still; last = now; still = 0; told = 0; continue; }   // ожил: главный поток допишет
     still += BB_DOG_STEP;
-    if (still >= BB_STALL_MS && !told) { told = 1; bbStalls++; int ph = bbPhase; bbStallPh = (unsigned)ph; bbDogScreen(still, ph); bbDogWrite(still, ph, now); }
+    if (still >= BB_STALL_MS && !told) { told = 1; bbStalls++; { unsigned bs_ = msioBusySince; bbDogReadHang = !waitLimitOld && bs_ && sceKernelGetSystemTimeLow() - bs_ > WAITLIMIT_READ_MS * 1000u; } int ph = bbPhase; bbStallPh = (unsigned)ph; bbDogScreen(still, ph); bbDogWrite(still, ph, now); bbDogStall(still, ph, now); bbReportWrite("STALL", still, ph); }
   }
   return 0;
 }
@@ -1303,16 +1472,41 @@ void bbOp(const char *op, const char *arg, int sync) {   // viewer/blackbox.h: �
   for (const char *a = arg ? arg : "-"; *a && n < (int)sizeof bbOpS - 1; a++) bbOpS[n++] = *a == ' ' ? '_' : *a;   // одно слово в строке
   bbOpS[n] = 0;
   bbOpAt = bbNow();
+  { unsigned h_ = bbOpHN++ % BB_OPH; memcpy(bbOpH[h_], bbOpS, sizeof bbOpH[h_] - 1); bbOpH[h_][sizeof bbOpH[h_] - 1] = 0; bbOpHAt[h_] = bbOpAt; }   // последние 32 действия для shar_report.txt
   if (sync && !bbSyncOld && strcmp(op, "fail") && strcmp(op, "melad")) sync = 0;   // см. blackbox.h: в кадре карту не ждём
   if (!strcmp(op, "msn") && arg) snprintf(bbMsn, sizeof bbMsn, "%s", arg);
   bbSample("op"); bbFlush("RUN", sync);   // и до первой секунды игры (NEW GAME: модель Мардж на старте m0) — файл RUN уже с действием
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "BBOP %s sync=%d n=%u syncn=%u t=%.1f\n", bbOpS, sync, bbN, bbSyncN, smkT); smkWrite(s); }   // гейт tests/crash_school
+}
+void geNestedNote(const char *why) {   // №1186: отказ от вложенного списка видеочипа (transit.c) — строка в ящик и в smoke.txt
+  geNestedN++;
+  char l[120]; snprintf(l, sizeof l, "GE NESTED why=%s n=%u phase=%s t=%.1f\n", why, geNestedN, bbPhName[bbPhase >= 0 && bbPhase < BBP_N ? bbPhase : 0], smkT);
+  bbNote(l); if (smkOn) smkWrite(l);
 }
 static void sfxFlush(void);
 static void blackBox(int exitNow) {   // выход (HOME, QUIT GAME): последняя строка и запись — синхронно (поток «cb» или главный)
   if (!exitNow) return;
   bbWaitIdle(300);
   bbSample("exit"); bbCompose("EXIT"); bbFileWrite(); sfxFlush();
+  bbReportWrite("EXIT", 0, bbPhase);   // чистый выход (HOME, QUIT GAME): отчёт игрока тоже
+}
+// №1186: раз в секунду — UIPEAK (пик списка GE по фазам, КБ: к концу фазы / прирост за фазу; интерфейс: вызовы, вершины, площадь), время sceGuSync
+// конца кадра (максимум), UIDRAWBIG (первые вызовы с вершинами > UIDIAG_VERTS или площадью > экрана × UIDIAG_AREAK). В smoke.txt и в кольцо ящика при событии
+static void geSecReport(void) {
+  UiBig b; while (uiDiagTakeBig(&b)) {
+    char s[200]; snprintf(s, sizeof s, "UIDRAWBIG %s:%d n=%d w=%d h=%d vt=0x%x cnt=%u t=%.1f\n", b.fn ? b.fn : "-", b.line, b.n, b.w, b.h, (unsigned)b.vt, b.cnt, smkT);
+    bbNote(s); if (smkOn) smkWrite(s); }
+  if (smkOn) {
+    char s[520]; int l = snprintf(s, sizeof s, "UIPEAK t=%.1f sc=%s sync_max_ms=%.1f ui_draws=%u ui_verts=%u maxverts=%u maxarea_px=%u fr_area_max_px=%u pk(endK/useK)", smkT, smkScene, geSyncPk,
+      uiSecFrames ? uiSecDraws / uiSecFrames : 0u, uiSecFrames ? uiSecVerts / uiSecFrames : 0u, uiSecMaxVerts, uiSecMaxAreaPx, uiSecFrAreaMax);
+    for (int k = 0; k < BBP_N && l < (int)sizeof s - 40; k++) if (gePkEnd[k]) l += snprintf(s + l, sizeof s - (size_t)l, " %s=%u/%u", bbPhName[k], gePkEnd[k] >> 10, gePkUse[k] >> 10);
+    snprintf(s + l, sizeof s - (size_t)l, "\n"); smkWrite(s);
+    if (uiPhN || 1) { char u[300]; int m = snprintf(u, sizeof u, "UIPEAKSUB t=%.1f sc=%s bytes_max", smkT, smkScene);
+      for (int i = 0; i < UIPH_N; i++) m += snprintf(u + m, sizeof u - (size_t)m, " %s=%u", UIPH_NAMES[i], uiPhGe[i]);
+      snprintf(u + m, sizeof u - (size_t)m, "\n"); smkWrite(u); }
+  }
+  memset(gePkEnd, 0, sizeof gePkEnd); memset(gePkUse, 0, sizeof gePkUse); memset(uiPhGe, 0, sizeof uiPhGe);
+  geSyncPk = 0.f; uiSecDraws = uiSecVerts = uiSecMaxVerts = uiSecMaxAreaPx = uiSecAreaPx = uiSecFrames = uiSecFrAreaMax = 0;
 }
 static void blackBoxSecond(float sec) {   // раз в секунду из главного цикла: образец раз в BB_PERIOD с или на событии
   bbClock += sec; bbT += sec; bbSecT0 = sceKernelGetSystemTimeLow();
@@ -1374,14 +1568,67 @@ static void sfxLogStart(void) {   // флаг-файл sfxlog: новый жур
 // Ловушка вылета (аудит ведущего 01.10 22:35, обрыв F10-5 без STALL): модуль ядра sharexc.prx рядом с EBOOT — исключение
 // процессора в любом потоке пишет строку CRASH (epc, ra, badvaddr, база модуля, цепочка вызовов) хвостом blackbox.txt и в crash.txt.
 // Модулю передаётся папка игры. Нет файла (эмулятор, смоук) — kexcRc 1, игра идёт как раньше
+// №1192/№1208 (TEST90: на старте встал в kexcBoot, эмулятор): (1) поток записи crash.txt и ящика создаёт ИГРА, не модуль (создание потока в module_start sharexc вешало старт); обработчик в исключении
+// копирует строку CRASH в kexcLine и будит этот поток по номеру из kexcWTid (адреса — в args модуля); (2) загрузка и старт модуля идут в отдельном потоке, главный ждёт не дольше KEXC_WAIT_MS:
+// не успело — ловушки нет, строка «KEXC timeout» в ящик и bootmark, игра идёт дальше (kexcTimedOut; ME после этого не поднимаем — модульный замок мог остаться занятым). KEXC_GUARD1192_OLD=1 — как до правки
+#ifndef KEXC_GUARD1192_OLD
+#define KEXC_GUARD1192_OLD 0
+#endif
+#define KEXC_WAIT_MS 2500
+static volatile int kexcTimedOut, kexcWTid = -1, kexcStartDone, kexcStartRc; static char kexcLine[704]; static char kexcStartFn[256]; static char kexcArgs[200 + 96]; static unsigned kexcArgN;
+static int kexcWorker(SceSize a, void *b) {   // пишет blackbox.txt (дописывает) и crash.txt в обычном контексте потока
+  (void)a; (void)b;
+  for (;;) { sceKernelSleepThread();
+    if (kexcLine[0]) { char fn[256]; sibling(fn, "blackbox.txt"); SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+      if (f >= 0) { sceIoWrite(f, kexcLine, (SceSize)strlen(kexcLine)); sceIoClose(f); }
+      sibling(fn, "crash.txt"); f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+      if (f >= 0) { sceIoWrite(f, kexcLine, (SceSize)strlen(kexcLine)); sceIoClose(f); } } }
+  return 0;
+}
+static int kexcStartThread(SceSize a, void *b) {
+  (void)a; (void)b;
+  SceUID m = kuKernelLoadModule(kexcStartFn, 0, 0); bmMarkU("kexc load id", (unsigned)m); if (m < 0) { kexcStartRc = m; kexcStartDone = 1; return 0; }
+  int st = 0; int rc = sceKernelStartModule(m, kexcArgN, kexcArgs, &st, 0); bmMarkU("kexc start rc", (unsigned)rc); kexcStartRc = rc < 0 ? rc : 0; kexcStartDone = 1;
+  return 0;
+}
 static void kexcBoot(void) {
   { char a[256], b[256]; sibling(a, "crash.txt"); sibling(b, "crash_prev.txt"); SceUID c = sceIoOpen(a, PSP_O_RDONLY, 0);
     if (c >= 0) { sceIoClose(c); sceIoRemove(b); sceIoRename(a, b); } }   // прошлый вылет -> crash_prev.txt
   char fn[256], dir[200]; sibling(fn, "sharexc.prx");
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) { kexcRc = 1; return; } sceIoClose(f);
   strncpy(dir, fn, sizeof dir - 1); dir[sizeof dir - 1] = 0; char *sl = strrchr(dir, '/'); if (sl) sl[1] = 0; else dir[0] = 0;
+  // №1208: за строкой папки (она оканчивается нулём, прежний sharexc.prx читает только её) — расширение «SHX1»: адрес и размер кадра экрана вылета от игры (crashpic.shx), адрес строки последнего шага (bmLast), строка сборки,
+  // code_rect кадра (crashpic.txt), адреса потока записи (kexcWTid, kexcLine). Нет файла картинки / CRASHPIC1208_OLD=1 — pic=0: обработчик рисует вшитую картинку модуля
+  static unsigned char crashPic[139264] __attribute__((aligned(64)));
+  unsigned picN = 0;
+#ifndef CRASHPIC1208_OLD
+#define CRASHPIC1208_OLD 0
+#endif
+  if (!CRASHPIC1208_OLD) { char pf[256]; sibling(pf, "crashpic.shx"); SceUID pfd = sceIoOpen(pf, PSP_O_RDONLY, 0);
+    if (pfd >= 0) { int r = sceIoRead(pfd, crashPic, sizeof crashPic); sceIoClose(pfd); if (r >= 16 && !memcmp(crashPic, "SHXC", 4)) picN = (unsigned)r; } }
+  unsigned dl = (unsigned)strlen(dir) + 1, off = (dl + 3u) & ~3u; memcpy(kexcArgs, dir, dl);
+  unsigned *x = (unsigned *)(kexcArgs + off); x[0] = 0x31584853u /* "SHX1" */; x[1] = picN ? (unsigned)crashPic : 0; x[2] = picN; x[3] = (unsigned)bmLast; x[4] = (unsigned)(__DATE__ " " __TIME__);
+  x[5] = x[6] = x[7] = x[8] = 0;
+  if (picN) { char tf[256], tb[96]; sibling(tf, "crashpic.txt"); SceUID tfd = sceIoOpen(tf, PSP_O_RDONLY, 0);
+    if (tfd >= 0) { int r = sceIoRead(tfd, tb, sizeof tb - 1); sceIoClose(tfd); if (r > 0) { tb[r] = 0; unsigned a_ = 0, b_ = 0, c_ = 0, d_ = 0; if (sscanf(tb, "code_rect %u %u %u %u", &a_, &b_, &c_, &d_) == 4 && c_) { x[5] = a_; x[6] = b_; x[7] = c_; x[8] = d_; } } } }
+  x[9] = (unsigned)&kexcWTid; x[10] = (unsigned)kexcLine; x[11] = sizeof kexcLine; kexcArgN = off + 48;
+  sceKernelDcacheWritebackInvalidateRange(crashPic, sizeof crashPic);
+  if (!KEXC_GUARD1192_OLD) {
+    SceUID w = sceKernelCreateThread("sharexc_w", kexcWorker, 0x0A, 0x1000, 0, 0);   // выше игровых потоков: пишет сразу после пробуждения из обработчика
+    if (w >= 0 && sceKernelStartThread(w, 0, 0) >= 0) kexcWTid = w;
+    bmMark("kexcWorker<");
+    // путь модуля — абсолютный: у потока своя текущая папка (в эмуляторе sibling() даёт относительное имя и поток его не находил: kuKernelLoadModule -> 0x80010002)
+    { kexcStartFn[0] = 0; if (!strchr(fn, ':')) { char cwd[200]; if (getcwd(cwd, sizeof cwd)) { size_t cl = strlen(cwd); if (cl && cl < 190) { memcpy(kexcStartFn, cwd, cl); if (cwd[cl - 1] != '/') kexcStartFn[cl++] = '/'; kexcStartFn[cl] = 0; } } }
+      strncat(kexcStartFn, fn, sizeof kexcStartFn - strlen(kexcStartFn) - 1); }
+    bmMark(kexcStartFn);
+    SceUID t = sceKernelCreateThread("kexc_ld", kexcStartThread, 0x22, 0x2000, 0, 0);
+    if (t < 0 || sceKernelStartThread(t, 0, 0) < 0) { kexcTimedOut = 1; kexcRc = -3; bmMark("KEXC thread fail"); return; }
+    for (int i = 0; i < KEXC_WAIT_MS / 4 && !kexcStartDone; i++) sceKernelDelayThread(4000);
+    if (!kexcStartDone) { kexcTimedOut = 1; kexcRc = -2; bmMark("KEXC timeout"); bbNote("KEXC timeout 2500 ms: ловушка вылета пропущена (загрузка sharexc.prx не вернулась)\n"); return; }
+    kexcRc = kexcStartRc; return;
+  }
   SceUID m = kuKernelLoadModule(fn, 0, 0); if (m < 0) { kexcRc = m; return; }
-  int st = 0; int rc = sceKernelStartModule(m, strlen(dir) + 1, dir, &st, 0); kexcRc = rc < 0 ? rc : 0;
+  int st = 0; int rc = sceKernelStartModule(m, off + 36, kexcArgs, &st, 0); kexcRc = rc < 0 ? rc : 0;
 }
 static void blackBoxBoot(void) {   // старт: прошлый ящик без EXIT (вылет или выключение) -> blackbox_prev.txt
   // правка 252: ловушки FPU главного потока (viewer/fpuguard.h); служебный файл fputrap — прежнее, как у PSP по умолчанию
@@ -2280,7 +2527,21 @@ static void msncamLoad(void) {   // камеры уровня gameLevel: у 2–
 #define CAMIN1041_FAR 30.f
 // сверка g09b-menu (СВЕРКА_КАМЕРА 3.4): конец наезда — у оригинала быстрый переход (95 % за 0,32 с; лимит 3 с); сглаживание за 0,37 с даёт те же 0,32 с до 95 % (круг 6: было 0,39, 95 % за 0,337 с — тест tests/sverka_g09b). CAMBLEND_OLD=1 — 0,7 с
 static int camIn1041 = !CAMIN1041_OLD;
-static int camBusy1047(void) { return camIn1041 && (mcPlay != 0 || lbOpen > 0.f); }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
+// №1170 (Роб, TEST87 на PSP, L5: «при появлении Апу close up перед лицом, перед лбом»). Камера старта L5 кончается в 8 м ПЕРЕД лицом героя (смотрит на него и собеседника), игровая камера пешком стоит за его спиной:
+// переход «от позы наезда» шёл по прямой между этими позами и проходил в 1,0-1,5 м над головой героя (на 4,7-4,9 с кадры в волосы и лоб). У L2, L3, L6 облёт кончается с той же стороны, где потом встаёт игровая камера
+// (косинус между направлениями 0,99, 0,50, 0,98), прямая не задевает героя; у L5 направления противоположны (-1,00). У оригинала обычный переход между камерами идёт по дуге вокруг точки взгляда: угол вокруг неё
+// и расстояние до неё меняются отдельно, глаз не пересекает героя. Теперь выход из наезда идёт так же (дуга уже есть у камеры разговора, camBArc). CAMEXIT1170_OLD=1 / flag camexit1170old 1 — по прямой, как в TEST87
+#ifndef CAMEXIT1170_OLD
+#define CAMEXIT1170_OLD 0
+#endif
+static int camExit1170 = !CAMEXIT1170_OLD;
+// №1218 (Роб 06.11: «когда появляемся на любом уровне, одновременно и наезд камеры и появление message bubble — делать появление после того, как заканчивается наезд»):
+// пузырь цели ждал только сам ролик наезда (mcPlay) и полосы; после ролика камера ещё 0,37 с дугой возвращается за спину героя (camBExit, №1170), и пузырь всплывал
+// поверх этого движения. Теперь ждёт и дугу: всплывает, когда камера встала. BUBAFTERCAM1218_OLD=1 — как было
+#ifndef BUBAFTERCAM1218_OLD
+#define BUBAFTERCAM1218_OLD 0
+#endif
+static int camBusy1047(void) { return camIn1041 && (mcPlay != 0 || lbOpen > 0.f || (!BUBAFTERCAM1218_OLD && camBExit && camBT >= 0.f)); }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
 static void msncamPlay(const MsnCam *c) {
   mcPlay = c; mcT = 0.f;
   if (camIn1041 && c->nfr > 2 && c->fps > 1.f) {
@@ -2535,6 +2796,7 @@ static void idleFlag(const SmokeCmd *sc) {   // флаги простоя — г
 }
 // ролик простоя: 1 — прерван кнопкой (*key, *pressAt — время первого нажатия сценария в ролике), 0 — доигран или его нет
 static int demoMovie(void **fbp, unsigned *key, unsigned *pressAt, unsigned *presses) {
+  GE_NEST_GUARD_RET("demoMovie", 0);   // №1186/№1188
   char fn[256], s[224]; sibling(fn, "movies/demo.smv");
   int r = movieSystem(1), err = 0;
   movieVolSync(); Movie *m = r < 0 ? NULL : movieOpen(fn, &err);

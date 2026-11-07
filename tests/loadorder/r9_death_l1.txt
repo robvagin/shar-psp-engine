@@ -1,0 +1,30 @@
+# ag/loadorder R9: зона DEATH L1 (двор горящих покрышек): машина и Гомер пешком; куда переносит и сколько метров (строка DEATH, apex)
+# правка 349: двор горящих покрышек L1 K2-8 (R6D01, оба ящика). Машиной в ящик 1 (x 262…287), в ящик 0 (x 284…312), въезд
+# через трамплин jumpzone9 с газом, Гомер пешком в ящик 1; контроль — машина у дороги (вне зоны)
+scene start
+wait 3
+scene car_box1
+goto 274 -515 3.1416
+wait 0.1
+shot car_box1_a
+wait 2.5
+shot car_box1_after
+scene car_box0
+goto 298 -515 0
+wait 2.5
+shot car_box0_after
+scene car_ramp
+goto 236 -508.5 1.5708
+wait 1
+press r 4
+wait 5
+shot car_ramp_after
+scene foot_box1
+foot 266 -515 1.5708
+wait 2.5
+shot foot_box1_after
+scene control
+goto 240 -530 1.5708
+wait 2.5
+shot control_after
+end

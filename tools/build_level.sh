@@ -13,12 +13,21 @@
 # Проверка результата: python tools/pvs_check.py OUT
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export PYTHONPATH="$ROOT/tools/_ci${PYTHONPATH:+:$PYTHONPATH}"   # Linux/WSL: поиск файлов диска без учёта регистра (tools/ci_fs.py); на macOS ничего не меняет
 OUT="${1:-}"
 case "$OUT" in ""|/*) ;; *) OUT="$PWD/$OUT" ;; esac
 cd "$ROOT"
 export SHR_TEX_CAP256="${SHR_TEX_CAP256:-1}" SHR_SMALL_MIPS="${SHR_SMALL_MIPS:-1}" SHR_LAYERS="${SHR_LAYERS:-1}"
 # правка Роба 129 (01.10): SHR_T4=1 — текстуры в 16 цветов 4 битами (уровень 0 без потерь), SHR_SIGN_CAP=1 — вывески 128 px
 export SHR_T4="${SHR_T4:-1}" SHR_SIGN_CAP="${SHR_SIGN_CAP:-1}"
+# №1162/№1166 («чужой экспорт = наш»): уровни нашего набора (TEST81 + правки поверх) собраны рецептом reissue_level.sh: дальняя версия без нарезки (SHR_FAR_PLAIN=1),
+# правило №488 выключено (SHR_PROP_OWNED_OLD=1), тип поверхности земли — отдельным файлом surf-l<N>.shr
+# (SHR_SURF_OLD=1: блока SRF1 в COL1 нет, хеш проб машин миссий mcpr.shr и lmap остаются верными). Публичная сборка по умолчанию давала другой level.shr
+# (COL1, PRP2, CAR1, PVS1 отличались: стены и коллизия, на которых стоит камера). Теперь те же значения по умолчанию; явно заданная переменная сильнее
+# (reissue_level.sh и прежние вызовы не меняются). BUILD_LEVEL1162_OLD=1 — прежние умолчания (всё выключено)
+if [ "${BUILD_LEVEL1162_OLD:-0}" != 1 ]; then
+  export SHR_FAR_PLAIN="${SHR_FAR_PLAIN-1}" SHR_PROP_OWNED_OLD="${SHR_PROP_OWNED_OLD-1}" SHR_SURF_OLD="${SHR_SURF_OLD-1}"
+fi
 echo "качество: SHR_TEX_CAP256=$SHR_TEX_CAP256 SHR_SMALL_MIPS=$SHR_SMALL_MIPS SHR_LAYERS=$SHR_LAYERS; память: SHR_T4=$SHR_T4 SHR_SIGN_CAP=$SHR_SIGN_CAP"
 
 # pvs: пересобрать, если бинарника нет или исходник новее
@@ -26,6 +35,8 @@ if [ ! -x tools/pvs ] || [ tools/pvs.c -nt tools/pvs ]; then
   cc -O3 -o tools/pvs tools/pvs.c -lm
 fi
 . .venv/bin/activate
+# №1162: наши правки в чужом разборщике диска (прозрачность вершин PS2); HRW_PATCH1162_OLD=1 — как было
+python tools/hrw_patches/apply.py || exit 1
 
 if [ -n "$OUT" ]; then
   # без --out экспортёр молча записал бы build/level.shr
@@ -57,3 +68,5 @@ if [ "${SHR_STRIPS:-0}" = "1" ]; then
   tools/strips.sh >/dev/null
   cp "$OUT" "$OUT.list"; tools/strips "$OUT.list" "$OUT"; rm -f "$OUT.list"
 fi
+# №1166: build_level.sh собирает ТОЛЬКО level.shr (город и коллизия). Для игры нужен весь набор (камеры зон, комнаты, трафик, Гомер, звук, интерфейс): tools/ship.sh
+echo "build_level: готов только level.shr; полный набор для PSP (камеры, комнаты, трафик, интерфейс, звук) собирает tools/ship.sh" >&2

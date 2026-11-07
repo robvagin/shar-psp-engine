@@ -1,0 +1,55 @@
+# №1170: L5, путь игрока (flag player, MISSION SELECT 0), кадр каждые 0,4 с
+scene A1170_P5
+flag camdet 1
+flag camlog
+flag golevel 5
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 0
+wait 0.4
+shot p00
+wait 0.4
+shot p01
+wait 0.4
+shot p02
+wait 0.4
+shot p03
+wait 0.4
+shot p04
+wait 0.4
+shot p05
+wait 0.4
+shot p06
+wait 0.4
+shot p07
+wait 0.4
+shot p08
+wait 0.4
+shot p09
+wait 0.4
+shot p10
+wait 0.4
+shot p11
+wait 0.4
+shot p12
+wait 0.4
+shot p13
+wait 0.4
+shot p14
+wait 0.4
+shot p15
+wait 0.4
+shot p16
+wait 0.4
+shot p17
+wait 0.4
+shot p18
+wait 0.4
+shot p19
+wait 0.4
+shot p20
+wait 0.4
+shot p21
+end

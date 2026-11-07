@@ -10,7 +10,9 @@ import rms
 
 KINDS = {'start': 0, 'drama': 1, 'win': 2, 'lose': 3,
          'get_out_of_car': 4, '10sec_to_go': 5}
-EVENT = re.compile(r'^(M\d|Bonus|StreetRace0[123])_(' + '|'.join(KINDS) + ')$', re.I)
+import os
+# STREETMUS_OLD=1 — прежний экспорт без музыки уличных гонок (красный контроль tests/levels/mevt_check.py); по умолчанию гонки StreetRace01..03 включены
+EVENT = re.compile(r'^(M\d|Bonus' + ('' if os.environ.get('STREETMUS_OLD') == '1' else '|StreetRace0[123]') + ')_(' + '|'.join(KINDS) + ')$', re.I)
 
 
 def canonical(name):

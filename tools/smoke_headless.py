@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run the existing ship smoke scenario without a window or audible output."""
-import os
+import os, shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -9,8 +9,10 @@ from PIL import Image
 def main():
     run, out = (Path(p).resolve() for p in sys.argv[1:3])
     timeout = int(sys.argv[3])
-    binary = Path(__file__).resolve().parents[1] / 'build/twins/bin/PPSSPPHeadless'
+    # $PPSSPP_HEADLESS (его выставляет tools/smoke.sh), build/twins/bin, общий эмулятор основной копии, PATH (Linux: свой PPSSPPHeadless; доработка noname8723, 06.11)
+    binary = Path(os.environ['PPSSPP_HEADLESS']) if os.environ.get('PPSSPP_HEADLESS') else Path(__file__).resolve().parents[1] / 'build/twins/bin/PPSSPPHeadless'
     if not binary.is_file(): binary = Path.home() / 'Downloads/shar-psp/build/twins/bin/PPSSPPHeadless'   # рабочие копии (git worktree) без своего build/twins: общий безголовый эмулятор основной копии
+    if not binary.is_file() and shutil.which('PPSSPPHeadless'): binary = Path(shutil.which('PPSSPPHeadless'))
     if not binary.is_file():
         raise SystemExit('smoke: missing headless emulator; no GUI fallback')
     env = dict(os.environ, TWINS_SMOKE=str(run/'smoke.txt'),

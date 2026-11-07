@@ -204,7 +204,7 @@ typedef struct {
   const BnsHdr *h; const BnsCp *cp; const BnsStart *st; const BnsWp *wpf, *wpr; const BnsPath *pf, *pr;
   const BnsPick *pk; const BnsHaz *hz; unsigned npick, nhaz;   // версия 2; в версии 1 — 0
   // №1116 (сверка g03-aicars): дороги трассы — хвост файла (блок TRF1: перекрёстки, дороги, полосы; tools/bonus/roads.py), u32 размер, 'BRD1'.
-  // Соперники ведутся по ним от точки WPR/WPL к следующей, как у оригинала (WaypointAI по Road/RoadSegment). NULL — хвоста нет (старый файл)
+  // Соперники ведутся по ним от точки WPR/WPL к следующей, как у оригинала (по дорогам файла трассы). NULL — хвоста нет (старый файл)
   const void *rd; unsigned rdSize;
 } BnsTrack;
 // разбор файла BNS1 (данные живут у вызывающего). 0 — ок, < 0 — ошибка (-1 магия/версия, -2 размер, -3 числа вне пределов)

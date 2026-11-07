@@ -1,0 +1,34 @@
+# ag/loadorder R6: L7, перебор миссий msnsel 0..8 (служебный выбор): где старт, какая комната, что журнал говорит про ирис/перенос
+flag nosave
+scene LO6_BOOT
+wait 3
+flag golevel 7
+wait 12
+scene LO6_SEL0
+flag msnsel 0
+wait 5
+scene LO6_SEL1
+flag msnsel 1
+wait 5
+scene LO6_SEL2
+flag msnsel 2
+wait 5
+scene LO6_SEL3
+flag msnsel 3
+wait 5
+scene LO6_SEL4
+flag msnsel 4
+wait 5
+scene LO6_SEL5
+flag msnsel 5
+wait 5
+scene LO6_SEL6
+flag msnsel 6
+wait 5
+scene LO6_SEL7
+flag msnsel 7
+wait 5
+scene LO6_SEL8
+flag msnsel 8
+wait 5
+end

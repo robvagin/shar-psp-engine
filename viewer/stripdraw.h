@@ -63,10 +63,13 @@ static const unsigned char *pieceListT(const Piece *d, int slot, unsigned *n) {
   stripExpand((const unsigned char *)d->v, d->idx, h->nsN, vs, S[slot].buf); S[slot].key = d->v; S[slot].n = cnt; *n = cnt; return S[slot].buf;
 }
 // загрузка клетки (загрузчик): указатели полосового куска и кэш срезов ggBatch по развёртке; STRIPS_OLD=1 — кусок целиком в список (память кучи, флаг снимается)
-static volatile int stripScratchLock; static unsigned char *stripScratch; static unsigned stripScratchCap;
-static unsigned char *stripScratchGet(unsigned bytes) {
-  while (__sync_lock_test_and_set(&stripScratchLock, 1)) sceKernelDelayThread(50);
+#include "reliab.h"
+static volatile int stripScratchLock, stripScratchHeld; static unsigned char *stripScratch; static unsigned stripScratchCap;
+static void stripScratchDelay(unsigned us) { sceKernelDelayThread(us); }
+static unsigned char *stripScratchGet(unsigned bytes) {   // №1195: замок с пределом 3 с — не взят: 0 и строка LOCK в ящик (кусок остаётся без кэша срезов, как при нехватке памяти)
+  stripScratchHeld = 0; if (!relSpinAcquire(&stripScratchLock, REL_LOCK_LIMIT_US, 50u, stripScratchDelay, "stripScratch")) return 0;
+  stripScratchHeld = 1;
   if (bytes > stripScratchCap) { free(stripScratch); stripScratchCap = (bytes + 4095u) & ~4095u; stripScratch = (unsigned char *)malloc(stripScratchCap); if (!stripScratch) stripScratchCap = 0; }
   return stripScratch;
 }
-static void stripScratchPut(void) { __sync_lock_release(&stripScratchLock); }
+static void stripScratchPut(void) { if (stripScratchHeld) { stripScratchHeld = 0; __sync_lock_release(&stripScratchLock); } }   // №1195: отпускает только тот, кто взял

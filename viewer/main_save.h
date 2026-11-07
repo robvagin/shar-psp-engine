@@ -190,11 +190,12 @@ static void cfgApply(void) {
   { float h_ = camCfg996On ? camCfgH996[cfg.camHeight] : 1.f, d_ = camCfg996On ? camCfgD996[cfg.camDist] : 1.f;
     if (h_ != homerCamUserH || d_ != homerCamUserD) { homerCamUserH = h_; homerCamUserD = d_; camCfgSnap996 = 1; } }
   if (!CAMMENU1151_OLD) {   // №1151: раздел CAMERA паузы — шесть настроек камеры (ступени 0..4); смена — сглаживание камеры сбросить, кадр за паузой сразу новый
-    int *q_[6] = {&cfg.carTilt, &cfg.carFov, &cfg.footHeight, &cfg.footDist, &cfg.camHeight, &cfg.camDist}; for (int k_ = 0; k_ < 6; k_++) *q_[k_] = mrCamClamp(*q_[k_]);
-    float v_[6] = {camCfg996On ? mrCamH(cfg.camHeight) : 1.f, camCfg996On ? mrCamD(cfg.camDist) : 1.f, mrCamTilt(cfg.carTilt), mrCamFov(cfg.carFov),
-                   camCfg996On ? mrCamH(cfg.footHeight) : 1.f, camCfg996On ? mrCamD(cfg.footDist) : 1.f};
-    float *w_[6] = {&camUserCarH, &camUserCarD, &camUserCarTilt, &camUserCarFov, &camUserFootH, &camUserFootD};
-    for (int k_ = 0; k_ < 6; k_++) if (*w_[k_] != v_[k_]) { *w_[k_] = v_[k_]; camCfgSnap996 = 1; } }
+    int *q_[7] = {&cfg.carTilt, &cfg.carFov, &cfg.footHeight, &cfg.footDist, &cfg.camHeight, &cfg.camDist, &cfg.carAim}; for (int k_ = 0; k_ < 7; k_++) *q_[k_] = mrCamClamp(*q_[k_]);
+    float v_[7] = {camCfg996On ? mrCamH(cfg.camHeight) : 1.f, camCfg996On ? mrCamD(cfg.camDist) : 1.f, mrCamTilt(cfg.carTilt), mrCamFov(cfg.carFov),
+                   camCfg996On ? mrCamH(cfg.footHeight) : 1.f, camCfg996On ? mrCamD(cfg.footDist) : 1.f,
+                   mrCamAim(cfg.carAim)};   // №1160: сдвиг кадра по высоте (при CARAIM1160_OLD — 0)
+    float *w_[7] = {&camUserCarH, &camUserCarD, &camUserCarTilt, &camUserCarFov, &camUserFootH, &camUserFootD, &camUserCarAim};
+    for (int k_ = 0; k_ < 7; k_++) if (*w_[k_] != v_[k_]) { *w_[k_] = v_[k_]; camCfgSnap996 = 1; } }
   flatTexUser = cfg.texturesOn != 0;   // №912: Textures On — родные текстуры (заливку включает flatPoll при Cartoon и Off)
   if ((cfg.toon != 0) != toneToon()) { toneSetToon(cfg.toon != 0); if (cfg.toon) toneToonPrep(); toneApplyAll(); toonModeChanged = 1; }   // №754: пресет 90-х на палитрах — вместе с Cartoon, фоновым заданием
   sndUserVolumes(cfg.music / 1000.f, cfg.effects / 1000.f, cfg.vehicle / 1000.f, cfg.voice / 1000.f);
@@ -209,12 +210,22 @@ static void cfgApply(void) {
 // (TEST34 — дальность 200 м, TEST36–39 — 250 м, повтор TEST39 — 150 м), скорость туров не сравнить. cfgDef — значения по умолчанию сборки
 // (до чтения settings.bin); служебный «flag cfgdefaults 1» в сценарии возвращает их
 static Settings cfgDef; static int cfgDefOk;
+#ifndef SETSAVE1170_OLD
+#define SETSAVE1170_OLD 0   // №1170: 1 — settings.bin пишется напрямую без CRC и подбора .tmp, как было
+#endif
+static int cfgFileValid(const void *b, int n) {   // годность остатка settings.tmp/.bak: размер структуры + CRC-хвост
+  if (n != (int)sizeof(Settings) + 4 || memcmp(b, "SHST", 4)) return 0;
+  unsigned crc; memcpy(&crc, (const char *)b + sizeof(Settings), 4); return crc == svCrc32((const uint8_t *)b, sizeof(Settings));
+}
 static void cfgLoad(void) {
   if (!cfgDefOk) { cfgDef = cfg; cfgDefOk = 1; }
   char fn[256]; sibling(fn, "settings.bin"); Settings t = cfg;   // чего нет в файле (запись ver 1 короче) — по умолчанию
+  if (!SETSAVE1170_OLD) svAtomicRecover(fn, cfgFileValid);   // №1170: остатки обрыва записи (.tmp, .bak) — до чтения
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
   if (f >= 0) { int n = sceIoRead(f, &t, sizeof t), n1 = (int)offsetof(Settings, tutorial);
-    if (n >= n1 && !memcmp(t.magic, "SHST", 4) && t.ver >= 1 && t.ver <= 14) {
+    int cfgBad = 0;   // №1170: запись с CRC-хвостом (размер структуры + 4): CRC не сошёлся — файл испорчен, настройки по умолчанию
+    if (!SETSAVE1170_OLD && n == (int)sizeof t) { unsigned crc = 0; if (sceIoRead(f, &crc, 4) == 4 && crc != svCrc32((const uint8_t *)&t, sizeof t)) { cfgBad = 1; t = cfg; if (smkOn) smkWrite("CFGBAD crc\n"); } }
+    if (!cfgBad && n >= n1 && !memcmp(t.magic, "SHST", 4) && t.ver >= 1 && t.ver <= 14) {
       if (t.ver == 7 && n >= (int)sizeof t) t.oldTv = t.oldTv ? 5 : 0;   // №830: ver 7 — Off/On, теперь сила 0..10
       if (t.ver == 1 || n < (int)sizeof t) { Settings d = cfg; memcpy((char *)&d, &t, t.ver == 1 ? (size_t)n1 : (size_t)n); t = d; }
       if (!DRAWDEF1042_OLD && t.ver < 13) t.drawDist = 2;   // №1042б: миграция один раз — Draw Distance 250 (выбор игрока потом сохраняется как есть)
@@ -227,6 +238,10 @@ static void cfgLoad(void) {
 static void cfgSave(void) {
   if (saveBlocked) { static int n_; if (smkOn && n_++ < 5) smkWrite("SAVEBLOCK cfg\n"); return; }   // автотур: настройки игрока не трогаем
   char fn[256]; sibling(fn, "settings.bin");
+  if (!SETSAVE1170_OLD) {   // №1170: через .tmp и подмену, с CRC-32 хвостом (старые сборки читают структуру и хвост не видят)
+    unsigned char buf[sizeof cfg + 4]; memcpy(buf, &cfg, sizeof cfg); unsigned crc = svCrc32((const uint8_t *)&cfg, sizeof cfg); memcpy(buf + sizeof cfg, &crc, 4);
+    svAtomicWrite(fn, buf, (int)sizeof buf); return;
+  }
   SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
   if (f >= 0) { sceIoWrite(f, &cfg, sizeof cfg); sceIoClose(f); }
 }
@@ -393,6 +408,7 @@ static int *cfgSlot(int scr, int row, int sound) {   // значение нас�
   if (row == rowOf(scr, "INK")) return &cfg.ink;                                                          // №951: Ink — Indigo / Black / Tone
   if (!CAMMENU1151_OLD) {   // №1151: страница настроек камеры
     if (row == rowOf(scr, "CAR HEIGHT")) return &cfg.camHeight; if (row == rowOf(scr, "CAR DISTANCE")) return &cfg.camDist; if (row == rowOf(scr, "CAR TILT")) return &cfg.carTilt;
+    if (!CARAIM1160_OLD && row == rowOf(scr, "CAR AIM")) return &cfg.carAim;   // №1160
     if (row == rowOf(scr, "CAR VIEW")) return &cfg.carFov; if (row == rowOf(scr, "FOOT HEIGHT")) return &cfg.footHeight; if (row == rowOf(scr, "FOOT DISTANCE")) return &cfg.footDist; }
   if (CAMMENU1151_OLD && row == rowOf(scr, "HEIGHT")) return &cfg.camHeight;                                                // №996: страница CAMERA — Height (Low … High)
   if (CAMMENU1151_OLD && row == rowOf(scr, "DISTANCE")) return &cfg.camDist;                                                // №996: Distance (Near … Far)
@@ -605,7 +621,7 @@ static void pauseSubInput(unsigned hit) {   // пауза стоит; △/○ �
   } else if (pmFlat() && pmCamAdj() && pauseSub == PM_CAMERA && r >= 0 && r == camLinkRow) {   // №1151: «Adjust Camera» -> страница настроек камеры
     pauseSub = PM_CAMADJ; pmEnterPage(PM_CAMADJ, &pauseSubSel[PM_CAMADJ]);
   } else if (pmFlat() && pmCamAdj() && pauseSub == PM_CAMADJ && r >= 0 && r == camResetRow) {   // №1151: «Reset to Default» — шесть настроек камеры на середину, кадр за паузой сразу новый
-    cfg.camHeight = cfg.camDist = cfg.carTilt = cfg.carFov = cfg.footHeight = cfg.footDist = 2; cfgApply(); cfgSave();
+    cfg.camHeight = cfg.camDist = cfg.carTilt = cfg.carFov = cfg.footHeight = cfg.footDist = cfg.carAim = 2; cfgApply(); cfgSave();
     int keep_ = pauseSubSel[PM_CAMADJ]; pmEnterPage(PM_CAMADJ, &pauseSubSel[PM_CAMADJ]); pauseSubSel[PM_CAMADJ] = keep_;
   } else if (pmFlat() && pauseSub == PM_PICTURE && r >= 0 && r == optLinkRow) {   // №783: «Cartoon» на PICTURE -> страница CARTOON
     pauseSub = PM_CARTOON; pmEnterPage(PM_CARTOON, &pauseSubSel[PM_CARTOON]);
@@ -722,6 +738,7 @@ static int scrapPage(int L, const unsigned char *c) {
 #endif
 static int scrapLast; static unsigned scrapGen;   // 0 — ещё не открывали; scrapGen — поколение уровня при выходе (началась игра — страница забыта)
 static void scrapRun(int mainSel, void **fbp, const unsigned char *c) {
+  GE_NEST_GUARD("scrapRun");   // №1186/№1188
   int keep = gameLevel, L = 0;
   if (scrapGen != lvGen) scrapLast = 0;
   if (!SCRAP_LAST_OLD && scrapLast >= 1 && scrapLast <= 7 && scrapPage(scrapLast, c)) L = scrapLast;
@@ -780,6 +797,7 @@ static void cheatMenuFrame(unsigned held, unsigned rawHit, unsigned *hit, int fr
   if (gameCheatsActive()) *hit = 0;
 }
 static void optionsRun(int mainSel, void **fbp) {
+  GE_NEST_GUARD("optionsRun");   // №1186/№1188
   char fn[256]; sibling(fn, "menu.shr");
   if (uiScrOpen(fn)) return;
   int scr = OPT_MAIN, rSound = rowOf(0, "SOUND"), sel[4] = {rSound < 0 ? 0 : rSound, 0, 0, 0};
@@ -852,6 +870,7 @@ static void optionsRun(int mainSel, void **fbp) {
 // меню. Экран ending.shr (CreditsPostFMV, Канг и Кодос) в эмуляторе вставал на 8–10 кадре: главный поток больше не получал процессор
 // (и поверх уровня, и в меню); VIEW CREDITS тем же эмулятором идёт до конца. ENDING_SAVE860_OLD=1 — прежнее: ending.shr прямо из игры
 static void creditsRun(void **fbp) {
+  GE_NEST_GUARD("creditsRun");   // №1186/№1188
   char fn[256]; sibling(fn, "menu.shr");
   if (uiScrOpen(fn)) return;
   if (uiScrScreens() <= OPT_MOVIES) { SCR_CLOSE(); return; }   // пакет без экрана титров (до 29.09)

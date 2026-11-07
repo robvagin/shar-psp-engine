@@ -1,0 +1,50 @@
+# №1188 (g10b-loop): гейт «GE NESTED = 0» для смерти (зона DEATH L1, ирис возврата) и сохранения из паузы (SAVE GAME, окно утилиты): flag menu, flag saves, NEW GAME, смерть, пауза, SAVE, QUIT. Строки GE NESTED в smoke.txt — 0
+flag menu
+flag saves
+wait 1.5
+press cross
+wait 4
+scene GE1188_DEATH_WARM
+flag repair
+flag warmhere
+wait 2
+goto 236 -508.5 1.5708
+flag warmhere
+wait 3
+scene GE1188_DEATH_ENTER
+goto 274 -515 3.1416
+wait 0.15
+shot ge1188_death_a
+wait 0.4
+shot ge1188_death_b
+wait 3
+scene GE1188_SAVE
+flag svmark
+wait 0.5
+press start
+wait 1
+press up
+wait 0.4
+press up
+wait 0.4
+shot sv_pause
+press cross
+wait 1
+shot sv_slots
+press cross
+wait 2.5
+shot sv_saved
+press cross
+wait 0.8
+press down
+wait 0.4
+press cross
+wait 1
+shot sv_quitask
+press down
+wait 0.3
+press cross
+wait 3
+shot sv_menu_after
+end
+

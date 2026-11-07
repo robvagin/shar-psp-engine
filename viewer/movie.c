@@ -13,6 +13,7 @@
 #include <pspgu.h>
 #include <malloc.h>
 #include "fpuguard.h"   // правка 252: ловушки FPU потоков ролика выключены (viewer/fpuguard.h)
+#include <stdio.h>
 #include "audio.h"      // правка 276: audioMeHold — пока открыт sceJpeg (кадры считает ME), звук на ME не идёт
 #endif
 
@@ -156,7 +157,7 @@ void movieClose(Movie *m, MovieStats *st) {
   free(m);
 }
 
-Movie *movieOpen(const char *fn, int *errOut) {
+static Movie *movieOpen1(const char *fn, int *errOut) {
   unsigned char h[64]; MvHdr hd; int e = MV_EFILE; Movie *m = 0;
   SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0);
   if (fd < 0) goto fail;
@@ -192,6 +193,25 @@ close:
 fail:
   if (errOut) *errOut = e;
   return 0;
+}
+
+#ifndef MOVIERETRY1206_OLD
+#define MOVIERETRY1206_OLD 0   // 1 — ролик открывается один раз (как в TEST89)
+#endif
+void (*movieNote)(const char *);   // №1206: строка о повторе (ящик и журнал) — задаёт main
+// №1206 (все переходы надёжно): сбой чтения при открытии ролика (заголовок, индекс, первые куски, поток, память) — до 2 повторов с паузой 250 мс и ПОВТОРНЫМ открытием файла;
+// потом, как раньше, ролик не играет (msnMovie пропускает его), а не виснет. Файла нет совсем — повтора нет.
+Movie *movieOpen(const char *fn, int *errOut) {
+  int e = MV_OK; Movie *m = movieOpen1(fn, &e);
+  if (!MOVIERETRY1206_OLD) for (int k = 1; !m && k <= 2; k++) {
+    SceIoStat st; if (e == MV_EFILE && sceIoGetstat(fn, &st) < 0) break;   // файла нет — повтор не поможет
+    if (e == MV_EDEC) break;                                                 // нет декодера (модуль прошивки) — повтор не поможет
+    char l[120]; snprintf(l, sizeof l, "MOVIE retry %d err=%d name=%.50s\n", k, e, fn); if (movieNote) movieNote(l);
+    sceKernelDelayThread(250000);
+    m = movieOpen1(fn, &e);
+  }
+  if (errOut) *errOut = m ? MV_OK : e;
+  return m;
 }
 
 static unsigned mvClock(const Movie *m) {   // сэмплы от начала ролика

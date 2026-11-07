@@ -1,0 +1,21 @@
+# ag/loadorder R7: L7, выбор миссии m4 (старт в школе, msnTeleport + msnRoomSync), потом выход из школы дверью: город у двери (клетки, а не только пол) готов?
+flag nosave
+flag roomexitring1209old
+flag teledoor1209old
+scene LO7_BOOT
+wait 3
+flag golevel 7
+wait 12
+scene LO7_SEL_M4
+flag msnsel 3
+wait 5
+scene LO7_OUT
+foot 499.98 343.72 0 -20
+wait 1
+foot 500.01 341.9 0 -20
+wait 0.6
+press triangle 0.2
+wait 12
+scene LO7_END
+wait 4
+end

@@ -12,6 +12,8 @@
 static SceUID msioSema = -1;
 int (*volatile msioReadWait)(int fd, void *data, unsigned int size);
 volatile unsigned msioReads, msioWaits, msioMaxWaitUs;
+volatile unsigned msioLockLimitMs; void (*volatile msioLockTimeout)(unsigned ms);
+volatile unsigned msioBusySince; volatile int msioBusyFd, msioHangTest, msioHangLoader;
 void msioInit(void) { if (msioSema < 0) msioSema = sceKernelCreateSema("msio", 0, 1, 1, NULL); }
 // №741/№700 (смена уровня висела намертво на экране загрузки — эмулятор 2 из 2, L6 на PSP): msioRead держит замок и, пока ждёт кусок, крутит кадры
 // экрана загрузки (msioReadWait); в кадре самописец пишет журнал (msioWrite) — тот же поток второй раз берёт тот же неповторный замок и ждёт сам себя.
@@ -27,7 +29,17 @@ int msioOwned(void) { return nested(); }   // №775: поток сейчас в
 static void lock(void) {
   if (msioSema < 0) return;
   unsigned t0 = sceKernelGetSystemTimeLow();
-  if (sceKernelPollSema(msioSema, 1) < 0) { msioWaits++; sceKernelWaitSema(msioSema, 1, NULL); unsigned w = sceKernelGetSystemTimeLow() - t0; if (w > msioMaxWaitUs) msioMaxWaitUs = w; }
+  if (sceKernelPollSema(msioSema, 1) < 0) { msioWaits++;
+#ifndef MSIO_HOST_STUBS
+    for (;;) {   // ТЕСТ90: замок ждёт не дольше предела за раз; владелец завис в чтении — главный поток получает экран ошибки, а не вечное ожидание
+      unsigned to = (msioLockLimitMs ? msioLockLimitMs : 6000u) * 1000u;
+      if (sceKernelWaitSema(msioSema, 1, &to) >= 0) break;
+      void (*cb)(unsigned) = msioLockTimeout; if (cb) cb((sceKernelGetSystemTimeLow() - t0) / 1000u);
+    }
+#else
+    sceKernelWaitSema(msioSema, 1, NULL);
+#endif
+    unsigned w = sceKernelGetSystemTimeLow() - t0; if (w > msioMaxWaitUs) msioMaxWaitUs = w; }
   owner = sceKernelGetThreadId();
 }
 static void unlock(void) { owner = -1; if (msioSema >= 0) sceKernelSignalSema(msioSema, 1); }
@@ -41,7 +53,13 @@ int msioRead(int fd, void *data, unsigned int size) {
     unsigned int n = size > MSIO_CHUNK ? MSIO_CHUNK : size;
     lock();
     int (*waitRead)(int, void *, unsigned) = msioReadWait;
+#ifndef MSIO_HOST_STUBS
+    if (msioHangLoader > 0 && sceKernelGetThreadCurrentPriority() == 0x18) { msioHangLoader--; msioBusyFd = fd; msioBusySince = sceKernelGetSystemTimeLow() | 1u; sceKernelSleepThread(); }
+    if (msioHangTest > 0) { msioHangTest--; msioBusyFd = fd; msioBusySince = sceKernelGetSystemTimeLow() | 1u; sceKernelSleepThread(); }   // тест: чтение не возвращается
+#endif
+    msioBusyFd = fd; msioBusySince = sceKernelGetSystemTimeLow() | 1u;
     int r = waitRead ? waitRead(fd, p, n) : sceIoRead(fd, p, n);
+    msioBusySince = 0;
     sceIoIoctl(fd, MSIO_NOP_IOCTL, NULL, 0, NULL, 0);   // сброс общего кэша ARK: следующее чтение (любой файл, любой поток) — с карты
     unlock(); msioReads++;
     if (r < 0) return total ? total : r;

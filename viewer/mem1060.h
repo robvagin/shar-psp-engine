@@ -30,7 +30,7 @@ static void mem1060Log(const char *what, unsigned f0, unsigned b0, int n, int ok
 // загрузчик стоит, все клетки города и готовый пакет будки — в кучу; возвращает число выгруженных клеток
 static int mem1060Free(void) {
   lqn = 0; __asm__ volatile("" ::: "memory");
-  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
+  { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_mem", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
   ringState = 0;
   int n = cellsDropBeyond(-1.f);
   uiScrWarmClear();   // пакет будки, лежавший про запас
@@ -51,6 +51,7 @@ static void mem1060NewsOut(void **fbp) { loadEnd(fbp); SCR_CLOSE(); }
 typedef struct { unsigned c; short x, y, z, pad; } M1060V;
 static int mem1060Frames;   // кадров перехода без кучи за последнюю сцену (журнал TRANS1060, гейт)
 static void mem1060Frame(void **fbp, int permille, int fadeA) {   // fadeA 0..255 — чёрный слой поверх мира (без очистки); permille < 0 — только слой
+  GE_NEST_GUARD("mem1060Frame");   // №1186/№1188
   sceGuStart(GU_DIRECT, list); resetState(); sceGuScissor(0, 0, SCR_W, SCR_H);
   if (permille >= 0) { sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT); }
   sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_DEPTH_TEST); sceGuEnable(GU_BLEND); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);

@@ -1,0 +1,49 @@
+# аудит g01 №1172, улица L1 (z=161, от x=180 до 326, курс +X): автопилот разгоняет до ~17 м/с, на x≈247 берём руками: газ, руль вправо 0,5 с, кадры каждые 0,2 с
+flag camdet 1
+scene start
+wait 3
+scene L1_load
+flag golevel 1
+wait 30
+flag repair
+scene L1_run
+flag drive 40
+wait 23
+shot pre0
+wait 1
+shot pre1
+flag stop
+press cross 6
+stick 1 0 0.5
+wait 0.2
+shot t01
+wait 0.2
+shot t02
+wait 0.2
+shot t03
+wait 0.2
+shot t04
+wait 0.2
+shot t05
+wait 0.2
+shot t06
+wait 0.2
+shot t07
+wait 0.2
+shot t08
+wait 0.2
+shot t09
+wait 0.2
+shot t10
+wait 0.2
+shot t11
+wait 0.2
+shot t12
+wait 0.2
+shot t13
+wait 0.2
+shot t14
+wait 0.2
+shot t15
+wait 1
+end

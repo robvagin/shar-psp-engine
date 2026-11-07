@@ -1,0 +1,42 @@
+# №1169: RESUME GAME в главном меню: камера подлетает к телевизору; в кадре, что остаётся на экране на время загрузки (TV_leave), не должно быть заголовка со стрелками, надписи пункта и подсказки.
+# Путь: LOAD GAME -> слот (сохранение save00.bin рядом с EBOOT, SMOKE_SAVEFILES) -> YES -> Load Successful -> назад в меню (RESUME GAME включён) -> RESUME GAME. «flag tvhold 1» — служебно: после подлёта ещё 40 кадров меню и снимок TV_leave
+flag menu
+flag saves
+wait 1.5
+press right
+wait 0.6
+press cross 0.2
+wait 3
+press cross 0.2
+wait 1.5
+press up 0.2
+wait 0.5
+press cross 0.2
+wait 4
+press cross 0.2
+wait 4
+scene TV_resume
+shot F_00
+flag tvhold 1
+press cross 0.2
+shot F_01
+wait 0.1
+shot F_02
+wait 0.1
+shot F_03
+wait 0.1
+shot F_04
+wait 0.1
+shot F_05
+wait 0.1
+shot F_06
+wait 0.1
+shot F_07
+wait 0.1
+shot F_08
+wait 0.1
+shot F_09
+wait 0.1
+shot F_10
+wait 4
+end

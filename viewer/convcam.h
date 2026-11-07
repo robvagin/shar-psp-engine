@@ -41,4 +41,5 @@ float convNear(const ConvScene *s, const float eye[3]);
 // x, y в долях кадра [0..1] (0,0 — левый верх), глубина; 0 — за камерой
 void convFace(const ConvScene *s, int who, float out[3]);
 int convProject(const float eye[3], const float look[3], float fovY, const float p[3], float *x, float *y, float *depth);
+extern int convVFov43;   // аудит 04.11: 1 — вертикальный угол кадра разговора как у оригинала на 4:3 (flag convvfov43 1); по умолчанию 0
 #endif

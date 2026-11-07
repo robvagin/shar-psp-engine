@@ -1,0 +1,19 @@
+# ag/loadorder R1: L1, Гомер пешком идёт в дом Симпсонов настоящей кнопкой (без foot в комнату), потом выходит
+flag nosave
+scene LO_START
+wait 3
+scene LO_SIMP_DOOR
+foot 228.94 183.30 0.0000 4.23
+wait 1.5
+press circle 0.3
+wait 1
+press triangle
+wait 6
+scene LO_SIMP_IN
+wait 3
+scene LO_SIMP_OUT
+press triangle
+wait 6
+scene LO_AFTER
+wait 3
+end

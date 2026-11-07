@@ -22,12 +22,14 @@
 #define FPU_VZO 0x1Cu                     // V Z O (младшие I U не ловим и не считаем: неточность и потеря точности — норма)
 #define FPU_KEEP_MASK 0x01800003u         // FS, cc0 и режим округления — остаются как были
 enum { FPU_T_MAIN, FPU_T_LOADER, FPU_T_MIX, FPU_T_AIO, FPU_T_BBW, FPU_T_DOG, FPU_T_MOVIE, FPU_T_BOOT, FPU_T_N };
+#include "reliab.h"
 extern volatile int fpuKeep;              // 1 — ловушки как у PSP по умолчанию (служебный файл fputrap / FPU_TRAP_KEEP)
 extern volatile unsigned fpuSeenThr, fpuSeenFlg;   // какие потоки видели V/Z/O (бит FPU_T_*) и какие флаги (V=16 Z=8 O=4)
 static inline unsigned fpuGet(void) { unsigned v; __asm__ volatile("cfc1 %0, $31" : "=r"(v)); return v; }
 static inline void fpuSet(unsigned v) { __asm__ volatile("ctc1 %0, $31" : : "r"(v) : "memory"); }
 // начало потока: ловушки выключить (если не fpuKeep), флаги и причину сбросить; -> FCR31 до правки (для шапки ящика)
 static inline unsigned fpuThreadInit(void) {
+  relStackPaint();   // №1195: стек потока закрасить (зонд высоты заполненности, reliab.c)
   unsigned f = fpuGet();
 #if !defined(FPU_TRAP_KEEP) || !FPU_TRAP_KEEP
   if (!fpuKeep) fpuSet(f & FPU_KEEP_MASK);

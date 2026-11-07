@@ -370,7 +370,7 @@ def mission_voice(lv):
 # start = Pickup (дальше Main по цепочке) | Main | Intro; drama = Drama_Pickup (-> Drama) | Drama; 10sec_to_go = 10sec;
 # win = End_Pos; lose = End_Neg; get_out_of_car = End_Sus* (случайная). Событие без потоков (M0_start) — «музыка не меняется».
 MEV_KIND = {'start': 0, 'drama': 1, 'win': 2, 'lose': 3, 'get_out_of_car': 4, '10sec_to_go': 5}
-MEV_GROUP = re.compile(r'^(M\d|Bonus)_(start|drama|win|lose|get_out_of_car|10sec_to_go)$', re.I)
+MEV_GROUP = re.compile(r'^(M\d|Bonus|StreetRace0[123])_(start|drama|win|lose|get_out_of_car|10sec_to_go)$', re.I)   # ТЕСТ90: уличные гонки как и у music_graph.EVENT (путь по умолчанию); тут — прежний разбор строк и матрицы состояний
 
 def music_role(stream):
     s = stream.lower()

@@ -1,0 +1,12 @@
+# Аудит 04.11 (строка g10b: G59_XFER, перенос на 960 м, самый длинный кадр 142 → 412 мс): L2, пешком в угол карты, RESET CAR к стартовой машине; CAMIN usmax — самый длинный кадр
+scene A_XFER
+flag golevel 2
+wait 40
+foot -600 -735 0
+wait 3
+flag camin 1
+flag repair
+wait 4
+shot xfer_after
+flag camin
+end

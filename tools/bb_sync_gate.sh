@@ -3,6 +3,7 @@
 #   tools/bb_sync_gate.sh EBOOT.PBP НАБОР [ВЫХОД]            зелёный: счётчик синхронных записей ящика на пути игрока (NEW GAME 35 с) = 0, кроме fail/melad;
 #                                                              после «flag freeze» ящик хранит последнюю строку (tools/bb_last_line.txt)
 #   BB_EXPECT_FAIL=1 tools/bb_sync_gate.sh …                 красный контроль: EBOOT старого кода (или сборка -DBB_SYNC_OLD=1) обязан упасть по синхронным записям
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/linux_env.sh"   # Linux: обёртки stat/cp/sed под синтаксис macOS (tools/linux_env.sh)
 set -u
 cd "$(dirname "$0")/.."; ROOT=$PWD
 EB=${1:?EBOOT.PBP}; PK=${2:?НАБОР (папка данных)}; OUT=${3:-$ROOT/build/bb_sync_gate/$(date +%H%M%S)}

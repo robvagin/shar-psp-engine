@@ -1,15 +1,9 @@
-# Прогон 2 (новый запуск эмулятора): главное меню -> LOAD GAME (карусель ◄ x4: NEW GAME -> LOAD GAME) -> слот 1 ->
+# Прогон 2 (новый запуск эмулятора): главное меню -> LOAD GAME (курсор стоит на RESUME GAME, ► через край: LOAD GAME) -> слот 1 ->
 # «Load Successful» -> уровень -> строка прогресса SVPROG src=load (сверка с прогоном 1)
 flag menu
 flag saves
 wait 1.5
-press left
-wait 0.3
-press left
-wait 0.3
-press left
-wait 0.3
-press left
+press right
 wait 0.4
 shot sv_menu_load
 press cross
@@ -19,8 +13,21 @@ shot sv_load_slots
 press cross
 wait 2.5
 shot sv_loaded
+# «Loading this data will cause current game progress to be lost. Load anyway?» (SVM_LOADASK, всегда): курсор на No, ↑ на Yes
+press up
+wait 0.4
 press cross
-wait 5
+wait 3
+shot sv_load_ok
+# «Load Successful» -> Continue -> игра
+press cross
+# правка 448 (LOAD_TO_MENU): слот загружен — камера летит назад в главное меню (LOADBACK), курсор на RESUME GAME, игра не стартует. ✕ на RESUME GAME — старт
+wait 6
+shot sv_loaded_back
+press cross
+# загрузка уровня в безголовом эмуляторе под нагрузкой Мака — до ~12 с (SVPROG src=load, GAME), потом отметка «через 5 с»
+wait 16
 flag svlog
+wait 1
 shot sv_game_loaded
 end

@@ -9,6 +9,7 @@
 
 #ifdef SKIN_HOST
 #include <stdio.h>
+#include <stdint.h>   // №1162: uint64_t в хост-сборке (tools/mcp_bake.sh) на Linux без этого не собирается
 #else
 #include <malloc.h>
 #include <pspkernel.h>
@@ -182,6 +183,23 @@ SkinPre *skinPreStart(const char *path) {
 #ifndef SKINPRE_POLL_RES_OLD
 #define SKINPRE_POLL_RES_OLD 0
 #endif
+unsigned ioWaitLimitMs, ioWaitTimeouts; int ioWaitLimitOld; void (*ioWaitNote)(const char *what, unsigned ms);
+#ifndef SKIN_HOST
+int ioWaitBounded(int fd, long long *res, unsigned size, const char *what) {
+  SceInt64 rr = -1;
+  if (ioWaitLimitOld) { int w = sceIoWaitAsync(fd, &rr); *res = rr; return w < 0 ? -1 : 1; }
+  unsigned lim = ioWaitLimitMs ? ioWaitLimitMs : 3000u + (unsigned)((unsigned long long)size * 4000ull / 1048576ull), t0 = sceKernelGetSystemTimeLow();
+  for (;;) {
+    int r = sceIoPollAsync(fd, &rr);
+    if (r <= 0) { *res = rr; return r == 0 ? 1 : -1; }
+    if (sceKernelGetSystemTimeLow() - t0 > lim * 1000u) {   // не вернулось: отмена, дождаться её (после отмены ожидание не вечное), буфер можно освобождать
+      ioWaitTimeouts++; if (ioWaitNote) ioWaitNote(what, lim);
+      sceIoCancel(fd); sceIoWaitAsync(fd, &rr); *res = -1; return 0;
+    }
+    sceKernelDelayThread(500);
+  }
+}
+#endif
 int skinPreDone(int pollRet) { return SKINPRE_ERR_OLD ? pollRet == 0 : pollRet <= 0; }
 int skinPreReady(SkinPre *p) {
 #ifdef SKIN_HOST
@@ -199,7 +217,7 @@ SkinModel *skinPreFinish(SkinPre *p) {
 #ifndef SKIN_HOST
   SceInt64 res = -1; int r = 0;
   if (!SKINPRE_POLL_RES_OLD && p->done && !p->err) res = p->res;   // опрос уже вернул «готово» и забрал результат — Wait дал бы ошибку и модель шла бы синхронным чтением (TEST18: 94 из 94 «async-fail»)
-  else r = sceIoWaitAsync(p->fd, &res);
+  else { long long rl = -1; int w = ioWaitBounded(p->fd, &rl, p->size, "skinpre"); res = rl; r = w == 1 ? 0 : -1; }   // ТЕСТ90: предел 3 с + 4 с/МБ, отказ модели — путь «npc!» вызывающего
   sceIoClose(p->fd);
   if (r < 0 || res != (SceInt64)p->size) { free(p->d); free(p); return 0; }
 #endif
@@ -209,7 +227,7 @@ SkinModel *skinPreFinish(SkinPre *p) {
 void skinPreCancel(SkinPre *p) {
   if (!p) return;
 #ifndef SKIN_HOST
-  SceInt64 res; sceIoWaitAsync(p->fd, &res); sceIoClose(p->fd);
+  { long long rl; if (!p->done) ioWaitBounded(p->fd, &rl, p->size, "skinprecancel"); else { SceInt64 res; sceIoWaitAsync(p->fd, &res); } } sceIoClose(p->fd);   // ТЕСТ90: отмена с пределом
 #endif
   free(p->d); free(p);
 }

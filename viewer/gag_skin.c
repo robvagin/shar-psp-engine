@@ -15,9 +15,9 @@ static SkinModel *models;
 static SkinPlayer *player;
 static unsigned count;
 static CollectRead sourceRead; static void *sourceUser; static unsigned sourceSize;
-static unsigned char **owned;
+static unsigned char **owned;static unsigned char *badRec;
 unsigned gagSkinResidentBytes;
-void gagSkinFree(void) { if (owned) { for (unsigned i=0;i<count;i++) free(owned[i]); free(owned); } owned=0; sourceRead=0; sourceUser=0; sourceSize=0; gagSkinResidentBytes=0; free(models); free(player); models = 0; player = 0; records = 0; count = 0; }
+void gagSkinFree(void) { free(badRec); badRec=0; if (owned) { for (unsigned i=0;i<count;i++) free(owned[i]); free(owned); } owned=0; sourceRead=0; sourceUser=0; sourceSize=0; gagSkinResidentBytes=0; free(models); free(player); models = 0; player = 0; records = 0; count = 0; }
 static int inside(unsigned size, unsigned off, unsigned n, unsigned stride) {
   return off <= size && n <= (size - off) / stride;
 }
@@ -113,6 +113,26 @@ int gagSkinPrepare(const Collect *c,const unsigned char *wanted) {
     sceKernelDcacheWritebackRange(d,r->size);
 #endif
   }
+  return 0;
+}
+void gagSkinTrim(const unsigned char *wanted) {
+  if(!sourceRead)return;
+  for(unsigned i=0;i<count;i++) if(owned[i] && !wanted[records[i].gag]){gagSkinResidentBytes-=records[i].size;free(owned[i]);owned[i]=0;memset(models+i,0,sizeof *models);}
+}
+int gagSkinNext(const unsigned char *wanted,unsigned *idx,unsigned *off,unsigned *size) {
+  if(!sourceRead)return 0;
+  for(unsigned i=0;i<count;i++) if(wanted[records[i].gag] && !owned[i] && !(badRec && badRec[i])){*idx=i;*off=records[i].off;*size=records[i].size;return 1;}
+  return 0;
+}
+int gagSkinGagOf(unsigned idx){return idx<count?records[idx].gag:-1;}
+void gagSkinMarkBad(unsigned idx){if(idx>=count)return;if(!badRec)badRec=calloc(count,1);if(badRec)badRec[idx]=1;}
+int gagSkinAdopt(unsigned idx,unsigned char *buf) {
+  if(!sourceRead || idx>=count || owned[idx])return -1;
+  if(bindModel(idx,buf,records[idx].size)){memset(models+idx,0,sizeof *models);return -1;}
+  owned[idx]=buf;gagSkinResidentBytes+=records[idx].size;
+#ifndef SKIN_HOST
+  sceKernelDcacheWritebackRange(buf,records[idx].size);
+#endif
   return 0;
 }
 unsigned gagSkinDraw(const Collect *c, int room, float ex, float ez, float distance) {

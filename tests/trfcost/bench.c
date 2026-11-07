@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
   const float DT = 1.f / 30.f; double sum = 0, worst = 0; long frames = 0, cars = 0, peds = 0, standing = 0;
   for (int a = 0; a < 5; a++) {
     carInit(&player, NULL, &world, at[a][0], ground(at[a][0], at[a][1], 50.f), at[a][1], 0.f);
-    trafficReset(&T, &world);
+    trafficReset(&T, &world); if (getenv("SEED")) T.seed += (unsigned)atoi(getenv("SEED")) * 7919u;   // SEED=n — другой поток случайных чисел
     for (int fr = 0; fr < 2400; fr++) {
       CarInput ci = {0, 0, 0, fr < 1200 ? 1 : 0}; carUpdate(&player, &world, &ci, DT);
       float pp[3] = {player.x, player.y, player.z}, eye[3] = {player.x, player.y + 3.f, player.z - 7.f}, fw[3] = {0, 0, 1};

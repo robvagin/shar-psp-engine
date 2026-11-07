@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
   // 2. бег: скорость сразу 8 при половине стика
   homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 60; i++) step(&H, 0, 0, 0, 0, 0);
   for (int i = 0; i < 12; i++) step(&H, 0, .5f, 1, 0, 0);
-  chk("1.4/P02-3 бег на половине стика через 0,2 с, м/с", hv(&H), 7.5f, 8.2f, 3.0f, 4.1f);
+  chk("1.4/P02-3 бег на половине стика через 0,2 с, м/с (разгон 13 м/с² по записи PS2: 2,6)", hv(&H), 2.3f, 2.9f, 3.0f, 4.1f);
   // 3. разворот на бегу: стик назад на полную через 0,5 с
   homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 30; i++) step(&H, 0, 1, 1, 0, 0);
   float h0 = H.h; for (int i = 0; i < 30; i++) step(&H, 0, -1, 1, 0, 0); float dh = fabsf(remainderf(H.h - h0, 6.2831853f)) * 57.2958f;
@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
   // 8. прыжок с места: заводка
   homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 60; i++) step(&H, 0, 0, 0, 0, 0);
   step(&H, 0, 0, 0, 1, 0); for (int i = 0; i < 3; i++) step(&H, 0, 0, 0, 0, 0);
-  chk("P02-7 прыжок с места: высота над землёй через 4 кадра, м", H.y - H.groundY, 0.f, .02f, .05f, 2.f);
+  chk("P02-7 прыжок с места: высота над землёй через 4 кадра, м (заводка 0,02 с по записи PS2; старое — на весь клип)", H.y - H.groundY, .2f, .45f, .05f, 2.f);
   // 9. стомп: вертикаль
   homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 40; i++) step(&H, 0, 1, 0, 0, 0);
   step(&H, 0, 1, 0, 1, 0); for (int i = 0; i < 20; i++) step(&H, 0, 1, 0, 0, 0); step(&H, 0, 1, 0, 1, 0); for (int i = 0; i < 6; i++) step(&H, 0, 1, 0, 0, 0);
@@ -197,5 +197,61 @@ int main(int argc, char **argv) {
     homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (int i = 0; i < 5; i++) step(&H, 0, 0, 0, 0, 0);
     for (int i = 0; i < 6; i++) { carInit(&cs[i], NULL, &world, H.x + dxs[i], H.y, H.z, 0.f); cs[i].v = vs[i]; worth += homerCarWorth(&H, &cs[i]); }
     chk("круг 6: машин миссии, дошедших до разбора сбивания (из 6), штук", (float)worth, 2.f, 2.f, 6.f, 6.f); }
+  // 14. GitHub #2 п.1 (запись PS2 04.11: gh2_stop_all / gh2_sprint_off / gh2_stick_off). Бег 1,5 с по ровной земле, дальше конец бега
+  //     PS2: ○ отпущен при стике — 8,6 → 4,3 м/с за один тик; оба отпущены — 4,2 за тик и 0 за 0,44 с; стик отпущен при ○ — 10 м/с² (0 за 0,8 с)
+  { int i, t0;
+    homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (i = 0; i < 40; i++) step(&H, 0, 0, 0, 0, 0);
+    for (i = 0; i < 48; i++) step(&H, 0, 1, 1, 0, 0);   // бег разгоняется ≈ 13 м/с² (запись PS2): до 8 м/с за 0,6 с
+    float vRun = hv(&H); step(&H, 0, 1, 0, 0, 0);
+    chk("GH2 п.1: бег 8 перед отпусканием ○, м/с", vRun, 7.5f, 8.3f, 7.5f, 8.3f);
+    chk("GH2 п.1: ○ отпущен при стике, скорость через 1 тик, м/с (PS2 4,3)", hv(&H), 3.9f, 4.4f, 7.2f, 8.1f);
+    for (i = 0; i < 30; i++) step(&H, 0, 1, 0, 0, 0);
+    chk("GH2 п.1: ○ отпущен при стике, через 0,5 с остаётся шаг, м/с (PS2 3,9-4,3)", hv(&H), 3.7f, 4.3f, 3.7f, 4.3f);
+    homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (i = 0; i < 40; i++) step(&H, 0, 0, 0, 0, 0);
+    for (i = 0; i < 48; i++) step(&H, 0, 1, 1, 0, 0);   // бег разгоняется ≈ 13 м/с² (запись PS2): до 8 м/с за 0,6 с
+    step(&H, 0, 0, 0, 0, 0);
+    chk("GH2 п.1: оба отпущены, скорость через 1 тик, м/с (PS2 4,2)", hv(&H), 3.7f, 4.3f, 7.2f, 8.1f);
+    for (t0 = 1; t0 < 120 && hv(&H) > .05f; t0++) step(&H, 0, 0, 0, 0, 0);
+    chk("GH2 п.1: оба отпущены, остановка за, с (PS2 0,44; PC 0,48)", t0 * DT, .38f, .52f, .7f, .9f);
+    homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (i = 0; i < 40; i++) step(&H, 0, 0, 0, 0, 0);
+    for (i = 0; i < 48; i++) step(&H, 0, 1, 1, 0, 0);   // бег разгоняется ≈ 13 м/с² (запись PS2): до 8 м/с за 0,6 с
+    for (t0 = 1; t0 < 200 && hv(&H) > .05f; t0++) step(&H, 0, 0, 1, 0, 0);
+    chk("GH2 п.1: стик отпущен, ○ держат, остановка за, с (PS2 0,78; без изменений)", t0 * DT, .7f, .9f, .7f, .9f); }
+  // 14б. GitHub #2: ○ отпущен при стике вбок — ход сразу по стику (PS2: рассогласование хода и стика 30° → 1° за тик)
+  { int i; homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (i = 0; i < 40; i++) step(&H, 0, 0, 0, 0, 0);
+    for (i = 0; i < 48; i++) step(&H, 0, 1, 1, 0, 0);
+    float a0 = atan2f(H.vx, H.vz); step(&H, 1, 0, 0, 0, 0);
+    chk("GH2 п.1: ○ отпущен, стик вбок: поворот хода за 1 тик, град (PS2 сразу к стику)", fabsf(remainderf(atan2f(H.vx, H.vz) - a0, 6.2831853f)) * 57.2958f, 70.f, 110.f, 0.f, 15.f); }
+  // 14в. GitHub #2 п.2 и п.3 (запись PS2 gh2_turn30/90/180: один закон, доля 0,07-0,08 остатка угла за тик 0,04 с, без двух режимов; ход вдоль лица)
+  //      Бег с места, стик вперёд, через 2 тика стик вбок (90°): границу задаёт кнопка ○, не скорость. За 0,5 с лицо: 90 × (1 − 0,92^12,5) = 58°
+  { int i; homerPlace(&H, &world, spx, spy + 1.f, spz, 0.f); for (i = 0; i < 40; i++) step(&H, 0, 0, 0, 0, 0);
+    for (i = 0; i < 2; i++) step(&H, 0, 1, 1, 0, 0);
+    float hh0 = H.h; for (i = 0; i < 30; i++) step(&H, 1, 0, 1, 0, 0);
+    chk("GH2 п.2: бег с места, стик на 90°, поворот лица за 0,5 с, град (PS2-закон 58)", fabsf(remainderf(H.h - hh0, 6.2831853f)) * 57.2958f, 50.f, 66.f, 80.f, 91.f);
+    float ang = fabsf(remainderf(atan2f(H.vx, H.vz) - H.h, 6.2831853f)) * 57.2958f;
+    chk("GH2 п.3: ход вдоль лица (совпало с оригиналом, красного нет), град", ang, 0.f, 3.f, 0.f, 91.f);
+    chk("GH2 п.3: на дуге скорость на разгоне 13 м/с² за 0,53 с, м/с (старое: сразу 8)", hv(&H), 6.6f, 7.2f, 7.8f, 8.2f); }
+  // 15. аудит 04.11, высокая посадка (решение дирижёра; оригинал: сиденье водителя выше 0,1 м над началом машины — клипы *_high_driver для посадки и выхода).
+  //     Для каждого из двух видов машины: посадка с земли (HS_TO_DOOR → HS_GET_IN → HS_IN_CAR), поездка 1 с, выход (HS_GET_OUT → HS_FOOT).
+  //     Считаем кадры с клипом *_high_driver, наибольший скачок корня за кадр (не должно быть разрывов цепочки клипов) и что Гомер дошёл до конца
+  for (int hi = 0; hi < 2; hi++) {
+    static Car car4; carInit(&car4, NULL, &world, spx, spy, spz, 0.f); HomerCar hc4; homerCarFrom(&hc4, &car4, .62f); hc4.high = hi;
+    homerPlace(&H, &world, spx + 2.f, spy + 1.f, spz + 1.f, 0.f); for (int i = 0; i < 30; i++) step(&H, 0, 0, 0, 0, 0);
+    int entered = homerEnterCar(&H, &hc4, NULL), highIn = 0, highOut = 0, gotIn = 0, gotOut = 0; float jump = 0.f, px = H.x, pz = H.z;
+    for (int i = 0; i < 60 * 14 && !gotOut; i++) {
+      if (H.state == HS_IN_CAR && !gotIn) gotIn = i;
+      if (gotIn && !gotOut && i == gotIn + 60) homerExitCar(&H, &hc4, NULL);
+      homerUpdate(&H, &world, &hc4, &(HomerInput){0}, DT); homerPose(&H);
+      if (H.state == HS_GET_IN || H.state == HS_GET_OUT) {
+        if (H.clip >= 0 && strstr(H.m->c[H.clip].name, "_high")) { if (H.state == HS_GET_IN) highIn++; else highOut++; }
+        float d = hypotf(H.x - px, H.z - pz); if (d > jump) jump = d; }
+      px = H.x; pz = H.z;
+      if (gotIn && H.state == HS_FOOT && i > gotIn + 60) gotOut = 1;
+    }
+    chk(hi ? "аудит: высокое сиденье — посадка клипами *_high (кадров, > 20)" : "аудит: низкое сиденье — клипы *_high не играют (0)", (float)highIn, hi ? 20.f : 0.f, 400.f, hi ? 0.f : 0.f, hi ? 0.f : 0.f);
+    chk(hi ? "аудит: высокое сиденье — выход клипами *_high (кадров, > 20)" : "аудит: низкое сиденье — выход обычный (0)", (float)highOut, hi ? 20.f : 0.f, 400.f, 0.f, 0.f);
+    chk(hi ? "аудит: высокое сиденье — сел и вышел (1)" : "аудит: низкое сиденье — сел и вышел (1)", (float)(entered && gotIn && gotOut), 1.f, 1.f, 1.f, 1.f);
+    chk(hi ? "аудит: высокое сиденье — наибольший скачок корня за кадр, м" : "аудит: низкое сиденье — наибольший скачок корня за кадр, м", jump, 0.f, .30f, 0.f, .30f);
+  }
   printf("%s: %d провалов\n", mode, fails); return fails;
 }

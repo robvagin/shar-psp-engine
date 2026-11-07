@@ -16,6 +16,20 @@
 #endif
 
 // ---- правила порта (в данных нет; числа — по ощущению, сверка с эталоном PS2 позже)
+// №1202 (Роб: «заметно появление машин вдалеке»). Замер TRFPOP/TRFSPAWN (езда 150 с): машины рождаются в кольце до 119 м (медиана 73–102 м) внутри конуса взгляда за дальностью рисования 90 м
+// и появляются на её краю: L1 8, L5 25, L3 8 раз в минуту. Подъём общей дальности drawDist до 125 м убирает появления на краю (25 → 0,8 в минуту), но то же правило запрещает рождение в кадре: машин в кадре на L5
+// 2,1 → 0,3 в среднем, трафик пропадает. Поэтому две дальности: рисования машин carDrawDist 125 м (больше кольца) и прежняя drawDist 90 м для рождения; машина, родившаяся в кадре дальше 55 м, растворяется
+// из прозрачности за TRF_FADE_S (смешивание с постоянной прозрачностью, GU_FIX; рисует main_render.h setFlags). TRFDRAW1202_OLD=1 / файл `trfdrawold` / «flag trfdraw 90» — прежняя дальность; файл `trffadeold` / «flag trffade 0» — без растворения.
+#ifndef TRFDRAW1202_OLD
+#define TRFDRAW1202_OLD 0
+#endif
+#ifndef TRFFADE1202_OLD
+#define TRFFADE1202_OLD 0
+#endif
+#define TRF_CARDRAW1202 125.f
+#define TRF_FADE_S 0.8f      // с: растворение от 0 до 1
+#define TRF_FADE_MIN 55.f    // м: ближе появившиеся машины не растворяются (входят в кадр с края, рядом)
+void (*trfFadeHook)(float a); int trfFadeOn = !TRFFADE1202_OLD; unsigned trfFadeN; float trfFadeMin = 1.f; float trfFadeTest;   // trfFadeTest > 0 — служебное («flag trffadetest 0.5»): все рисуемые машины с постоянной прозрачностью (проверка вида растворения)   // служебно (смоук): сколько машин рисуется растворяясь в кадре и наименьшая прозрачность
 #define SPAWN_LEAD 40.f      // центр кольца — игрок + 40 м вперёд (hit-and-run-web TRAFFIC_RULES.cameraLead)
 #define SPAWN_R 65.f         // кольцо спавна (spawnRadius)
 #define SPAWN_BAND 10.f      // ширина кольца
@@ -184,6 +198,9 @@ static float wrapPi(float a) {
   if (!(a > -64.f && a < 64.f)) a = (a > -1e30f && a < 1e30f) ? fmodf(a, 6.2831853f) : 0.f;
   while (a > 3.14159265f) a -= 6.2831853f; while (a < -3.14159265f) a += 6.2831853f; return a;
 }
+#ifndef TRF_SEED_ADD
+#define TRF_SEED_ADD 0
+#endif
 static float rnd(Traffic *t) { t->seed = t->seed * 1664525u + 1013904223u; return (float)(t->seed >> 8) * (1.f / 16777216.f); }
 static int inside(const Traffic *t, uint32_t off, uint32_t len) { return off <= t->size && len <= t->size - off; }
 static void pushEvW(Traffic *t, int type, int idx, float x, float y, float z, float amount, const char *who) {
@@ -335,7 +352,7 @@ int trafficInitMem(Traffic *t, void *data, unsigned size, int own) {
   parkChoose(t);
   t->maxCars = h->nSlot < TR_MAXCAR ? (int)h->nSlot : TR_MAXCAR;
   t->maxPeds = h->nPed && h->nPath ? TR_MAXPED : 0;
-  t->drawDist = 90.f; t->pedDrawDist = 60.f; t->seed = 0x2545F491u;
+  t->drawDist = 90.f; t->carDrawDist = TRFDRAW1202_OLD ? 90.f : TRF_CARDRAW1202; t->pedDrawDist = 60.f; t->seed = 0x2545F491u + TRF_SEED_ADD * 7919u;   // TRF_SEED_ADD — служебная добавка к потоку случайных чисел для проверки «сдвиг случайности или правка» (по умолчанию 0)
 #ifndef SKIN_HOST
   sceKernelDcacheWritebackRange(data, size);   // GE читает вершины, палитры и тексели из ОЗУ
 #endif
@@ -2785,6 +2802,36 @@ static void drawCar(Traffic *t, const Car *k, int model, float wheelAng, float d
   trafficDrawModel(&t->model[model], t->piece, t->vert, k, wheelAng, lod, fn, user, &tris); t->drawnTris += tris;
 }
 const Car *trVisCar;   // clipguard.h: машина, чей ящик проверяет vis (NULL — нет)
+// №1202 (Роб: «заметно появление машин вдалеке»): журнал появления машин в кадре — первое рисование машины, которая жила и не рисовалась (проход дальности drawDist) или только родилась.
+// Только смоук (trfProfOn): main_loop.h пишет строки TRFPOP из trfPop[]; на кадр ничего не добавляет.
+TrPop trfPop[48]; unsigned trfPopN;
+static unsigned char trfSeen[2][256], trfAlive[2][256];
+static float trfFadeV[2][256]; static unsigned char trfFadeP[2][256]; static unsigned trfFadeT;
+// прозрачность машины: 0 → 1 за TRF_FADE_S с момента первого рисования, если оно случилось дальше TRF_FADE_MIN; drawn = 0 — машина не рисуется в этом кадре (следующее рисование снова «первое»)
+static float trfFadeSeen(int pass, int i, int drawn, float d) {
+  if (trfFadeTest > 0.f && drawn) return trfFadeTest;
+  if (i < 0 || i >= 256 || !trfFadeOn) return 1.f;
+  if (!drawn) { trfFadeP[pass][i] = 0; return 1.f; }
+  float dt = 0.f;
+#ifndef SKIN_HOST
+  { unsigned now = sceKernelGetSystemTimeLow(); if (trfFadeT) dt = (float)(now - trfFadeT) * 1e-6f; if (dt > .1f) dt = .1f; }
+#endif
+  if (!trfFadeP[pass][i]) { trfFadeP[pass][i] = 1; trfFadeV[pass][i] = d >= TRF_FADE_MIN ? 0.f : 1.f; }
+  return trfFadeV[pass][i];
+}
+static void trfFadeAdvance(void) {   // раз в кадр, после обхода: сдвиг прозрачностей (время — по часам кадра)
+#ifndef SKIN_HOST
+  unsigned now = sceKernelGetSystemTimeLow(); float dt = trfFadeT ? (float)(now - trfFadeT) * 1e-6f : 0.f; trfFadeT = now; if (dt > .1f) dt = .1f;
+  for (int p = 0; p < 2; p++) for (int i = 0; i < 256; i++) if (trfFadeP[p][i] && trfFadeV[p][i] < 1.f) { trfFadeV[p][i] += dt / TRF_FADE_S; if (trfFadeV[p][i] > 1.f) trfFadeV[p][i] = 1.f; }
+#endif
+}
+static void trfPopMark(int pass, int i, int live, int drawn, float d, float R) {
+  if (!live && i >= 0 && i < 256) trfFadeP[pass][i] = 0;   // машина ушла из мира: следующее появление — снова «первое» (растворение)
+  if (!trfProfOn || i < 0 || i >= 256) return;
+  if (!live) { trfSeen[pass][i] = trfAlive[pass][i] = 0; return; }
+  if (drawn && !trfSeen[pass][i] && trfPopN < 48) { TrPop *q = &trfPop[trfPopN++]; q->pass = (unsigned char)pass; q->i = (unsigned short)i; q->d = d; q->R = R; q->born = trfAlive[pass][i] ? 0 : 1; }
+  trfSeen[pass][i] = (unsigned char)drawn; trfAlive[pass][i] = 1;
+}
 void trafficDrawCars(Traffic *t, const float eye[3], int (*vis)(const float bb[6]), TrDrawFn fn, void *user) {
   t->drawnCars = t->lodCars = t->drawnPark = t->drawnTris = 0;
   if (!t->hd) return;
@@ -2792,25 +2839,27 @@ void trafficDrawCars(Traffic *t, const float eye[3], int (*vis)(const float bb[6
     int n = pass ? t->npark : t->maxCars;
     for (int i = 0; i < n; i++) {
       const Car *k; int model; float ang = 0.f;
-      if (!pass) { const TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) continue; k = &c->car; model = c->model; ang = c->wheelAng; }
-      else { if (!parkLive(t, i)) continue; k = &t->park[i].car; model = t->parkd[i].model; }
-      if (carShowHusk(k)) { if (!svHuskOk(t, model)) continue; model = (int)t->hd->huskModel; }   // P03-05: у части моделей остова нет — после взрыва машина пропадает
+      if (!pass) { const TrCar *c = &t->car[i]; if (c->mode == TRM_OFF) { trfPopMark(0, i, 0, 0, 0.f, 0.f); continue; } k = &c->car; model = c->model; ang = c->wheelAng; }
+      else { if (!parkLive(t, i)) { trfPopMark(1, i, 0, 0, 0.f, 0.f); continue; } k = &t->park[i].car; model = t->parkd[i].model; }
+      if (carShowHusk(k)) { if (!svHuskOk(t, model)) { trfPopMark(pass, i, 0, 0, 0.f, 0.f); continue; } model = (int)t->hd->huskModel; }   // P03-05: у части моделей остова нет — после взрыва машина пропадает
       float dx = k->x - eye[0], dy = k->y - eye[1], dz = k->z - eye[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
 #if CULL_SPHERE_OLD
       float R = carR(k);
-      if (d - R > t->drawDist) continue;
+      if (d - R > t->carDrawDist) { trfPopMark(pass, i, 1, 0, d, R); trfFadeSeen(pass, i, 0, 0.f); continue; }
       float bb[6] = {k->x - R, k->y - 1.f, k->z - R, k->x + R, k->y + 4.f, k->z + R};
-      if (vis) { trVisCar = k; int vv_ = vis(bb); trVisCar = 0; if (!vv_) continue; }
+      if (vis) { trVisCar = k; int vv_ = vis(bb); trVisCar = 0; if (!vv_) { trfPopMark(pass, i, 1, 0, d, R); continue; } }
 #else
       float R = carSphereR(k);
-      if (d > 30.f && d - R > t->drawDist) continue;   // №546: ближе 30 м машины не снимать дальностью
+      if (d > 30.f && d - R > t->carDrawDist) { trfPopMark(pass, i, 1, 0, d, R); trfFadeSeen(pass, i, 0, 0.f); continue; }   // №546: ближе 30 м машины не снимать дальностью
       float bb[6] = {k->x - R, k->y - R, k->z - R, k->x + R, k->y + R, k->z + R};
-      if (vis) { trVisCar = k; int vv_ = vis(bb); trVisCar = 0; if (!vv_) continue; }
+      if (vis) { trVisCar = k; int vv_ = vis(bb); trVisCar = 0; if (!vv_) { trfPopMark(pass, i, 1, 0, d, R); continue; } }
 #endif
-      drawCar(t, k, model, ang, d, fn, user);
+      trfPopMark(pass, i, 1, 1, d, R);
+      { float fa_ = trfFadeSeen(pass, i, 1, d); if (fa_ < .999f && trfFadeHook) { trfFadeN++; if (fa_ < trfFadeMin) trfFadeMin = fa_; trfFadeHook(fa_); drawCar(t, k, model, ang, d, fn, user); trfFadeHook(1.f); } else drawCar(t, k, model, ang, d, fn, user); }
       if (pass) t->drawnPark++; else t->drawnCars++;
     }
   }
+  trfFadeAdvance();
 }
 #ifndef PED_POSE_FAR_OLD
 #define PED_POSE_FAR_OLD 0

@@ -532,7 +532,7 @@ def _text(g, st, its, dl, fonts, sc, face_width, assets, U):
             # постоянная, на PAUSE_MIN_ROWS строк паузы свободной езды (правка 232), а пунктов в ней 5 — поля были по 49 px против 25 у паузы.
             # Пункты паузы миссии занимают ту же высоту, что 7 строк паузы: первая и последняя строки на тех же местах, поля как у паузы,
             # между строками больше воздуха (шаг 26 · 6 / 4 = 39). UI_TYPO_PAUSEMSN856_OLD=1 — шаг панели как у паузы
-            if g['id'] == 'pause_items' and sc == 'pausemsn' and os.environ.get('UI_TYPO_PAUSEMSN856_OLD') != '1':
+            if g['id'] == 'pause_items' and sc == 'pausemsn' and os.environ.get('UI_TYPO_PAUSEMSN856_OLD') != '1' and os.environ.get('PAUSEMSN1194_OLD') == '1':   # №1194: по умолчанию шаг как у паузы (26), без растяжки под рамку на 7 строк
                 rows_ = int(getattr(U, 'PAUSE_MIN_ROWS', 7) or 7)
                 if 2 <= n < rows_: p = int(round(p * (rows_ - 1) / (n - 1)))
             if p != p0:
@@ -916,6 +916,19 @@ def apply(sc, dl, assets, fonts, cfg=None, U=None):
                         if q.get('name') == 'PositionOrdinal':
                             q['dst'] = [q['dst'][0] + d] + list(q['dst'][1:])
     _elements(sc, dl, cfg.get('elements'), assets, U, fonts)   # №574: настройки отдельных элементов — самыми последними
+    if sc == 'levelstats' and os.environ.get('LEVELEND1206_OLD') != '1':
+        # №1206 п. 1: подсказка «USE MISSION SELECT TO RETURN TO THIS LEVEL» упиралась в значок ✕ ACCEPT справа — строка кончается за 6 px до значка (левый край уезжает, не короче 8 px от края кадра)
+        ic = [q for q in dl if q.get('name') == 'Accept' and q.get('type') == U.T_IMG]
+        for t in dl:
+            if t.get('name') == 'UseMissionSelect' and ic and t.get('strings'):
+                w = U.text_width(fonts.get(t['font']), t['strings'][0]); x0, y0, w0, h0 = t['dst']; lim = ic[0]['dst'][0] - 6
+                if x0 + w > lim:
+                    t['dst'] = [max(8, lim - w), y0, w0, h0]
+    if os.environ.get('TXTSHADOW1206_OLD') != '1':
+        # №1206 п. 5 (аудит 05.11 п. 6): тень мелкого пиксельного текста на всех экранах — непрозрачный чёрный 1 px вправо-вниз (было мягче и разной толщины)
+        for t in dl:
+            if t.get('type') == U.T_TEXT and str(t.get('font', '')).split('@')[0].split('*')[0] in ('bart_16bit', 'msx_thin', 'msx_bold') and t.get('strings') is not None:
+                t['sh'] = (1, 1, [0, 0, 0, 255])
     _brief_center(sc, dl, fonts, gs, U)                         # №632: Continue и LOADING по центру карточки (после элементов: ширина значка уже с масштабом)
     return dl
 

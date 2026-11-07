@@ -1,0 +1,130 @@
+# ТЕСТ90 память: L7 загружен (цепочка смен уровня), финал L7 → главное меню (гостиная fe.shr 5 200 032 Б) → бонус-игра трасса 4, конец сценария на старте гонки: с выгрузкой уровня до гостиной отказа 5,2 МБ и FERETRY841 нет
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO1_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 16
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO2_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO3_L6
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 6
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO4_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO5_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 16
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO6_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 25
+flag msnhud 1
+wait 5
+scene F_ENDING_L7
+flag repair
+wait 3
+flag lvlog
+flag msnmainat 701
+wait 8
+shot ending_screen
+wait 4
+press triangle 0.2
+wait 12
+shot ending_back
+scene F_BONUS_T4
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5
+flag bonustrack 4
+flag bonusquitat 110
+press left 0.3
+wait 1
+press cross 0.3
+wait 8
+shot bonus_t4_track
+press cross 0.3
+wait 1.5
+press cross 0.3
+wait 1.5
+press cross 0.3
+wait 4
+flag bonusgo
+wait 12
+shot bonus_t4_race
+end

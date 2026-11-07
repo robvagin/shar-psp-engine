@@ -1,5 +1,8 @@
 # Прогон 4 (DATA.BIN слота 1 испорчен гейтом): игра не падает — слот «< Damaged Save >», при выборе сообщение оригинала
 # «Load failed! ... corrupt and must be deleted. OK?» -> запись удаляется -> «No ... save data» -> меню -> NEW GAME без записи
+# после закрытия слотов камера летит от видика назад (~1 с, главное меню 3D): нажатия в перелёте не принимаются
+# 04.11 (гейт под g09b-menu): курсор при запуске на NEW GAME (RESUME скрыт: запись испорчена), ◄ x4 — LOAD GAME; повреждённый слот серый (P14-5): сразу «нет данных»,
+# Continue — назад в меню, ► x4 — NEW GAME. До 04.11 сценарий шёл по старому потоку (список слотов, «corrupt… OK?», удаление)
 flag menu
 flag saves
 wait 1.5
@@ -12,17 +15,11 @@ wait 0.3
 press left
 wait 0.4
 press cross
-wait 1
-shot sv_damaged_slots
-press cross
-wait 1
+wait 3
 shot sv_corrupt_msg
 press cross
 wait 2.5
 shot sv_nodata
-press cross
-# после закрытия слотов камера летит от видика назад (~1 с, главное меню 3D): нажатия в перелёте не принимаются
-wait 2.5
 press right
 wait 0.3
 press right

@@ -1,0 +1,49 @@
+### ТЕСТ90 2Б: меню → RESUME, загрузчик глух 6 с от флага (окно времени: счёт пробуждений тратили другие сигналы), loadwaitms 600 → повторы каждые 0,6 с; главный должен взять задание: «PREREAD takeover ok=1» в smoke.txt, затем GAME n=1. Набор БЕЗ prereadold. С PREREAD_TAKEOVER_OLD=1: LOADWAIT retry и дальше загрузка идёт только после того, как загрузчик проснётся (пятое пробуждение)
+flag nosave 1
+flag player 1
+flag menu
+flag intro
+flag saves
+wait 3
+press start
+wait 4
+press start
+wait 1
+press start
+wait 9
+press start
+wait 4
+press start
+wait 4
+flag newsshot 1
+flag loadwaitms 600
+flag loaderdeaf 6000
+press cross
+shot r00
+wait 0.5
+shot r01
+wait 0.5
+shot r02
+wait 0.5
+shot r03
+wait 0.5
+shot r04
+wait 0.5
+shot r05
+wait 0.5
+shot r06
+wait 0.5
+shot r07
+wait 0.5
+shot r08
+wait 0.5
+shot r09
+wait 0.5
+shot r10
+wait 0.5
+shot r11
+wait 0.5
+shot r12
+wait 3
+end
+

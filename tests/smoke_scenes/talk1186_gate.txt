@@ -1,0 +1,248 @@
+# №1186 гейт: конец разговора-старта на L1 (последний этап вступления): TALKSKIP start=1 -> полосы сходятся -> ирис talk_out. Запуск как tests/missions/boss_l7.sh: flag menu, lvset, NEW GAME крестом
+flag menu
+flag lvset 1
+scene talk_boot
+wait 1.5
+press cross
+wait 9
+scene F_TALK1186_L1_M0S0
+flag msnmainat -0
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m0s0_a
+wait 2
+shot talk1186_l1_m0s0_b
+scene F_TALK1186_L1_M0S1
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m0s1_a
+wait 2
+shot talk1186_l1_m0s1_b
+scene F_TALK1186_L1_M0S2
+flag msnmainat -2
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m0s2_a
+wait 2
+shot talk1186_l1_m0s2_b
+scene F_TALK1186_L1_M1S0
+flag msnmainat -100
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m1s0_a
+wait 2
+shot talk1186_l1_m1s0_b
+scene F_TALK1186_L1_M1S1
+flag msnmainat -101
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m1s1_a
+wait 2
+shot talk1186_l1_m1s1_b
+scene F_TALK1186_L1_M1S2
+flag msnmainat -102
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m1s2_a
+wait 2
+shot talk1186_l1_m1s2_b
+scene F_TALK1186_L1_M2S0
+flag msnmainat -200
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m2s0_a
+wait 2
+shot talk1186_l1_m2s0_b
+scene F_TALK1186_L1_M2S1
+flag msnmainat -201
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m2s1_a
+wait 2
+shot talk1186_l1_m2s1_b
+scene F_TALK1186_L1_M2S2
+flag msnmainat -202
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m2s2_a
+wait 2
+shot talk1186_l1_m2s2_b
+scene F_TALK1186_L1_M3S0
+flag msnmainat -300
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m3s0_a
+wait 2
+shot talk1186_l1_m3s0_b
+scene F_TALK1186_L1_M3S1
+flag msnmainat -301
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m3s1_a
+wait 2
+shot talk1186_l1_m3s1_b
+scene F_TALK1186_L1_M3S2
+flag msnmainat -302
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m3s2_a
+wait 2
+shot talk1186_l1_m3s2_b
+scene F_TALK1186_L1_M4S0
+flag msnmainat -400
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m4s0_a
+wait 2
+shot talk1186_l1_m4s0_b
+scene F_TALK1186_L1_M4S1
+flag msnmainat -401
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m4s1_a
+wait 2
+shot talk1186_l1_m4s1_b
+scene F_TALK1186_L1_M4S2
+flag msnmainat -402
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m4s2_a
+wait 2
+shot talk1186_l1_m4s2_b
+scene F_TALK1186_L1_M5S0
+flag msnmainat -500
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m5s0_a
+wait 2
+shot talk1186_l1_m5s0_b
+scene F_TALK1186_L1_M5S1
+flag msnmainat -501
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m5s1_a
+wait 2
+shot talk1186_l1_m5s1_b
+scene F_TALK1186_L1_M5S2
+flag msnmainat -502
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m5s2_a
+wait 2
+shot talk1186_l1_m5s2_b
+scene F_TALK1186_L1_M6S0
+flag msnmainat -600
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m6s0_a
+wait 2
+shot talk1186_l1_m6s0_b
+scene F_TALK1186_L1_M6S1
+flag msnmainat -601
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m6s1_a
+wait 2
+shot talk1186_l1_m6s1_b
+scene F_TALK1186_L1_M6S2
+flag msnmainat -602
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m6s2_a
+wait 2
+shot talk1186_l1_m6s2_b
+scene F_TALK1186_L1_M7S0
+flag msnmainat -700
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m7s0_a
+wait 2
+shot talk1186_l1_m7s0_b
+scene F_TALK1186_L1_M7S1
+flag msnmainat -701
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m7s1_a
+wait 2
+shot talk1186_l1_m7s1_b
+scene F_TALK1186_L1_M7S2
+flag msnmainat -702
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+shot talk1186_l1_m7s2_a
+wait 2
+shot talk1186_l1_m7s2_b
+end

@@ -1,0 +1,99 @@
+# ТЕСТ90 память (окно оптимизации): цепочка смен уровня как в туре TEST89 (L1 → L4 → L5 → L6 → L5 → L4 → L7), на каждом уровне 16 с + езда 22 с; дом L4 пешком. Журнал: LEVEL ev=free/load (наибольший кусок mx), PINFREE, COLL stream error=load, MEMFAILSZ.
+# ballast 5 для сборки без служебной таблицы (с LEAK696_TRACE — 3): свободной кучи при старте L1 как на PSP (23,5 против 24,0 МБ)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO1_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 16
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO2_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO3_L6
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 6
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO4_L5
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 5
+wait 16
+flag msnhud 1
+press triangle 0.2
+wait 3
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO5_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 16
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 20
+wait 22
+flag stop
+press triangle 0.2
+wait 4
+scene F_GO6_L7
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 7
+wait 25
+flag msnhud 1
+wait 5
+end

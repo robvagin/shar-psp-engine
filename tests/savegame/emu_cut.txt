@@ -1,0 +1,45 @@
+# Прогон 5 (№1170, обрыв питания посреди записи слота): слот только файлом (утилита отвергает всё: flag saveutiloff 1), в слоте 1 уже лежит запись (SMOKE_SAVEFILES: готовый
+# save00.bin). Новая игра -> пауза -> SAVE GAME -> слот 1 (занят) -> «обрыв питания» (flag svcut 1: запись обрывается сразу после шага, после которого файла слота на месте
+# нет) -> ошибка записи -> «перезагрузка» (svrescan: слоты читаются заново) : слот обязан остаться целым (новый порядок: прежняя запись лежит в .bak и подбирается при чтении);
+# прежний порядок (SAVEAT_OLD=1, и у базы TEST89) оставляет слот пустым — гейт краснеет
+flag menu
+flag saves
+wait 1.5
+press left
+wait 0.4
+press cross
+wait 1.5
+# «Restarting will cause all unsaved game progress to be lost. Restart anyway?» (в слоте уже есть запись): курсор на No, ↑ на Yes
+press up
+wait 0.4
+press cross
+wait 4
+# флаги сохранений в меню не разбираются, в игре — да: утилита отвергает всё (слот живёт файлом)
+flag saveutiloff 1
+wait 0.3
+press start
+wait 1
+press up
+wait 0.4
+press up
+wait 0.4
+press cross
+wait 1.2
+shot cut_slots
+flag svcut 1
+press cross
+wait 1.5
+shot cut_after_cross
+press up
+wait 0.4
+press cross
+wait 3
+shot cut_result
+# «Save failed!» -> Continue -> «перезагрузка»: слоты читаются заново (flag svrescan, строка SVSCAN, как при запуске игры) — слот обязан быть целым
+press cross
+wait 1.5
+shot cut_slots_after
+flag svrescan
+wait 1.5
+shot cut_rescan
+end

@@ -6,6 +6,7 @@
 #include <psputils.h>
 #include <pspgu.h>
 #include "hud.h"
+#include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после всех include)
 
 extern unsigned char msx[];   // libpspdebug 8x8 font: 256 glyphs x 8 rows, bit 7 = leftmost pixel
 

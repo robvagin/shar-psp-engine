@@ -1,0 +1,40 @@
+flag camdet 1
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L5_load
+flag golevel 5
+wait 40
+flag repair
+cam off
+goto -589.4 -652.4 0
+wait 6
+cam -589.4 42.0 -652.4 -0.01 -0.13 0.99 60
+wait 10
+shot rest_p4
+cam off
+goto -25.9 -388.9 0
+wait 6
+cam -25.9 32.8 -388.9 -0.97 -0.22 0.09 60
+wait 10
+shot rest_p3
+cam off
+goto -23.0 -388.2 0
+wait 6
+cam -23.0 28.9 -388.2 -1.00 -0.02 0.00 60
+wait 10
+shot rest_h1
+cam off
+goto -590.0 -650.7 0
+wait 6
+cam -590.0 38.6 -650.7 0.00 -0.02 1.00 60
+wait 10
+shot rest_h2
+cam off
+scene L5_ride
+flag repair
+flag drive 300
+wait 305
+flag stop
+wait 1
+end

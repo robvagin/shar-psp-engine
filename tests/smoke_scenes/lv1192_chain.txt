@@ -1,0 +1,39 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 9
+scene LV1192_L1_WIN
+flag realend 1
+flag startcam 1
+flag lvwin
+wait 75
+shot lv1192_l1_to_l2
+scene LV1192_L2_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l2_to_l3
+scene LV1192_L3_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l3_to_l4
+scene LV1192_L4_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l4_to_l5
+scene LV1192_L5_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l5_to_l6
+scene LV1192_L6_WIN
+flag realend 1
+flag lvwin
+wait 70
+shot lv1192_l6_to_l7
+flag realend 0
+end

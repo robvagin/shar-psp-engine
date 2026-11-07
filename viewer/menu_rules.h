@@ -171,11 +171,18 @@ static inline void mrNewGameDefaults(int *radar, unsigned *tutSeen, unsigned *mo
 // язык системы PSP (PSP_SYSTEMPARAM_ID_INT_LANGUAGE: 0 японский, 1 английский, 2 французский, 3 испанский, 4 немецкий, 5 итальянский, 6 нидерландский, 7 португальский, ...) -> 0 English, 1 French, 2 German, 3 Spanish;
 // -1 — языка среди четырёх нет (итальянский в оригинале выключен, португальского на диске нет): экран выбора
 static inline int mrLangFromPsp(int v) { if (LANG1111_OLD) return 0; return v == 1 ? 0 : v == 2 ? 1 : v == 4 ? 2 : v == 3 ? 3 : -1; }
+// №1161 (найдено при №1160): таблица rowkeys.txt (подпись на языке → английская, tools/lang_rowkeys.py) лежит в lang/<буква>/, но в списке ниже её не было: на французском, немецком и испанском
+// движок читал rowkeys.txt из английской папки, не находил, строки Jump Cameras / Adjust Camera / Navigation System не опознавались и оставались серыми (OPT rows 0x,0x,1,0x вместо 0x,1,1,0).
+// CAMROWLANG_OLD=1 — как до правки (rowkeys.txt от языка не зависит)
+#ifndef CAMROWLANG_OLD
+#define CAMROWLANG_OLD 0
+#endif
 // файлы с текстами (всё, что экспортёры собирают из текстовой библиотеки диска); прочее от языка не зависит
 static inline int mrLangDepends(int lang, const char *name) {
   if (LANG1111_OLD || lang <= 0) return 0;
   const char *b = strrchr(name, '/'); b = b ? b + 1 : name; size_t n = strlen(b);
-  static const char *const f[] = {"ui.shr", "msnart.shr", "load.shr", "menu.shr", "pmenu.shr", "pextra.shr", "fsave.shr", "psave.shr", "scrap.shr", "scrapgal.shr", "ending.shr", "shop.shr", "phone.shr", "phonecars.txt", "prompts.txt", "wardrobe.shr", "mini.shr", "ticket.shr", 0};
+  if (!CAMROWLANG_OLD && !strcmp(b, "rowkeys.txt")) return 1;   // №1161: таблица подписей строк меню лежит в lang/<буква>/ (см. выключатель CAMROWLANG_OLD ниже)
+  static const char *const f[] = {"ui.shr", "msnart.shr", "load.shr", "menu.shr", "pmenu.shr", "pextra.shr", "fsave.shr", "psave.shr", "scrap.shr", "scrapgal.shr", "ending.shr", "shop.shr", "phone.shr", "phonecars.txt", "prompts.txt", "bonuslabels.txt", "wardrobe.shr", "mini.shr", "ticket.shr", 0};
   for (int i = 0; f[i]; i++) if (!strcmp(b, f[i])) return 1;
   if (n > 4 && !strcmp(b + n - 4, ".msn")) return 1;
   if (!strncmp(b, "cardqr-", 7)) return 1;
@@ -193,6 +200,10 @@ static inline int mrCamClamp(int step) { return step < 0 || step > 4 ? 2 : step;
 static inline float mrCamH(int step) { static const float v[5] = {.5f, .75f, 1.f, 1.25f, 1.5f}; return v[mrCamClamp(step)]; }          // высота глаза над точкой взгляда, множитель
 static inline float mrCamD(int step) { static const float v[5] = {.7f, .85f, 1.f, 1.15f, 1.3f}; return v[mrCamClamp(step)]; }         // дальность, множитель
 static inline float mrCamTilt(int step) { static const float v[5] = {-10.f, -5.f, 0.f, 5.f, 10.f}; return v[mrCamClamp(step)]; }       // наклон взгляда, градусы
+#ifndef CARAIM1160_OLD
+#define CARAIM1160_OLD 0     // №1160: строка Car Aim (сдвиг кадра по высоте) в CAMERA
+#endif
+static inline float mrCamAim(int step) { static const float v[5] = {-.12f, -.06f, 0.f, .11f, .22f}; return CARAIM1160_OLD ? 0.f : v[mrCamClamp(step)]; }   // сдвиг кадра, доли полувысоты: 0 и 1 поднимают машину в кадре, 3 и 4 опускают, 2 — как было
 static inline float mrCamFov(int step) { static const float v[5] = {.85f, .92f, 1.f, 1.08f, 1.15f}; return v[mrCamClamp(step)]; }      // множитель угла обзора
 // settings.bin прежних версий короче (bytesRead < смещения footHeight): пешком получает прежние Height / Distance, что были на обе камеры — у игрока ничего не прыгает
 static inline int mrCamFootMigrate(int bytesRead, int footOffset, int footNow, int camOld) { return !CAMMENU1151_OLD && bytesRead < footOffset ? camOld : footNow; }

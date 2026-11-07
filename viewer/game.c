@@ -745,8 +745,12 @@ static uint16_t chHashOf(const char *n) {   // FNV-1a, 16 бит; ключ та�
   for (; *n; n++) { h ^= (unsigned char)*n; h *= 16777619u; }
   return (uint16_t)(h ^ (h >> 16));
 }
+static uint16_t chKey(const Game *g, const char *n) {   // №1171: машина уровня (пустое имя) — своя запись у каждого уровня
+  if (CAR_HEALTH_LVL1171_OLD || (n && *n)) return chHashOf(n);
+  char t[4] = {'~', (char)('A' + (g->chLevel & 15)), 0, 0}; return chHashOf(t);   // «~A»… по номеру уровня
+}
 static int chFind(const Game *g, const char *n) {
-  uint16_t k = chHashOf(n);
+  uint16_t k = chKey(g, n);
   for (int i = 0; i < g->chN; i++) if (g->chHash[i] == k) return i;
   return -1;
 }
@@ -757,7 +761,7 @@ void gameCarHealthNote(Game *g, const char *name, float frac) {
   if (i < 0) {
     if (g->chN < 8) i = g->chN++;
     else { for (int k = 1; k < 8; k++) { g->chHash[k - 1] = g->chHash[k]; g->chFrac[k - 1] = g->chFrac[k]; } i = 7; }   // самая старая уходит
-    g->chHash[i] = chHashOf(name);
+    g->chHash[i] = chKey(g, name);
   }
   g->chFrac[i] = frac;
 }

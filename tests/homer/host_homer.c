@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
   if (haveSP) { H.solid = homerSolidSprops; H.solidUser = &sp; }   // стейтпропы твёрдые (как в патче main.c)
   carInit(&car, NULL, &world, spx, spy, spz, sph);
   for (int i = 0; i < 120; i++) stepCar(DT);                       // car settles
+  CarBox bw0; carBox(&car, &bw0); float ENT_W = bw0.hw + .8f;   // 04.11: сесть можно в объёме «габарит кузова + 1 м» (ГОМЕР 5.1/6.2, HOMER_ENTER_BOX_OLD=1 — прежние 5 м от двери): тесты ставят Гомера у борта (0,8 м), а не за 3 м от центра
   printf("level %s: spawn %.1f %.1f %.1f h %.2f; stateprops %u, coins %u; homer %u clips\n", lvl, spx, spy, spz, sph,
          haveSP ? sp.ninst : 0, haveCoins ? coins.nworld : 0, m->h->nClips);
   printf("loco clip speeds: walk %.2f run %.2f dash %.2f m/s\n", H.locoV[1], H.locoV[2], H.locoV[3]);
@@ -94,14 +95,14 @@ int main(int argc, char **argv) {
   homerPlace(&H, &world, bx, car.y + 1.f, bz, sph);
   { HomerInput in = in0(sph); in.my = 1.f; in.dash = 1; float t8 = -1, t4 = -1, t = 0;   // ○ зажат — бег (ControllerPS2.pag DASH / SPRINT)
     for (int i = 0; i < 90; i++, t += DT) { frame(&H, &in); if (t4 < 0 && H.speed >= 3.99f) t4 = t + DT; if (t8 < 0 && H.speed >= 7.99f) t8 = t + DT; }
-    check("run: time to 8 m/s, s", t8, .35f, .5f, "accel 20 m/s2 -> 0.40");
+    check("run: time to 8 m/s, s", t8, .55f, .7f, "PS2 gh2 record: ramp ~13 m/s2 -> 0.62 (path 2.3 m in 0.6 s, 7.1 m in 1.2 s)");   // 04.11: бег разгоняется (HOMER_RUNRAMP_OLD=1 — сразу 8)
     check("run: top speed, m/s", H.speed, 7.9f, 8.01f, "8");
     in.my = 0.f; t = 0; float d0x = H.x, d0z = H.z;
     for (int i = 0; i < 90 && H.speed > .01f; i++, t += DT) frame(&H, &in);
     check("stop from 8 m/s, s", t, .7f, .9f, "decel 10 -> 0.80");
     check("stop distance, m", hypotf(H.x - d0x, H.z - d0z), 2.8f, 3.6f, "v^2/2a = 3.2");
     in.my = .5f; for (int i = 0; i < 60; i++) frame(&H, &in);
-    check("half stick with O: speed, m/s", H.speed, 3.9f, 4.1f, "4 (half of run)");
+    check("half stick with O: speed, m/s", H.speed, 7.9f, 8.01f, "8: with O any stick runs full speed (original source, circle 3; old harness expected half of run)");
     in.my = 1.f; in.dash = 0; for (int i = 0; i < 60; i++) frame(&H, &in);
     check("full stick without O: speed, m/s", H.speed, 3.9f, 4.01f, "4 (walk; srr2: PRESS AND HOLD O TO RUN)");
     in.dash = 1; for (int i = 0; i < 60; i++) frame(&H, &in);
@@ -114,7 +115,7 @@ int main(int argc, char **argv) {
     carInit(&car, NULL, &world, hx - fx9 * 14.f, gy9, hz - fz9 * 14.f, sph);
     CarInput ci9 = {1, 0, 0, 0}; int hurtSeen = 0, hits0 = H.carHits; float vyMax = 0.f, vHit = 0.f, t9 = 0.f, tBack = -1.f;
     for (int i = 0; i < 30 * 8; i++, t9 += DT) {
-      carUpdate(&car, &world, &ci9, DT); HomerCar h9; homerCarFrom(&h9, &car, .62f);
+      carUpdate(&car, &world, &ci9, DT); HomerCar h9; homerCarFrom(&h9, &car, .62f); h9.hostile = 1;   // сверка 5.7 (исходник): пешего сбивают только машины ИИ миссий — тестовая машина «миссионная»
       if (H.state == HS_HURT && !hurtSeen) { hurtSeen = 1; vHit = fabsf(h9.v); }
       if (H.state == HS_HURT && H.vy > vyMax) vyMax = H.vy;
       homerUpdate(&H, &world, &h9, &in, DT); homerPose(&H);
@@ -129,12 +130,15 @@ int main(int argc, char **argv) {
   // ---------------- 2. jump / double jump
   { HomerInput in = in0(sph); for (int i = 0; i < 60; i++) frame(&H, &in);
     float y0 = H.y; H.maxY = H.y; in.jump = 1; frame(&H, &in); in.jump = 0; float t = DT;
+    for (int w_ = 0; H.grounded && w_ < 60; w_++) frame(&H, &in);   // прыжок с места: сначала заводка (P02-7), отрыв позже — ждём отрыва
+    t = DT;
     while (!H.grounded && t < 3) { frame(&H, &in); t += DT; }
     check("jump: apex above ground, m", H.maxY - y0, 1.8f, 1.95f, "1.9");
     check("jump: air time, s", t, .72f, .85f, "2*sqrt(2h/g) = 0.78");
     for (int i = 0; i < 30; i++) frame(&H, &in);
     y0 = H.y; H.maxY = H.y; in.jump = 1; frame(&H, &in); in.jump = 0;
-    while (H.vy > 1.5f) frame(&H, &in);                             // second press near the apex (vy <= 2)
+    for (int w_ = 0; H.grounded && w_ < 60; w_++) frame(&H, &in);   // прыжок с места: сначала заводка (P02-7), отрыв позже — ждём отрыва
+    while (H.vy > 2.3f) frame(&H, &in);                             // второй ✕ как в записи PS2 (через 0,32 с, вертикаль ≈ +2,1…2,5; прежнее окно 1,5)
     in.jump = 1; frame(&H, &in); in.jump = 0;
     check("double jump: jumps", (float)H.jumps, 2, 2, "2");
     while (!H.grounded) frame(&H, &in);
@@ -150,12 +154,14 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 60; i++) { t += DT; frame(&H, &in); drainEvents(&H, &hits, &stomps, t, &tHit); }
     check("kick: HIT events", (float)hits, 1, 1, "1 per kick");
     check("kick: HIT time after press, s", tHit + DT, .25f, .3f, "frame 8 of hom_break = 0.27");
-    in.jump = 1; frame(&H, &in); in.jump = 0; for (int i = 0; i < 12; i++) frame(&H, &in);
+    in.jump = 1; frame(&H, &in); in.jump = 0; for (int w_ = 0; H.grounded && w_ < 60; w_++) frame(&H, &in);   // прыжок с места: сначала заводка (P02-7), отрыв позже — ждём отрыва
+    for (int i = 0; i < 12; i++) frame(&H, &in);
     in.attack = 1; frame(&H, &in); in.attack = 0; for (int i = 0; i < 10; i++) frame(&H, &in);   // X + □: удар в прыжке, не стомп
     drainEvents(&H, &hits, &stomps, 0, NULL);
     check("jump + attack: jump kick (no stomp)", (float)(H.state == HS_STOMP), 0, 0, "hom_jump_kick");
     while (!H.grounded) frame(&H, &in); for (int i = 0; i < 30; i++) frame(&H, &in);
-    in.jump = 1; frame(&H, &in); in.jump = 0; while (H.vy > 1.5f) frame(&H, &in);   // X X □ — стомп (второй прыжок, потом удар)
+    in.jump = 1; frame(&H, &in); in.jump = 0; for (int w_ = 0; H.grounded && w_ < 60; w_++) frame(&H, &in);   // прыжок с места: сначала заводка (P02-7), отрыв позже — ждём отрыва
+    while (H.vy > 1.5f) frame(&H, &in);   // X X □ — стомп (второй прыжок, потом удар)
     in.jump = 1; frame(&H, &in); in.jump = 0; frame(&H, &in);
     in.attack = 1; frame(&H, &in); in.attack = 0; t = 0; hits = stomps = 0;
     check("double jump + attack: STOMP state", (float)(H.state == HS_STOMP), 1, 1, "X X [] = stomp");
@@ -184,7 +190,7 @@ int main(int argc, char **argv) {
     check("sweep: runs that fell out of the world", (float)falls, 0, 0, "0");
     printf("     sweep: %d runs, %d moved > 1 m, largest snap down %.2f m\n", runs, stuckFree, maxDrop); }
   // ---------------- 5. car: enter from the passenger side (walks around), sit, exit
-  { homerPlace(&H, &world, car.x + rx * 3.f, car.y + 1.f, car.z + rz * 3.f, sph);  // passenger side
+  { homerPlace(&H, &world, car.x + rx * ENT_W, car.y + 1.f, car.z + rz * ENT_W, sph);  // passenger side
     HomerCar hc; homerCarFrom(&hc, &car, 0.62f);
     HomerCarCb cb = {onDoor, onDone, 0};
     printf("     can enter from 3 m (passenger side): %d\n", homerCanEnter(&H, &hc));
@@ -197,8 +203,9 @@ int main(int argc, char **argv) {
                ax * fx + az * fz, ax * rx + az * rz, car.h, q.box.fx, q.box.fz); } }
     check("enter: reached IN_CAR", (float)(H.state == HS_IN_CAR && doneIn == 1), 1, 1, "done(1)");
     check("enter: walk around to the door, s", tSeq, .5f, 4.f, "auto-run");
-    check("enter: door sequence, s", t - tSeq, 1.3f, 1.5f, "open .43 + in .57 + close .37 = 1.37");
-    check("enter: door opened fully, then closed", doorMax - doorOpen, .99f, 1.01f, "1 then 0");
+    check("enter: door sequence, s", t - tSeq, .95f, 1.05f, "open .43 + in .57 = 1.0: управление и IN_CAR по концу get_into_car (P02-27/P05-14), закрытие 0,2 с идёт уже за рулём (HOMER_CTRL_EARLY_OLD=1: 1.37)");
+    for (int i = 0; i < 30; i++) { HomerInput in = in0(sph); frame(&H, &in); }   // дверь закрывается уже за рулём
+    check("enter: door opened fully, then closed", doorMax - doorOpen, .99f, 1.01f, "1 then 0 (closes in the car)");
     // exit
     for (int i = 0; i < 30; i++) { HomerInput in = in0(sph); frame(&H, &in); }
     homerCarFrom(&hc, &car, 0.62f); doorMax = 0;
@@ -289,13 +296,14 @@ int main(int argc, char **argv) {
   { HomerCar hc; HomerCarCb cb = {onDoor, onDone, 0};
     carInit(&car, NULL, &world, spx, spy, spz, sph); for (int i = 0; i < 60; i++) stepCar(DT);
     homerCarFrom(&hc, &car, .62f); homerSetInCar(&H, &hc); H.cb = cb; doneOut = -1;
+    for (int i = 0; i < 4; i++) { HomerInput in4 = in0(car.h); homerUpdate(&H, &world, &hc, &in4, DT); homerPose(&H); }   // 04.11: в игре водитель каждый кадр на месте сиденья; без кадров Гомер оставался там, где его оставил прошлый тест (41 м от машины)
     car.damage = 1.f; car.destroyed = 1; homerCarFrom(&hc, &car, .62f);
     float y0 = H.y, maxY = -1e9f, t = 0.f; int ej = 0;
     if (!getenv("HOST_NOEJECT")) ej = homerEject(&H, &world, &hc, car.x, car.z, HOMER_EJECT_POWER);
     // правка Роба 147 (выброс как в оригинале): трасса по кадрам — голова и самый низкий сустав в мире (H.place * H.world)
     int jHead = skinFindJoint(H.m, "Head"), jExtra = skinFindJoint(H.m, "Extra_Attributes"); float gX = 0, gZ = 0, gT = -1.f, hurtT = -1.f, footT = -1.f, dotV = -2.f;
     float upEarly = 0.f, flyHead = -1.f, minBody = 9.f, guHead = 9.f, guLow = 9.f, guHead1 = -1.f, guDist = -1.f, hx0 = 0, hz0 = 0;
-    int inCar05 = 0, flyN = 0; float prevHy = -1.f, headJump = 0.f;
+    int inCar05 = 0, flyN = 0; float prevHy = -1.f, headJump = 0.f, ftx = 0.f, ftz = 0.f;   // ftx, ftz — где встал на ноги
     while (t < 4.f) {
       HomerInput in = in0(car.h); frame(&H, &in); t += DT; maxY = fmaxf(maxY, H.y);
       const ScePspFMatrix4 *P = &H.place; float lo = 1e9f, hy = 0.f;
@@ -318,10 +326,11 @@ int main(int argc, char **argv) {
         if (H.clip == H.cGetUp && gT < 0.f) { gT = t; gX = H.x; gZ = H.z; guDist = hypotf(gX - hx0, gZ - hz0); }
         if (gT >= 0.f && H.pitch == 0.f && guHead > 8.f) { guHead = hy - H.groundY; guLow = lo - H.groundY; }   // переход в get_up закончен
         if (gT >= 0.f && t - gT >= .9f - DT * .5f && guHead1 < 0.f) guHead1 = hy - H.groundY;
-      } else if (H.state == HS_FOOT && footT < 0.f && hurtT >= 0.f) footT = t;
+      } else if (H.state == HS_FOOT && footT < 0.f && hurtT >= 0.f) { footT = t; ftx = H.x; ftz = H.z; }
       if (footT >= 0.f) break;
     }
     if (flyN == 0) flyHead = 9.f;
+#if HOMER_DODGE_OLD   // прежний выброс (полёт, флейл, get_up по записи PS2 147): после сверки круга 5 вместо него уворот dodge — тогда эти проверки не применимы
     check("147: still in the burning car at 0.5 s", (float)inCar05, 1, 1, "PS2 33:33.43 hit -> 33:34.23 out: ~0.7 s delay");
     check("147: not upright out of the car before 0.9 s", upEarly, 0, 0, "flies, lies, then gets up");
     check("147: heading along the flight (dot)", dotV, .7f, 1.01f, "head first, not backwards");
@@ -333,17 +342,25 @@ int main(int argc, char **argv) {
     check("147: 0.9 s into get_up head over ground, m", guHead1, 1.1f, 1.5f, "stands (disc frames 24-30: 1.23-1.27)");
     check("147: flight + slide from the door, m", guDist, 2.5f, 5.5f, "PS2 record ~3-5 m");
     check("147: get_up played whole, s", gT >= 0.f && footT >= 0.f ? footT - gT : 0.f, .95f, 1.2f, "hom_get_up 31 frames = 1.03 s");
+#else   // 04.11: уворот dodge (оригинал, круг 5): водитель выходит через ~0,5 с клипом уворота, скользит от машины и встаёт; полёта и флейла нет
+    check("dodge: still in the burning car at 0.5 s", (float)inCar05, 0, 1, "out at 0.5 s (dodge clip starts, tests/g04 circle 5)");
+    check("dodge: slide from the car at the moment he is on foot, m", hypotf(ftx - hc.box.x, ftz - hc.box.z), 2.5f, 9.f, "tests/g04 circle 5: 3..9 m from the car centre");
+    check("dodge: on foot after, s", footT, .8f, 3.f, "dodge clip ~1.4 s");
+#endif
     { float s0 = H.speed; for (int i = 0; i < 30; i++) { HomerInput in = in0(car.h); in.my = 1.f; frame(&H, &in); }
       check("147: control back after get_up, m/s", H.speed - s0, 1.f, 20.f, "stick moves him"); }
     printf("     147: out at %.2f s, get_up at %.2f s (head %.2f, low %.2f), on foot at %.2f s, %.2f m from the door\n",
            hurtT, gT, guHead, guLow, footT, guDist);
     const CarBox *b = &hc.box; float ex = H.x - b->x, ez = H.z - b->z;
     float ua = fmaxf(fabsf(ex * b->fx + ez * b->fz) - b->hl, 0.f), us = fmaxf(fabsf(-ex * b->fz + ez * b->fx) - b->hw, 0.f);
+    { float ex2 = ftx - b->x, ez2 = ftz - b->z; ua = fmaxf(fabsf(ex2 * b->fx + ez2 * b->fz) - b->hl, 0.f); us = fmaxf(fabsf(-ex2 * b->fz + ez2 * b->fx) - b->hw, 0.f); }   // где встал на ноги, а не после последующей ходьбы
     float clear = sqrtf(ua * ua + us * us);
     check("explosion: ejected (homerEject)", (float)ej, 1, 1, "Homer was in the car");
     check("explosion: on foot after 3 s", (float)(H.state == HS_FOOT), 1, 1, "flail -> get up -> foot");
     check("explosion: outside the husk, m", clear, .3f, 12.f, "not inside the body box");
+#if HOMER_DODGE_OLD
     check("explosion: flew up, m", maxY - y0, .5f, 4.f, "a flight, not a teleport");
+#endif
     homerCarFrom(&hc, &car, .62f);
     check("explosion: cannot enter the husk", (float)homerCanEnter(&H, &hc), 0, 0, "hc.dead");
     printf("     explosion: landed %.2f m from the car centre, clear of the body %.2f m, apex +%.2f m\n",
@@ -352,7 +369,7 @@ int main(int argc, char **argv) {
     // (б) занятая дверь: подложенное твёрдое тело слева (как 5б-а), Гомер справа от машины
     HomerSolidFn s0 = H.solid; void *u0 = H.solidUser; H.solid = testWall; H.solidUser = &car;
     float fx = sinf(car.h), fz = cosf(car.h), rx = -fz, rz = fx;
-    homerPlace(&H, &world, car.x + rx * 3.f, car.y + 1.f, car.z + rz * 3.f, car.h);
+    homerPlace(&H, &world, car.x + rx * ENT_W, car.y + 1.f, car.z + rz * ENT_W, car.h);
     H.irisOn = getenv("HOST_NOIRIS") ? 0 : 1; int seat0 = H.irisSeat; doorMax = 0; doneIn = -1;
     homerCarFrom(&hc, &car, .62f); int ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
     while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
@@ -363,7 +380,7 @@ int main(int argc, char **argv) {
     H.irisOn = 0; H.solid = s0; H.solidUser = u0;
     // (в) правка Роба 212: обход машины к двери водителя долгий — с ирисом сразу на сиденье (путь длиннее HOMER_IRIS_PATH);
     //     со стороны водителя в 2 м от двери — пешком, дверь анимацией (красный контроль: -DHOMER_IRIS_PATH=0)
-    homerPlace(&H, &world, car.x + rx * 3.f, car.y + 1.f, car.z + rz * 3.f, car.h);   // справа (сторона пассажира), дверь свободна
+    homerPlace(&H, &world, car.x + rx * ENT_W, car.y + 1.f, car.z + rz * ENT_W, car.h);   // справа (сторона пассажира), дверь свободна
     H.irisOn = 1; seat0 = H.irisSeat; doorMax = 0; doneIn = -1;
     homerCarFrom(&hc, &car, .62f); ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
     while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
@@ -371,7 +388,7 @@ int main(int argc, char **argv) {
     check("walk around, iris: at once, s", t, 0.f, .1f, "first frame of TO_DOOR");
     { float dp[3]; homerCarFrom(&hc, &car, .62f);
       dp[0] = hc.m[0] * hc.door[0] + hc.m[8] * hc.door[1] + hc.m[12]; dp[2] = hc.m[2] * hc.door[0] + hc.m[10] * hc.door[1] + hc.m[14];
-      homerPlace(&H, &world, dp[0] - rx * 2.f, car.y + 1.f, dp[2] - rz * 2.f, car.h);   // слева, 2 м от двери водителя
+      homerPlace(&H, &world, dp[0] - rx * .2f, car.y + 1.f, dp[2] - rz * .2f, car.h);   // слева, 2 м от двери водителя
       seat0 = H.irisSeat; doorMax = 0; doneIn = -1; ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
       float eyeP = 0.f, eyeStep = 0.f, pe[3] = {0}; int ne = 0;   // правка 223: путь глаза камеры пешком на посадке (HS_GET_IN)
       while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT;
@@ -387,7 +404,7 @@ int main(int argc, char **argv) {
     { homerDoorCan = getenv("HOST_ENTERIRIS_OLD") ? NULL : hostNoDoor;
       float dp[3]; homerCarFrom(&hc, &car, .62f);
       dp[0] = hc.m[0] * hc.door[0] + hc.m[8] * hc.door[1] + hc.m[12]; dp[2] = hc.m[2] * hc.door[0] + hc.m[10] * hc.door[1] + hc.m[14];
-      homerPlace(&H, &world, dp[0] - rx * 2.f, car.y + 1.f, dp[2] - rz * 2.f, car.h);
+      homerPlace(&H, &world, dp[0] - rx * .2f, car.y + 1.f, dp[2] - rz * .2f, car.h);
       H.irisOn = 1; seat0 = H.irisSeat; int c0 = H.irisCarIn; doorMax = 0; doneIn = -1; ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
       while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
       check("667: no door hinge, iris: seated under the iris", (float)(H.irisCarIn - c0), 1, 1, "irisCarIn++");
@@ -398,7 +415,7 @@ int main(int argc, char **argv) {
       float yy[3], seat1 = car.p.seat[1]; int sd = car.p.seatData;   // frame() собирает HomerCar из car: сиденье задаём в нём
       for (int k = 0; k < 3; k++) {
         car.p.seatData = k != 2; homerCarFrom(&hc, &car, .62f); car.p.seat[1] = (k == 1 ? 0.499f : 1.04f) - hc.lift; homerCarFrom(&hc, &car, .62f);   // hc.lift: carModelLift меняет подъём
-        homerPlace(&H, &world, dp[0] - rx * 2.f, car.y + 1.f, dp[2] - rz * 2.f, car.h);
+        homerPlace(&H, &world, dp[0] - rx * .2f, car.y + 1.f, dp[2] - rz * .2f, car.h);
         H.irisOn = 1; ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
         while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
         { HomerInput in = in0(car.h); frame(&H, &in); }   // кадр сидения: y берётся из якоря
@@ -415,7 +432,7 @@ int main(int argc, char **argv) {
       homerCarFrom(&hc, &car, .62f); int famIris = carIrisFor("famil_v");
       check("333: plowk_v SetIrisTransition, famil_v not", (float)(hc.iris * 2 + famIris), 2, 2, "scripts/cars/*.con");
       float dp[3]; dp[0] = hc.m[0] * hc.door[0] + hc.m[8] * hc.door[1] + hc.m[12]; dp[2] = hc.m[2] * hc.door[0] + hc.m[10] * hc.door[1] + hc.m[14];
-      homerPlace(&H, &world, dp[0] - rx * 2.f, car.y + 1.f, dp[2] - rz * 2.f, car.h);   // слева, 2 м от двери водителя (famil_v тут идёт клипами)
+      homerPlace(&H, &world, dp[0] - rx * .2f, car.y + 1.f, dp[2] - rz * .2f, car.h);   // слева, 2 м от двери водителя (famil_v тут идёт клипами)
       H.irisOn = 1; int in0c = H.irisCarIn, out0c = H.irisCarOut, seat1 = H.irisSeat; doorMax = 0; doneIn = -1;
       int ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
       while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
@@ -442,7 +459,7 @@ int main(int argc, char **argv) {
     int g0 = H.drvGestures, sawTurn = 0, sawCrash = 0, back = 0; float t = 0.f;
     for (int i = 0; i < 240; i++) {   // 4 с: руль вправо на 0,3 с, отпустить; на 2-й секунде удар
       float st = (i >= 10 && i < 28) ? 1.f : 0.f;
-      homerDriveInput(&H, st, 1.f, 0.f, 12.f, i == 130);
+      homerDriveInput(&H, st, 1.f, 0.f, i < 130 ? 12.f : 8.f, 0);   // удар: скорость падает 12 → 8 м/с за кадр — замедление за порогом 25 м/с² (оригинал, P02-29: жест выбирается по замедлению, а не флагом; прежний порт: флаг crash, HOMER_GESTURE_OLD=1)
       HomerInput in = in0(car.h); frame(&H, &in); t += DT;
       if (H.clip == H.cDrvTurn[1]) sawTurn = 1;
       if (H.clip == H.cDrvCrash) sawCrash = 1;

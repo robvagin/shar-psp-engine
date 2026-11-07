@@ -682,7 +682,18 @@ def build2():
         else:   # правка 396 (Роб 08.10): второй ряд симметрично — ChatGPT слева, Radical по центру, человечек Claude справа
             r = [i for i, mk in enumerate(marks) if mk[0] == 'radical']
             at = r[0] if r else len(marks)
-            marks[at:at] = [codex_symbol()]; marks.insert(at + 2, claude_icon())
+            # №1162: знак ChatGPT (цветок OpenAI) читается из assets/branding/openai-monoblossom.png — логотипы сторонних компаний в публичный репозиторий не кладутся
+            # (tools/public_stage/stage.py), и сборка по README падала на этом файле. Теперь без файла знак пропускается (остальные на месте). BMK_PUBLIC1162_OLD=1 — как было
+            try: cx = codex_symbol()
+            except FileNotFoundError:
+                if os.environ.get('BMK_PUBLIC1162_OLD'): raise
+                cx = None; print('  нет assets/branding/openai-monoblossom.png: знак ChatGPT на заставке пропущен')
+            try: ci = claude_icon()   # №1210: и значок Claude из assets/branding — в публичном наборе его нет, без файла пропускается
+            except FileNotFoundError:
+                if os.environ.get('BMK_PUBLIC1162_OLD'): raise
+                ci = None; print('  нет assets/branding/claude-app-icon.png: значок Claude на заставке пропущен')
+            marks[at:at] = [cx] if cx else []
+            if ci: marks.insert(at + (2 if cx else 1), ci)
     if TAG:
         t = elbarto_tag()
         if t: marks.append(t)

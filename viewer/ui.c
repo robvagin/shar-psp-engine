@@ -21,6 +21,8 @@
 #include "marker_lod.h"
 #include "glintshape941.h"   // №1012: тот же векторный шейп блика ✦ — метка выделенного пункта меню
 #include "bootmsx.h"    // шрифт msx 8×8 (pspsdk libpspdebug, tools/bootmsx.sh)
+#include "zoneslot.h"   // TEST91 1А шаг 1: постоянные места под пакеты ui.shr и газету load.shr
+#include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после include pspgu)
 
 typedef struct {
   char magic[4]; unsigned version;
@@ -74,6 +76,16 @@ static int typoShot;   // правка 312: служебный снимок фо
 void uiTypoShot(int mode) { typoShot = mode; }
 #define PREFIX_GAP 2                    // px between the coin icon and the count (tools/ui_export.py: same)
 #define DIM_ABGR 0x80a0a0a0u            // disabled menu item (not implemented yet): grey, half alpha
+// правка Роба №1194 («через строку»: серые пункты паузы в задании сливались с доской): на паузах серые пункты светлее и плотнее — читаются, но явно не жёлтые и не белые.
+// PAUSEGREY1194_OLD=1 — прежний серый
+#ifndef PAUSEGREY1194_OLD
+#define PAUSEGREY1194_OLD 0
+#endif
+// аудит типографики 05.11 п. 6: тень мелкого пиксельного текста бонус-игры (uiTextSh / uiTextShS) — непрозрачный чёрный 1 px вправо-вниз. TXTSH1198_OLD=1 — прежняя полупрозрачная
+#ifndef TXTSH1198_OLD
+#define TXTSH1198_OLD 0
+#endif
+#define DIM_PAUSE_ABGR 0xff9c9e9cu   // непрозрачный #9C9E9C (аудит 05.11 п. 3): контраст ≈3,6:1 к доске, тише белых
 enum { FMT_NONE, FMT_INT, FMT_TIME, FMT_FRAC, FMT_ORDINAL, FMT_SELECT, FMT_PCT };
 #define SEL_ABGR 0xff14e6ffu            // selected menu item: SHAR yellow (255,230,20)
 
@@ -446,9 +458,22 @@ static const unsigned char *pakAtIn(const struct UiSegs *sg, const unsigned char
   for (int i = 0; i < sg->n; i++) if (off >= sg->start[i] && off - sg->start[i] < sg->len[i]) return sg->p[i] + (off - sg->start[i]);
   return sg->p[0];   // смещение вне пакета: пакет проверен при чтении, сюда не попадаем; безопасный адрес вместо чтения мимо
 }
+// TEST91 1А шаг 1: ZONE_UI_OLD=1 / файл zoneuiold — пакет ui.shr, как в TEST89, каждый раз из кучи; ZONE_NEWS_OLD=1 / файл zonenewsold — то же для газеты load.shr
+#ifndef ZONE_UI_OLD
+#define ZONE_UI_OLD 0
+#endif
+// ПО УМОЛЧАНИЮ слот газеты ВЫКЛЮЧЕН (1): замер эмулятора, цепочка 10 уровней TEST88: слот держит 1,1 МБ кучи и во время игры (свободно после выгрузки 26,6 → 25,4 МБ), а наибольший кусок не растёт; включить — файл zonenewson или -DZONE_NEWS_OLD=0
+#ifndef ZONE_NEWS_OLD
+#define ZONE_NEWS_OLD 1
+#endif
+static ZSlot zsUi = {0, ZONE_UI_OLD ? 0u : 1152u << 10, 0, 0, 0}, zsNews = {0, ZONE_NEWS_OLD ? 0u : 1152u << 10, 0, 0, 0};   // ui.shr 1 086 592 Б, load.shr 1 100 032 Б (набор TEST88) + запас; выделяются при первом чтении
+void uiZoneSet(int ui, int news) { if (ui >= 0) zsUi.cap = ui ? 1152u << 10 : 0; if (news >= 0) zsNews.cap = news ? 1152u << 10 : 0; }   // -1 — не менять; файлы-выключатели читает main (до первого пакета)
+static int pakKind;   // чьё чтение сейчас: 0 — куча, 1 — ui.shr, 2 — газета
+static void *pakMem(unsigned n) { void *p = pakKind == 1 ? zsAlloc(&zsUi, n) : pakKind == 2 ? zsAlloc(&zsNews, n) : 0; return p ? p : memalign(64, n); }
+static void pakFree1(void *p) { if (!p) return; if (zsFree(&zsUi, p) || zsFree(&zsNews, p)) return; free(p); }
 static void pakFreeAll(unsigned char *base, struct UiSegs *sg) {
-  if (!sg) { free(base); return; }
-  for (int i = 0; i < sg->n; i++) free(sg->p[i]);
+  if (!sg) { pakFree1(base); return; }
+  for (int i = 0; i < sg->n; i++) pakFree1(sg->p[i]);
   free(sg);
 }
 static int pakSplitCmp(const void *a, const void *b) { unsigned x = *(const unsigned *)a, y = *(const unsigned *)b; return x < y ? -1 : x > y; }
@@ -480,7 +505,7 @@ static int pakReadSplit(SceUID fd, unsigned size, struct UiSegs **sgOut) {
   }
   free(st);
   for (int i = 0; i < sg->n; i++) {
-    unsigned char *m = (unsigned char *)memalign(64, sg->len[i]);
+    unsigned char *m = (unsigned char *)pakMem(sg->len[i]);
     if (!m && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(sg->len[i])) m = (unsigned char *)memalign(64, sg->len[i]);
     if (!m) { pakFreeAll(0, sg); return -3; }
     sg->p[i] = m;
@@ -503,12 +528,12 @@ static int pakRead(const char *path) {
     int sr = pakReadSplit(fd, (unsigned)size, &sg); sceIoClose(fd); if (sr) return sr;
     m = sg->p[0];
   } else {
-  m = (unsigned char *)memalign(64, (size_t)size);
+  m = (unsigned char *)pakMem((unsigned)size);
   if (!m && !MSNART_ROOM_OLD && msnartRoom && msnartRoom((unsigned)size)) m = (unsigned char *)memalign(64, (size_t)size);   // №637: цельный кусок под пакет — освободить далёкие клетки
   if (!m) { sceIoClose(fd); return -3; }
   int got = sceIoRead(fd, m, (SceSize)size);
   sceIoClose(fd);
-  if (got != size || memcmp(m, "UIP1", 4)) { free(m); return -4; }
+  if (got != size || memcmp(m, "UIP1", 4)) { pakFree1(m); return -4; }
   }
 #define PKP(o) pakAtIn(sg, m, (o))
   {                                                          // обрезанный / испорченный пакет — отказ, а не чтение мимо файла
@@ -540,7 +565,7 @@ static int pakRead(const char *path) {
 
 static void svReset(void);   // сверка g09a-hud
 int uiInit(const char *path) {
-  int r = pakRead(path);
+  pakKind = 1; int r = pakRead(path); pakKind = 0;   // TEST91: пакет интерфейса — в постоянное место
   if (r) return r;
   tagMask[UI_SCREEN_HUD] |= 1u << UI_T_HNR_FULL; // clipped continuously, empty at zero
   memset(fieldv, 0, sizeof fieldv);
@@ -628,7 +653,8 @@ int uiScrOpen(const char *path) {
     return 0;
   }
   pakGet(&mainPak); memset(&scrPak, 0, sizeof scrPak); pakSet(&scrPak);
-  int r = pakRead(path);
+  { size_t pl_ = path ? strlen(path) : 0; pakKind = pl_ >= 8 && !strcmp(path + pl_ - 8, "load.shr") ? 2 : 0; }   // TEST91: газета — в постоянное место
+  int r = pakRead(path); pakKind = 0;
   if (!r) pakGet(&scrPak);
   pakSet(&mainPak);
   return r;
@@ -1624,6 +1650,9 @@ static int pix8Want(const UiItem *it, int screen) {
 }
 // правка 312: межбуквенное и межстрочное pix8 строки (res[2]) — копия грани с другим шагом знака и строки; трекинг как у граней
 // пакета с «+N» (tools/ui_export.py FontCache): шаг +N, отступ +N/2 (вниз), строка по центру не съезжает. Четыре варианта в кэше
+#ifndef TRKSPACE_OLD
+#define TRKSPACE_OLD 0   // 1 — отрицательный трекинг сужает и пробел (как до 05.11)
+#endif
 static UiFont pix8V[4]; static int pix8VKey[4], pix8VNext;
 static const UiFont *pix8Variant(int trk, int lead) {
   const UiFont *b = pix8Font();
@@ -1634,6 +1663,7 @@ static const UiFont *pix8Variant(int trk, int lead) {
   UiFont *v = &pix8V[i]; *v = *b; pix8VKey[i] = key;
   v->h.lh = (unsigned short)(b->h.lh + lead < 1 ? 1 : b->h.lh + lead);
   for (int c = 0; c < 256; c++) if (v->g[c].flags) {
+    if (trk < 0 && c == ' ' && !TRKSPACE_OLD) continue;   // Роб 05.11 (аудит п. 9): сужение букв не сужает пробел — слова не слипаются
     int a = v->g[c].adv + trk, l = v->g[c].left + (trk >= 0 ? trk / 2 : -((-trk + 1) / 2));
     v->g[c].adv = (unsigned char)(a < 1 ? 1 : a); v->g[c].left = (signed char)l;
   }
@@ -1673,6 +1703,13 @@ static int menuVecWanted(const UiItem *it, int sidx, int selected, const char *s
 #ifndef CARDTEXT_PULSE_OLD
 #define CARDTEXT_PULSE_OLD 0
 #endif
+// №1217 (Роб 06.11: «на карточке пульсирует объяснение миссии, а должна пульсировать кнопка крестик и continue, как треугольник над машиной»): пульс ±5 % с частотой 2 Гц
+// (период 0,5 с — ритм △) снят с заголовка и описания карточки и отдан группе «✕ CONTINUE» (тег PRESS_START экрана карточки): значок и подпись дышат вместе от общего
+// центра, текст задания стоит ровно. CARDPULSE1217_OLD=1 — как было (пульсируют заголовок и описание)
+#ifndef CARDPULSE1217_OLD
+#define CARDPULSE1217_OLD 0
+#endif
+static float cardPulseS = 1.f, cardPulseCx, cardPulseCy; static int cardPulseOn;
 static void drawTextItem(const UiItem *it, const char *s, unsigned col);
 static void menuVecPlate(const UiItem *it, const char *s) {
   const UiFont *f = itemFont(it, curScreen); if (!f || it->font >= H->nfont) return;
@@ -1829,10 +1866,31 @@ int uiTextSh(int font, int x, int y, unsigned abgr, const char *s) {
   bn = 0; btex = -1;
   UiItem it; memset(&it, 0, sizeof it);
   it.x = (short)x; it.y = (short)y; it.w = (short)w; it.h = (short)f->h.lh; it.font = (unsigned char)font;
-  it.flags = F_SHADOW; it.sdx = 1; it.sdy = 1; it.color2 = 0xc8000000u; it.color = abgr;
+  it.flags = F_SHADOW; it.sdx = 1; it.sdy = 1; it.color2 = TXTSH1198_OLD ? 0xc8000000u : 0xff000000u; it.color = abgr;
   drawTextItem(&it, s, abgr);
   bflush();
   return w;
+}
+// №1179 (повтор №1145): та же строка с тенью HUD, но каждая точка пиксельной грани — квадрат k x k (целый кратный, без размытия): «крупнее и читаемо» без отдельной грани пакета.
+// Тень — на k точек вправо-вниз, как у кратного кегля основной игры. k = 1 — как uiTextSh. Одна строка, без переноса
+int uiTextWS(int font, const char *s, int k) { return uiTextW(font, s) * (k < 1 ? 1 : k); }
+int uiTextShS(int font, int x, int y, unsigned abgr, const char *s, int k) {
+  if (k <= 1) return uiTextSh(font, x, y, abgr, s);
+  if (!H || (unsigned)font >= H->nfont || !s) return 0;
+  const UiFont *f = &fonts[font]; int n = (int)strlen(s), w = lineWidth(f, s, n);
+  int gh = f->h.tex == PIX8_TEXID ? 8 : (f->h.pad ? f->h.pad : f->h.lh);
+  beginUi(); bn = 0; btex = -1;
+  for (int pass = 0; pass < 2; pass++) {
+    unsigned cc = pass ? abgr : (TXTSH1198_OLD ? 0xc8000000u : 0xff000000u); int pen = x + (pass ? 0 : k), yy = y + (pass ? 0 : k);
+    for (int i = 0; i < n; i++) {
+      const UiGlyph *g = &f->g[(unsigned char)s[i]];
+      if (!g->flags) g = &f->g['?'];
+      if (g->flags & 1) baddS(f->h.tex, g->u, g->v, g->w, gh, pen + g->left * k, yy, g->w * k, gh * k, cc);
+      pen += (g->adv + kernAdj(f, s, i, n)) * k;
+    }
+  }
+  bflush();
+  return w * k;
 }
 // №1149 (Роб: отсчёт перед бонус-гонкой — тот же, что у уличных гонок): HUD рисует только метку отсчёта (цифра 3-2-1 или слово GO!, анимация и шрифт HUD), остальные метки экрана
 // на время вызова сняты. Показ цифры и слова — те же uiHudSet / uiCountdownText / uiHudShow, что у сценариев миссий
@@ -1841,6 +1899,14 @@ void uiDrawCountdownOnly(void) {
   tagMask[UI_SCREEN_HUD] = keep & (1u | 1u << UI_T_COUNTDOWN);
   drawScreen(UI_SCREEN_HUD, -1);
   tagMask[UI_SCREEN_HUD] = keep;
+}
+// №1196 (Роб: место и круги бонус-гонки — теми же рисованными цифрами, что у уличных гонок): HUD рисует только метки из набора; показ и числа — uiHudSet / uiHudShow, как у миссий
+// Флаги «новый текст / новое число отсчёта» сбрасывает первая отрисовка экрана, поэтому здесь они сохраняются: иначе отсчёт 3-2-1 терял всплытие и не появлялся
+void uiDrawHudTags(unsigned tagBits) {
+  unsigned keep = tagMask[UI_SCREEN_HUD]; int cd_ = cdNew, mg_ = msgNew;
+  tagMask[UI_SCREEN_HUD] = keep & (1u | tagBits);
+  drawScreen(UI_SCREEN_HUD, -1);
+  tagMask[UI_SCREEN_HUD] = keep; if (!(tagBits >> UI_T_COUNTDOWN & 1)) cdNew = cd_; if (!(tagBits >> UI_T_OBJECTIVE & 1)) msgNew = mg_;   // флаг остаётся, только если метка в этот вызов не рисовалась
 }
 int uiFontFind(const char *name) {   // номер шрифта пакета: грань base; есть вариант для текстов миссий (base*k) — он
   if (!H || !name) return 0;
@@ -2485,6 +2551,14 @@ static void drawScreen(int sidx, int selected) {
   bn = 0; btex = -1;
   char buf[32];
   xf.on = 0;
+  cardPulseOn = 0;
+  if (!CARDPULSE1217_OLD && sidx == UI_SCREEN_MISSIONLOAD && !scrMode && (mask >> UI_T_PRESS_START & 1)) {   // №1217: рамка группы ✕ CONTINUE
+    int x0 = 9999, y0 = 9999, x1 = -9999, y1 = -9999;
+    for (unsigned i = 0; i < sc->count; i++) { const UiItem *g = &items[sc->first + i]; if (g->tag != UI_T_PRESS_START) continue;
+      if (g->x < x0) x0 = g->x; if (g->y < y0) y0 = g->y; if (g->x + g->w > x1) x1 = g->x + g->w; if (g->y + g->h > y1) y1 = g->y + g->h; }
+    if (x1 > x0) { cardPulseOn = 1; cardPulseCx = (x0 + x1) * .5f; cardPulseCy = (y0 + y1) * .5f;
+      cardPulseS = 1.f + .05f * sinf(2.f * 3.14159265f * 2.f * (float)(sceKernelGetSystemTimeLow() % 1000000u) * 1e-6f); }
+  }
   // ---- анимации HUD: показ/снятие тегов с прошлого кадра, гаснущие теги, центры всплывающих групп (ui_anim.h)
   int hud = sidx == UI_SCREEN_HUD && !scrMode;
   int failureY = 272, failureLeft = 0, failureRight = 0;
@@ -2774,6 +2848,7 @@ static void drawScreen(int sidx, int selected) {
           int v = fieldv[UI_F_ROW0 + it->res[1] - 1]; if (v < 0) v = 0; if (v > 1000) v = 1000;
           fuse += (int)floorf((v - 500) * (1.f / 1000.f) * it->ang + .5f);
         }
+        if (cardPulseOn && it->tag == UI_T_PRESS_START) { xf.on = 1; xf.a = 1.f; xf.s = cardPulseS; xf.cx = cardPulseCx; xf.cy = cardPulseCy + gDy; }   // №1217: ✕ карточки
         if (hud && it->tag == UI_T_ACTION && !(animOff & UI_ANIM_NOPULSE)) {   // подсказка △ дышит от своего центра (ui_anim.h, п. 1)
           xf.on = 1; xf.a = 1.f; xf.s = uiPulseScale(uiClk - tagOnT[UI_T_ACTION]);
           xf.cx = s->x + s->w * .5f; xf.cy = s->y + gDy + s->h * .5f;
@@ -2850,7 +2925,7 @@ static void drawScreen(int sidx, int selected) {
         }
         unsigned col = it->color;
         if (it->flags & F_MENU) {
-          if (it->menu < 32 && (menuOff[sidx] >> it->menu & 1)) col = DIM_ABGR;
+          if (it->menu < 32 && (menuOff[sidx] >> it->menu & 1)) col = (!PAUSEGREY1194_OLD && (sidx == UI_SCREEN_PAUSE || sidx == UI_SCREEN_PAUSEMSN)) ? DIM_PAUSE_ABGR : DIM_ABGR;
           else if (it->menu == selected) col = SEL_ABGR;
         }
         if (hud && it->field == UI_F_ACTION_TEXT && !(animOff & UI_ANIM_NOACTFADE)) {   // правка 272: подпись у △ проявляется вместе
@@ -2897,7 +2972,10 @@ static void drawScreen(int sidx, int selected) {
           }
           if (menuVecWanted(it, sidx, selected, s)) menuVecPlate(it, s);   // №1012: страницы OPTIONS (PICTURE, SOUND, CAMERA, GAME) идут этой веткой
           drawTextItem(it, s, col);
-        } else if (!CARDTEXT_PULSE_OLD && (it->field == UI_F_MSN_TITLE || it->field == UI_F_MSN_INFO) && sidx == UI_SCREEN_MISSIONLOAD) {   // сверка g09a-hud, M2:28: заголовок и описание карточки пульсируют ±5 % с частотой 2 Гц
+        } else if (cardPulseOn && it->tag == UI_T_PRESS_START) {   // №1217: подпись CONTINUE — вместе со значком от общего центра
+          typeof(xf) keep_ = xf; xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.s = cardPulseS; xf.cx = cardPulseCx; xf.cy = cardPulseCy + gDy;
+          drawTextItem(it, s, col); xf = keep_;
+        } else if (!CARDTEXT_PULSE_OLD && CARDPULSE1217_OLD && (it->field == UI_F_MSN_TITLE || it->field == UI_F_MSN_INFO) && sidx == UI_SCREEN_MISSIONLOAD) {   // сверка g09a-hud, M2:28: заголовок и описание карточки пульсируют ±5 % с частотой 2 Гц
           typeof(xf) keep_ = xf; if (!xf.on) { xf.on = 1; xf.s = 1.f; xf.a = 1.f; }
           xf.s *= 1.f + .05f * sinf(2.f * 3.14159265f * 2.f * (float)(sceKernelGetSystemTimeLow() % 1000000u) * 1e-6f); xf.cx = it->x + it->w * .5f; xf.cy = (float)(it->y + gDy) + it->h * .5f;
           drawTextItem(it, s, col); xf = keep_;

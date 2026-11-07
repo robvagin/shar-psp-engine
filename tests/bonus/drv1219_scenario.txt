@@ -1,0 +1,64 @@
+# №1219: водители бонус-гонки — меню как sheet_after.txt до гонки, затем все виды (Select) со снимками. Красный контроль: EBOOT с -DBNSDRIVER1219_OLD=1 (машины пустые)
+flag menu
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonustrack 1
+wait 3.00
+shot s01_main_menu
+wait 0.10
+press left 0.3
+wait 0.90
+shot s02_main_minigame
+wait 0.10
+press cross 0.3
+wait 2.30
+shot s03_select_track
+wait 0.10
+press cross 0.3
+wait 1.30
+shot s04_select_char
+wait 0.10
+press right 0.3
+wait 0.70
+shot s05_select_char_next
+wait 0.10
+press cross 0.3
+wait 0.80
+shot s06_select_car
+wait 0.10
+press cross 0.3
+wait 0.30
+shot s07_after_ok
+wait 0.70
+shot s10_loading
+wait 0.80
+shot s11_count_0
+wait 1.00
+shot s11_count_1
+wait 1.10
+shot s11_count_2
+wait 1.00
+shot s11_count_3
+wait 1.10
+shot s11_count_4
+wait 1.80
+shot s12_race_0
+wait 7.00
+shot s12_race_1
+wait 3
+shot drv_race_top
+wait 3
+shot drv_race_top2
+press select 0.2
+wait 1.5
+shot drv_far
+press select 0.2
+wait 1.5
+shot drv_bumper
+press select 0.2
+wait 1.5
+shot drv_near
+wait 2
+shot drv_near2
+end

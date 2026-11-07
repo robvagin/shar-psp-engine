@@ -1,0 +1,26 @@
+# ag/loadorder R3: переходы уровней golevel (тот же путь, что LEVEL COMPLETE -> следующий): L4 (старт в доме), L7, L2, L3, L5, L6, L1
+flag nosave
+scene LO_L1
+wait 4
+scene LO_GO_L4
+flag golevel 4
+wait 14
+scene LO_GO_L7
+flag golevel 7
+wait 14
+scene LO_GO_L2
+flag golevel 2
+wait 14
+scene LO_GO_L3
+flag golevel 3
+wait 14
+scene LO_GO_L5
+flag golevel 5
+wait 14
+scene LO_GO_L6
+flag golevel 6
+wait 14
+scene LO_GO_L1
+flag golevel 1
+wait 14
+end

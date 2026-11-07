@@ -1,0 +1,7 @@
+scene A1170_LOG
+flag camdet 1
+flag camlog
+flag startcam 1
+flag golevel 5
+wait 7
+end

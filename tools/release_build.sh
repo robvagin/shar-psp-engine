@@ -7,6 +7,7 @@
 #   EBOOT = RELEASE + KEEP_DIAG (ящик асинхронный) + KEEP_HUD (счётчик скрыт, R+SELECT; файла hudon в финале нет) + JITTER_*_OLD, сборка только из чистого дерева,
 #   название через tools/eboot_title.py --preset final, frame_gate обязателен (нет PASS — выход 1). Игровые сохранения (save00/03, settings.bin, devsave) и pcar-*.shr набор не трогает: файлов с такими именами в наборе нет.
 # Переменные: те же, что у test30_set.sh (DATA, LV_SRC, TRF_SRC, UI_SRC, PERS_SRC, HZ_SRC, CEIL_SRC); TITLE_PRESET не нужен (final).
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/linux_env.sh"   # Linux: обёртки stat/cp/sed под синтаксис macOS (tools/linux_env.sh)
 set -eu
 cd "$(dirname "$0")/.."; ROOT="$PWD"
 OUT="${1:?укажи папку результата}"; CARD="${2:-/Volumes/PSP/PSP/GAME/SHARVIEW}"

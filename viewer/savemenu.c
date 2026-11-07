@@ -3,6 +3,7 @@
 #define FAILPULSE1097_OLD 0   // №1097: 1 — вопросы savemenu без пульса (прежнее)
 #endif
 #include <pspkernel.h>
+#include "genest.h"   // №1188
 #include <pspdisplay.h>
 #include <pspctrl.h>
 #include <psputility.h>
@@ -258,6 +259,7 @@ static int dlgRun(SceUtilitySavedataParam *p) {
 static int utilVar(int var, int mode, const char *saveName, void *buf, unsigned bufSize, unsigned dataSize, const SaveGame *meta,
                    const char *test) {
   int dlg = mode == PSP_UTILITY_SAVEDATA_SAVE || mode == PSP_UTILITY_SAVEDATA_LOAD;
+  if (dlg) GE_NEST_GUARD_RET("savemenu", -1);   // №1188: окно PSP рисует в свой список; при открытом списке кадра — отказ до запуска утилиты
   if (svBlock && mode != PSP_UTILITY_SAVEDATA_LOAD && mode != PSP_UTILITY_SAVEDATA_AUTOLOAD && mode != PSP_UTILITY_SAVEDATA_LISTLOAD) { logf_("SAVEBLOCK util mode=%d\n", mode); return (int)0x80110300u; }
   if (svvFail && var == SVV_STD && (mode == PSP_UTILITY_SAVEDATA_AUTOSAVE || mode == PSP_UTILITY_SAVEDATA_SAVE)) return (int)svvFail;   // «savefail»: как железо, ничего не пишется
   if (dlg && svDlgFail) return (int)0x80110388u;   // 309 «svdlgfail»: окно отвергает параметры, ничего не показано

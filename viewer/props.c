@@ -43,7 +43,7 @@ int propsInit(Props *p, const void *section, unsigned size) {
   for (unsigned i = 0; i < ntype; i++) {
     if ((uint64_t)p->types[i].firstPiece + p->types[i].nPiece > npiece) return -6;
   }
-  p->nearList = (unsigned *)calloc(ninst ? ninst : 1, sizeof(unsigned));   // №1086
+  p->nearList = (unsigned *)calloc(ninst ? ninst : 1, sizeof(unsigned));   // №1086; №1170: может быть NULL — все обращения (propsAdvanceEx fuse, propsNearBuild, propsHit useList) проверяют nearList, без списка идёт полный проход
   p->st = calloc(ninst ? ninst : 1, sizeof(PropState));
   if (!p->st) return -7;
   // коробка каждого типа в осях модели: по вершинам всех кусочков (модель = o + sc*v)

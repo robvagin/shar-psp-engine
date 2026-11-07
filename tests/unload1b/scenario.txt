@@ -1,0 +1,16 @@
+# TEST90 1В: три смены уровня (L4 и L1 с PVS в участок) и выход в главное меню при «раздробленной» куче (fragmenu 4: гостиная ищет кусок ≥ 5,2 МБ)
+wait 6
+flag golevel 4
+wait 12
+flag golevel 1
+wait 12
+flag golevel 4
+wait 12
+flag fragmenu 4
+press start
+wait 1.5
+press up
+wait 0.6
+press cross
+wait 14
+end

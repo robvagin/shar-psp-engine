@@ -64,6 +64,9 @@ typedef struct { uint8_t joint, slot, mode, pad; int32_t tex; float t[3], w, h, 
 #ifndef SP_BILL_PVIS_ON
 #define SP_BILL_PVIS_ON 1   // отрицательный контроль гейта tests/levelmech/barriers.sh: 0 — огни не мигают (горят всегда)
 #endif
+#ifndef BARRIERFX1175_OLD
+#define BARRIERFX1175_OLD 0   // №1175: 1 — обломок барьера (BREAK) не играет своих частиц, как в TEST87
+#endif
 typedef struct { float x, y, z, q[4]; uint16_t type, tag; } SpInst;   // tag: номер щитка m4 (powerboxN), 0 нет
 
 // ---- состояние экземпляра
@@ -83,6 +86,7 @@ typedef struct {
   float dirC, dirS;
   uint8_t fall; float fallTh, fallW, fallD[2], fallR0[9];   // №975: 1 — столб валится на шарнире у основания (угол, скорость, направление, исходный поворот), 2 — лежит
   float hv[2];                     // №923: горизонтальная скорость машины (до стен кадра) при её ударе по этому предмету; обломок по вызову с задержкой берёт её отсюда
+  uint8_t ownFx;                  // №1175: обломок запущен самим стейтпропом (вызов BREAK барьера) — его родные частицы играет он сам, не вызывающий; 0 — обломок предмета (частицы у вызывающего)
   uint8_t bushPass;               // №1101: куст-шар — машина вошла на скорости и проходит насквозь (держится, пока касание не кончилось)
   uint8_t hitPend;                 // сверка g11 круг 2 (P18 Д5): вызов монет при выключенном Hit & Run подал предмету ещё одно событие HIT — отправить после вызова
   uint8_t loopOn; float loopA, loopB;   // сверка g11 круг 2 (P15-19): цикл кадров [loopA, loopB) вместо хода клипа (вступление и окончание гэга), spLoop

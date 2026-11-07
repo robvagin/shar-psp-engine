@@ -8,6 +8,7 @@ CC="cc -std=c99 -O2 -w -I viewer -DSV_FORCE_PLAYER=1 -DSV_AIRWHEEL_OLD=0"   # �
 SRC="tests/g01cars/check.c tests/g01cars/surf.c viewer/col.c viewer/car.c -lm"
 $CC -o "$OUT/new" $SRC || exit 1
 # тест | ключ | нижняя | верхняя | выключатели старого (через +) | SAME — старое значение совпадает по построению (тест подтверждает число оригинала, но не падает)
+# №1172: потеря сцепления ведущих на скорости SV_GRIPLOSS_K 0,05 вместо 0,2 по тексту исходника (с 0,2 TEST87 срывало в занос 38 машин из 89), граница griploss_hi 17,3…19,0 → 16,0…16,6
 # №1126 (PS2-коридоры): границы steer_top, brake_limit, brake_force, griploss сдвинуты коэффициентами SV_STEER_DROP_K = 0,7 (до доли скорости 0,55, дальше к 1 у TopSpeed) и SV_ROLL_BRAKE_K = 0,2 (карточка tests/cars/attitude.c E и G)
 TABLE='steer_top steer_top 0.28 0.36 SV_STEER_DROP_OLD
 steer_low steer_low_deg 37 39.5 SV_STEER_LOW_OLD
@@ -27,7 +28,7 @@ airstab_tilt airstab_tilt_ratio 0.8 1.0 SV_AIRSTAB_OLD
 airdamp airdamp_ratio 0.9 1.1 SV_AIRSTAB2_OLD
 weeble_diag weeble_roll_deg 18 24 SV_WEEBLEDIAG_OLD
 surface_grip surface_grass_ratio 0.67 0.78 SV_SURFACE_GRIP_OLD
-gripLoss griploss_hi 17.3 19.0 SV_GRIPLOSS_OLD
+gripLoss griploss_hi 16.0 16.6 SV_GRIPLOSS_OLD
 flipsteer flipsteer_ratio 0.97 1.03 SV_FLIPSTEER_OLD
 rest_slope rest_slope_move 0 0.5 SV_REST_OLD
 hitter hitter_ratio 0.45 0.55 SV_HITTERVEL_OLD

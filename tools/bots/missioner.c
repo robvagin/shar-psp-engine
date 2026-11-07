@@ -18,9 +18,10 @@
 #include <string.h>
 #include <math.h>
 #include "navgraph.h"
-#include "footpath.h"   // 03.10: путь пешком по сетке по настоящей коллизии (m0 своя машина у двери, m1 крыльцо школы)
+#include "footpath.h"
+#include "footnav.h"   // 05.11: пешая навигация g04-homer (626ca49f): длинный план по дорогам + пешеходы A/B, прыжок через тонкую преграду. MISSIONER_NO_FOOTNAV=1 — без неё (красный контроль)   // 03.10: путь пешком по сетке по настоящей коллизии (m0 своя машина у двери, m1 крыльцо школы)
 
-static BotWorld W; static BotSnap stageSnap; static int impossibleTimer, verbose, startCoins = -1, fromMain;   // startCoins: --coins N — кошелёк на старте миссии (покупки: m3 «купи Plow King»)
+static BotWorld W; static BotSnap stageSnap; static int impossibleTimer, verbose, startCoins = -1, fromMain, brokenGoal;   // startCoins: --coins N — кошелёк на старте миссии (покупки: m3 «купи Plow King»)
 static BotSnap cpSnap; static int cpRec, cpKey, cpTries;   // 30.09: снимок стадии RESET_TO_HERE — чекпоинт, с которого игра повторяет миссию
 typedef struct { unsigned b; float ax, ay; } In;
 static In *rec; static int nrec, recCap = 60 * 60 * 30;
@@ -39,9 +40,41 @@ static void traceCurrentStage(void) {
   fflush(stdout);
 #endif
 }
+// ночь 04.11 (наряд «боты»): быстрый водитель и лестница без вечного стояния
+//   MISSIONER_FAST=1 — всегда быстрый (не careful: толкает трафик, едет без оглядки на урон), =0 — никогда; без переменной — быстрый
+//   с третьей попытки стадии на гонке и таймере. MISSIONER_SEED=N — вариант: другие числа водителя (PAR0) и другой поток эволюции.
+//   MISSIONER_NO_TELEPORT=1 — без переноса (красный контроль лестницы). --broken-goal — красный контроль: цель на 60 м над маркером
+static float fastK = 0.f;   // 0 — по умолчанию: гонка 3.0 (L2 sr1 проходится на первой попытке за 96.7 с при 1.35 и 2.0 не успевает на 3–6 %), прочий таймер 1.8;   // MISSIONER_FASTK: во сколько раз можно превысить желаемую скорость водителя полос до торможения (быстрый водитель)
+static int fastDrive; static float parBase[NPAR]; static uint32_t seedSet; static char waitWhy[160];
+#define TP_MAX 8   // переносов на миссию; больше — честное «застрял»
+// Механики (05.11, «главное, чтобы механика работала»): счётчики событий мира за прогон (монеты, удары по предметам, ломка стейтпропов, входы в комнаты, удары трафика)
+// с местом первого события, и ход гонки раз в 5 с (прогресс игрока и соперников). Счётчики считают всё, что видели, включая отброшенные повторы. Строки MECH в stdout
+enum { MK_COIN, MK_KICK, MK_SP, MK_ROOM, MK_TRAF, MK_N };
+static unsigned mPrev[MK_N], mCnt[MK_N]; static int mHave[MK_N]; static float mPos[MK_N][3];
+static void mechReset(void) { memset(mPrev, 0, sizeof mPrev); memset(mCnt, 0, sizeof mCnt); memset(mHave, 0, sizeof mHave); }
+static void mechTrack(void) {
+  unsigned cur[MK_N] = {W.st.coins, W.st.propKicks, W.st.spChanges, W.st.rooms, W.st.trEvents};
+  for (int k = 0; k < MK_N; k++) {
+    if (cur[k] > mPrev[k]) { mCnt[k] += cur[k] - mPrev[k]; if (!mHave[k]) { mHave[k] = 1; int ft = gameOnFoot(&W.G);
+      mPos[k][0] = ft ? W.homer.x : W.car.x; mPos[k][1] = ft ? W.homer.y : W.car.y; mPos[k][2] = ft ? W.homer.z : W.car.z; } }
+    mPrev[k] = cur[k];
+  }
+  const MsnRuntime *rt = &W.msn.rt;
+  if (rt->status == MSN_RUNNING && rt->obj == MSN_OBJ_RACE && W.st.frames % 300 == 0) {
+    printf("MECH\trace\t%u\t%d/%d\t%d/%d", W.st.frames / 60, rt->lap, rt->laps, rt->next_item, rt->nitems);
+    for (int i = 0; i < W.msn.cars.n; i++) { const McCar *c = &W.msn.cars.c[i]; if (c->on) printf("\t%s:%d:%d", c->name, c->wp, c->finished); }
+    printf("\n");
+  }
+}
+static void mechSummary(int mi) {
+  static const char *nm[MK_N] = {"coins", "kicks", "sp", "rooms", "traffic"};
+  printf("MECH\tsum\t%d", mi);
+  for (int k = 0; k < MK_N; k++) printf("\t%s:%u:%.1f:%.1f:%.1f", nm[k], mCnt[k], mHave[k] ? mPos[k][0] : 0.f, mHave[k] ? mPos[k][1] : 0.f, mHave[k] ? mPos[k][2] : 0.f);
+  printf("\n");
+}
 static void step(unsigned b, float ax, float ay) {
   if (nrec < recCap) rec[nrec++] = (In){b, ax, ay};
-  bwStep(&W, b, ax, ay); traceCurrentStage();
+  bwStep(&W, b, ax, ay); traceCurrentStage(); mechTrack();
 }
 
 // эволюция отрезка, как навигатор Б1: от снимка cur к точке p — варианты чисел водителя и сдвигов опорных точек вбок,
@@ -295,7 +328,7 @@ static void laneStep(const MsnVec3 *p, int ram, const char *target, int follow) 
   botDrv.car = W.car; botDrv.mode = ram ? MC_CHASE : MC_RACE; botDrv.hasSk = 0;   // игрок едет и по срезам (дороги диска с флагом shortcut: у гонки sr1 — западная сторона круга)
   // 30.09 (часть race): машина игрока не толкает трафик и стоящие, как соперник гонки (им стены не бьют, игроку — любой удар):
   // урон gr1 0.38 ещё до старта гонки (толкался у Луи), провалы «damage». Таран — толкать; MISSIONER_PUSHY=1 — прежний водитель
-  botDrv.careful = !ram && !getenv("MISSIONER_PUSHY");
+  botDrv.careful = !ram && !getenv("MISSIONER_PUSHY") && !fastDrive;
   snprintf(botDrv.ignore, sizeof botDrv.ignore, "%s", ram && target ? target : "");
   float g[3] = {p->x, p->y, p->z}; CarInput in;
   static float tp[60][3]; int ntp = 0;
@@ -320,6 +353,9 @@ static void laneStep(const MsnVec3 *p, int ram, const char *target, int follow) 
     if (pushT > .4f) { backT = .5f; pushT = 0.f; }
     if (backT > 0.f) { backT -= BW_DT; in.throttle = 0.f; in.brake = .3f; }
   } else pushT = backT = 0.f;
+  // быстрый водитель (04.11): водитель полос берёт скорость поворотов консервативно (vt 7–20 м/с при предельных 35: sr1 L2 вдвое медленнее времени). Не тормозить,
+  // пока перебор над желаемой скоростью меньше 35 % + 2 м/с, газ не слабее 0.6; ручник в крутых поворотах уже даёт mcBotInput. MISSIONER_FAST=0 — отключить
+  if (fastDrive && !ram && !follow && in.brake > 0.f && W.car.v < botDrv.vt * (fastK > 0.f ? fastK : W.msn.rt.obj == MSN_OBJ_RACE ? 3.0f : 1.8f) + 2.f) { in.brake = 0.f; in.throttle = fmaxf(in.throttle, .6f); }
   unsigned b = 0; thrAcc += in.throttle; if (thrAcc >= 1.f) { b |= GP_R; thrAcc -= 1.f; }   // газ/тормоз пульта — нажатия: доля кадров
   brkAcc += in.brake; if (brkAcc >= 1.f) { b |= GP_L; brkAcc -= 1.f; }
   if (in.handbrake > .5f) b |= GP_SQUARE;
@@ -338,7 +374,7 @@ static void laneStep(const MsnVec3 *p, int ram, const char *target, int follow) 
   }
   step(b, in.steer, 0);
 }
-typedef struct { const char *result, *why; float t, margin, damage; int stages, attempts, frames; float sx, sz; int wall; const char *cls; int nav, second, raceNavPick; } Out;
+typedef struct { const char *result, *why; float t, margin, damage; int stages, attempts, frames; float sx, sz; int wall; const char *cls; int nav, second, raceNavPick, tp, waitjump; } Out;
 // попыток стадии после первой: 3; у гонки с соперниками — 7 (игрок тоже переигрывает гонку; водителей по попыткам чередуем)
 static int maxTries(const MsnRuntime *rt) {
 #ifdef ALLRISK_MISSION_LIBRARY
@@ -374,9 +410,41 @@ static void bonusCarToStart(int mi) {
     if (verbose) printf("  бонус-миссия: машина у её старта %s %.1f %.1f %.1f (Гомер %.1f %.1f)\n", msn_str(F, l->name), l->pos[0], l->pos[1], l->pos[2], W.homer.x, W.homer.z);
     return; }
 }
+// Лестница, последняя ступень (проект ботов 04.11 §3): перенос на узел дорог не ближе 30 м от места застревания, по пути к цели; < 0 — переносить некуда.
+// Всегда с пометкой: строка TP с местом (код места считает отчёт), итог миссии «пройдена с переносом», класс «игра/бот: разобрать».
+static int roomGridOn = -1;   // 05.11: сетка пути (footpath) и в комнатах; MISSIONER_ROOMGRID=1 — включить (не доказано: fpPlan в Moe's возвращает 0 точек)
+static float stillT, sideT;   // пешком: время без сдвига и шаг вбок (общие с блоком footnav)
+static float tpFrom[TP_MAX][2]; static int tpN;   // откуда уже переносили: не возвращать туда же (L2 m2: пешеход мотался H10-2 <-> H8-7)
+// 06.11 (Роб: «обучи ботов… чтобы правки не были как снег на голову»): в гонке оба водителя застревали у бордюров и домов по пути к точке (21 заезд TEST91 — «игра»,
+// в эмуляторе на тех же местах машина уезжает: открытые перекрёстки) — теперь и в гонке последняя ступень — перенос по пути навигатора к точке (итог «пройдена с переносом»,
+// место — в списке переносов), а «игра» остаётся за настоящими тупиками. MISSIONER_RACE_NO_TP=1 — как было (в гонке переноса нет)
+static int teleportAhead(int mi, MsnVec3 goal, int foot, float t, const MsnRuntime *rt) {
+  float fx = foot ? W.homer.x : W.car.x, fy = foot ? W.homer.y : W.car.y, fz = foot ? W.homer.z : W.car.z;
+  if (foot && W.room >= 0) {   // Гомер в комнате (y около −20 — комнаты лежат под городом, это не провал сквозь пол): перенос на локатор выхода комнаты
+    float t3[3]; bwRoomExit(W.room, t3);
+    for (int i = 0; i < tpN; i++) if (hypotf(t3[0] - tpFrom[i][0], t3[2] - tpFrom[i][1]) < 3.f) return -1;
+    if (tpN < TP_MAX) { tpFrom[tpN][0] = fx; tpFrom[tpN][1] = fz; tpN++; }
+    printf("TP\t%d\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%.1f\t%d.%d\n", mi, fx, fy, fz, t3[0], t3[1], t3[2], foot, t, rt->phase, rt->stage);
+    homerPlace(&W.homer, bwCol(), t3[0], t3[1] + .5f, t3[2], 0.f);
+    for (int k = 0; k < 10; k++) bwStep(&W, 0, 0, 0);
+    return 0;
+  }
+  P3 q[MAXWP]; int nq = navPlan(fx, fy, fz, goal.x, goal.y, goal.z, q, MAXWP), pick = -1;
+  for (int i = 0; i < nq; i++) if (hypotf(q[i].x - fx, q[i].z - fz) >= 30.f) { pick = i; break; }
+  if (pick < 0) return -1;
+  float tx = q[pick].x, ty = q[pick].y, tz = q[pick].z, nx = pick + 1 < nq ? q[pick + 1].x : goal.x, nz = pick + 1 < nq ? q[pick + 1].z : goal.z;
+  for (int i = 0; i < tpN; i++) if (hypotf(tx - tpFrom[i][0], tz - tpFrom[i][1]) < 20.f) return -1;   // перенос привёл бы в место прежнего застревания: честное «застрял»
+  if (tpN < TP_MAX) { tpFrom[tpN][0] = fx; tpFrom[tpN][1] = fz; tpN++; }
+  float h = atan2f(nx - tx, nz - tz);
+  printf("TP\t%d\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%.1f\t%d.%d\n", mi, fx, fy, fz, tx, ty, tz, foot, t, rt->phase, rt->stage);
+  if (foot) homerPlace(&W.homer, bwCol(), tx, ty + .5f, tz, h);
+  else { carPlace(&W.car, (ColWorld *)bwCol(), tx, ty, tz, h); W.props.havePreviousCar = 0; }
+  for (int k = 0; k < 10; k++) bwStep(&W, 0, 0, 0);   // осесть (кадры вне записи ввода: повтор mN.in пометки переноса не воспроизводит)
+  return pick;
+}
 static Out playMission(int mi, float secs) {
   traceEnabled = 0; traceMission = mi; tracePhase = traceStage = -99;
-  rcReset();
+  rcReset(); mechReset();
   Out o = {"застрял", "", 0, -1, 0, 0, 1, 0, 0, 0, -1, "игра", 0, 0};
   bwFree(&W); bwNew(&W); nrec = 0;
 #ifdef BW_HAVE_AO
@@ -387,7 +455,7 @@ static Out playMission(int mi, float secs) {
   // иначе MISSIONER_COINS (по умолчанию 250): игрок к этим миссиям уровня 1 набирает монеты по городу, бот их не собирает;
   // нужны ставке gr1 (20) и покупке Plow King (150) — допущение стенда, не игры
   if (W.haveCoins) W.coins.collected = startCoins >= 0 ? startCoins : getenv("MISSIONER_COINS") ? atoi(getenv("MISSIONER_COINS")) : 250;
-#if defined(ALLRISK_MISSION_LIBRARY) && !defined(ALLRISK_WALLET_OLD)
+#if !defined(ALLRISK_WALLET_OLD)   // 04.11: и для обычного миссионера (L2–L7: покупки дороже кошелька L1 в 250); MISSIONER_COINS/--coins дают точное число
   // Starting fixture, not free in-game coins: later-level purchase stages cost
   // more than the legacy L1 wallet. Derive required budget from packet BindReward.
   // Explicit --coins/MISSIONER_COINS keep their exact value for negative controls.
@@ -416,7 +484,13 @@ static Out playMission(int mi, float secs) {
   else if (M->f.missions[mi].flags & (MSN_MF_BONUS | MSN_MF_STREETRACE | MSN_MF_GAMBLE | MSN_MF_BONUSMISSION)) { bonusCarToStart(mi); msn_start_bonus(rt, mi); }
   else msn_start_mission(rt, mi, 0);
   P3 q[MAXWP]; int nq = 0, seg = 0; MsnVec3 aim = {1e9f, 0, 1e9f};
-  float par[NPAR]; memcpy(par, PAR0, sizeof par);
+  float par[NPAR]; memcpy(parBase, PAR0, sizeof parBase);
+  if (seedSet) for (int k = 0; k < NPAR; k++) parBase[k] = fmaxf(PARLO[k], fminf(PARHI[k], PAR0[k] * (1.f + .12f * lgauss())));   // вариант: другие числа водителя (seed — ось ночи)
+  memcpy(par, parBase, sizeof par);
+  float stageD0 = -1.f, stageMin = 1e9f;   // расстояние до цели стадии на старте и лучшее за стадию (доля пути до провала)
+  int tp = 0; tpN = 0; float waitT = 0.f; int waitJump = 0;   // лестница: переносы и ожидание события
+  { const char *fe = getenv("MISSIONER_FAST"); fastDrive = fe && *fe == '1'; }
+  { const char *fk = getenv("MISSIONER_FASTK"); if (fk) fastK = (float)atof(fk); }
   int lastStage = -99, frames = (int)(secs * 60), tries = 0; float best = 1e9f, bestT = 0;
   float resetsT = 0, shift = 0, slowT = 0, backT = 0, backAx = 0; int resets = 0, evolved = 0; navAvoidN = 0;
   float escT = 0.f; MsnVec3 esc = {0, 0, 0}; memset(&botDrv, 0, sizeof botDrv); thrAcc = brkAcc = 0.f;
@@ -432,12 +506,12 @@ static Out playMission(int mi, float secs) {
   traceEnabled = 1; traceCurrentStage();
   bwSave(&W, &stageSnap); int stageRec = nrec;   // запись ввода откатывается вместе с миром: повтор mN.in = ровно сыгранное
   for (int f = 0; f < frames; f++) {
-    if ((rt->completed >> mi) & 1u) { o.result = "пройдена"; o.cls = "—"; o.t = f / 60.f; o.damage = W.car.damage; o.frames = f;
+    if ((rt->completed >> mi) & 1u) { o.result = tp ? "пройдена с переносом" : "пройдена"; o.cls = tp ? "игра/бот: разобрать (перенос)" : "—"; o.tp = tp; o.waitjump = waitJump; o.t = f / 60.f; o.damage = W.car.damage; o.frames = f;
       if (verbose) printf("  пройдена t=%.1f: таймер %.1f%s, монет %d\n", W.st.frames / 60.f, rt->remaining, rt->timer_up ? " (вверх)" : "", W.coins.collected);   // gr1: выигрыш ставки
       return o; }
     int stageKey = rt->phase * 1000 + rt->stage;
     if (stageKey != lastStage && rt->phase == rt->cp_phase && rt->stage == rt->cp_stage && stageKey != cpKey) { bwSave(&W, &cpSnap); cpRec = nrec; cpKey = stageKey; }
-    if (stageKey != lastStage) { lastStage = stageKey; o.stages++; bwSave(&W, &stageSnap); stageRec = nrec; tries = 0; best = 1e9f; bestT = f / 60.f; aim.x = 1e9f; evolved = 0; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset();
+    if (stageKey != lastStage) { stageD0 = -1.f; stageMin = 1e9f; lastStage = stageKey; o.stages++; bwSave(&W, &stageSnap); stageRec = nrec; tries = 0; best = 1e9f; bestT = f / 60.f; aim.x = 1e9f; evolved = 0; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset();
       traceCurrentStage();
       if (verbose) printf("  стадия %d.%d t=%.1f: dest %d talk %d dialog %d target %s objdist %.1f; маркер %d %s %.1f %.1f %.1f loc %d; машина %.1f %.1f %.1f пешком %d; монет %d; урон %.2f\n",
                           rt->phase, rt->stage, f / 60.f, rt->c_dest != 0, rt->c_talk != 0, rt->c_dialog != 0, rt->target ? rt->target : "-", rt->objdist,
@@ -447,6 +521,9 @@ static Out playMission(int mi, float secs) {
     if (rt->timer_on && !rt->timer_up) o.margin = rt->remaining;
     if (rt->status == MSN_FAILED) {                      // провал отрезка: снова с начала стадии другими числами водителя
       o.attempts++;
+      // 05.11: строка FAIL всегда (отчёт «провалы по правилу миссии»): стадия, причина, остаток таймера, урон, круг/точка, доля пути до цели (1 − лучшее расстояние / стартовое)
+      printf("FAIL\t%d\t%d.%d\t%s\t%s\t%.1f\t%.2f\t%d/%d\t%d/%d\t%.2f\t%.1f\t%.1f\n", mi, rt->phase, rt->stage, msn_objective_name[rt->obj], msn_fail_name[rt->fail], rt->remaining, W.car.damage,
+             rt->lap, rt->laps, rt->next_item, rt->nitems, stageD0 > 1.f ? 1.f - stageMin / stageD0 : -1.f, W.car.x, W.car.z);
       // 30.09 (часть race): причина провала в журнал -v — «игра или бот» решается по ней (таймер, урон, соперник первым, пар-время)
       if (verbose) { printf("  провал стадии %d.%d t=%.1f: %s; таймер %.1f%s, урон %.2f, круг %d/%d, точка %d/%d, собрано %d, монет %d", rt->phase, rt->stage, W.st.frames / 60.f,
                             msn_fail_name[rt->fail], rt->remaining, rt->timer_up ? " (вверх)" : "", W.car.damage, rt->lap, rt->laps, rt->next_item, rt->nitems, rt->ncollected, W.coins.collected);   // правка 347: собрано — у dump/delivery «точка» не считает
@@ -455,19 +532,31 @@ static Out playMission(int mi, float secs) {
       // 30.09 (часть race): таймер кончился на стадии без своего времени (AddStageTime 0: bm1 — поле томатов) — повтор, как в игре,
       // с чекпоинта RESET_TO_HERE (там таймер полный), не со снимка этой стадии, где время уже 0 (прежде 4 мгновенных провала подряд)
       if (rt->fail == MSN_FAIL_TIMEOUT && cpKey >= 0 && stageKey != cpKey) {
-        if (++cpTries > 2) { o.result = "провал"; o.cls = "намеренно"; o.why = "таймер: 3 захода с чекпоинта (RESET_TO_HERE) не успели"; o.t = f / 60.f; o.frames = f; return o; }
+        if (++cpTries > 2) { o.result = "провал"; o.cls = "намеренно"; o.why = "таймер: 3 захода с чекпоинта (RESET_TO_HERE) не успели"; o.t = f / 60.f; o.tp = tp; o.frames = f; return o; }
         bwLoad(&W, &cpSnap); nrec = cpRec; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset(); aim.x = 1e9f; continue;
       }
-      if (++tries > maxTries(rt)) { o.result = "провал"; o.cls = "намеренно"; o.why = "3 попытки стадии не прошли (правило миссии: таймер, урон)"; o.t = f / 60.f; o.frames = f; return o; }
+      if (++tries > maxTries(rt)) { o.result = "провал"; o.cls = "намеренно"; o.why = "3 попытки стадии не прошли (правило миссии: таймер, урон)"; o.t = f / 60.f; o.tp = tp; o.frames = f; return o; }
       bwLoad(&W, &stageSnap); nrec = stageRec; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset();   // снимок стадии уже содержит сценарий в её начале — msn_retry не нужен
-      for (int k = 0; k < NPAR; k++) par[k] = fmaxf(PARLO[k], fminf(PARHI[k], PAR0[k] * (1.f + .15f * (tries & 1 ? 1 : -1) * (k + 1) / NPAR)));
+      for (int k = 0; k < NPAR; k++) par[k] = fmaxf(PARLO[k], fminf(PARHI[k], parBase[k] * (1.f + .15f * (tries & 1 ? 1 : -1) * (k + 1) / NPAR)));
       aim.x = 1e9f; continue;
     }
     // «сядь в машину» (getin, current): маркера нет — пешком к своей машине и △ у двери, как игрок (после разговора
     // с Мардж игрок стоит на месте: SetMissionResetPlayerInCar переносит только при старте/повторе, game_msn.h)
     int getin = rt->status == MSN_RUNNING && rt->obj == MSN_OBJ_GETIN && gameOnFoot(&W.G);
-    if (!M->markerOn && !getin) { step(0, 0, 0); continue; }      // диалог, пауза между стадиями: ждать
-    MsnVec3 p = M->marker.pos;
+    if (!getenv("MISSIONER_FAST")) fastDrive = !(tries & 1) && (rt->obj == MSN_OBJ_RACE || (rt->timer_on && !rt->timer_up));   // быстрый водитель на гонке и таймере: с первой попытки, чётные попытки быстрым, нечётные аккуратным (дирижёр 05.11)
+    if (!M->markerOn && !getin) {      // диалог, пауза между стадиями: ждать — но не вечно (лестница: 20 с кнопки, 60 с прыжок на чекпоинт или честное «застрял»)
+      if (rt->status == MSN_RUNNING) waitT += BW_DT; else waitT = 0.f;
+      if (waitT > 20.f) step(((int)(waitT * 2.f) & 7) == 0 ? ((int)waitT & 1 ? GP_CROSS : GP_TRIANGLE) : 0, 0, 0); else step(0, 0, 0);
+      if (waitT > 60.f) {
+        if (rt->phase == 0 && M->f.missions[mi].main != MSN_NONE16 && !waitJump && !getenv("MISSIONER_NO_TELEPORT")) {
+          waitJump = 1; waitT = 0.f; printf("WAIT\t%d\t%d.%d\tпрыжок на чекпоинт основной части\t%.1f\n", mi, rt->phase, rt->stage, f / 60.f);
+          rt->cp_phase = 1; rt->cp_stage = 0; msn_start_mission(rt, mi, 1); lastStage = -99; continue; }
+        o.result = "застрял"; o.cls = "игра"; o.waitjump = waitJump; o.tp = tp; o.t = f / 60.f; o.frames = f;
+        snprintf(waitWhy, sizeof waitWhy, "ждёт события: стадия %d.%d %s, маркера нет 60 с", rt->phase, rt->stage, msn_objective_name[rt->obj]); o.why = waitWhy;
+        o.sx = gameOnFoot(&W.G) ? W.homer.x : W.car.x; o.sz = gameOnFoot(&W.G) ? W.homer.z : W.car.z; return o; }
+      continue; }
+    waitT = 0.f;
+    MsnVec3 p = M->marker.pos; if (brokenGoal) p.y += 60.f;   // красный контроль: цель в воздухе, бот обязан не «пройти» и не ждать вечно
     if (getin) { p.x = W.car.x; p.y = W.car.y; p.z = W.car.z; }
     int ram = 0, followTrail = 0;
     if (laneBot && rt->status == MSN_RUNNING && !gameOnFoot(&W.G) && rt->target) {
@@ -502,7 +591,7 @@ static Out playMission(int mi, float secs) {
       else if (W.room >= 0) wantFoot = 1;
     }
     float px = foot ? W.homer.x : W.car.x, pz = foot ? W.homer.z : W.car.z, py = foot ? W.homer.y : W.car.y;
-    float dist = hypotf(p.x - px, p.z - pz);
+    float dist = hypotf(p.x - px, p.z - pz); if (stageD0 < 0.f) stageD0 = dist; if (dist < stageMin) stageMin = dist;
     // цель едет (слежка, таран): ход — и когда бот сам проехал 15 м (расстояние до неё может не падать)
     { static float mx0, mz0; if (followTrail || ram) { if (hypotf(px - mx0, pz - mz0) > 15.f) { mx0 = px; mz0 = pz; best = 1e9f; } } else { mx0 = px; mz0 = pz; } }
     if (dist < best - 1.f) { best = dist; bestT = f / 60.f; }
@@ -518,10 +607,13 @@ static Out playMission(int mi, float secs) {
       if (++resets > 3) {
         if (++tries <= maxTries(rt)) {   // как при провале: отрезок стадии заново с её начала другими числами водителя (езда хаотична)
           o.attempts++; bwLoad(&W, &stageSnap); nrec = stageRec; resets = 0; navAvoidN = 0; shift = 0; evolved = 0; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset();
-          for (int k = 0; k < NPAR; k++) par[k] = fmaxf(PARLO[k], fminf(PARHI[k], PAR0[k] * (1.f + .15f * (tries & 1 ? 1 : -1) * (k + 1) / NPAR)));
+          for (int k = 0; k < NPAR; k++) par[k] = fmaxf(PARLO[k], fminf(PARHI[k], parBase[k] * (1.f + .15f * (tries & 1 ? 1 : -1) * (k + 1) / NPAR)));
           bestT = f / 60.f; best = 1e9f; aim.x = 1e9f; continue;
         }
-        o.result = "застрял"; o.why = "12 с без приближения к цели, 3 возврата и объезда"; o.t = f / 60.f; o.frames = f;
+        if (tp < TP_MAX && !getenv("MISSIONER_NO_TELEPORT") && (rt->obj != MSN_OBJ_RACE || !getenv("MISSIONER_RACE_NO_TP")) && rt->obj != MSN_OBJ_FOLLOW && rt->obj != MSN_OBJ_LOSETAIL && rt->obj != MSN_OBJ_DESTROYBOSS && teleportAhead(mi, p, foot, f / 60.f, rt) >= 0) {   // последняя ступень: перенос с пометкой, задание проверяется дальше
+          tp++; resets = 0; tries = 0; navAvoidN = 0; shift = 0; evolved = 0; botDrv.nroute = 0; rcReset(); escT = 0.f; trailReset(); aim.x = 1e9f; bestT = f / 60.f; best = 1e9f;
+          bwSave(&W, &stageSnap); stageRec = nrec; continue; }   // новый снимок стадии = место после переноса
+        o.result = "застрял"; o.why = "12 с без приближения к цели, 3 возврата и объезда"; o.tp = tp; o.t = f / 60.f; o.frames = f;
         o.sx = foot ? W.homer.x : W.car.x; o.sz = foot ? W.homer.z : W.car.z; o.wall = W.car.wallType * 100000 + (int)W.car.wallIdx;
         if (!foot && !wantFoot) {   // Т1.5: второй независимый водитель со старта стадии; доехал — виноват водитель, нет — подозрение на игру
           o.second = 1; int ok = secondDriver(&stageSnap, p, fminf(120.f, 30.f + dist / 4.f), o.sx, o.sz);
@@ -613,10 +705,11 @@ static Out playMission(int mi, float secs) {
       // пути, до которой прямая свободна (до 12 м); путь заново раз в 2 с или когда цель сдвинулась. Пока не упёрся — ход прежний
       // (миссии, которые проходились, идут тем же путём). Правило бота, не игры. MISSIONER_NO_FOOTGRID=1 — без правила (красный
       // контроль tests/bots/footgrid.sh)
+      if (roomGridOn < 0) roomGridOn = getenv("MISSIONER_ROOMGRID") != 0;
       static int gOff = -1, gArm, gArmKey = -1; static float gArmX, gArmZ;
       if (gOff < 0) gOff = getenv("MISSIONER_NO_FOOTGRID") != 0;
       int gKey = lastStage * 16 + tries, grid = 0; MsnVec3 p0 = p;
-      if (gArm && (gArmKey != gKey || hypotf(p.x - gArmX, p.z - gArmZ) > 3.f || dist <= 1.f || toCar || W.room >= 0)) gArm = 0;
+      if (gArm && (gArmKey != gKey || hypotf(p.x - gArmX, p.z - gArmZ) > 3.f || dist <= 1.f || toCar || (W.room >= 0 && !roomGridOn))) gArm = 0;
       { static FpPt path[256]; static int np, haveW; static float ptx = 1e9f, ptz = 1e9f, replanT, chkT, wx, wz;
         if (gArm && dist < 35.f) {
           if ((chkT -= BW_DT) <= 0.f || hypotf(p.x - ptx, p.z - ptz) > 1.f) {
@@ -636,6 +729,26 @@ static Out playMission(int mi, float secs) {
           if (haveW) { p.x = wx; p.z = wz; grid = 1; }
         } else { np = 0; haveW = 0; chkT = 0.f; ptx = ptz = 1e9f; }
       }
+      // 05.11 (наряд ночи, «застрял пешком»): цель дальше 40 м — сетка footpath не берёт (область ±40 м). Крупный путь по графу дорог режется на прыжки до 55 м, каждый
+      // строят пешеходы A и B (footnav.h, настоящая коллизия, прыжок через низкую преграду); идём по точкам с запасом 1,3 м, берём точку по ходу не ближе 2 м.
+      // Упёрся дважды подряд — пересчёт вторым, независимым пешеходом (только B) с текущей точки. Не вышло — как прежде (граф дорог), затем лестница и перенос
+      static int fnOff = -1; static FpPt fnPath[600]; static int fnN, fnSeg, fnFails, fnBOnly; static float fnGx = 1e9f, fnGz, fnAge;
+      if (fnOff < 0) fnOff = getenv("MISSIONER_NO_FOOTNAV") != 0;
+      static float fnFailT = -99.f;
+      if (!fnOff && !grid && dist > 40.f && W.room < 0 && W.homer.y > -8.f && !toCar && !(fnN == 0 && f / 60.f - fnFailT < 10.f)) {   // не удалось — десять секунд не пересчитывать (дорогой поиск)
+        if (hypotf(p0.x - fnGx, p0.z - fnGz) > 3.f || fnAge > 12.f) {   // новая цель или давно строили: путь заново
+          P3 cq[MAXWP]; int ncq = navPlan(W.homer.x, W.homer.y, W.homer.z, p0.x, p0.y, p0.z, cq, MAXWP); FpPt co[MAXWP]; for (int i = 0; i < ncq; i++) co[i] = (FpPt){cq[i].x, cq[i].y, cq[i].z};
+          FnResult fr; fnN = fnLongPlan(bwCol(), &W.car, bwLevel(), W.homer.x, W.homer.y, W.homer.z, p0.x, p0.y, p0.z, 1.5f, co, ncq, fnBOnly, fnPath, 600, &fr);
+          fnSeg = 0; fnGx = p0.x; fnGz = p0.z; fnAge = 0.f; if (fnN) fnFails = 0; else { fnFails++; fnFailT = f / 60.f; }
+          if (verbose) printf("    footnav t=%.1f: %d точек к %.1f %.1f (%s%s) %s\n", f / 60.f, fnN, p0.x, p0.z, fnN ? "путь " : "нет пути ", fnN ? (fr.who ? (fr.who == 'B' ? "B" : "A") : "") : fnWhyName(fr.why), fr.place);
+        }
+        fnAge += BW_DT;
+        if (fnN) {
+          while (fnSeg < fnN - 1 && hypotf(fnPath[fnSeg].x - W.homer.x, fnPath[fnSeg].z - W.homer.z) < 1.3f) fnSeg++;
+          int k = fnSeg; while (k < fnN - 1 && hypotf(fnPath[k].x - W.homer.x, fnPath[k].z - W.homer.z) < 2.f) k++;   // точка по ходу не ближе 2 м: на бегу круг поворота около 2 м
+          p.x = fnPath[k].x; p.z = fnPath[k].z; grid = 1;
+        }
+      } else { fnGx = 1e9f; fnBOnly = 0; }
       if (!grid && dist > 12.f && W.room < 0) {   // далеко пешком: по графу дорог (обход заборов между дворами), точка — первая дальше 3 м
         static float pullT;
         if (hypotf(p.x - aim.x, p.z - aim.z) > 3.f || !nq) { aim = p; nq = navPlan(W.homer.x, W.homer.y, W.homer.z, p.x, p.y, p.z, q, MAXWP); seg = 0; pullT = 0.f; }
@@ -651,12 +764,12 @@ static Out playMission(int mi, float secs) {
       // П1 (m4): у предмета «сломать» — пинок □ раз в 0.7 с, стик на него (лицом к щитку); шаг вбок не нужен — стоит у цели нарочно
       int kick = breakTarget(M) && dist < 2.2f;
       // 29.09: упёрся пешком (машина миссии, забор, угол дома) — 1.5 с без сдвига на 0.5 м: шаг вбок 0.8 с, стороны по очереди
-      { static float fx0, fz0, stillT, sideT; static int sideN;
+      { static float fx0, fz0; static int sideN;
         if (kick) { stillT = 0.f; sideT = 0.f; }
         if (hypotf(W.homer.x - fx0, W.homer.z - fz0) > .5f) { fx0 = W.homer.x; fz0 = W.homer.z; stillT = 0.f; } else if (dist > 1.5f && !kick) stillT += BW_DT;
         if (stillT > 1.5f && sideT <= 0.f) {
-          if (!gOff && !gArm && !toCar && W.room < 0 && dist < 35.f) { gArm = 1; gArmKey = gKey; gArmX = p0.x; gArmZ = p0.z; stillT = 0.f; }   // сначала путь по сетке
-          else { sideT = .8f; sideN++; stillT = 0.f; } }
+          if (!gOff && !gArm && !toCar && (W.room < 0 || roomGridOn) && dist < 35.f) { gArm = 1; gArmKey = gKey; gArmX = p0.x; gArmZ = p0.z; stillT = 0.f; }   // сначала путь по сетке
+          else { sideT = .8f; sideN++; stillT = 0.f; fnGx = 1e9f; fnBOnly = (sideN & 2) != 0; } }   // footnav: каждый второй упор — путь вторым пешеходом (B)
         if (sideT > 0.f) { sideT -= BW_DT; float a = atan2f(p.x - W.homer.x, p.z - W.homer.z) + (sideN & 1 ? 1.5708f : -1.5708f);
           p.x = W.homer.x + sinf(a) * 5.f; p.z = W.homer.z + cosf(a) * 5.f; } }
       float yaw = W.homer.camYaw, r = atan2f(p.x - W.homer.x, p.z - W.homer.z) - yaw;
@@ -667,12 +780,13 @@ static Out playMission(int mi, float secs) {
       unsigned b = (f % 30) == 0 && (dist < 1.5f || gameMsnWantsMissionAction(&W.msn) || (buy && gameMsnWantsAction(&W.msn))) ? GP_TRIANGLE : 0;
       if (gameShopOpen(&W.msn) >= 0 && (f % 30) == 0) b = buy ? GP_CROSS : GP_CIRCLE;   // лавка: Purchase (X) для этапа «купи», иначе отказ (○)
       if (dist > 3.f) b |= GP_CIRCLE;   // далеко — бегом, как игрок (○ DASH / SPRINT, ControllerPS2.pag); у цели — шагом
+      if (grid && fnN && sideT <= 0.f && (f % 45) == 0 && W.homer.grounded && stillT > .6f) b |= GP_CROSS;   // упор на пути footnav: прыжок ✕ через низкую преграду (забор 1,5 м)
       if (kick) { b = W.homer.grounded && (f % 42) == 0 ? GP_SQUARE : 0; bestT = f / 60.f; }   // бьёт — не «застрял»
       step(b, -sinf(r), -cosf(r));   // стик относительно камеры: вправо камеры = −x при курсе 0 (ось z отзеркалена)
     }
   }
   o.sx = gameOnFoot(&W.G) ? W.homer.x : W.car.x; o.sz = gameOnFoot(&W.G) ? W.homer.z : W.car.z;
-  o.t = secs; o.frames = frames; o.why = "время вышло"; o.cls = "нет данных"; return o;
+  o.t = secs; o.frames = frames; o.tp = tp; o.waitjump = waitJump; o.why = "время вышло"; o.cls = "нет данных"; return o;
 }
 
 // ------------------------------------------------------------------ П1 (L1_ФИНИШ 30.09): теоретическое время блока с таймером
@@ -805,6 +919,7 @@ int missionerRun(int argc, char **argv) {
     else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = (float)atof(argv[++i]);
     else if (!strcmp(argv[i], "--impossible-timer")) impossibleTimer = 1;
     else if (!strcmp(argv[i], "--coins") && i + 1 < argc) startCoins = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--broken-goal")) brokenGoal = 1;
     else if (!strcmp(argv[i], "--from-main")) fromMain = 1;   // 29.09: основная часть миссии с её чекпоинта (как повтор после провала)
     else if (!strcmp(argv[i], "--leg") && i + 3 < argc) { legMode = 1; for (int k = 0; k < 3; k++) lp[k] = (float)atof(argv[i + 1 + k]); i += 3; }
     else if (!strcmp(argv[i], "--theory")) theory = 1;   // П1: теоретическое время блоков с таймером (theoryMission)
@@ -813,6 +928,7 @@ int missionerRun(int argc, char **argv) {
     else if (!strcmp(argv[i], "-vv")) verbose = 2;   // и строка каждой секунды в любой ветке (где стоит бот, почему не едет)
     else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
   }
+  if (getenv("MISSIONER_SEED")) { lrs = (uint32_t)strtoul(getenv("MISSIONER_SEED"), 0, 0) * 2654435761u | 1; seedSet = lrs; }   // вариант прохождения (ось ночи)
   rec = malloc(sizeof(In) * (size_t)recCap);
   bwNew(&W); bwSaveAlloc(&W, &stageSnap); bwSaveAlloc(&W, &curSnap); bwSaveAlloc(&W, &cpSnap);
   leg = malloc(sizeof(In) * 60 * 120); legBest = malloc(sizeof(In) * 60 * 120);
@@ -852,9 +968,9 @@ int missionerRun(int argc, char **argv) {
   for (int mi = a; mi < b && mi < n; mi++) {
     const MsnMission *ms = &W.msn.f.missions[mi];
     if (one < 0 && (ms->flags & (MSN_MF_BONUS | MSN_MF_STREETRACE | MSN_MF_GAMBLE | MSN_MF_BONUSMISSION))) continue;   // --all: сюжет m0..m7
-    Out o = playMission(mi, secs);
-    printf("M\t%d\t%s\t%s\t%s\t%s\t%.1f\t%.1f\t%.2f\t%d\t%d\t%d\t%.1f\t%.1f\t%d\t%s\t%d\t%d\n", mi, msn_str(&W.msn.f, ms->id), msn_str(&W.msn.f, ms->title), o.result, o.why, o.t,
-           o.margin, o.damage, o.stages, o.attempts, o.frames, o.sx, o.sz, o.wall, o.cls, o.nav, o.second);
+    Out o = playMission(mi, secs); mechSummary(mi);
+    printf("M\t%d\t%s\t%s\t%s\t%s\t%.1f\t%.1f\t%.2f\t%d\t%d\t%d\t%.1f\t%.1f\t%d\t%s\t%d\t%d\t%d\t%d\n", mi, msn_str(&W.msn.f, ms->id), msn_str(&W.msn.f, ms->title), o.result, o.why, o.t,
+           o.margin, o.damage, o.stages, o.attempts, o.frames, o.sx, o.sz, o.wall, o.cls, o.nav, o.second, o.tp, o.waitjump);
     if (out) writeIn(out, mi, &o);
     fflush(stdout);
   }

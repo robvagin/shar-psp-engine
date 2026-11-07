@@ -12,9 +12,11 @@
 #include <malloc.h>
 #include <math.h>
 #include "msnart.h"
+#include "lvcheck.h"
 #include "glintshape941.h"   // №944: общий шейп блика (GLINT944_OLD)
 #include "ui.h"
 #include "blackbox.h"   // правка 103: bbOp — самописец чёрного ящика (main.c)
+#include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после include pspgu)
 
 #ifndef MSNART_BBDONE_OLD
 #define MSNART_BBDONE_OLD 0   // =1 — как раньше: в чёрном ящике только начало чтения записи
@@ -80,7 +82,12 @@ int msnartInit(const char *dir) {
   snprintf(file, sizeof file, "%smsnart.shr", dir);
   SceUID f = sceIoOpen(file, PSP_O_RDONLY, 0); if (f < 0) return -1;
   unsigned h[4]; if (sceIoRead(f, h, 16) != 16 || memcmp(h, "MSA2", 4)) { sceIoClose(f); return -2; }
-  nrows = h[1]; rows = malloc(sizeof(MsaRow) * (nrows ? nrows : 1));
+#ifndef MSAROWS1195_OLD
+#define MSAROWS1195_OLD 0   // №1195: 1 — число строк и смещение таблицы из заголовка msnart.shr без проверки, как в TEST89
+#endif
+  nrows = h[1];
+  if (!MSAROWS1195_OLD) { int fsz_ = sceIoLseek32(f, 0, PSP_SEEK_END); if (!lvMsaHdrOk(h, fsz_, sizeof(MsaRow))) { sceIoClose(f); nrows = 0; return -4; } }   // таблица строк целиком внутри файла: иначе счётчик из заголовка давал строки за концом выделенного (повреждённый пакет рисунков)
+  rows = malloc(sizeof(MsaRow) * (nrows ? nrows : 1));
   sceIoLseek32(f, (int)h[2], PSP_SEEK_SET);
   if (!rows || sceIoRead(f, rows, (SceSize)(sizeof(MsaRow) * nrows)) != (int)(sizeof(MsaRow) * nrows)) { free(rows); rows = 0; nrows = 0; }
   if (rows) afd = f; else sceIoClose(f);   // файл остаётся открытым для асинхронных чтений

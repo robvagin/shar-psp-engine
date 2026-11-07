@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
     FILE *f = fopen(argv[a], "rb"); if (!f) continue; fseek(f, 0, SEEK_END); long size = ftell(f); rewind(f); unsigned char *data = aligned_alloc(16, (size + 15) & ~15); if (fread(data, 1, size, f) != (size_t)size) continue; fclose(f);
     unsigned co = *(unsigned *)(data + 92), po = *(unsigned *)(data + 96), pv = *(unsigned *)(data + 88), ce = (unsigned)size; if (po > co && po < ce) ce = po; if (pv > co && pv < ce) ce = pv;
     spFree(&sp); memset(&props, 0, sizeof props); colInit(&world, data + co, ce - co); propsInit(&props, data + po, *(unsigned *)(data + po + 40)); spInit(&sp, props.spr, props.sprSize);
-    for (unsigned i = 0; i < sp.ninst; i++) { const SpType *T = &sp.type[sp.inst[i].type]; if (T->cls != 2 || T->kind || !T->nPiece || 2.f * T->h[1] < .4f || 2.f * T->h[1] > 3.f || fmaxf(T->h[0], T->h[2]) > 2.5f) continue; bushes++; if (!T->nCol) bare++; }
+    for (unsigned i = 0; i < sp.ninst; i++) { const SpType *T = &sp.type[sp.inst[i].type]; if (T->cls != 2 || T->kind || !T->nPiece || 2.f * T->h[1] < .4f || 2.f * T->h[1] > 3.f || fmaxf(T->h[0], T->h[2]) > 2.5f || T->atc != 10 || T->mass <= 0.f) continue; bushes++; if (!T->nCol) bare++; }
     if (a == argc - 1) {   // последний файл — L7: куст у J9-5
       int found = -1; for (unsigned i = 0; i < sp.ninst; i++) if (fabsf(sp.inst[i].x - 156.7f) < .5f && fabsf(sp.inst[i].z - 159.9f) < .5f && sp.type[sp.inst[i].type].cls == 2) found = (int)i;
       int slow = found >= 0 ? drive((unsigned)found, 3.f) : -9, fast = found >= 0 ? drive((unsigned)found, 12.f) : -9;

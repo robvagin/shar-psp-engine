@@ -1,0 +1,66 @@
+### №1173 A/B (g10b-loop): разбор клеток из очереди игры ниже главного потока (flag ldfinpri 1, по умолчанию) против прежнего приоритета (flag ldfinpri 0). Пары по 8 с, порядок чередуется (0→1, 1→0, 0→1, 1→0),
+### 2 с прогрева после переноса. Куда: целиком в test89_game.txt, лучше после блока L5 (перед «scene F_GO3_L6») или рядом с F_AB_CF*; каждая сцена своя в smoke.txt (имя F_AB_LD_<место>_<0|1>).
+### Читать: PHSEC ph6+ph7, PH6SPLIT stream_us / stream_max_us, STAT missvis / missvismax, CELLLAT avg_ms / max_ms (запрос клетки -> готова), LDFINPRI on=. Ожидание: ph6+ph7 и p95 ниже в «1», CELLLAT растёт не больше чем на кадр-два.
+### Места: 973_L4 (маршрут автопилота от дома), G59_SP4 (сброс машины у дома: клетки приходят пачкой), проспект L5 (F_AVE_L5, трафик) два раза: езда 8 с и езда 14 с (подгрузка на ходу). Автострада L5 в туре точкой не задана — не включена.
+scene F_AB_LD_973_0
+flag stop
+flag ldfinpri 0
+flag repair
+goto 214.9 172.3 -3.0
+wait 2
+flag drive 8
+wait 8
+flag stop
+scene F_AB_LD_973_1
+flag ldfinpri 1
+flag repair
+goto 214.9 172.3 -3.0
+wait 2
+flag drive 8
+wait 8
+flag stop
+scene F_AB_LD_SP4_1
+flag ldfinpri 1
+flag repair
+wait 2
+wait 8
+scene F_AB_LD_SP4_0
+flag ldfinpri 0
+flag repair
+wait 2
+wait 8
+flag ldfinpri 1
+scene F_AB_LD_AVE8_0
+flag stop
+flag ldfinpri 0
+goto -157 -494 4.712
+wait 2
+flag drive 8
+wait 9
+flag stop
+scene F_AB_LD_AVE8_1
+flag stop
+flag ldfinpri 1
+goto -157 -494 4.712
+wait 2
+flag drive 8
+wait 9
+flag stop
+scene F_AB_LD_AVE14_1
+flag stop
+flag ldfinpri 1
+goto -157 -494 4.712
+wait 2
+flag drive 14
+wait 15
+flag stop
+scene F_AB_LD_AVE14_0
+flag stop
+flag ldfinpri 0
+goto -157 -494 4.712
+wait 2
+flag drive 14
+wait 15
+flag stop
+flag ldfinpri 1
+flag stop

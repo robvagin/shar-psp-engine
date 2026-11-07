@@ -71,9 +71,19 @@ def vag_decode_py(data, ch, blk0=0, nblk=None, hist=None):
                 s2, s1 = s1, smp
     return out
 
+def _real_path(path):
+    """настоящее имя файла без учёта регистра (Linux/WSL); не нашли — путь как был"""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import ci_fs
+    finally:
+        sys.path.pop(0)
+    return ci_fs.resolve(path) or path
+
 def ffmpeg_decode(path, rate=None):
     """Reference decode via ffmpeg (rsd demuxer + adpcm_psx). Returns numpy int16 [n, ch]."""
     import numpy as np
+    path = _real_path(path)   # ffmpeg открывает файл сам, подмена чтения Python (tools/ci_fs.py) ему не помогает: имя на диске строчное, а в данных игры оно в смешанном регистре
     cmd = ['ffmpeg', '-v', 'error', '-nostdin', '-i', path]
     if rate:
         cmd += ['-af', 'aresample=%d:resampler=swr:filter_size=128:phase_shift=12:cutoff=0.97' % rate]

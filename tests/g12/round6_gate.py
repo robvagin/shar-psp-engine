@@ -35,10 +35,10 @@ for N in range(1, 8): walk(SD.scan_level(N))
 multi = {k: v for k, v in pairs.items() if len(v) > 1}
 check('вызовы стейтпропов: имя ↔ номер однозначны, кроме 11', list(multi) == [11], str(multi))
 
-# 2. частицы удара: девять имён оригинала; eSpark и кокосы — «нет частиц»
-c = "import prp2_export as P; d=P.PARTICLE_CODE; print(d.get('eSpark'), d.get('ePineTreeNeedles'), d.get('eParkingMeter'), d.get('ePopsicles'), d.get('eShrub'), d.get('eGarbage'), d.get('eOakTreeLeaves'), d.get('eMail'))"
+# 2. частицы удара: девять видов оригинала; искры и кокосы — «нет частиц»
+c = "import prp2_export as P; d=P.PARTICLE_CODE; print(d.get('spark'), d.get('needles'), d.get('meter'), d.get('popsicle'), d.get('shrub'), d.get('trash'), d.get('leaves'), d.get('mail'))"
 n, o = py(c), py(c, {'PRP2_PARTICLES_OLD': '1'})
-check('P11-13 частицы: eSpark нет, 7/24/26 как номера оригинала, 3/4/5/6', n == 'None 7 24 26 3 4 5 6', n)
+check('P11-13 частицы: искр нет, 7/24/26 как номера оригинала, 3/4/5/6', n == 'None 7 24 26 3 4 5 6', n)
 check('  красный контроль PRP2_PARTICLES_OLD=1', o.split()[0] == '1' and o.split()[1] == 'None', o)
 
 # 3. камеры зон машины: нейтральные рельсы (ни бита 1, ни бита 8) работают и из машины

@@ -50,8 +50,12 @@
 // генератор — в состоянии монет (Б0: мир целиком в структурах, save/load ботов); старт 12345, как прежний static
 static float frand(Coins *cs) { cs->rng = cs->rng * 1664525u + 1013904223u; return (cs->rng >> 8) * (1.f / 16777216.f); }
 
+#ifndef COINSCAP1195_OLD
+#define COINSCAP1195_OLD 0   // №1195: 1 — число монет мира без предела, как в TEST89
+#endif
 int coinsInit(Coins *cs, const float *pos, unsigned nworld) {
   memset(cs, 0, sizeof *cs); cs->rng = 12345u;
+  if (!COINSCAP1195_OLD && nworld > (1u << 18)) return -2;   // №1195: число из пакета уровня; монет в уровне тысячи, больше 262144 — порча (счёт nworld + пул переполнил бы размер выделения)
   cs->c = calloc(nworld + COIN_POOL, sizeof(Coin));
   if (!cs->c) return -1;
   cs->n = nworld + COIN_POOL; cs->nworld = nworld; cs->total = (int)nworld;

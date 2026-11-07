@@ -29,6 +29,7 @@ typedef struct {
   float enginePitch, engineVol;
   float limiter;          // output limiter gain now (1 = idle)
   unsigned limiterBuffers;// 11.6 ms buffers where the limiter was reducing gain (since init)
+  int loops;              // №1174: резидентных голосов с петлёй, занятых сейчас (не остановленных)
 } AudioStats;
 
 // dir: folder with sfx.sab and music.sap, ending with '/', e.g. "ms0:/PSP/GAME/SHARVIEW/audio/".

@@ -1,0 +1,6 @@
+# №1160: старый settings.bin (без поля Car Aim) -> ступень 2; новый с полем -> его значение. Файл кладётся рядом с EBOOT (SMOKE_SAVEFILES="файл=settings.bin"); результат — строка CAMAIM1160 в smoke.txt
+scene drive
+wait 3
+flag camuseraimlog 0
+wait 1
+end

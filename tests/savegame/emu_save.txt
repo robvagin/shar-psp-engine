@@ -1,6 +1,7 @@
 # Гейт сохранений в эмуляторе, прогон 1 (tests/savegame/emu.sh): новая игра -> отметка прогресса (flag svmark: m0 пройдена,
 # карточка 1, +7 монет, монета мира 0, музыка 300) -> пауза -> SAVE GAME -> слот 1 (пустой: запись сразу, проверка чтением)
-# -> «Save Successful» -> QUIT GAME -> «Do you want to save your game?» NO -> главное меню. Дальше эмулятор закрывается (выход)
+# -> «Save Successful» -> QUIT GAME -> «Are you sure you want to quit?» (курсор на No, ↑ на Yes) -> Yes -> главное меню; второго вопроса «сохранить?» нет: в этой паузе уже сохраняли
+# (g09b-menu P13-Д4, SVM_SAVEDFLAG; гейт до 04.11 ждал второй вопрос и нажимал «вниз»). Дальше эмулятор закрывается (выход)
 flag menu
 flag saves
 wait 1.5
@@ -28,7 +29,7 @@ wait 0.4
 press cross
 wait 1
 shot sv_quitask
-press down
+press up
 wait 0.3
 press cross
 wait 3

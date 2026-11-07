@@ -1,0 +1,76 @@
+# №1180/№1181: бонус-игра из главного меню кнопками, три трассы до финиша (блок тура TEST89); tests/bonus1167/menu_tracks.sh
+flag menu
+### TEST89 №1180/№1181 (g03-aicars): бонус-игра из главного меню кнопками — MINI GAME, трасса, выбор игрока и машины, гонка; три трассы подряд (4, 1, 7), гонка до финиша на каждой: круг игрока (carhom_v за водителем ИИ), итоги, выход; страховка flag bonusquitat 110.
+### Тур приходит сюда в главное меню (после титров L7, курсор на пункте 4): «press left» — на MINI GAME (пункт 3), «press cross» — вход. Перелёт камеры меню длится секунды, поэтому после входа wait 8.
+### Выбор: трасса -> персонаж -> машина (три «cross»), гонка начинается сразу (ожидания других игроков нет). После выхода из гонки игра возвращается на экран выбора трассы бонус-игры (не в главное меню).
+### Прежний блок (flag bonusgo через 3 с после входа) терялся в перелёте камеры; тур показывал экран выбора игрока до конца сцены (№1180). В smoke.txt: BONUS ev=confirm kind=character/vehicle, ev=load, ev=loadscr, BONUSFR, ev=quit, ev=exit.
+scene F_BONUS_T4
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5     # carhom_v: водитель ИИ за игрока проходит круг и финиширует (с family sedan на повороте у старта застревает, в туре нужен финиш P1)
+flag bonustrack 4
+flag bonusquitat 110   # страховка: гонка идёт до финиша (≈60–90 с), выход по таймеру только если не закончилась
+press left 0.3
+wait 1
+press cross 0.3   # MINI GAME
+wait 8             # перелёт камеры меню к пункту
+shot bonus_t4_track
+press cross 0.3   # трасса принята -> выбор игрока
+wait 1.5
+shot bonus_t4_chr
+press cross 0.3   # персонаж выбран -> выбор машины
+wait 1.5
+shot bonus_t4_veh
+press cross 0.3   # машина принята: гонка сразу (№1181, без ожидания других игроков)
+wait 4
+flag bonusgo      # страховка: не прошла кнопка — старт без неё (после старта гонки флаг сбрасывается)
+wait 12
+shot bonus_t4_race
+wait 100
+shot bonus_t4_back
+scene F_BONUS_T1
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5     # carhom_v: водитель ИИ за игрока проходит круг и финиширует (с family sedan на повороте у старта застревает, в туре нужен финиш P1)
+flag bonustrack 1
+flag bonusquitat 110   # страховка: гонка идёт до финиша (≈60–90 с), выход по таймеру только если не закончилась
+wait 1            # после выхода из гонки игра остаётся на экране выбора трассы бонус-игры
+shot bonus_t1_track
+press cross 0.3   # трасса принята -> выбор игрока
+wait 1.5
+shot bonus_t1_chr
+press cross 0.3   # персонаж выбран -> выбор машины
+wait 1.5
+shot bonus_t1_veh
+press cross 0.3   # машина принята: гонка сразу (№1181, без ожидания других игроков)
+wait 4
+flag bonusgo      # страховка: не прошла кнопка — старт без неё (после старта гонки флаг сбрасывается)
+wait 12
+shot bonus_t1_race
+wait 100
+shot bonus_t1_back
+scene F_BONUS_T7
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5     # carhom_v: водитель ИИ за игрока проходит круг и финиширует (с family sedan на повороте у старта застревает, в туре нужен финиш P1)
+flag bonustrack 7
+flag bonusquitat 110   # страховка: гонка идёт до финиша (≈60–90 с), выход по таймеру только если не закончилась
+wait 1            # после выхода из гонки игра остаётся на экране выбора трассы бонус-игры
+shot bonus_t7_track
+press cross 0.3   # трасса принята -> выбор игрока
+wait 1.5
+shot bonus_t7_chr
+press cross 0.3   # персонаж выбран -> выбор машины
+wait 1.5
+shot bonus_t7_veh
+press cross 0.3   # машина принята: гонка сразу (№1181, без ожидания других игроков)
+wait 4
+flag bonusgo      # страховка: не прошла кнопка — старт без неё (после старта гонки флаг сбрасывается)
+wait 12
+shot bonus_t7_race
+wait 100
+shot bonus_t7_back
+end

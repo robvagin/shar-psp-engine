@@ -1,0 +1,44 @@
+flag camdet 1
+scene start
+wait 3
+scene L1_load
+flag golevel 1
+wait 30
+flag repair
+flag hulldiag 1
+flag caroutline 0
+scene L1_drive
+flag drive 40
+wait 23
+shot pre0
+wait 1
+shot pre1
+flag stop
+press cross 6
+stick 1 0 0.5
+wait 0.2
+shot t01
+wait 0.2
+shot t02
+wait 0.2
+shot t03
+wait 0.2
+shot t04
+wait 0.2
+shot t05
+wait 0.2
+shot t06
+wait 0.2
+shot t07
+wait 0.2
+shot t08
+wait 0.2
+shot t09
+wait 0.2
+shot t10
+wait 0.2
+shot t11
+wait 0.2
+shot t12
+wait 1
+end

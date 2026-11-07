@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 OUT=build/cheats; mkdir -p "$OUT"
 V=viewer; . tools/bots/lib.sh
 CC="cc -std=c11 -O2 -Wall -Wno-unused-function -Wno-misleading-indentation -DSKIN_HOST -I $V -I tools/bots"
-ARGS="build/level.shr build/homer.shr build/missions/level01.msn"
+LV=${CHEAT_LV:-$(ls -t build/test9*tour/PSP/GAME/SHARTEST15/level.shr 2>/dev/null | head -1)}; LV=${LV:-build/level.shr}   # свежий набор тура: в старом build/level.shr (31.10) машина у старта врезается — effect_accel/notop ложно красные
+ARGS="$LV build/homer.shr build/missions/level01.msn"
 $CC -DCHEATS1104_OLD=1 tests/cheats/host.c $BOTS_LIB -lm -o "$OUT/red" 2> "$OUT/build.txt" || { echo "FAIL: сборка красного"; head -5 "$OUT/build.txt"; exit 1; }
 "$OUT/red" $ARGS > "$OUT/red.txt" 2>&1; n=$(grep -c 'CHECK.*FAIL' "$OUT/red.txt")
 echo "красный CHEATS1104_OLD=1: упало проверок $n из 12 — $(grep 'CHECK.*FAIL' "$OUT/red.txt" | awk '{print $2}' | tr '\n' ' ')"

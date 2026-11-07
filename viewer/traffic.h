@@ -193,7 +193,7 @@ typedef struct {
   int zoneGroup, missionPedGroup;        // группа ворот и UsePedGroup; −1 возвращает выбор ворот
   unsigned long long zoneIn;             // №1132: в каких воротах группы игрок уже стоит (бит на ворота) — группа меняется только при входе
   float scanT, pedScanT, time; unsigned seed; int fresh, parkRR;
-  float drawDist, pedDrawDist;
+  float drawDist, pedDrawDist, carDrawDist;   // carDrawDist (№1202): дальность рисования машин; drawDist остаётся правилом «вне кадра / дальше дальности» для рождения и возврата
   int noSolid;                          // служебное: отрицательный контроль (flag trfnosolid) — трафик не твёрдый
   const TrZone *loader; int nLoader; uint32_t zoneMask;   // правка 139: загрузчики зон и маска загруженных файлов (~0 — все)
   int forceLod;                         // служебное (flag trflod): все машины в дальней версии (снимок LOD вблизи)
@@ -261,6 +261,9 @@ int trafficParkModel(const Traffic *t, const char *name);
 // отрисовка машин: для каждого куска fn(user, кусок, вершины, матрица модели 4x4 по столбцам) — main.c строит Piece и
 // зовёт drawPieceM (стекло уходит в его очередь полупрозрачного). vis(bb[6]) — видимость ящика (NULL = всё видно).
 typedef void (*TrDrawFn)(void *user, const TrPiece *p, const void *verts, const float m[16]);
+extern void (*trfFadeHook)(float a); extern int trfFadeOn; extern unsigned trfFadeN; extern float trfFadeMin, trfFadeTest;   // №1202: растворение появляющейся машины: main ставит смешивание с постоянной прозрачностью a (1 — снять)
+typedef struct { unsigned char pass, born; unsigned short i; float d, R; } TrPop;   // №1202: журнал появления машин в кадре (только смоук, traffic.c trfPopMark)
+extern TrPop trfPop[48]; extern unsigned trfPopN;
 void trafficDrawCars(Traffic *t, const float eye[3], int (*vis)(const float bb[6]), TrDrawFn fn, void *user);
 // одна машина по модели формата TRF1 (трафика или пакета машин миссий msncars-l<N>.shr): куски piece и вершины vert — у
 // вызывающего; lod — дальняя версия; *tris += треугольников (NULL — не считать)

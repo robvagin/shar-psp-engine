@@ -1,0 +1,12 @@
+# гейт №1165: старт игры (сверху пусто), R+SELECT (счётчик виден), ещё раз R+SELECT (снова пусто)
+scene HUD_idle
+wait 6
+shot HUD_start
+press r 0.3
+press select 0.3
+wait 2
+shot HUD_on
+press r 0.3
+press select 0.3
+wait 2
+shot HUD_off

@@ -1,0 +1,18 @@
+# ТЕСТ90 память: пакет гэгов без памяти — «flag collfail 1» (следующее выделение отказывает): с повтором COLLRETRY loaded=1 и COLL ok; «collfail 2» — отказ и повтор: честное «COLL stream error=load»
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 4
+scene F_CF_L4
+press circle 0.3
+wait 0.5
+flag collfail 1
+flag golevel 4
+wait 14
+scene F_CF_L5
+press circle 0.3
+wait 0.5
+flag collfail 2
+flag golevel 5
+wait 14
+end

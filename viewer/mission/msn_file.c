@@ -244,6 +244,19 @@ const char *msn_text(const MsnFile *f, const char *key)
     return key;                                        /* unknown key: show the key itself ("3", "!!!") */
 }
 
+/* текст по хешу ключа: сам ключ в коде не пишется (04.11, чистота); перебор по всем ключам, вызывается раз в секунду из события */
+const char *msn_text_h(const MsnFile *f, uint32_t h)
+{
+    uint32_t i;
+    for (i = 0; i < f->ntexts; i++) {
+        const unsigned char *k = (const unsigned char *)msn_str(f, f->texts[i].key);
+        uint32_t x = 2166136261u;
+        for (; *k; k++) x = (x ^ *k) * 16777619u;
+        if (x == h) return msn_str(f, f->texts[i].value);
+    }
+    return NULL;
+}
+
 static const char *const fail_key[] = { "", "MISSION_FAILED_TIME_OUT", "MISSION_FAILED_PLAYER_OUT_OF_VEHICLE",
     "MISSION_FAILED_VEHICLE_DAMAGE", "MISSION_FAILED_POSITION", "MISSION_FAILED_RACE", "MISSION_FAILED_FOLLOW_DISTANCE",
     "", /* keepbarrel: no bible key found, generic MISSION_FAILED */ "MISSION_FAILED_TIME_OUT" /* wager par time */, "",

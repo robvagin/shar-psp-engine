@@ -25,6 +25,7 @@
   python tools/seams_ge.py LEVEL.shr --gate [--max N] …   сторож: щелей на 12 видах × 3 кадра не больше N (иначе FAIL, код 1)
   python tools/seams_ge.py LEVEL.shr --tris               цена: треугольников в круге 250 м — с дальними версиями и ближними везде"""
 import argparse, ctypes, math, os, struct, subprocess, sys
+import shutil
 from pathlib import Path
 import numpy as np
 
@@ -40,10 +41,11 @@ GATE_MAX = int(os.environ.get('SEAMS_GE_MAX', 200))   # 03.10: прежний у
 
 
 def lib():
-    src = ROOT / 'tools/seams_ge.c'; out = ROOT / 'build/tmp_conv/seams_ge.dylib'
+    src = ROOT / 'tools/seams_ge.c'; out = ROOT / ('build/tmp_conv/seams_ge.dylib' if sys.platform == 'darwin' else 'build/tmp_conv/seams_ge.so')   # Linux/WSL: .so
     out.parent.mkdir(parents=True, exist_ok=True)
     if not out.exists() or out.stat().st_mtime < src.stat().st_mtime:
-        subprocess.run(['clang', '-O2', '-shared', '-o', str(out), str(src)], check=True)
+        cc = os.environ.get('CC') or ('clang' if sys.platform == 'darwin' else (shutil.which('cc') or shutil.which('gcc') or 'cc'))   # на Linux clang обычно нет
+        subprocess.run([cc, '-O2', '-shared', '-fPIC', '-o', str(out), str(src), '-lm'], check=True)
     L = ctypes.CDLL(str(out))
     L.raster_id.argtypes = [ctypes.c_int] + [ctypes.c_void_p] * 3 + [ctypes.c_int, ctypes.c_int] + [ctypes.c_void_p] * 2
     return L

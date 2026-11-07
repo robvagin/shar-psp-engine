@@ -17,8 +17,25 @@ static void pieceBigMark(int i, Piece *d, const unsigned char *list, unsigned n,
   if (GG_BIG840_OLD || d->r.owner != 0 || ((d->r.flags & 2) && !(d->r.flags & 4))) return;
   if (pieceBigEdge(list, n, vs, po, d->r.sc)) { d->r.pad[1] = 1u; if (cellBigF) cellBigF[i] = 1; }
 }
+// №1173 (хвосты кадров TEST88 в 973_L4 и G59_SP4): разбор клетки (cellFinish: кэш срезов, разметка, запись указателей) идёт в потоке загрузчика, а он по приоритету 0x18 выше главного 0x20 —
+// на одном ядре главный поток стоит всё время разбора. Замер журнала тура TEST86/TEST88 на PSP: в секунды с загрузкой 30 и более клеток ph6+ph7 кадра 3,4–3,5 мс, без загрузки 1,7 мс;
+// маршрут автопилота решает, в какие секунды клетки приходят, поэтому p95 коротких сцен прыгает между турами (36…53 мс). Теперь разбор клетки из очереди игры идёт ниже главного (0x26):
+// главный кадр не прерывается, загрузчик доделывает в простое (ожидание обратного хода 5–10 мс на кадр). Чтение (sceIoRead) остаётся на 0x18. Круг у старта уровня (экран загрузки)
+// не трогаем. LDFINISHPRI1173_OLD=1 — как в TEST88
+#ifndef LDFINISHPRI1173_OLD
+#define LDFINISHPRI1173_OLD 0
+#endif
+#define LD_FIN_PRI 0x26
+static volatile int ldQueue; static SceUID loaderTid = -1;   // ldQueue: 1 — загрузчик обслуживает очередь игры (не круг у старта); loaderTid — чтобы главный поток, разбирающий клетку сам (экран загрузки), приоритет не менял
+#ifndef LDFINPRI_DEFAULT
+#define LDFINPRI_DEFAULT 1   // что в игре по умолчанию (1 — разбор ниже главного); сборка с -DLDFINPRI_DEFAULT=0 — по умолчанию прежний приоритет, переключатель в работе остаётся
+#endif
+static volatile int ldFinPriOn = LDFINPRI_DEFAULT;   // переключатель в работе: «flag ldfinpri 0/1» в сценарии, файл ldfinpriold рядом с EBOOT выключает с запуска (читается при запуске загрузчика)
+static unsigned ldLatN, ldLatSum, ldLatMax;   // от запроса клетки до готовности, мс (строка CELLLAT в smoke, раз в 2 с)
+static int ldFinLow(void) { if (LDFINISHPRI1173_OLD || !ldFinPriOn || !ldQueue || sceKernelGetThreadId() != loaderTid) return 0; sceKernelChangeThreadPriority(0, LD_FIN_PRI); return 1; }
+static void ldFinHigh(int on) { if (on) sceKernelChangeThreadPriority(0, 0x18); }
 static void cellFinish(int i, void *m) {
-  Cell *c = &cl[i];
+  Cell *c = &cl[i]; int ldLow_ = ldFinLow();
   sceKernelDcacheWritebackRange(m, c->size);
   for (unsigned k = c->first; k < c->first + c->n; k++) {
     Piece *d = &pc[k]; char *b = (char *)m + d->r.off;
@@ -68,10 +85,11 @@ static void cellFinish(int i, void *m) {
   c->mem = m; loadedBytes += c->size;
   __asm__ volatile("" ::: "memory");      // указатели кусков записаны раньше, чем state = 2
   c->state = 2; cgDirty++;   // №924: перебор клеток камеры (camgrid.h) увидит новую клетку сразу
+  ldFinHigh(ldLow_);
 }
 static void loadCell(SceUID fd, int i) {
   Cell *c = &cl[i];
-  void *m = cpAlloc(c->size);
+  void *m = cpAllocCell(c->size);
   if (!m) { c->state = 3; smkAllocFail++; cellFail |= 2; return; }   // счётчики приёмки: viewer/smoke.h
   sceIoLseek32(fd, c->off, PSP_SEEK_SET);
   if (sceIoRead(fd, m, c->size) != (int)c->size || smokeBadRead()) { cpFree(m); c->state = 3; smkReadErr++; cellFail |= 1; return; }
@@ -102,7 +120,7 @@ static int cellsReadRuns(SceUID fd, short *idx, int n, volatile int *done) {
       else {
         ringReads++; ringBytes += e - s;
         for (int k = a; k < b; k++) { Cell *c = &cl[idx[k]];
-          void *m = cpAlloc(c->size);
+          void *m = cpAllocCell(c->size);
           if (!m) { c->state = 3; smkAllocFail++; cellFail |= 2; continue; }
           memcpy(m, tmp + (c->off - s), c->size); cellFinish(idx[k], m); }
       }
@@ -204,7 +222,38 @@ static volatile int tailColAl, tailPropAl; static int lvaTail962bOld = LVATAIL96
 #ifndef LEVEL_TAIL_OLD
 #define LEVEL_TAIL_OLD 0
 #endif
-#define LVA_BYTES ((17u << 20) + ((LEVEL_TAIL_OLD ? 832u : 128u) << 10))   // 17,13 МБ: max(рез. до таблицы кусков + COL1 + PRP2) по уровням 1–7 = 17,04 МБ (L1); с LEVEL_TAIL_OLD=1 прежние 17,81 МБ (max рез. + COL1 + PRP2 = 17,71 МБ, L4)
+#define LVA_BYTES_BASE ((17u << 20) + ((LEVEL_TAIL_OLD ? 832u : 128u) << 10))   // 17,13 МБ: max(рез. до таблицы кусков + COL1 + PRP2) по уровням 1–7 = 17,04 МБ (L1); с LEVEL_TAIL_OLD=1 прежние 17,81 МБ (max рез. + COL1 + PRP2 = 17,71 МБ, L4)
+// TEST90 шаг 1В (docs/handoff/АРХИТЕКТУРА_ПАМЯТЬ_ЗАГРУЗКА_2026-11-04.md §1.4): PVS L1/L4 (2,3 и 2,75 МБ) целиком в участок вместо 9–11 кусков по 256 КБ в куче; участок на LVA_PVS_KB больше.
+// LVA_PVS_OLD=1 / файл lvapvsold рядом с EBOOT — участок прежний (LVA_BYTES_BASE), PVS кусками в куче, как в TEST89
+// ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО (1): замер эмулятора на наборе TEST88: участок +3 МБ съедает 3 МБ кучи на КАЖДОМ уровне, а PVS L1/L4 в него всё равно не ложится (резерв под COL1/PRP2 8,2 МБ: 10,9 + 2,3..2,75 + 8,2 > 21,1); включить — файл lvapvson рядом с EBOOT или -DLVA_PVS_OLD=0
+#ifndef LVA_PVS_OLD
+#define LVA_PVS_OLD 1
+#endif
+#ifndef LVA_PVS_KB
+#define LVA_PVS_KB 3072u
+#endif
+// UNLOAD_FIRST_OLD=1 / файл unloadfirstold — смена уровня как в TEST89: газета и музыка загрузки открываются, пока старый уровень ещё в куче, выгрузка после;
+// FE_UNLOAD_FIRST_OLD=1 / файл feunloadfirstold — главное меню читает гостиную fe.shr при ещё загруженном уровне (отказ 5,2 МБ, потом повтор FERETRY841)
+#ifndef UNLOAD_FIRST_OLD
+#define UNLOAD_FIRST_OLD 0
+#endif
+#ifndef FE_UNLOAD_FIRST_OLD
+#define FE_UNLOAD_FIRST_OLD 0
+#endif
+static unsigned lvaBytes = LVA_BYTES_BASE + (LVA_PVS_OLD ? 0u : (LVA_PVS_KB << 10)); static int unloadFirst1b = !UNLOAD_FIRST_OLD, feUnloadFirst1b = !FE_UNLOAD_FIRST_OLD;
+// ТЕСТ90 память (окно оптимизации, журнал карты TEST89: после выгрузки L4 свободно 20,2 МБ, наибольший кусок 1,79 МБ, потом отказ 1,6 МБ на пакет гэгов L7): кэши прежнего уровня с мелкими блоками — запечённые листы пропов (propbake.h, по 76–3400 Б на клетку),
+// кэш срезов (ggcStore, 28 Б) и сетка стейтпропов — освобождались только когда новый уровень читал свой SPR1 (rfSpReset в levelPropAdopt), то есть живыми пережидали газету, банк звука, интерфейс и игрока нового уровня: сотни мелких островков по всей свободной куче, крупные блоки садились между ними
+// и оставались на месте. Теперь они уходят в levelUnload (мир уже не рисуется). PINFREE_OLD=1 / файл pinfreeold рядом с EBOOT — как в TEST89 (в конце загрузки)
+#ifndef PINFREE_OLD
+#define PINFREE_OLD 0
+#endif
+static int pinFree1 = !PINFREE_OLD;
+// ТЕСТ90 память: пакет гэгов (collect-lN.shr, 1,4–1,7 МБ одним блоком) не нашёл куска — было «COLL stream error=load» и уровень без гэгов; теперь один повтор после mem1060Pre (клетки под экраном загрузки). COLLRETRY_OLD=1 / файл collretryold — как в TEST89
+#ifndef COLLRETRY_OLD
+#define COLLRETRY_OLD 0
+#endif
+static int collRetry1 = !COLLRETRY_OLD;
+#define LVA_BYTES lvaBytes
 static unsigned char *lvaBase; static unsigned lvaUsed, lvaLast, lvaMiss; static SceUID lvaSema = -1;
 static int lvaOwns(const void *p) { return lvaBase && (const unsigned char *)p >= lvaBase && (const unsigned char *)p < lvaBase + LVA_BYTES; }
 static void lvaInit(void) {
@@ -271,6 +320,13 @@ static PfSlot pf[PF_MAX]; static int pfOld = PFETCH_OLD;
 #ifndef LOAD_PREREAD_OLD
 #define LOAD_PREREAD_OLD 0
 #endif
+// ТЕСТ90 2Б (PREREAD с пределом, PREREAD_TAKEOVER_OLD=1 — прежнее): загрузчик публикует прочитанное по кускам 512 КБ (prDone — смещение в файле, до которого буфер готов); главный, не увидев движения
+// 3 повтора сигнала подряд (6 с), а загрузчик не занят (проспал сигнал), берёт задание себе (prState 5) и дочитывает с prDone сам через обычное чтение под газетой (с пределами №LOADWAIT и замка msio);
+// загрузчик, занятый зависшим чтением, не отбирается: ждёт предел WAITLIMIT (fail). prState: 5 — взято главным
+#ifndef PREREAD_TAKEOVER_OLD
+#define PREREAD_TAKEOVER_OLD 0
+#endif
+static volatile unsigned prDone; static volatile unsigned loaderDeafUntil;   // тест: до этого момента (мкс системных часов) загрузчик, проснувшись, ничего не делает (проспал задание); flag loaderdeaf МС — окно в мс от момента флага. Счёт пробуждений не годится: их тратят и другие сигналы (трафик, клетки)
 static volatile int prState; static unsigned prOff, prSize; static unsigned char *prBuf; static char prPath[256]; static int prereadOld = LOAD_PREREAD_OLD, prereadSum;
 static unsigned levelPropSize(const unsigned char *ph, int pn) {   // размер секции PRP1/PRP2 по её заголовку; 0 — это не она
   if (!(pn >= 32 && (!memcmp(ph, "PRP1", 4) || (pn == 64 && !memcmp(ph, "PRP2", 4))))) return 0;
@@ -280,19 +336,20 @@ static unsigned levelPropSize(const unsigned char *ph, int pn) {   // разме
   return sz;
 }
 static int loaderThread(SceSize a, void *b) {
-  SceUID fd = -1; unsigned gen = ~0u; fpuThreadInit();   // правка 252: ловушки FPU потока (viewer/fpuguard.h)
+  SceUID fd = -1; unsigned gen = ~0u; loaderTid = sceKernelGetThreadId(); fpuThreadInit();   // правка 252: ловушки FPU потока (viewer/fpuguard.h)
   for (;;) {
     loaderIdle = 1;
     sceKernelWaitSema(sema, 1, NULL);
     fpuThreadPoll(FPU_T_LOADER);
     loaderIdle = 0;
+    if (loaderDeafUntil && (int)(sceKernelGetSystemTimeLow() - loaderDeafUntil) < 0) continue;   // ТЕСТ90 2Б: тест «загрузчик проспал» в течение окна
     for (;;) {                                       // пока в очереди есть незагруженное — грузим подряд
       if (prState == 1) {                            // №PREREAD: резидентная часть level.shr (после заголовка и lmap) в буфер главного потока
         loaderBusy = 1; SceUID pfd = sceIoOpen(prPath, PSP_O_RDONLY, 0); int ok = 0;
-        if (pfd >= 0) { sceIoLseek32(pfd, prOff, PSP_SEEK_SET); unsigned o = prOff; ok = 1;
-          while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o, n) != (int)n) { ok = 0; break; } o += n; }
+        if (pfd >= 0) { sceIoLseek32(pfd, prOff, PSP_SEEK_SET); unsigned o = prOff; ok = 1; prDone = o;
+          while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o, n) != (int)n) { ok = 0; break; } o += n; prDone = o; if (prState != 1) { ok = 0; break; } }   // ТЕСТ90 2Б: прочитанное публикуется; задание взято главным — выйти
           sceIoClose(pfd); }
-        __asm__ volatile("" ::: "memory"); prState = ok ? 2 : 3; loaderBusy = 0; }
+        __asm__ volatile("" ::: "memory"); if (prState == 1) prState = ok ? 2 : 3; loaderBusy = 0; }
       if (tailState == 1) {                          // загрузка 2 п.6: COL1 и PRP2 уровня (задание главного потока)
         loaderBusy = 1; SceUID tf = sceIoOpen(levelShr, PSP_O_RDONLY, 0);
         if (tf >= 0) {
@@ -339,11 +396,11 @@ static int loaderThread(SceSize a, void *b) {
       unsigned t0 = sceKernelGetSystemTimeLow();
       if (slowIoKBs) sceKernelDelayThread(6000 + cl[i].size * 1000u / slowIoKBs);   // ~6 мс на поиск + скорость чтения
       smokeLoadHook();   // служебное: отрицательный контроль delaycell (viewer/smoke.h)
-      loadCell(fd, i);
+      ldQueue = 1; loadCell(fd, i); ldQueue = 0;
       if (cl[i].state == 3 && (cellFail & 1)) loaderErrRun++; else if (cl[i].state == 2) loaderErrRun = 0;
       stLoadUs += sceKernelGetSystemTimeLow() - t0; stLoads++;
       if (cl[i].reqT) { unsigned lat = (sceKernelGetSystemTimeLow() - cl[i].reqT) / 1000u;   // П2: от запроса до готовности, мс
-                        bbCellN++; if (lat > bbCellMax) bbCellMax = lat; if (lat > 100u) bbCellSlow++; accN++; accLatSum += lat; if (lat > accLatMax) accLatMax = lat; if (lat > 100u) accSlow++; cl[i].reqT = 0; }
+                        bbCellN++; ldLatN++; ldLatSum += lat; if (lat > ldLatMax) ldLatMax = lat; if (lat > bbCellMax) bbCellMax = lat; if (lat > 100u) bbCellSlow++; accN++; accLatSum += lat; if (lat > accLatMax) accLatMax = lat; if (lat > 100u) accSlow++; cl[i].reqT = 0; }
       __asm__ volatile("" ::: "memory");
     }
     loaderBusy = 0;
@@ -352,6 +409,7 @@ static int loaderThread(SceSize a, void *b) {
 }
 static void loaderEnsure(void) {   // поток чтения: один на запуск; поднимается при первом нужном (предчтение уровня на старте из меню идёт раньше инициализации главного цикла)
   if (loaderUp) return;
+  { char fn_[256]; sibling(fn_, "ldfinpriold"); SceUID h_ = sceIoOpen(fn_, PSP_O_RDONLY, 0); if (h_ >= 0) { sceIoClose(h_); ldFinPriOn = 0; } }   // №1173: файл-флаг, как прочие *old
   sema = sceKernelCreateSema("load", 0, 0, 1, NULL);
   SceUID lt = sceKernelCreateThread("loader", loaderThread, 0x18, 0x4000, 0, 0);   // выше главного: чтение короткое, ждёт карту памяти
   if (lt >= 0) loaderUp = sceKernelStartThread(lt, 0, 0) >= 0;
@@ -365,7 +423,40 @@ static void loaderEnsure(void) {   // поток чтения: один на з�
 #endif
 static int loadWaitOld = LOADWAIT_OLD, lwLose, lwRetries, lwGiveups; static unsigned lwMs = 2000;   // lwMs: 2 с по умолчанию; тест (медленный безголовый эмулятор): flag loadwaitms N
 static void ldSignal(void) { if (lwLose > 0) { lwLose--; return; } sceKernelSignalSema(sema, 1); }
-typedef struct { unsigned last, prog; int n, init; } LdWait;
+// ТЕСТ90 (разбор НАДЁЖНОСТЬ_2026-11-04 §2, урок TEST28/TEST48): ожидания главного потока без выхода получают предел. Не дождались за предел — строка в ящик с местом и один общий экран
+// «Memory Stick read error» (fail), а не вечная газета. WAITLIMIT_OLD=1 / файл waitlimitold / flag waitlimitold 1 — прежнее. Тест: flag waitlimitms N — предел N мс вместо штатного
+#ifndef WAITLIMIT_OLD
+#define WAITLIMIT_OLD 0
+#endif
+#define WAITLIMIT_LOADER_MS 6000u   // загрузчик занят/опрос задания: одна клетка или файл-впрок, штатно доли секунды
+#define WAITLIMIT_UNLOAD_MS 10000u  // смена уровня: ждёт, пока загрузчик закончит идущее чтение
+#define WAITLIMIT_READ_MS 4000u     // сторож: поток внутри одного куска чтения (64 КБ) дольше этого — «карта не отвечает»
+static int waitLimitOld = WAITLIMIT_OLD; static unsigned wlMs, wlFails;
+typedef struct { unsigned last, prog; int n, init; unsigned t0; } LdWait;
+static void ldWaitFail(const char *what, unsigned ms) {
+  static char msg[160]; wlFails++;
+  snprintf(msg, sizeof msg, "Memory Stick read error.\n\n(%s: no answer for %u s)", what, ms / 1000u);
+  // замок карты может держать зависшее чтение: любая запись через msioWrite (журнал, ящик) встала бы на нём же — улика идёт мимо замка (msioWriteRaw), как у сторожа
+  { char fn[256], ln[120]; sibling(fn, "waitlimit.txt"); int n = snprintf(ln, sizeof ln, "WAITLIMIT %s ms=%u (Memory Stick read error) busyfd=%d busyms=%u\n", what, ms, msioBusyFd, msioBusySince ? (sceKernelGetSystemTimeLow() - msioBusySince) / 1000u : 0u);
+    SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777); if (f >= 0) { msioWriteRaw(f, ln, (unsigned)n); sceIoClose(f); } }
+  if (!msioBusySince) {   // карта жива: обычные пути
+    if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "WAITLIMIT %s ms=%u t=%.1f\n", what, ms, smkT); smkWrite(s_); }
+    bbOp("fail", what, 1);
+  }
+  fail(msg);
+}
+static void ioWaitNoteMain(const char *what, unsigned ms) {   // асинхронное чтение (модель NPC, машина миссии) не вернулось за ms: строка в ящик и журнал, модель просто не появится
+  bbOp("waitlimit", what, 0); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "WAITLIMIT %s ms=%u t=%.1f\n", what, ms, smkT); smkWrite(s_); }
+}
+static void msioLockTimeoutMain(unsigned ms) {   // ТЕСТ90: замок карты не освободился за предел (владелец завис в чтении): главный поток — экран ошибки, остальные ждут дальше
+  if (!waitLimitOld && sceKernelGetThreadCurrentPriority() == 0x20) ldWaitFail("msiolock", ms);
+}
+static void ldWaitLimit(LdWait *w, const char *what, unsigned limitMs) {   // зовётся в каждом обороте ожидания; предел от первого оборота
+  if (waitLimitOld) return;
+  unsigned now = sceKernelGetSystemTimeLow(), lim = wlMs ? wlMs : limitMs;
+  if (!w->t0) { w->t0 = now | 1u; return; }
+  if (now - w->t0 > lim * 1000u) ldWaitFail(what, lim);
+}
 static int loaderWaitStep(LdWait *w, const char *what, unsigned prog, int canGiveUp) {   // 1 — выйти из ожидания (только если canGiveUp)
   unsigned now = sceKernelGetSystemTimeLow();
   if (!w->init || prog != w->prog) { if (!w->init && smkOn) { char s_[80]; snprintf(s_, sizeof s_, "LWINIT %s old=%d t=%.1f\n", what, loadWaitOld, smkT); smkWrite(s_); } w->init = 1; w->prog = prog; w->last = now; return 0; }
@@ -567,9 +658,9 @@ static int stream(float x, float y, float z) {
           float d = cellDist(c, x, y, z); if (lkl > 1e-3f && streamAhead1042) { int sd_ = sta1042Side(c, x, z, lkx, lkz); d += sd_ > 0 ? -STA1042_KEEP : sd_ < 0 ? 40.f : 0.f; }   // №1042
           if (d > fd) { fd = d; far = (int)i; } }
         if (far < 0) break;
-        unsigned cf0 = cpChunksFreed, csz = cl[far].size; memTrimBytes += csz; unloadCell(&cl[far]); n++;
+        unsigned hf0 = cpHeapFreed, csz = cl[far].size; memTrimBytes += csz; unloadCell(&cl[far]); n++;
         if ((unsigned)far < MT2_MAX) { memTrimSet2[far] = 1; if (memTrimCnt2[far] < 255) memTrimCnt2[far]++; }
-        got += CELLPOOL_OLD || csz > CP_DIRECT ? csz : (cpChunksFreed - cf0) * CP_CHUNK;   // пул: место вернулось в кучу только вместе с освободившимся куском
+        got += cpOld || csz > cpClsKB[cpNCls - 1] * 1024u ? csz : (cpHeapFreed - hf0);   // пул: место вернулось в кучу только вместе с освободившейся плитой / куском; клетка вне классов шла прямо в кучу
       }
       memTrimGot2 = got;
       memTrims += (unsigned)n; memTrimAcc1060 += (unsigned)n;
@@ -680,7 +771,7 @@ static int cellsMakeRoom(unsigned need) {
   if (mem1060 && memMaxBlock() < need && (ldOn || viewBusyNow())) {   // №1060: далёких клеток не хватило, а мир закрыт экраном (газета, будка, лавка, гардероб) — все клетки уходят в кучу, стрим вернёт их сам
     unsigned f0_ = heapFreeBytes(), b0_ = memMaxBlock();
     lqn = 0; __asm__ volatile("" ::: "memory");
-    { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }
+    { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_stream", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
     int all_ = cellsDropBeyond(-1.f); n += all_;
     if (smkOn) { char s[160]; snprintf(s, sizeof s, "MEM1060 all need=%.1f dropped=%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", need / 1048576.f, all_, f0_ / 1048576.f, heapFreeBytes() / 1048576.f, b0_ / 1048576.f, memMaxBlock() / 1048576.f, smkT); smkWrite(s); }
   }
@@ -733,12 +824,14 @@ static int boothRoom1051(int stage) {
 static void boothRelease1051(void) { stBoothHold1051 = 0; }
 // служебное: сколько клеток города в кадре (ближе дальности видимости) ещё не загружено — это и есть «дыры»
 static int stMissNow, stMissMax, stMissFrames, stFrames; static float stWorkSum, stWorkMax; static unsigned stRamMax;
+static float stMissNearD = 1e9f;   // ag/loadorder: расстояние (м) до ближайшей видимой незагруженной клетки в этом кадре (служебный журнал VOID1209, main_loop.h loFallWatch)
 static void streamMiss(void) {
-  int m = 0;
+  int m = 0; stMissNearD = 1e9f;
   for (unsigned i = 0; i < ncell; i++) {
     Cell *c = &cl[i]; if (c->owner || c->state == 2) continue;
     if (zgOn && CELL_REG(c) && CELL_REG(c) <= 16 && !((regRes >> (CELL_REG(c) - 1)) & 1u)) continue;   // правка 181: регион вне набора ворот не рисуется — не дыра
     if (boxD2(c->bb) < drawDist * drawDist && visBox(c->bb, 0, 0, 0)) {
+      { float d2_ = boxD2(c->bb); if (d2_ < stMissNearD * stMissNearD) stMissNearD = sqrtf(d2_); }
       if (m < 4 && smkOn && !stMissNow && !jumpWatch) {   // служебное: первые видимые недогруженные клетки пачки — почему не загружены (строка MISSCELL)
         float dx = c->cx - eyeX, dz = c->cz - eyeZ, hl = sqrtf(dx * dx + dz * dz) + .01f, fl = sqrtf(stFx * stFx + stFz * stFz) + .001f;
         char s_[200]; snprintf(s_, sizeof s_, "MISSCELL i=%u state=%d d=%.0f rad=%.0f ang=%.0f vel=%.1f,%.1f lqn=%d busy=%d tight=%d ring=%d dd=%.0f t=%.2f\n", i, c->state, hl, c->rad,

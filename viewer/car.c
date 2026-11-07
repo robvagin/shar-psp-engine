@@ -242,6 +242,23 @@ extern int colDebug;
 #ifndef SV_JTURNDROP_OLD
 #define SV_JTURNDROP_OLD 0      // круг 6, 3.1: разворот задним ходом работает только при доле > 0,15 и любой скорости назад; боковое сопротивление всех колёс падает до 0,001 и возвращается за 1 с (latK, у любой машины). Было: назад быстрее 0,5 м/с, без падения
 #endif
+// №1172 (Роб, TEST87 на PSP: «все машины заносит, не дрифт, а неконтролируемый занос, как будто не касаются земли»). Замер tests/g01cars/fleet1172.c: 89 машин, скорость 0,45/0,7/0,9 TopSpeed,
+// полный руль 2 с при 30 к/с: «срыв» (скорость упала больше чем на 25 % или угол хода к носу > 20° или переворот) — TEST82: 24 из 534 заездов, TEST84: 88, TEST87: 139 (38 машин).
+// Виновники по выключателям на TEST87: SV_GRIPLOSS (139 → 33), SV_AIRSTAB2 (→ 42), PS2COR1126 (→ 88); вместе первые два — 6. Первые два читались из исходника по тексту, в нашей модели шин
+// (боковая сила от скольжения, без полной таблицы оригинала) их действие сильнее. Теперь: потеря сцепления ведущих — SV_GRIPLOSS_K (было 0,2), угловое сопротивление игрока на земле — SV_YAWGROUND_K·m·ω
+// (без него на скорости рыскание не гасится, и машину уносит боком). SV_GRIPLOSS1172_OLD=1 / SV_YAWGROUND1172_OLD=1 — как в TEST87
+#ifndef SV_GRIPLOSS1172_OLD
+#define SV_GRIPLOSS1172_OLD 0
+#endif
+#ifndef SV_GRIPLOSS_K
+#define SV_GRIPLOSS_K 0.05f   // по тексту исходника 0,2
+#endif
+#ifndef SV_YAWGROUND1172_OLD
+#define SV_YAWGROUND1172_OLD 0
+#endif
+#ifndef SV_YAWGROUND_K
+#define SV_YAWGROUND_K 1.f   // прежнее — 3
+#endif
 #ifndef SV_AIRSTAB2_OLD
 #define SV_AIRSTAB2_OLD 0       // круг 6, 5.1: демпфирование 7·m·ω входит только вместе с моментом возврата (наклон больше 10°); угловое сопротивление игрока 3·m·ω — только в полёте (все 4 колеса без земли) и при доле > 0,01. Было: 7·m·ω всегда в полёте, 3·m·ω у игрока всегда, и на земле
 #endif
@@ -267,7 +284,7 @@ extern int colDebug;
 #define SV_SLIPENTRY_OLD 0      // P01-03: вход в занос без ручника — по колесу с наибольшей нагрузкой, ручник переводит в режим 2 только из режима 0
 #endif
 #ifndef SV_GRIPLOSS_OLD
-#define SV_GRIPLOSS_OLD 0       // 3.2: машина игрока на > 90 км/ч, доля > 0,7, газ, руль > 0,1: сцепление ведущих ×(1 − 0,2·газ)
+#define SV_GRIPLOSS_OLD 0       // 3.2 (№1172: коэффициент SV_GRIPLOSS_K ниже; вместо 0,2 из чтения исходника — меньше, см. там): машина игрока на > 90 км/ч, доля > 0,7, газ, руль > 0,1: сцепление ведущих ×(1 − 0,2·газ)
 #endif
 #ifndef SV_JTURN_OLD
 #define SV_JTURN_OLD 0          // 3.1: разворот задним ходом (J-turn)
@@ -709,6 +726,24 @@ static float effMass(const Car *c, const M3 *M, V3 n, V3 r) {   // 1 / K для 
 #endif
 #ifndef CAR_BUMPSTOP_DAMP
 #define CAR_BUMPSTOP_DAMP 13.f   // демпфер за ходом подвески, доли амортизатора (прежняя 13)
+#endif
+// Правка Роба 1200 (тангаж на склонах и трамплинах, КАНДИДАТ — не принят, по умолчанию выключен: CAR_PITCH1200_OLD=1 — прежняя подвеска побайтно).
+// Записи PS2 (трамплины jz2/jz4/jz16/jz17/jz5) показывают, что кузов оригинала после излома склона уходит выше и круче порта (тангаж на кромке +3°, vy +1 м/с, хвост
+// колебаний 1,3–1,8 Гц почти не затухает), порт гасит их сильнее: подвеска 0,2 от критического + жёсткий упор (60·k, демпфер ×13). Кандидат (CAR_PITCH1200_OLD=0):
+// демпфирование хода и тангажа подвески ×P1200_DAMP, снятое демпфирование крена возвращается моментом по оси «вперёд» (крен и рыскание не меняются);
+// упор на сжатии мягче и вязче вдвое-впятеро (P1200_STOPK·k, демпфер ×P1200_STOPD). Подбор по 14 прыжкам twin + jz5 (tests/g01cars/pitch1200.sh, docs/handoff/ТАНГАЖ_1200_2026-11-05.md):
+// даёт Σ|Δудар| 34,8→~20 м и vy за 3 м до кромки ближе к PS2 на 30 %, но крышу jz5 на 100 км/ч НЕ даёт (ручек подвески для этого не хватает, см. отчёт).
+#ifndef CAR_PITCH1200_OLD
+#define CAR_PITCH1200_OLD 1
+#endif
+#ifndef P1200_DAMP
+#define P1200_DAMP 0.4f
+#endif
+#ifndef P1200_STOPK
+#define P1200_STOPK 28.f
+#endif
+#ifndef P1200_STOPD
+#define P1200_STOPD 2.8f
 #endif
 static float contactRestitution(const Car *c,float e) {
   // Mass already enters the contact's effective impulse. Scaling material
@@ -1506,7 +1541,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
     for(int i=0;i<c->nhkeep;i++) {int seen=0;for(int k=0;k<count;k++)seen|=keep[k]==c->hkeep[i];if(!seen&&count<COL_HUMP_KEEP)keep[count++]=c->hkeep[i];}
     colHumpKeep(keep,count);
   }
-  float normalForce[4]={0};
+  float normalForce[4]={0}, cRoll=0.f;   // cRoll: Σ c·b² по колёсам с опорой (b — плечо поперёк кузова), Н·м·с/рад: демпфирование крена подвески до правки 1200
   if(!CAR_EXPLICIT_SUSPENSION_OLD) {
     V3 r[4],n[4];float spring[4]={0},tangent[4]={0},damping[4]={0},freeV[4]={0};int active[4]={0};
     V3 vfree=madd(vel,Fs,dt*im),wfree=madd(om,invIw(c,&M,Ts),dt);
@@ -1516,13 +1551,14 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       active[i]=1;r[i]=sub(madd(mws[i],M.U,-ext),comW);
       V3 vp=add(vfree,cross(wfree,r[i]));if(onsup[i])vp=sub(vp,v3(c->supV[0],c->supV[1],c->supV[2]));
       freeV[i]=dot(vp,n[i]);float xs=fminf(x,c->lim);
-      spring[i]=c->kS[i]*(xs+5.f*xs*xs);tangent[i]=c->kS[i]*(1.f+10.f*xs);damping[i]=c->cS[i];
+      spring[i]=c->kS[i]*(xs+5.f*xs*xs);tangent[i]=c->kS[i]*(1.f+10.f*xs);damping[i]=c->cS[i]*(CAR_PITCH1200_OLD?1.f:P1200_DAMP);
       if(x>c->lim) {
-        float vnI=dot(add(vel,cross(om,r[i])),n[i]),k=(vnI<0.f?60.f:CAR_BUMPSTOP_REBOUND_OLD?8.f:CAR_BUMPSTOP_REBOUND_K)*c->kS[i];
-        spring[i]+=k*(x-c->lim);tangent[i]=k>0.f?k:c->kS[i]*(1.f+10.f*c->lim);damping[i]*=CAR_BUMPSTOP_DAMP;
+        float vnI=dot(add(vel,cross(om,r[i])),n[i]),k=(vnI<0.f?(CAR_PITCH1200_OLD?60.f:P1200_STOPK):CAR_BUMPSTOP_REBOUND_OLD?8.f:CAR_BUMPSTOP_REBOUND_K)*c->kS[i];
+        spring[i]+=k*(x-c->lim);tangent[i]=k>0.f?k:c->kS[i]*(1.f+10.f*c->lim);damping[i]*=CAR_PITCH1200_OLD?CAR_BUMPSTOP_DAMP:P1200_STOPD;
       }
     }
     suspensionForces(c,&M,r,n,spring,tangent,damping,freeV,active,dt,normalForce);
+    if(!CAR_PITCH1200_OLD)for(int i=0;i<4;i++)if(active[i]){float b=dot(r[i],M.L);cRoll+=c->cS[i]*b*b;}
   }
   // сверка g01-cars круг 5, P01-02: предварительный проход — какие колёса касаются земли; если хоть одно касается, остальные («призрачные») тоже дают силы шин
   // с нормалью = средняя по касающимся (нормальная сила 0, пружина не считается); колесо с наибольшим уходом за упор подвески (больше двух ходов) пропускается. -DSV_AIRWHEEL_OLD=1
@@ -1583,7 +1619,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       // сверка g01-cars, 3.3: сцепление по поверхности (асфальт, дерево, металл ×1; трава ×0,7; песок, гравий, вода, грунт ×0,6); 3.2: игрок на скорости теряет сцепление ведущих;
       // 3.1: J-turn. Было: везде ×1. -DSV_SURFACE_GRIP_OLD=1 / -DSV_GRIPLOSS_OLD=1 / -DSV_JTURN_OLD=1
       if (!SV_SURFACE_GRIP_OLD) { int sf = c->wheelSurf[i]; gm *= sf == SURF_GRASS ? .7f : (sf == SURF_SAND || sf == SURF_GRAVEL || sf == SURF_WATER || sf == SURF_DIRT) ? .6f : 1.f; }
-      if (!SV_GRIPLOSS_OLD && i >= 2 && player && thr > 0.f && ratio > .7f && speed > SV_KMH(90.f) && fabsf(c->steer) > .1f) gm *= 1.f - .2f * thr;
+      if (!SV_GRIPLOSS_OLD && i >= 2 && player && thr > 0.f && ratio > .7f && speed > SV_KMH(90.f) && fabsf(c->steer) > .1f) gm *= 1.f - (SV_GRIPLOSS1172_OLD ? .2f : SV_GRIPLOSS_K) * thr;
       if (jturn) gm *= i < 2 ? .5f : 1.5f;
       stiff *= gm;
       if (c->fenceT > 0.f) stiff *= CAR_FENCE_LAT;   // №487: скользим вдоль забора — боковые силы шин не гасят скорость скольжения
@@ -1726,6 +1762,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       if (!SV_AIRSTAB2_OLD && player && ratio > .01f) Ts = madd(Ts, om, -3.f * m);   // круг 6, 5.1: угловое сопротивление игрока — только в полёте
     }
     if (SV_AIRSTAB2_OLD && player) Ts = madd(Ts, om, -3.f * m);
+    if (!SV_YAWGROUND1172_OLD && !SV_AIRSTAB2_OLD && player && ng > 0 && ratio > .01f) Ts = madd(Ts, om, -SV_YAWGROUND_K * m);   // №1172: на земле игроку — часть прежнего 3·m·ω
   }
   // сверка g01-cars, 4.3: машина на боку или крыше (наклон > 78°, скорость < 1 м/с): руль даёт момент крена 130·m·руль в сторону «встать». Только игрок. Было: своего момента нет. -DSV_FLIPSTEER_OLD=1
   c->stabRoll = 0.f;
@@ -1765,6 +1802,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   // на колёсах в обычной езде качает сама подвеска
   {
     V3 wb = mulMT(&M, om);
+    if (!CAR_PITCH1200_OLD && cRoll > 0.f) Ts = add(Ts, mulM(&M, v3(0.f, 0.f, -(1.f - P1200_DAMP) * cRoll * wb.z)));   // правка 1200: крен демпфируется как раньше
     int tilted = M.U.y < 0.985f;
     if (SV_AIRSTAB_OLD ? (!ng || tilted) : (ng && tilted)) {   // сверка g01-cars, 5.1: в полёте затухание даёт стабилизатор (выше)
       float K = mg * fabsf(P->weebleOffset) + mg * 0.2f, al = P->airLevel;

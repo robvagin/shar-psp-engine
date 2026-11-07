@@ -180,6 +180,9 @@ typedef struct SkinPre SkinPre;                 // предзагрузка мо
 int skinPreDone(int pollRet);                 // ответ sceIoPollAsync -> прочитано ли (ошибка тоже «закончено»); для хост-проверки
 SkinPre *skinPreStart(const char *path);        // NULL — файла нет / нет памяти
 int skinPreReady(SkinPre *p);                   // 1 — файл прочитан целиком (хост — всегда)
+// ТЕСТ90: предел ожидания чтения (WAITLIMIT_OLD): ioWaitBounded ждёт конца асинхронного чтения не дольше 3 с + 4 с/МБ (ioWaitLimitMs — тест), потом sceIoCancel и дождаться отмены; 1 — прочитано, 0 — отменено по времени, -1 — ошибка
+extern unsigned ioWaitLimitMs; extern int ioWaitLimitOld; extern unsigned ioWaitTimeouts; extern void (*ioWaitNote)(const char *what, unsigned ms);
+int ioWaitBounded(int fd, long long *res, unsigned size, const char *what);
 SkinModel *skinPreFinish(SkinPre *p);           // разбор из памяти, освобождает p (ждёт остаток чтения); NULL — файл повреждён
 void skinPreCancel(SkinPre *p);                 // отказаться от предзагрузки
 void skinFree(SkinModel *m);

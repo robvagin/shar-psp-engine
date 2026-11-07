@@ -1,0 +1,10 @@
+#!/bin/bash
+# Linux shim: BSD/macOS "stat -f FORMAT FILE" -> GNU "stat -c". %z size, %m mtime, %N name, %Sm/%a not supported (pass through).
+# GNU "stat -f" (file system status) takes no FORMAT, so "stat -f %..." can only be the BSD form.
+REAL=/usr/bin/stat; [ -x "$REAL" ] || REAL=/bin/stat
+if [ "${1:-}" = -f ] && [ "${2#%}" != "${2:-}" ] && [ -n "${2:-}" ]; then
+  fmt="$2"; shift 2
+  fmt="${fmt//%z/%s}"; fmt="${fmt//%m/%Y}"; fmt="${fmt//%a/%X}"; fmt="${fmt//%N/%n}"
+  exec "$REAL" -c "$fmt" "$@"
+fi
+exec "$REAL" "$@"

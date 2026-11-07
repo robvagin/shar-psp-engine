@@ -1,0 +1,31 @@
+# №1193 блок тура TEST90: пауза свободной езды, пауза в задании (обычная, выбран RESTART) и с серыми пунктами (подсказка обучения); кадры pause_sunday, pause_mission, pause_mission_down, pause_mission_grey
+scene PS_free
+flag msn
+wait 2
+press start
+wait 1
+shot pause_sunday
+press start
+wait 1
+scene PS_mission
+flag msnmain 1
+wait 3
+press cross
+wait 4
+press start
+wait 1
+shot pause_mission
+press down
+wait 0.5
+shot pause_mission_down
+press start
+wait 1.5
+scene PS_grey
+flag tutorial 1
+wait 3
+press start
+wait 1
+shot pause_mission_grey
+press start
+wait 1
+# конец блока: пауза закрыта; миссия L1 идёт — блок ставить в КОНЕЦ тура (перед end), не перед сценами, которым нужна свободная езда и обычная пауза (F_SET)

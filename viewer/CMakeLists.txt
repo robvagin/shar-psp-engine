@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(sharview C)
-add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c)
+add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c)
 
 # правки 252/259 (03.10): кэш карты ARK-4 — все sceIoRead/sceIoWrite движка идут через viewer/msio.c (по одному, сброс кэша)
 target_compile_options(sharview PRIVATE "SHELL:-include ${CMAKE_SOURCE_DIR}/msio.h")   # SHELL: — CMake склеивает повторы «-include»
@@ -34,7 +34,7 @@ foreach(v SHAR_JITTER_DEFAULT SHAR_RELEASE SHAR_RELEASE_KEEP_DIAG SHAR_RELEASE_K
   endif()
 endforeach()
 # правка 103: учёт отказов памяти во всех модулях (viewer/memwatch.c)
-target_link_libraries(sharview "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=sceIoClose")   # sceIoClose: ловушка 05.10 (main.c __wrap_sceIoClose)
+target_link_libraries(sharview "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=free,--wrap=sceIoClose")   # sceIoClose: ловушка 05.10 (main.c __wrap_sceIoClose)
 # правки 269/273/276, ступень 0 (проба Media Engine): сторона игры viewer/me/meprobe.c — только по флагу сценария «meprobe»;
 # модуль ядра sharme.prx (код ME, метод MIST, viewer/me/vendor — MIT) собирается отдельно: make -C viewer/me, правило в
 # tools/ship_rules.txt — как ловушка вылетов viewer/kexc

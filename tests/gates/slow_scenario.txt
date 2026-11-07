@@ -1,0 +1,10 @@
+# Красный контроль «TIMEOUT, а не зависание»: честная игра, которой дают слишком мало времени (предел MAXT много меньше сценария). END не успевает, журнал растёт до самого обрыва.
+scene spawn
+wait 4
+shot spawn
+scene drive
+wait 1
+flag autostraight
+wait 40
+shot drive
+end

@@ -1,0 +1,61 @@
+# №1160: Car Aim — снимки на ступенях 2 / 0 / 4 в машине (L1): стоит, прямая, поворот, занос. «flag camuseraim N» — ступень как в меню CAMERA.
+# Каждый кадр с одной и той же точки и курса, ход кадров фиксирован (flag camdet): ступени сравнимы по пикселям; ступень 2 против сборки CARAIM1160_OLD=1 — побитово.
+# Смоук: SMOKE_HEADLESS=1 SMOKE_SCN=tests/camera/caraim1160_scenario.txt tools/smoke.sh <набор>; числа — tests/camera/caraim1160_measure.py <папка прогона>
+scene drive
+wait 2
+flag camdet 1
+flag camuseraim 2
+scene drive
+goto 220 172 1.5708
+flag repair
+wait 2
+shot aim2_still
+flag autostraight
+wait 3
+shot aim2_straight
+press left 0.7
+wait 0.2
+shot aim2_turn
+press square 0.5
+press left 0.5
+wait 0.3
+shot aim2_skid
+flag stop
+wait 1
+flag camuseraim 0
+scene drive
+goto 220 172 1.5708
+flag repair
+wait 2
+shot aim0_still
+flag autostraight
+wait 3
+shot aim0_straight
+press left 0.7
+wait 0.2
+shot aim0_turn
+press square 0.5
+press left 0.5
+wait 0.3
+shot aim0_skid
+flag stop
+wait 1
+flag camuseraim 4
+scene drive
+goto 220 172 1.5708
+flag repair
+wait 2
+shot aim4_still
+flag autostraight
+wait 3
+shot aim4_straight
+press left 0.7
+wait 0.2
+shot aim4_turn
+press square 0.5
+press left 0.5
+wait 0.3
+shot aim4_skid
+flag stop
+wait 1
+end

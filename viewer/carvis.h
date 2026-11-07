@@ -63,6 +63,11 @@ void carVisSpin(CarVis *v, const Car *c, float dt);   // №955б: только 
 // variant 1 (остов) рисуется со своим huskLift.
 void carVisPieceMatrix(const CarVis *v, const Car *c, int joint, int variant, float ox, float oy, float oz, float sc, float m[16]);
 void carVisPieceMatrixEx(const CarVis *v, const Car *c, int joint, int variant, float ox, float oy, float oz, float sc, int noSpin, float m[16]);   // №867: noSpin — без качения колеса
+// ТЕСТ90: на время рисования кусков машины в кадре общая часть матриц (поворот сустава и его столбцы 3x3) считается один раз на сустав и масштаб, а не на каждый кусок.
+// Скобка: carVisMtxScope(v, c, 1) перед циклом кусков, (0,0,0) после; внутри машина и суставы не меняются. Числа те же, что при расчёте заново (проверка tests/g01cars/carmtx.c).
+// CARMTX_OLD=1 / файл carmtxold рядом с EBOOT / «flag carmtxold 1» — прежний расчёт на каждый кусок
+extern int carMtxOld; extern unsigned long carMtxCoreN;
+void carVisMtxScope(const CarVis *v, const Car *c, int on);
 int carVisWheelJoint(const CarVis *v, int joint);   // №867: сустав — колесо
 // рисовать ли кусок этого варианта сейчас (машина целая / остов)
 int carVisVariantOn(const Car *c, int variant);
