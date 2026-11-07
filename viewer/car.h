@@ -126,6 +126,7 @@ typedef struct {
   float supV[3];                                     // скорость крыши (трение колёс — относительно неё)
   // --- служебное ---
   float acc, t, airT, noGroundT, embedT, bellyT, flipT, nofitT, strandT, fallTop, fallT0, fallPendT; int fallPending, bodyHit;
+  int spawnOk, spawnRings, spawnKeeps;   // правка 431: spawnOk — машина хоть раз поставлена на опору (carPlace); счётчики постановок без опоры: на ближайшую опору / оставлена на месте
   struct { float x, y, z, h, t; } safe[CAR_SAFE]; int nsafe, safeHead; float safeT;
   float homeX, homeY, homeZ, homeH;
   float kS[4], cS[4], eq, lim, mountY, inertia[3], invInertia[6], comBase[3];   // производные от параметров (carInit)

@@ -179,9 +179,11 @@ for nd in "${NEWDATA[@]:-}"; do
 done
 { echo "ship $(date '+%Y-%m-%d %H:%M:%S')  $SMOKE_NOTE"; echo "git $(git rev-parse --short HEAD 2>/dev/null)$(git diff --quiet 2>/dev/null || echo ' +изменения')"
   (cd "$STAGE" && sha256 EBOOT.PBP "${FILES[@]}"); } > build/ship_manifest.txt
+tools/setrev.sh "$STAGE" build/ship_manifest.txt >/dev/null && cp "$STAGE/set.txt" build/set.txt   # TEST93 C1: штамп набора (номер выпуска данных, sha манифеста) — движок сверяет при старте
 step "установлено в build/ (прежнее -> *_ok), манифест build/ship_manifest.txt; $SMOKE_NOTE"
 else
   (cd "$STAGE" && sha256 EBOOT.PBP "${FILES[@]}") > "$STAGE/manifest.txt"
+  tools/setrev.sh "$STAGE" "$STAGE/manifest.txt" >/dev/null   # TEST93 C1
   step "--no-install: build/ не тронут, набор в ${STAGE#$ROOT/}/ (манифест manifest.txt); $SMOKE_NOTE"
 fi
 
@@ -200,7 +202,8 @@ if [ -f "$D/EBOOT.PBP" ]; then
 fi
 # только изменившиеся: совпавший по cmp файл на карте не переписывается (наборы уровней 2–7 — сотни МБ)
 CHG=(); same=0; need=0
-for f in EBOOT.PBP "${FILES[@]}"; do
+for f in EBOOT.PBP set.txt "${FILES[@]}"; do   # set.txt — штамп набора (TEST93 C1)
+  if [ -f "$STAGE/$f" ] || [ "$f" != set.txt ]; then :; else continue; fi
   if [ -f "$D/$f" ] && cmp -s "$STAGE/$f" "$D/$f"; then same=$((same + 1)); continue; fi
   old=0; [ -f "$D/$f" ] && old=$(file_size "$D/$f")
   CHG+=("$f"); need=$((need + $(file_size "$STAGE/$f") - old))

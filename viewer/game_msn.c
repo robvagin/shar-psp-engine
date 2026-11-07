@@ -138,8 +138,11 @@ static void putCar(Game *g, const MsnPlace *at) {
   g->pProps->havePreviousCar = 0;
 }
 #define TELEPORTED() (GM->teleports++, GM->scam.placed |= GM->scam.arm)   // правка 40: перенос на старте фазы — к её камере
+static float wdPut[4]; static int wdPutOk;   // сторож (watchdog_game.c): точка последней постановки героя фазой миссии — запасное «надёжное место»
+static int wdStartPoint(int hero, float out[4]) { if (!hero || !wdPutOk) return 0; memcpy(out, wdPut, sizeof wdPut); return 1; }
 static void putHomer(Game *g, const MsnPlace *at) {
   if (!at || !*g->pHaveHomer) return;
+  wdPut[0] = at->pos.x; wdPut[1] = at->pos.y; wdPut[2] = at->pos.z; wdPut[3] = at->has_heading ? at->heading : g->pHomer->h; wdPutOk = 1; gameWdStartPoint = wdStartPoint;
   homerPlace(g->pHomer, g->pWorld, at->pos.x, at->pos.y, at->pos.z, at->has_heading ? at->heading : g->pHomer->h);
 }
 // круг 2–3: игрок сразу ставится на землю у машины (выход без анимации): сначала сбоку по одну сторону, потом по другую, иначе в центре машины
@@ -293,6 +296,13 @@ void gameMsnHnrPoliceFar(GameMsn *m, float px, float pz, float R) {
 // сверка g09b-menu круг 7 (P03 Д2): снять одну машину погони по номеру в списке машин миссии
 void gameMsnHnrPoliceDrop(GameMsn *m, int i) {
   if (i >= 0 && i < m->cars.n && m->cars.c[i].on && !strcasecmp(m->cars.c[i].name, m->hnr.car)) memset(&m->cars.c[i], 0, sizeof m->cars.c[i]);
+}
+// правка 433 (Роб 06.11, L4): аналог EnterLimbo оригинала (DisableAllActiveVehicleAIs в ChaseManager): помеченный на удаление коп бросает погоню и тормозит (режим «стоит»: ручник, тормоз при движении);
+// on = 0 — вернуть погоню (шкала снова поднялась и защёлка встала до того, как коп ушёл из кадра). Исчезают они не здесь, а правилом «вне кадра 5 с / дальше 110 м» (main_frontend.h)
+void gameMsnHnrPoliceLimbo(GameMsn *m, int on) {
+  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (!c->on || strcasecmp(c->name, m->hnr.car)) continue;
+    if (on && c->mode == MC_CHASE) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; }
+    else if (!on && c->mode == MC_PARKED) { c->mode = MC_CHASE; c->asleep = 0; c->still = 0.f; c->chaseRoad = -2; c->chaseRoadT = 0.f; } }
 }
 void gameMsnHnrPoliceHold(GameMsn *m) {
   for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (c->on && !strcasecmp(c->name, m->hnr.car)) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; } }

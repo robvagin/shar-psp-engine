@@ -1,0 +1,19 @@
+# Правка 436 (Роб 06.11 23:55): задние фары горят как стоп-сигнал без тормоза. Езда L4 без единого нажатия тормоза (flag autodrive: газ 1, тормоз 0, руль синусом), затем pilot с его торможением.
+# В журнале LAMP436: кадров, стоп горит, из них без тормоза во вводе (ожидание: 0)
+scene F_LAMP_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+wait 3
+flag autodrive
+wait 45
+flag stop
+wait 2
+flag drive 60
+wait 62
+flag stop
+wait 2
+end

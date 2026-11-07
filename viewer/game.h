@@ -163,4 +163,8 @@ void gameCarHealthTrack(Game *g);                                  // кадр: 
 #define GAME_STICK_OLD 0
 #endif
 void gameStick(float rawx, float rawy, float *ax, float *ay);   // rawx/rawy: −1..1 с аналога PSP; выход: после зоны и ступени
+enum { WDB_HERO_NOFLOOR = 1, WDB_HERO_BELOW = 2, WDB_HERO_STUCK = 4, WDB_CAR_NOFLOOR = 8, WDB_CAR_BELOW = 16, WDB_CAR_STUCK = 32 };
+extern int wdBreakMask;   // служебное: искусственная поломка видов сторожа (приёмка), см. watchdog_game.c
+void gameWatchdogStep(Game *g, float dt);   // сторож игры (watchdog_game.c): зовётся в конце gameAfterCar
+extern int (*gameWdStartPoint)(int hero, float out[4]);   // крючок миссий: старт текущей фазы/комнаты (x, y, z, курс); 1 — дал
 #endif

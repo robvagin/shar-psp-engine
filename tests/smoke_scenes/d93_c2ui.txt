@@ -1,0 +1,9 @@
+# TEST93 Данные-93 (C2): экран «Level N files are missing» как у игрока (flag setcheckui 1 в служебном прогоне), кнопка нажимается самим тестом (smkTap, тот же smokePad). Набор без l3/level.shr.
+# Журнал: SETCHECK missing=1 first=l3/level.shr, SHOT setui1 (экран), SETCHECK continue, затем игра идёт (SHOT d93_after). Красное: тот же сценарий на сборке SETCHECK_OLD=1 — ни строки, ни экрана
+flag setcheckui 1
+flag menu
+wait 1.5
+press cross
+wait 6
+shot d93_after
+end

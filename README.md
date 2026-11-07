@@ -20,7 +20,19 @@ No game files are included, and none will be.
 - [Build 86 in pictures](docs/slides/README.md): what was checked, what changed and how fast it runs, in five slides
 - [All documents](docs/index.md)
 
-## What's new in build 86
+## What's new in build 93
+
+- **Nobody appears before the ground under them.** At a level start, a door, a room exit or a mission move, the hero is placed only when the city block and the floor under the spot are loaded (up to 6 seconds). The screen transition stays closed until he stands on it. Traffic pedestrians and mission characters follow the same rule.
+- **A watchdog.** Every frame the game checks for a hero or a car with nothing underneath, a body below the world, or a body stuck inside a wall, and puts it back on solid ground. The player sees nothing; every case goes to the black box.
+- **A memory ladder.** When the city, a menu or a mission needs memory that is not free, the game releases it in steps (read-ahead, far blocks, a shorter draw distance for a while, a simpler menu) and brings it back later, instead of failing. When a city block on level 4 cannot fit, the ladder now runs before giving up on it. Not verified on a real PSP yet.
+- **The game checks its own files.** The builder stamps them (`set.txt`). Files from another build show "Game files are from another build. Run the builder again."; a missing level names the missing file instead of silently skipping the level or returning to the menu.
+- **Police and cars.** With the Hit & Run meter at zero the police give up after about 6 seconds; wheelies are limited, so the ATV and the red brick car no longer flip on ramps.
+
+Before the first build on a Mac, accept the Xcode license (`sudo xcodebuild -license accept`) or install the Command Line Tools (`xcode-select --install`). Firmware: tested on PRO-C and ARK-4; ME/LME and Adrenaline were not tried.
+
+If the game stops, send `SHARVIEW/shar_report.txt` and `SHARVIEW/blackbox.txt` from the Memory Stick (copy them before you start the game again) and the map code from the bottom left of the pause screen, for example `L1 K9-7`. Please add the PSP model, the firmware and whether your disc is PAL or NTSC.
+
+### Build 86
 
 November 3, 2026. Since build 85 (the same day):
 
@@ -28,22 +40,6 @@ November 3, 2026. Since build 85 (the same day):
 - Mission complete in a car: the hero cheers from the driver's seat, like the original, instead of sliding out through the door
 - Mission failed: the red FAILED title is 1.5 times bigger
 - Known: after about ten level changes in one session, a level's collectibles may not load (a new list fragments memory). Fix planned for the next build
-
-### Build 85
-
-November 3, 2026. Since build 83 (November 2):
-
-- Four languages: English, French, German and Spanish, text and voices
-- Saves keep best times and attempts for every mission, like the original. Saves from earlier builds are read and converted on load, progress included
-- Mini Game: the full set of bonus cars, rivals drive the track roads and bump into each other instead of passing through, the countdown is the same as in street races, the HUD and the pause menu use the main game's fonts, the pause stops the music, and Select cycles the race views plus the top view
-- Pause menu: a new CAMERA section with six camera settings; the backdrop and frames no longer blink between OPTIONS sections
-- Scrapbook: every page, with its transitions; small captions in the Bart font, Accept and Back on every page
-- The original cheat codes, including the four extra cameras
-- Cars: physics in even sub-steps, with corner grip checked against PS2 recordings, so cars stay on their wheels at speed
-- Collectibles: from the car, cards and gags are picked up with the original reach; the wasp's shot now pushes props, knocks down pedestrians and dents traffic
-- Level 7: solid bushes, no invisible fences or poles after a booth is knocked down, windows drawn as plain textures without blinking
-- Ink outlines only on characters and cars
-- Look-back in the car is gone; the radar is back to its earlier look, with the blinking dot kept inside its edge
 
 ## Build
 
@@ -113,8 +109,8 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About five weeks, 86 test builds and 43 full tours on a real PSP. 1,159 playtest notes, logged and worked through one by one.
-Over 3,400 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
+About six weeks, 93 test builds and dozens of full tours on a real PSP. 1,220 playtest notes, logged and worked through one by one.
+Over 4,200 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
 ## Reporting bugs

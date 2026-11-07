@@ -1,0 +1,48 @@
+flag nosave
+scene BOOT
+flag golevel 4
+wait 55
+flag uimsndone 127
+wait 2
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 2.5
+shot rows_L4
+press triangle
+wait 1
+press start
+wait 1.5
+flag golevel 2
+wait 55
+flag uimsndone 19
+wait 2
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 2.5
+shot rows_L2
+press triangle
+wait 1
+press start
+wait 1.5
+flag golevel 6
+wait 55
+flag uimsndone 3
+wait 2
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 2.5
+shot rows_L6
+press triangle
+wait 1
+press start
+wait 1.5
+end

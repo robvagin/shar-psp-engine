@@ -1,5 +1,6 @@
 // Игра без экрана для ботов (пункт Б0): см. world.h. Кадр — как игровая ветка цикла viewer/main.c (△, RESET CAR,
 // машина, Гомер, пропы, стейтпропы, монеты, возврат вне вида, спад шкалы Hit & Run), логика — viewer/game.c.
+#include "watchdog.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -114,6 +115,7 @@ int bwData(const char *level, const char *homer, const char *msn) {
     carPOk = carParamsFromCar1(lvl + c1, ce1 - c1, &carP);   // как main.c: имя машины, ходовые .con, кузов, посадка, камера
     if (carPOk < 0) fprintf(stderr, "машина: %s — famil_v\n", carParamsError(carPOk));
   }
+  { const char *e_ = getenv("BW_CARNAME"); CarParams q_; if (e_ && *e_ && carParamsFor(e_, &q_)) { carP = q_; carPOk = 1; } }   // правка 434: BW_CARNAME=имя — машина из таблицы ходовых вместо машины уровня (сравнение семейства на одной трассе)
   if (homer && !(homerM = skinLoad(homer))) return -2;
   if (msn && !(msnPack = readAll(msn, &msnSize))) return -4;
   { const char *e = getenv("BW_LEVEL"); if (e && atoi(e) >= 1 && atoi(e) <= 7) bwLevelNo = atoi(e); }
@@ -243,7 +245,9 @@ static void hkHomer(void *u, const HomerEvent *e) {   // как homerEvFx в mai
 }
 static void hkCoin(void *u) { ((BotWorld *)u)->st.coins++; }
 
+static void bwWdLog(const char *l) { printf("%s\n", l); }   // сторож (viewer/watchdog.h): строки WATCHDOG в stdout бота, их считают отчёты ночи
 int bwNew(BotWorld *w) {
+  wdSetLog(bwWdLog);
   { const char *e_ = getenv("TRFCOST1001B"); if (e_) trfCost1001b = atoi(e_); }   // №1001б: TRFCOST1001B=0 — прежний обход препятствий в pathGap (для «до/после»)   // как newGame в main.c (пункт 12а), без звука и частиц
   memset(w, 0, sizeof *w);
   w->haveCol = haveColData; w->lift = carLift;

@@ -171,16 +171,22 @@ static int ldRead1206(SceUID *fd, const char *path, void *buf, unsigned n, unsig
   }
   return r;
 }
+#include "setcheck.h"   // TEST93 (Данные-93): штамп набора и проверка полноты; экраны вместо молчаливого ухода
 static int levelAvailable(int n) {   // набор уровня n рядом с EBOOT (level.shr; у 2–7 — в l<n>/)
   if (n < 1 || n > 7) return 0;
   int keep = gameLevel; gameLevel = n; char fn[256]; levelFile(fn, "level.shr"); gameLevel = keep;
   SceIoStat st; return sceIoGetstat(fn, &st) >= 0;
 }
-static int msLevelOpen(int n) {   // правка 348: уровень n в MISSION SELECT — свой всегда; другие — в DEV SAVE, если набор рядом с EBOOT
+static int msLevelOpen0(int n) {   // правка 348: уровень n в MISSION SELECT — свой всегда; другие — в DEV SAVE, если набор рядом с EBOOT
   // облако 05.10 (карьера): и в обычной игре — уровни, до которых игра дошла (запись прогресса всех уровней, savegame.h SV_EXT_LV),
   // как ◄ ► у оригинала (MissionSelect.scr: планка LEVEL N со стрелками). Прежнее — flag lvprogold 1
   return n == gameLevel || (msDevSession && levelAvailable(n)) ||
-         (!gameLvProgOld && levelAvailable(n) && n >= 1 && n <= (svLvReached(&lvKeep) > gameLevel ? svLvReached(&lvKeep) : gameLevel));
+         (!gameLvProgOld && (levelAvailable(n) || !SETCHECK_OLD) && n >= 1 && n <= (svLvReached(&lvKeep) > gameLevel ? svLvReached(&lvKeep) : gameLevel));   // TEST93: дошли до уровня, а набора нет — строка остаётся, при выборе честный экран (main_loop.h), а не пропуск ◄►
+}
+static int msLevelOpen(int n) {   // TEST93: обёртка с журналом (строка MSLEVEL — раз на смену ответа), сам выбор — msLevelOpen0
+  int r = msLevelOpen0(n);
+  if (smkOn && n >= 1 && n <= 7) { static signed char last[8]; int v = r | (levelAvailable(n) ? 2 : 0); if (last[n] != v + 1) { last[n] = (signed char)(v + 1); char l[64]; snprintf(l, sizeof l, "MSLEVEL n=%d open=%d avail=%d\n", n, r, (v >> 1) & 1); smkWrite(l); } }
+  return r;
 }
 static unsigned msLevelRows(int n) { unsigned r = 0; return !gameLvProgOld && svLvGet(&lvKeep, n, NULL, &r) ? r : 0u; }   // облако 05.10: строки уровня n
 extern unsigned memMaxBlock(void);
@@ -1485,7 +1491,7 @@ static void levelLoad(void **fbp) {
   if (haveCol) gameCarHealthApply(&G, "", &car);   // сверка g10-flow P01 Д1: прочность машины уровня переживает смену уровня
   ldStep("carinit"); if (haveTraffic) trafficReset(&traffic, &world); ldStep("trafficreset");   // этап 5: стоящие машины на места
   bound = -2; loadedLevel = gameLevel; lvGen++; __asm__ volatile("" ::: "memory");
-  levelLog("load", lt0, lh0);
+  levelLog("load", lt0, lh0); memLadSetLevel(gameLevel);   // P0.2 Опора-93: блок под меню на L4 меньше
   if (smkOn) { char s_[300]; snprintf(s_, sizeof s_, "LVA level=%d on=%d used=%u size=%u miss=%u col=%d props=%d soft=%u softmiss=%u old=%d tail962b=%d\n", gameLevel, lvaBase != 0, lvaUsed, LVA_BYTES, lvaMiss, haveCol, haveProps, lvaSoftBytes, lvaSoftMiss, lvaMem962Old, !lvaTail962bOld); smkWrite(s_);
     for (int i_ = 0; i_ < lvaSoftRecN; i_++) { char r_[160]; snprintf(r_, sizeof r_, "LVASOFT level=%d n=%u reserve=%u used=%u tail=%d alloc=%d hit=%d\n", gameLevel, lvaSoftRec[i_].n, lvaSoftRec[i_].res, lvaSoftRec[i_].used, lvaSoftRec[i_].ts, lvaSoftRec[i_].al, lvaSoftRec[i_].hit); smkWrite(r_); } lvaSoftRecN = 0; }   // №775
 }
@@ -1782,7 +1788,7 @@ static void menuRun(void **fbp) {
       sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = idleT0 = sceKernelGetSystemTimeLow(); continue; }
     if (svcMode && (hit & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))) {   // служебный выбор уровня: L — предыдущий, R — следующий набор
       int d = (hit & PSP_CTRL_RTRIGGER) ? 1 : -1, n = menuLevel;
-      for (int k = 0; k < 7; k++) { n = (n + d + 6) % 7 + 1; if (levelAvailable(n)) break; }
+      for (int k = 0; k < 7; k++) { n = (n + d + 6) % 7 + 1; if (!SETCHECK_OLD || levelAvailable(n)) break; }   // TEST93: ◄► не перескакивает отсутствующий уровень (строка серая «MISSING», main_frontend.h)
       menuLevel = n; if (smkOn) { snprintf(s, sizeof s, "MENULEVEL n=%d t=%.1f\n", menuLevel, smkT); smkWrite(s); }
       hit &= ~(PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER); }
     act = uiMenuInput(UI_MENU_MAIN, &sel, hit);
@@ -1822,6 +1828,7 @@ static void menuRun(void **fbp) {
       int it = act, loadedBack = 0; menuFly(it, FE_GO, sel, fbp);
       int ok = (act == mainResume && menuLoadOn && !LOAD_TO_MENU_OLD) ? (svPending = menuLoaded, 1) : act == mainResume ? svmLatest(&svPending) : saveMenuRun(sel, fbp);
       if (ok && act == mainLoad) svPending = *svmLoaded();
+      if (ok && !setSaveGuard(svPending.level)) ok = 0;   // TEST93 C3: запись на уровне без набора — экран и назад в меню, а не молчаливый уровень 1
 #if !LOAD_TO_MENU_OLD
       if (ok && act == mainLoad) {   // правка 448: слот загружен — назад в главное меню (появляется RESUME GAME), игра не стартует; бонус-гонки открыты по его карточкам
         menuLoaded = svPending; menuLoadOn = 1; bonusOpenFromSave(&menuLoaded, "loaded"); if (mainScrap >= 0 && !SCRAP862_OLD) uiMenuEnable(UI_MENU_MAIN, mainScrap, 1);

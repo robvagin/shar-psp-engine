@@ -202,6 +202,19 @@ static const GameNpc *npcByKey(const char *key) {   // персонаж по к�
 #endif
 static int (*mvVis)(const float bb[6]);   // отсечение по пирамиде кадра (main.c trVis); NULL — боты и хосты, без отсечения
 void mvSetVis(int (*f)(const float bb[6])) { mvVis = f; }
+// Канон п.11 (правка 431): персонаж миссии не рисуется, пока клетка города под ним не в памяти (state 2). Комнаты и точки ниже города (y < −10) не проверяются:
+// их пол резидентен. NULL (боты, хосты) — без проверки. NPCSCENE431_OLD=1 — прежнее (рисуется всегда)
+#ifndef NPCSCENE431_OLD
+#define NPCSCENE431_OLD 0
+#endif
+static int (*mvSceneOk)(float x, float z);
+void mvSetSceneOk(int (*f)(float x, float z)) { mvSceneOk = f; }
+int mvNpcSceneHeld;   // сколько персонажей прямо сейчас скрыто за сцену (смоук читает по строкам NPCSCENE431)
+int mvNpcCityPos(int i, float *x, float *z) {   // служебно (смоук dropnpc): городской персонаж миссии под номером i (не комната) — его место; 0 — нет такого
+  if (i < 0 || i >= M.nnpc) return 0;
+  const GameNpc *n = &M.npc[i]; if (n->pos.y <= -10.f || n->interior[0]) return 0;
+  *x = n->pos.x; *z = n->pos.z; return 1;
+}
 static int (*mvGround)(float x, float z, float yHi, float yLo, float *out);
 void mvSetGround(int (*f)(float x, float z, float yHi, float yLo, float *out)) { mvGround = f; }
 static NpcAnim *animFor(const char *name, int create, int amb) {   // name — ключ (npcKey); модель — по имени без «#b»
@@ -1239,6 +1252,7 @@ int mvPoliceLimit(void) { return active ? gameMsnHnrPoliceLimit(&M) : 1; }
 void mvPoliceFar(float px, float pz, float R) { if (active) gameMsnHnrPoliceFar(&M, px, pz, R); }
 int mvPoliceSuspend(void) { return active ? gameMsnHnrPoliceSuspend(&M) : 0; }   // круг 7 (P03-07)
 void mvPoliceResume(void) { if (active) gameMsnHnrPoliceResume(&M); }
+void mvPoliceLimbo(int on) { if (active) gameMsnHnrPoliceLimbo(&M, on); }   // правка 433
 void mvPoliceDrop(int i) { if (active) gameMsnHnrPoliceDrop(&M, i); }   // круг 7 (P03 Д2)
 void mvPoliceHold(void) { if (active) gameMsnHnrPoliceHold(&M); }
 float mvHnrDecay(void) { return active ? M.hnr.decay : 3.f; }
@@ -1295,6 +1309,12 @@ static int pointVisible(float x, float y, float z, const char *explicitRoom) {
 static int npcVisible(const GameNpc *n, float ex, float ey, float ez, float far) {
   float dx = n->pos.x - ex, dy = n->pos.y - ey, dz = n->pos.z - ez;
   if (dx * dx + dy * dy + dz * dz > far * far) return 0;
+  if (!NPCSCENE431_OLD && mvSceneOk && n->pos.y > -10.f && !n->interior[0]) {
+    int ok = mvSceneOk(n->pos.x, n->pos.z);
+    long ix = n - M.npc; static unsigned char held[GAME_NPC_MAX];
+    if (ix >= 0 && ix < GAME_NPC_MAX && held[ix] == ok) { held[ix] = !ok; mvNpcSceneHeld += ok ? -1 : 1; logf_("NPCSCENE431 %s %s at=%.1f,%.1f held=%d\n", ok ? "show" : "hide", n->name, n->pos.x, n->pos.z, mvNpcSceneHeld); }
+    if (!ok) return 0;
+  }
   if (clipGuardBody(ex, ey, ez, n->pos.x, n->pos.y, n->pos.y + 1.9f, n->pos.z, .35f, CAM_HIDE_NPC)) return 0;   // №502: персонаж у самого глаза не рисуется
   return pointVisible(n->pos.x, n->pos.y, n->pos.z, n->interior);
 }
@@ -1848,6 +1868,10 @@ static int msCursorOld = MS_CURSOR_OLD;
 void mvServiceSwitchOld(const char *what, int on) {
   if (!strcmp(what, "msnswitchold")) msnSwitchOld = on; else if (!strcmp(what, "mscursorold")) msCursorOld = on;
 }
+#ifndef MSHEAL_OLD
+#define MSHEAL_OLD 0
+#endif
+static int msChkOff = MSHEAL_OLD; static void msWdFire(const char *info);
 static void mvSwitchTo(int mi, const char *why) {   // смена миссии из меню / сценария: прежняя цель и её маркер уходят, новая стартует с начала вступления
   const char *from = M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions ? msn_str(&M.f, M.f.missions[M.rt.cur].id) : "-";
   if (!msnSwitchOld) msn_switch_clear(&M.rt);
@@ -1856,6 +1880,10 @@ static void mvSwitchTo(int mi, const char *why) {   // смена миссии �
         M.mg.marker_on, msn_reg_mission_count(&M.rt), M.mg.hud.objective ? M.mg.hud.objective : "", H.talk[0] != 0, H.briefing, clock_);
   if (!strcmp(why, "row") || !strcmp(why, "pause")) msn_enter_mission(&M.rt, mi);   // круг 7 (P06-5): выбор в MISSION SELECT — как вход после загрузки, вступление с этапа RESET_TO_HERE; Skip и служебные — с нулевого
   else msn_start_mission(&M.rt, mi, 0);
+  if (!msChkOff && (!strcmp(why, "row") || !strcmp(why, "pause")) && M.rt.cur != mi) {   // правка 432: выбор стартует именно выбранную миссию; не она — старт заново с нулевого этапа
+    char s_[96]; snprintf(s_, sizeof s_, "when=start want=%d got=%d fix=restart", mi, M.rt.cur); msWdFire(s_);
+    msn_start_mission(&M.rt, mi, 0);
+  }
 }
 static int msnSelStatus(int i) {   // 0 закрыта, 1 текущая, 2 пройдена или пропущена (выбрать можно)
   if (i < 0) return 0;
@@ -1956,7 +1984,148 @@ void mvMsLR1058Set(int old) { msLR1058Old = old; }
 #ifndef SV_MS_START_OLD
 #define SV_MS_START_OLD 0
 #endif
+// ------------------------------------------------------------------ правка Роба 432 (06.11, L4 Мардж): MISSION SELECT сам себя проверяет и чинит
+// Фото IMG_8201: после долгой погони меню поверх игры в запасном виде (текстовый список, 6 строк из 7, без значков, мир залит синим) — пакет pextra.shr не открылся (куча
+// занята погоней, три повтора msPackOpen с очисткой пакета будки не хватало), а запасной список рисовался как будто так и надо. Теперь: (1) msPackOpen ступенями отдаёт
+// место (main_frontend.h), (2) пока список запасной, главный цикл повторяет открытие пакета и пересобирает меню (mvMissionSelectNeedPack / mvMissionSelectPackReady),
+// (3) каждый кадр открытого меню инварианты проверяются здесь и нарушенное чинится: пакет и режим строк согласованы, список строк = последние 7 сюжетных миссий уровня по
+// текущему состоянию игры, включённость строк = статус (пройдена / текущая), курсор на выбираемой строке, при открытии — на текущей миссии, есть что выбрать.
+// Каждое срабатывание: строка MSNSELCHK и «WATCHDOG msnsel» (общий сторож, CLAUDE.md п.12; сторож страхует игрока, корень чинится отдельно).
+// Выключатели: MSHEAL_OLD=1 / служебно flag msnselchkoff 1 (проверка молчит — красный контроль); flag msnselbreak N портит состояние меню (отрицательный контроль)
+#ifndef MSHEAL_OLD
+#define MSHEAL_OLD 0
+#endif
+#if defined(__has_include)
+#if __has_include("watchdog.h")
+#include "watchdog.h"   // общий сторож (окно «Опора», ветка spawn-ground): wdFire(вид, актёр, строка)
+#define MS_HAVE_WD 1
+#endif
+#endif
+static int msBreak, msNeedPack, msChkN;
+static void msWdFire(const char *info) {
+  msChkN++;
+#ifdef MS_HAVE_WD
+  wdFire("msnsel", "menu", info);
+#else
+  logf_("WATCHDOG msnsel actor=menu t=%.1f %s\n", clock_, info);
+#endif
+  logf_("MSNSELCHK %s t=%.1f\n", info, clock_);
+}
+int mvMsnSelCount(void) { return msChkN; }
+// Строка для гейта (правка 435, п.3 наряда 07.11): что показано в 7 строках (disp: 1 включена, 0 серая, - пусто) и что должно быть по маскам пройденных и текущей, посчитанным заново (exp)
+static int msStoryList(int *story);
+static void msRowsLine(void) {
+  char d[8] = "-------", e[8] = "-------"; int story[32], ns = msStoryList(story);
+  if (selRows) for (int k = 0; k < 7; k++) {
+    int m = ns - 7 + k >= 0 ? story[ns - 7 + k] : -1;
+    d[k] = m < 0 ? '-' : uiScrEnabled(UI_PX_MISSIONSELECT, k) ? '1' : '0';
+    e[k] = m < 0 ? '-' : ((M.rt.completed >> m & 1u) || m == M.rt.story) ? '1' : '0'; }
+  logf_("MSNSELROWS lv=%d rows=%d disp=%s exp=%s n=%d idx=%d t=%.1f\n", (int)msCur(), selRows, d, e, selN, selIdx, clock_);
+}
+static int msFbN;
+int mvMsnSelFallbacks(void) { return msFbN; }   // открытий меню в запасном виде (бот меню, правка 435: сравнение с лестницей и без неё)
+void mvMsnSelChkOff(int off) { msChkOff = off; }
+void mvMsnSelBreak(int n) { msBreak = n; }
+static int msStoryList(int *story) {   // сюжетные миссии уровня по порядку (не бонус, не без сценария, не переход)
+  int ns = 0;
+  for (unsigned i = 0; i < M.f.nmissions; i++) { if (M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) continue; if (ns < 32) story[ns++] = (int)i; }
+  return ns;
+}
+static int msPackOk(void) { return uiScrReady() && uiScrRows(UI_PX_MISSIONSELECT) >= 7; }
+static void msBuild(void);
+static int mvMissionSelect2(int on, unsigned hit);
+static void msBreakApply(void) {   // отрицательный контроль: что-то портит состояние открытого меню, один раз за открытие
+  if (!msBreak || !selOn) return;
+  int b = msBreak; msBreak = 0;
+  if (b == 1 && selN > 2) selList[2] = (selList[2] + 1) % (int)M.f.nmissions;      // чужая миссия в строке
+  else if (b == 2) selIdx = 99;                                                    // курсор вне списка
+  else if (b == 3) { uiScrClose(); }                                               // пакет пропал под открытым меню
+  else if (b == 4 && selRows) { for (int k = 0; k < 7; k++) uiScrEnable(UI_PX_MISSIONSELECT, k, 0); }   // все строки серые
+  else if (b == 5 && selRows) { selN = 3; }                                        // список обрезан (как «6 строк из 7» на фото)
+  logf_("MSNSELBREAK kind=%d t=%.1f\n", b, clock_);
+}
+// Проверка с починкой. when: "open" / "frame" / "accept". Возвращает число нарушений (0 — всё согласовано)
+static int msnSelCheck(const char *when) {
+  if (msChkOff || !active || !selOn) return 0;
+  int bad = 0, story[32], ns = msStoryList(story);
+  char info[176]; int n = snprintf(info, sizeof info, "when=%s lv=%d", when, (int)msCur());
+#define MSNOTE(...) do { bad++; if (n < (int)sizeof info - 40) n += snprintf(info + n, sizeof info - n, __VA_ARGS__); } while (0)
+  int packOk = msPackOk();
+  if (selRows && !packOk) { MSNOTE(" pack=lost fix=fallback+reopen"); selRows = 0; msNeedPack = 1; msBuild(); }       // пакет ушёл из-под меню: запасной вид и повтор открытия
+  else if (!selRows && packOk) { MSNOTE(" rows=0 pack=ready fix=rebuild"); msBuild(); }
+  if (selOn && selRows) {
+    int dif = 0, ex[7];
+    for (int k = 0; k < 7; k++) { ex[k] = ns - 7 + k >= 0 ? story[ns - 7 + k] : -1; dif += selList[k] != ex[k]; }
+    if (dif || selN != 7) { MSNOTE(" list=%d/7 n=%d fix=resync", dif, selN); for (int k = 0; k < 7; k++) selList[k] = ex[k]; selN = 7; }
+    int de = 0; for (int k = 0; k < 7; k++) de += (uiScrEnabled(UI_PX_MISSIONSELECT, k) != 0) != (msRowStatus(k) > 0);
+    if (de) { MSNOTE(" enable=%d/7 fix=refresh", de); msRefresh(); }
+  } else if (selOn && !selRows) {   // запасной список: пройденные и текущая, по порядку
+    int ex[16], en = 0; for (int i = 0; i < (int)M.f.nmissions && en < 16; i++) {
+      if (M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) continue;
+      if ((M.rt.completed >> i & 1u) || i == M.rt.story) ex[en++] = i; }
+    int dif = en != selN; for (int k = 0; !dif && k < en; k++) dif = selList[k] != ex[k];
+    if (dif) { MSNOTE(" fblist=%d/%d fix=resync", selN, en); for (int k = 0; k < en; k++) selList[k] = ex[k]; selN = en; if (selIdx >= selN) selIdx = 0; }
+  }
+  if (selOn) {   // курсор: в списке и на выбираемой строке
+    int okc = selIdx >= 0 && selIdx < selN && (!selRows || msRowStatus(selIdx) > 0);
+    if (!okc) {
+      int to = -1; for (int k = 0; k < selN; k++) if (selList[k] >= 0 && selList[k] == M.rt.story && (!selRows || msRowStatus(k) > 0)) to = k;
+      for (int k = 0; to < 0 && k < selN; k++) if (!selRows || msRowStatus(k) > 0) to = k;
+      MSNOTE(" cursor=%d fix=%d", selIdx, to);
+      if (to >= 0) selIdx = to; else { selOn = 0; uiPauseMenuHide(0); MSNOTE(" empty fix=close"); }
+    } else if (!strcmp(when, "open") && selRows && msLv == msCur()) {   // при открытии курсор — на текущей миссии
+      int cur = -1; for (int k = 0; k < 7; k++) if (selList[k] >= 0 && selList[k] == M.rt.story) cur = k;
+      if (cur >= 0 && msRowStatus(cur) > 0 && selIdx != cur) { MSNOTE(" cursor=%d!=cur fix=%d", selIdx, cur); selIdx = cur; }
+    }
+  }
+#undef MSNOTE
+  if (bad) msWdFire(info);
+  return bad;
+}
+// Независимый свидетель (не чинит, читает состояние заново; для ботов и гейтов): 0 — меню согласовано, иначе код нарушения и строка MSNSELBAD
+int mvMsnSelOracle(void) {
+  if (!active || !selOn) return 0;
+  int code = 0, story[32], ns = 0;
+  for (unsigned i = 0; i < M.f.nmissions; i++) { unsigned f = M.f.missions[i].flags; if (!(f & MSN_MF_BONUS) && !(f & MSN_MF_NOSCRIPT) && !(f & MSN_MF_TRANSITION) && ns < 32) story[ns++] = (int)i; }
+  if (!selRows) {   // запасной вид (пакет не открылся; лестница памяти дошла до ступени 5): допустим, пока список верный и курсор на строке; повтор открытия ведёт главный цикл
+    int ex[16], en = 0; for (int i = 0; i < (int)M.f.nmissions && en < 16; i++) {
+      if (M.f.missions[i].flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT | MSN_MF_TRANSITION)) continue;
+      if ((M.rt.completed >> i & 1u) || i == M.rt.story) ex[en++] = i; }
+    if (en != selN) code = 1; else { for (int k = 0; !code && k < en; k++) if (selList[k] != ex[k]) code = 1; }
+    if (!code && (selIdx < 0 || selIdx >= selN)) code = 6;
+  }
+  else if (!(uiScrReady() && uiScrRows(UI_PX_MISSIONSELECT) >= 7)) code = 2;   // пакет не тот или закрыт
+  else if (selN != 7) code = 3;
+  else { for (int k = 0; k < 7 && !code; k++) { int e = ns - 7 + k >= 0 ? story[ns - 7 + k] : -1; if (selList[k] != e) code = 4;
+           else if ((uiScrEnabled(UI_PX_MISSIONSELECT, k) != 0) != (msRowStatus(k) > 0)) code = 5; }
+         if (!code && (selIdx < 0 || selIdx >= 7 || msRowStatus(selIdx) <= 0)) code = 6; }
+  if (code) logf_("MSNSELBAD code=%d rows=%d n=%d idx=%d t=%.1f\n", code, selRows, selN, selIdx, clock_);
+  return code;
+}
+void mvMsFuzzState(unsigned r) {   // служебное (бот меню, flag msnselfuzz): случайное состояние прохождения уровня — для проверки меню; игру дальше не ведёт
+  if (!active) return;
+  int story[32], ns = msStoryList(story); if (!ns) return;
+  unsigned all = 0; for (int i = 0; i < ns; i++) all |= 1u << story[i];
+  int kind = (int)(r % 8); r /= 8;
+  if (kind == 0) { M.rt.completed = all; M.rt.story = story[ns - 1]; }                 // все пройдены, текущая — последняя
+  else if (kind == 1) { M.rt.completed = all & ~(1u << story[ns - 1]); M.rt.story = story[ns - 1]; }   // все кроме последней
+  else if (kind == 2) { M.rt.completed = all; M.rt.story = -1; }                      // все пройдены, текущей нет
+  else if (kind == 3) { M.rt.completed = 0; M.rt.story = story[0]; }                 // самое начало
+  else { M.rt.completed = (r >> 3) & all; M.rt.story = story[(r >> 12) % (unsigned)ns]; }   // случайный набор
+}
+int mvMissionSelectNeedPack(void) { return active && selOn && !selRows; }
+void mvMissionSelectPackReady(void) { if (active && selOn && !selRows && msPackOk()) { msBuild(); logf_("MSNSELHEAL rebuilt rows=%d t=%.1f\n", selRows, clock_); } }
 int mvMissionSelect(int on, unsigned hit) {
+  if (!active) return 0;
+  if (selOn) { msBreakApply(); msnSelCheck("frame"); }
+  if (on && !selOn) { msBuild(); if (selOn && !selRows) msFbN++; if (selOn) { msnSelCheck("open"); msRowsLine(); } return selOn; }
+  return mvMissionSelect2(on, hit);
+}
+static void msBuild(void) {   // собрать список и вид меню из ТЕКУЩЕГО состояния игры (при каждом открытии и при починке)
+  selOn = 0;
+  mvMissionSelect2(1, 0);
+}
+static int mvMissionSelect2(int on, unsigned hit) {
   if (!active) return 0;
   if (on && !selOn) {   // открыть: пройденные и текущая сюжетная, в порядке расписания (как в оригинале)
     selN = 0; selRows = uiScrReady() && uiScrRows(UI_PX_MISSIONSELECT) >= 7; msLv = msCur(); msArrL = msArrR = 0; msWantRow = -1;

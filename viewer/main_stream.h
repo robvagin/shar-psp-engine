@@ -496,6 +496,7 @@ static float cellDist(Cell *c, float x, float y, float z) {
 #endif
 #define STREAM_FWD_M 30.f
 #define CELL_RETRY_US 1000000u
+static int memLadCellOom(void);   // memladder.h (P0.2 Опора-93): отказ памяти под клетку, а далёких клеток нет — ступени лестницы дальше
 static unsigned cellFailT, cellRetries;   // правка 103: последняя попытка освободить место под клетку, сколько раз
 // Замер железа 30.09 (ведущий, build/psp-logs/20260930-1904): на PSP свободно 9–10 МБ, эмулятор в тех же местах показывает 18–19.
 // Клетки впрок (LOAD_DIST до 325 м, DROP_DIST 395 м при дальности 250 м) забирают остаток кучи, и отказ получает уже не клетка, а
@@ -681,6 +682,7 @@ static int stream(float x, float y, float z) {
     for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner) continue;
       if (oom && c->state == 2 && cellDist(c, x, y, z) > drawDist + 20.f) { unloadCell(c); freed++; }   // ошибке чтения место не нужно
       else if (c->state == 3) { c->state = 0; again++; } }
+    if (oom && !freed) freed += memLadCellOom();   // P0.2: из дальнего нечего отдать — лестница (ступень 3: дальность ×0,6), а не вечные отказы MEMFAILSZ
     cellRetries++;
     if (smkOn) { char s[112]; snprintf(s, sizeof s, "CELLRETRY %s freed=%d again=%d heap=%.2f t=%.1f\n", oom ? "mem" : "read", freed, again, heapFreeBytes() / 1048576.f, smkT); smkWrite(s); }
   }
@@ -797,8 +799,11 @@ static int cellsDropBeyond(float r) {
   return n;
 }
 // №1060: перед крупным выделением на закрытом экране (ролик, комната, бонус-игра): наибольшего блока хватает — ничего (цена ноль); нет — далёкие клетки по одной, затем все. 1 — место есть
+static int memLadder(const char *who, unsigned need, int prio);   // memladder.h: лестница памяти (п.13)
+static int memLadOn;
 static int mem1060Pre(unsigned need, const char *who) {
   if (!mem1060 || !memMaxBlock || memMaxBlock() >= need) return 1;
+  if (memLadOn) return memLadder(who, need, 2);   // правка 435: вся крупная память — через одну лестницу
   unsigned f0 = heapFreeBytes(), b0 = memMaxBlock(); int ok = cellsMakeRoom(need);
   if (smkOn) { char s[160]; snprintf(s, sizeof s, "MEM1060 pre %s need=%.1f ok=%d free=%.2f->%.2f blk=%.2f->%.2f t=%.1f\n", who, need / 1048576.f, ok, f0 / 1048576.f, heapFreeBytes() / 1048576.f, b0 / 1048576.f, memMaxBlock() / 1048576.f, smkT); smkWrite(s); }
   return ok;

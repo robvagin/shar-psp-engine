@@ -1,0 +1,31 @@
+# TEST93 Данные-93 (C3): flag setcheckui 1 — экраны как у игрока, кнопку жмёт сам тест. MISSION SELECT на L2 без l3/level.shr при дошедшем до L3 игроке (flag lvreach 3). Журнал: MSLEVEL n=3 open=1 avail=0 (строка уровня 3 остаётся, ◄► не перескакивает), снимки списка. Красное — SETCHECK_OLD=1: open=0, уровень 3 пропускается
+flag setcheckui 1
+flag menu
+flag lvset 2
+wait 1.5
+press cross
+wait 9
+scene D93_MSEL
+flag lvreach 3
+wait 1
+press start
+wait 1.5
+shot d93_pause
+press down
+wait 0.4
+press cross
+wait 2
+shot d93_msel_a
+press right
+wait 1
+shot d93_msel_b
+press cross
+wait 3
+shot d93_msel_nolevel
+flag setsave 3
+wait 2
+shot d93_save3
+flag setsave 2
+wait 1
+end
+# дальше: выбор миссии на уровне 3 без набора -> экран (SETCHECK nolevel n=3, SETCHECK continue); flag setsave 3 -> запись на L3 без набора: SETCHECK save level=3 ok=0 (OLD: ok=1, молча); setsave 2 — контроль ok=1

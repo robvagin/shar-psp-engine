@@ -15,6 +15,7 @@
 #include "main_stream.h"
 #include "main_camera.h"
 #include "main_render.h"
+#include "memladder.h"   // правка 435: лестница памяти (канон п.13)
 #include "main_probe.h"
 #include "stripbench.h"   // тур полос (служебный файл stripbench): без файла не исполняется
 #include "main_rooms.h"

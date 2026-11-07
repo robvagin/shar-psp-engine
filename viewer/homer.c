@@ -2,6 +2,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
+#include "watchdog.h"
 #include <stdlib.h>
 #include "homer.h"
 #include "stateprops.h"
@@ -425,13 +426,31 @@ int homerInit(Homer *H, const SkinModel *m) {
   return 0;
 }
 
+static void spawnLog(const Homer *H, const char *what, float t) {   // сторож (watchdog.h), вид spawn
+  char s[200]; snprintf(s, sizeof s, "%s to=%.2f,%.2f,%.2f want=%.2f,%.2f,%.2f waited=%.2f", what, H->x, H->y, H->z, H->spawnX, H->spawnY, H->spawnZ, t);
+  wdFire("spawn", "hero", s);
+}
+int (*sceneReadyHook)(const ColWorld *w, float x, float z, int *failed);
+void (*sceneWantHook)(const ColWorld *w, float x, float z);
 void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h) {
   float g, n[3];
   H->x = x; H->z = z; H->h = h; H->y = y;
-  if (w && colGround(w, x, z, y + 2.f, y - 100.f, &g, n)) H->y = g;
+  int supported = 1;
+  if (w) { if (colGround(w, x, z, y + 2.f, y - HOMER_SPAWN_PROBE, &g, n)) H->y = g; else supported = 0; }
+  else supported = -1;   // мир при постановке неизвестен (комнатные переносы помощника): проверка в первом кадре, в мире кадра
   H->vx = H->vy = H->vz = 0.f; H->grounded = 1; H->jumps = 0; H->groundY = H->y; H->airFrom = H->y;
   H->state = HS_FOOT; H->rootMode = 0; H->st = 0.f; H->speed = 0.f; H->nev = 0;
-  H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z;
+  // правка 431: «надёжное место» — только точка, под которой опора есть. Прежде здесь safe = точка постановки в любом случае, и возврат из падения ставил обратно в пустоту:
+  // падение пилой (ночь 06.11, комната L6, мир города у кармана комнат, «Мардж падает бесконечно»). HOMER_SPAWNWAIT_OLD=1 — как было
+  if (HOMER_SPAWNWAIT_OLD) { H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; H->safeOk = 1; H->spawnWait = 0; }
+  else {
+    H->spawnX = x; H->spawnY = y; H->spawnZ = z; H->spawnT = 0.f; H->spawnLost = 0;
+    int sceneOk = 1, failed = 0;
+    if (supported == 1 && !HOMER_SCENEGATE_OLD && sceneReadyHook && !sceneReadyHook(w, x, z, &failed)) sceneOk = 0;
+    if (supported == 1 && sceneOk) { H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; H->safeOk = 1; H->spawnWait = 0; }
+    else if (supported == 1) { H->spawnWait = 1; H->spawnHolds++; spawnLog(H, failed ? "scenefail" : "scene", 0.f); if (sceneWantHook) sceneWantHook(w, x, z); }
+    else { H->spawnWait = supported < 0 ? 2 : 1; H->spawnHolds++; spawnLog(H, supported < 0 ? "check" : "hold", 0.f); }
+  }
   H->clip = -1; H->fade = H->fadeLen = 0.f; H->camInit = 0; H->maxY = H->y;
   H->frame = h; H->heldX = H->heldY = 0.f; H->padLast = -1; H->bouncing = 0;
   H->pitch = 0.f; H->ejWait = 0.f; H->ejPh = 0;
@@ -1224,9 +1243,67 @@ void homerUpdate(Homer *H, const ColWorld *w, const HomerCar *car, const HomerIn
   static unsigned gen; if (++gen == 0) gen = 1;
   homerSolidFrame = gen; homerUpdateBody(H, w, car, in, dt); homerSolidFrame = 0;
 }
+// Правка 431: ближайшая опора вокруг (x, z): кольца до HOMER_SPAWN_RING_R, на каждом 16 направлений; из попаданий — самое близкое по высоте к y. 1 — нашлась (out)
+static int spawnNearest(const ColWorld *w, float x, float y, float z, float out[3]) {
+  static const float RR[] = {1.f, 2.f, 3.f, 4.f, 6.f, 8.f, 10.f, HOMER_SPAWN_RING_R};
+  float g;
+  for (unsigned r = 0; r < sizeof RR / sizeof *RR; r++) {
+    float best = 1e30f; int have = 0;
+    for (int k = 0; k < 16; k++) {
+      float a = (float)k * (6.2831853f / 16.f), px = x + RR[r] * sinf(a), pz = z + RR[r] * cosf(a);
+      float nn[3];
+      if (!colGround(w, px, pz, y + 3.f, y - HOMER_SPAWN_PROBE, &g, nn) || nn[1] < .85f) continue;   // ровная опора: на откосе и краю тело сползает за границу
+      int steady = 1; static const float NX[4] = {.6f, -.6f, 0.f, 0.f}, NZ[4] = {0.f, 0.f, .6f, -.6f};
+      for (int q = 0; q < 4 && steady; q++) { float g2; if (!colGround(w, px + NX[q], pz + NZ[q], g + .8f, g - .8f, &g2, 0)) steady = 0; }   // вокруг тоже опора, не край
+      if (!steady) continue;
+      if (fabsf(g - y) < best) { best = fabsf(g - y); out[0] = px; out[1] = g; out[2] = pz; have = 1; }
+    }
+    if (have) return 1;
+  }
+  return 0;
+}
+// 1 — опора есть, тело отпущено в физику; 0 — ждёт (кадр тела пропускается). Мир w — тот, в котором тело обновляется в этом кадре (комната или город)
+static int spawnResolve(Homer *H, const ColWorld *w, float dt) {
+  float g, ring[3];
+  if (!w) { H->spawnWait = 0; return 1; }
+  if (colGround(w, H->x, H->z, H->y + 2.f, H->y - HOMER_SPAWN_PROBE, &g, 0)) {
+    if (!HOMER_SCENEGATE_OLD && sceneReadyHook) {   // опора есть, а сцены (клеток города) под точкой нет: ждём её, прося загрузку; не дольше HOMER_SPAWN_WAIT_T
+      int failed = 0;
+      if (!sceneReadyHook(w, H->x, H->z, &failed)) {
+        float t0 = H->spawnT; H->spawnT += dt;
+        if (sceneWantHook && (t0 == 0.f || (int)(H->spawnT * 2.f) != (int)(t0 * 2.f))) sceneWantHook(w, H->x, H->z);
+        if (failed && t0 == 0.f) spawnLog(H, "scenefail", 0.f);
+        H->vx = H->vy = H->vz = 0.f; H->grounded = 1; H->speed = 0.f;
+        if (H->spawnT < HOMER_SPAWN_WAIT_T) return 0;
+        wdFire("cellfail", "hero", "release: сцена под героем не загрузилась за порог, отпущен на опору (город грузится дальше)");
+      }
+    }
+    if (H->spawnWait == 1) H->y = g;                     // постановка с известным миром: на опору, как сделал бы homerPlace
+    else if (H->y < g) H->y = g;                          // мир был неизвестен: ниже опоры не оставляем; выше — приземлится сама
+    H->groundY = H->supY = g; H->vx = H->vy = H->vz = 0.f; H->grounded = 1; H->airFrom = H->y; H->maxY = H->y;
+    H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; H->safeOk = 1;
+    if (H->spawnT > 0.f) spawnLog(H, "release", H->spawnT);
+    H->spawnWait = 0; H->spawnT = 0.f; return 1;
+  }
+  H->vx = H->vy = H->vz = 0.f; H->grounded = 1; H->speed = 0.f;
+  H->spawnT += dt;
+  if (H->spawnT < HOMER_SPAWN_WAIT_T) return 0;
+  if (spawnNearest(w, H->x, H->y, H->z, ring)) {        // опора рядом: ближайшая, не дальше HOMER_SPAWN_RING_R
+    float wt_ = H->spawnT; H->x = ring[0]; H->y = ring[1]; H->z = ring[2]; H->spawnRings++;
+    spawnLog(H, "ring", wt_);
+  } else if (H->safeOk) {                               // последнее надёжное место
+    float wt_ = H->spawnT; H->x = H->safe[0]; H->y = H->safe[1]; H->z = H->safe[2]; H->spawnSafes++;
+    spawnLog(H, "safe", wt_);
+  } else { spawnLog(H, "lost", H->spawnT); H->spawnLost = 1; H->spawnWait = 0; H->spawnT = 0.f; H->grounded = 0; return 0; }   // вызывающий ставит от машины / старта
+  H->groundY = H->supY = H->y; H->airFrom = H->y; H->maxY = H->y; H->vy = 0.f; H->grounded = 1;
+  H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; H->safeOk = 1;
+  H->spawnWait = 0; H->spawnT = 0.f; H->spawnFixes++;
+  return 1;
+}
 static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, const HomerInput *in, float dt) {
   if (dt <= 0.f) return;
   if (dt > .1f) dt = .1f;
+  if (H->spawnWait && !HOMER_SPAWNWAIT_OLD && !spawnResolve(H, w, dt)) return;   // правка 431: опоры под точкой постановки нет — не двигаться, не падать
   HomerInput inI;   // сверка g04-homer P02-6 / ГОМЕР 1.6: внутри интерьера ○ (бег) и ✕ (прыжок) отключены
   if (in && H->indoor && !HOMER_INTERIOR_OLD && (in->dash || in->jump)) { inI = *in; inI.dash = 0; inI.jump = 0; in = &inI; }
   // круг 3 (проверка ГОМЕР 8.6): на время оглушения желаемое движение равно нулю (прыжок и удар проходят); HOMER_STUN_OLD=1 — только мерцание
@@ -1599,7 +1676,7 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
   if (H->grounded == 3) H->grounded = 1;
   if (homerOnFoot(H) && H->grounded) {                        // надёжное место (для выпадения из мира)
     float gs_;   // только опора мира: крыша машины или ящик над пустотой — не надёжное место (HOMER_VOID_RECOVER)
-    if (!HOMER_VOID_RECOVER || !w || colGround(w, H->x, H->z, H->y + .3f, H->y - .6f, &gs_, 0)) { H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; }
+    if (!HOMER_VOID_RECOVER || !w || colGround(w, H->x, H->z, H->y + .3f, H->y - .6f, &gs_, 0)) { H->safe[0] = H->x; H->safe[1] = H->y; H->safe[2] = H->z; H->safeOk = 1; }
   }
   animTick(H, dt);
 }

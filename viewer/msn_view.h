@@ -91,6 +91,7 @@ void mvPoliceAdd(void);                       // сверка g09b-menu круг
 int  mvPoliceLimit(void);                     // сколько положено уровню
 int mvPoliceSuspend(void);   // круг 7: машины погони уходят в запас (поза и урон), -> сколько
 void mvPoliceResume(void);   // и возвращаются на те же места
+void mvPoliceLimbo(int on);   // правка 433: копы бросают погоню и тормозят (1) / возвращаются в погоню (0)
 void mvPoliceDrop(int i);   // круг 7: снять одну машину погони по номеру в списке машин миссии
 void mvPoliceFar(float px, float pz, float R);   // снять по одной машины погони дальше R м
 void mvPoliceHold(void);                      // №627: полиция после ареста стоит на месте (исчезает через mvPolice(0) по концу таймера)
@@ -119,6 +120,8 @@ int  mvMsnSetup(void);                       // №1072: 1 — у миссии �
 void mvSetGround(int (*f)(float x, float z, float yHi, float yLo, float *out));   // №606: высота коллизии под точкой (main: colGround); без вызова стрелка стоит как раньше
 void mvSetGov(int on);   // L3 причал: кадр в перегрузке (frameGov) — дальние персонажи миссии не рисуются дальше NPC_GOV_DIST
 void mvSetVis(int (*f)(const float bb[6]));   // правка 500: отсечение персонажей по кадру (trVis из main); без вызова — рисуются все
+void mvSetSceneOk(int (*f)(float x, float z));   // правка 431, канон п.11: персонаж не рисуется, пока клетка под ним не в памяти; без вызова — рисуются все
+int mvNpcCityPos(int i, float *x, float *z);   // служебно (смоук dropnpc, правка 431)
 void mvDraw3D(float ex, float ey, float ez, float dt);   // персонажи миссий (скиннинг GE); после — resetState() в main.c
 int  mvNpcNearList(float (*out)[4], int max, float x, float z, float r);   // сверка g07b (запрос g06-camera): персонажи миссии в радиусе r от (x, z), по возрастанию расстояния: {x, y, z, радиус тела 0,35}; -> сколько
 int mvNpcFeet(float (*out)[4], int max, float ex, float ey, float ez, float r);   // №748: персонажи миссий, которые рисуются (ближе r м к глазу, своя комната): x, y (ноги), z, рост модели — векторные тени (spritelight.h)
@@ -130,8 +133,16 @@ void mvHud(float dt);                        // поля и метки HUD, зн
 void mvOverlay(void);                        // меню повтора после провала (после uiDraw)
 int  mvInput(unsigned *hit);                 // 1 — кнопки забрало меню провала (*hit обнулён)
 int  mvFailedScreen(int *sel);               // 1 — провал: экран MissionOver (uiDrawMissionOver(sel) вместо uiDraw), мир стоит
+int  mvMsnSelFallbacks(void);
 int  mvMissionSelect(int on, unsigned hit);  // пауза -> MISSION SELECT: список миссий уровня; 1 открыт, 2 миссия запущена, 3 миссия другого уровня, 4 START - выход из паузы в игру (сверка g07b), 0 закрыт
 void mvDrawMissionSelect(void);
+void mvMsFuzzState(unsigned r);                // служебное: случайное состояние прохождения уровня для бота меню
+int  mvMissionSelectNeedPack(void);            // правка 432: меню открыто в запасном виде (пакета нет) — главный цикл повторяет открытие пакета
+void mvMissionSelectPackReady(void);           // правка 432: пакет открыт — пересобрать меню из текущего состояния
+int  mvMsnSelOracle(void);                     // правка 432: независимый свидетель согласованности меню (0 — норма); для ботов и гейтов
+int  mvMsnSelCount(void);                      // правка 432: сколько раз самопроверка меню что-то чинила («WATCHDOG msnsel»)
+void mvMsnSelChkOff(int off);                  // служебное: 1 — самопроверка молчит (красный контроль)
+void mvMsnSelBreak(int n);                     // служебное: испортить состояние открытого меню (отрицательный контроль), 1..5
 int  mvMissionSelectOn(void);                 // 1 — список MISSION SELECT открыт
 int  mvMissionSelectAvail(int rows);          // пункт ДОБИВКИ 26: 0 — на MISSION SELECT нечего выбрать (пункт паузы серый; PAUSE_MS_DIM_OLD=1 — всегда 1);
                                               // rows: 1 — список откроется строками MissionSelect.scr (pextra.shr), 0 — запасной список

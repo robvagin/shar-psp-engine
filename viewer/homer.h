@@ -315,6 +315,15 @@ enum { HOMER_EV_HIT = 1,     // пинок / удар в прыжке: сфер�
 #define HOMER_VOID_RECOVER 1
 #endif
 #define HOMER_VOID_DROP 6.0f
+// Правка 431: постановка Гомера обязана пройти проверку «опора под точкой» (homerPlace), см. поле spawnWait. HOMER_SPAWNWAIT_OLD=1 — как было (ставит и отпускает на любой точке)
+#ifndef HOMER_SPAWNWAIT_OLD
+#define HOMER_SPAWNWAIT_OLD 0
+#endif
+#ifndef HOMER_SPAWN_WAIT_T
+#define HOMER_SPAWN_WAIT_T 6.0f    // сколько секунд ждать опору, прежде чем искать рядом / возвращать: перенос миссии в комнату ждёт карточку брифинга (~1 с), подготовку фазы (до 90 кадров) и ирис — запас; дольше — данные не те
+#endif
+#define HOMER_SPAWN_RING_R 12.f    // радиус поиска ближайшей опоры при тайм-ауте, м
+#define HOMER_SPAWN_PROBE 100.f    // как далеко вниз от точки homerPlace искал опору всегда (ниже — не опора)
 #define HOMER_CRACK 1.0f     // = CAR_CRACK (viewer/car.c): щель уже 2 м с опорой по обе стороны — не край
 #ifndef HOMER_STEP_DUST
 #define HOMER_STEP_DUST 1    // отрицательный контроль tests/jumps (--gate): 0 — шагов бега нет (как до правки 45)
@@ -415,6 +424,12 @@ typedef struct {
   // --- камера пешком
   float camYaw, camY, frame, heldX, heldY, neutralT, steerGap, sweepT; int camInit, flipSeen, flipLatch; float flipLatchT;   // №920: neutralT — сколько стик уже в нуле (кадр управления держится STEER_NEUTRAL_T); steerGap — сколько steer не вызывался (после машины, пинка, падения кадр не считается свежим)
   float safe[3], launchV; int idleNext;
+  // правка 431 (канон Роба 06.11, «никто не появляется раньше сцены»): постановка без опоры под ногами не отпускает тело в физику.
+  // spawnWait: 0 — нет; 1 — homerPlace не нашёл опору в своём мире; 2 — мир при постановке не был известен (w = NULL), проверка в первом кадре.
+  // Пока ожидание: тело не двигается, не падает, не рисуется (homerSpawnPending); опора появилась (в мире кадра) — встаёт на неё. Не появилась за HOMER_SPAWN_WAIT_T —
+  // ближайшая опора в HOMER_SPAWN_RING_R, иначе последнее надёжное место (safe), иначе spawnLost = 1 (вызывающий ставит от машины / старта)
+  int spawnWait, safeOk, spawnLost; float spawnT, spawnX, spawnY, spawnZ;
+  int spawnHolds, spawnFixes, spawnRings, spawnSafes;   // счётчики для гейта и журнала
   // --- отладка / тесты
   float maxY, lastLandV; int landings;
   int voidRecovers;            // сколько раз возвращён с колонки без опоры (HOMER_VOID_RECOVER), для гейта fallhunt
@@ -480,6 +495,15 @@ const char *homerClipPrefix(void);
 const char *homerCharName(void);
 // поставить на землю под (x, y + 2, z) с курсом h, пешком
 void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h);
+// Правка 431, вторая половина канона: «геометрия» под точкой постановки. Крючки ставит движок (main_loop.h): готова ли сцена города под точкой (клетки в памяти) и «нужна клетка под точкой»
+// (лестница памяти окна «Меню»). NULL (боты, хост) — сцена всегда готова. failed = 1 — клетка не загрузилась вообще (state 3, нет памяти), а не «ещё грузится».
+// Пока сцены нет, а опора есть, герой ждёт так же (не рисуется, не двигается), до HOMER_SPAWN_WAIT_T; потом отпускается со строкой WATCHDOG cellfail. HOMER_SCENEGATE_OLD=1 — без проверки сцены
+#ifndef HOMER_SCENEGATE_OLD
+#define HOMER_SCENEGATE_OLD 0
+#endif
+extern int (*sceneReadyHook)(const ColWorld *w, float x, float z, int *failed);
+extern void (*sceneWantHook)(const ColWorld *w, float x, float z);
+static inline int homerSpawnPending(const Homer *H) { return H->spawnWait != 0; }   // правка 431: ждёт опору — не двигается, не рисуется (main_loop.h)
 // шаг кадра. car — машина игрока (NULL — нет): посадка/выход/в машине и толкание кузовом
 void homerUpdate(Homer *H, const ColWorld *w, const HomerCar *car, const HomerInput *in, float dt);
 // посадка: △ у машины. 1 = пошёл к двери (дальше сам: подойти, открыть, сесть, закрыть -> cb.done(1)), 0 = далеко/занят

@@ -1670,6 +1670,24 @@ static int pedGround(const ColWorld *w, TrPed *e, float up) {
   float g; if (colGround(w, e->x, e->z, e->y + up, e->y - 3.f, &g, 0)) { e->y = g; return 1; }
   return 0;
 }
+// P0.2/A2 Опора-93 (канон Роба п.11 для прохожих): рождение только там, где под точкой есть опора (pedGround) И сцена (клетка города) загружена (sceneReadyHook, как у героя):
+// иначе прохожий стоит в пустоте без города. Нет клетки — в этот кадр не рождаем (точка пропускается). PEDS_SCENE_OLD=1 — прежнее (только опора)
+#ifndef PEDS_SCENE_OLD
+#define PEDS_SCENE_OLD 0
+#endif
+void (*trafficLogLine)(const char *line);   // smoke.txt (main_loop.h); NULL — молча
+static int pedSceneOkCnt(const ColWorld *w, float x, float z) { if (!sceneReadyHook) return 1; int failed = 0; return sceneReadyHook(w, x, z, &failed); }
+static int pedSceneOk(const ColWorld *w, float x, float z) { return PEDS_SCENE_OLD ? 1 : pedSceneOkCnt(w, x, z); }
+// раз в секунду: сколько живых прохожих стоит над пустотой или вне загруженной сцены; строка PEDAIR n=.. — только если n > 0 (журнал для ботов и тура)
+static void pedAirCount(Traffic *t, const ColWorld *w, float dt) {
+  static float acc; acc += dt; if (acc < 1.f) return; acc = 0.f;
+  if (!trafficLogLine || !w) return;
+  int n = 0, ng = 0, ns = 0; float g;
+  for (int i = 0; i < t->maxPeds; i++) { TrPed *e = &t->ped[i]; if (e->mode == TRP_OFF || e->test) continue;
+    int air = !colGround(w, e->x, e->z, e->y + 1.5f, e->y - 3.f, &g, 0), sc = !pedSceneOkCnt(w, e->x, e->z);
+    if (air || sc) { n++; ng += air; ns += sc; } }
+  if (n > 0) { char s[96]; snprintf(s, sizeof s, "PEDAIR n=%d ground=%d scene=%d\n", n, ng, ns); trafficLogLine(s); }
+}
 static void spawnPeds(Traffic *t, const ColWorld *w, const float ppos[3], const float eye[3], const float fwd[3]) {
   if (!t->maxPeds || t->group < 0 || t->group >= (int)t->hd->nGroup) return;
   const TrGroup *g = t->grp + t->group; if (!g->n) return;
@@ -1697,6 +1715,7 @@ static void spawnPeds(Traffic *t, const ColWorld *w, const float ppos[3], const 
       e->x = x; e->y = y; e->z = z; e->s = u;
       const float *nx = e->dir > 0 ? b : a; e->h = atan2f(nx[0] - x, nx[2] - z);
       if (!PED_GROUND_OLD && !pedGround(w, e, 1.5f)) continue;   // №594: рождение над пустотой — другая точка
+      if (!pedSceneOk(w, x, z)) { e->mode = TRP_OFF; continue; }   // P0.2/A2: клетка города под точкой не загружена — другая точка
       else if (PED_GROUND_OLD) pedGround(w, e, 1.5f);
       skinInit(&e->sp, &t->peds[m]); e->mode = TRP_WALK; pedPlay(t, e, TRC_WALK, 1);
       break;
@@ -1773,6 +1792,7 @@ static void spawnPedsSv(Traffic *t, const ColWorld *w, const float ppos[3], cons
     e->x = x; e->y = y; e->z = z; e->partner = -1;
     e->h = atan2f(b[0] - x, b[2] - z);
     if (!pedGround(w, e, 1.5f)) return;   // №594: рождение над пустотой — другая точка
+    if (!pedSceneOk(w, x, z)) { e->mode = TRP_OFF; return; }          // P0.2/A2: сцена под точкой не загружена — в этот кадр не рождаем
     skinInit(&e->sp, &t->peds[m]); e->mode = TRP_WALK; pedPlay(t, e, e->run && t->clip[m][TRC_RUN] >= 0 ? TRC_RUN : TRC_WALK, 1);
     t->pedTryT = 0.f;
     return;
@@ -2491,6 +2511,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
   }
   if ((t->pedScanT -= dt) <= 0.f || t->fresh) { t->pedScanT = .5f; if (!t->streetRace) spawnPeds(t, w, ppos, eye, fwd); }
   }
+  pedAirCount(t, w, dt);
   t->fresh = 0;
   TP(3);
   // --- препятствия для водителей (стоящие машины gapAhead смотрит сам)

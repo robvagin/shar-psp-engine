@@ -1,0 +1,19 @@
+# A1 Опора-93: ирис выхода из дома (room_out) держится, пока герой ждёт сцену; flag scenehold 3 — сцена города «не готова» 3 с после нажатия. Проверка: tests/spawnground/spawnhold.py (smoke.txt OLD и нового)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+shot f00_l1
+scene A1_L4
+flag golevel 4
+wait 40
+foot 499.0 397.6 0 -20
+wait 2
+foot 502.4 398.0 0 -20
+wait 0.6
+flag scenehold 3
+press triangle 0.2
+wait 4
+shot a1_after3
+wait 9
+end

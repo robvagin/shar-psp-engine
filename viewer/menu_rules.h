@@ -87,6 +87,9 @@
 #ifndef HNRMARK_OLD
 #define HNRMARK_OLD 0         // круг 7: помеченная на удаление погоня снимается по одной (дальше 110 м; 5 с вне кадра)
 #endif
+#ifndef HNRMARKCAP_OLD
+#define HNRMARKCAP_OLD 0      // правка 433 (Роб 06.11, L4: «шкала упала, копы гонятся дальше»): 1 — помеченная погоня живёт, пока машина в кадре и ближе 110 м, без предела (прежнее)
+#endif
 #ifndef OPTFLY_OLD
 #define OPTFLY_OLD 0
 #endif
@@ -100,6 +103,7 @@
 #define JACK_V_MAX 4.5f                                     // угон: машина едет не быстрее 4,5 м/с
 #define HNR_PASS_S .7f                                      // проход постановки погони: раз в 0,7 с
 #define HNR_FAR_S .5f                                       // проход снятия дальних машин: раз в 0,5 с
+#define HNR_MARK_CAP_S 6.f                                  // правка 433: помеченная (шкала 0) погоня не живёт дольше 6 с, даже если машина в кадре и ближе 110 м
 #define HNR_OUT_S 5.f                                       // помеченная машина погони дольше 5 с подряд вне кадра игрока — снимается
 #define HNR_SHOW_LEVEL .05f                                 // после ареста индикатор держит 5 %…
 #define HNR_SHOW_HOLD_S 1.3f                                // …1,3 с…
@@ -223,6 +227,8 @@ static inline int mrHnrRetryReset(void) { return !HNRMSN3_OLD; }                
 static inline void mrHnrShowStep(float *show, float *hold, float dt) { if (*hold > 0.f) *hold -= dt; else if (*show > 0.f) *show = fmaxf(0.f, *show - HNR_SHOW_DECAY * dt); }
 // помеченная машина погони: счёт секунд вне кадра (в кадре — с нуля); 1 — пора снять (строго дольше HNR_OUT_S)
 static inline int mrHnrOutStep(float *t, int visible, float dt) { if (HNRMARK_OLD) return 0; if (visible) { *t = 0.f; return 0; } *t += dt; return *t > HNR_OUT_S; }
+// правка 433: предел жизни помеченной погони. marked = 1, пока шкала 0, защёлка отпущена и полиция есть; иначе счёт с нуля. 1 — пора снять всех
+static inline int mrHnrMarkCap(float *t, int marked, float dt) { if (HNRMARKCAP_OLD || !marked) { *t = 0.f; return 0; } *t += dt; return *t > HNR_MARK_CAP_S; }
 // значение для кольца: прежнее — шкала; новое — наибольшее из шкалы и хвоста
 static inline float mrHnrRing(float heat, float show) { return HNRSHOW_OLD ? heat : fmaxf(heat, show); }
 #endif

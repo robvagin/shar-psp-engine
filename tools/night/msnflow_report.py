@@ -3,6 +3,8 @@
 название, сколько этапов пройдено (MSN done), дошла ли до MSN complete, на каком этапе и цели встала; сбои уровня (STALL, отказы памяти, нет END).
   python3 tools/night/msnflow_report.py NIGHT_DIR [--prev ПРЕЖНИЙ_NIGHT_DIR]  -> таблица в stdout; с --prev — что стало хуже/лучше по миссиям"""
 import re, sys
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent))
+import watchdog_col
 from pathlib import Path
 def parse(night):
     res = {}
@@ -44,6 +46,9 @@ if __name__ == '__main__':
             st = 'ПРОЙДЕНА' if s['complete'] else f'встала: {s["last"] or "не началась"}' + (f' — провал «{s["fail"]}»' if s['fail'] else '')
             print(f'  {s["id"] or s["tag"]:4} {s["name"][:32]:32} этапов {s["done"]:2} (засчитано помощником {s["passed"]})  {st}')
     print(f'Итого: миссий {tot}, до конца {comp}')
+    wcnt, wrows = watchdog_col.scan(*sorted(Path(night).glob('runs/*/smoke.txt')), *sorted(Path(night).glob('runs/*/stdout.txt')))
+    print('## ' + watchdog_col.summary(wcnt))   # графа «сторож»: любое срабатывание = дыра (CLAUDE.md п.12)
+    for l in watchdog_col.lines(wrows): print(l)
     if prev:
         P = {key(L, s): s for L, r in prev.items() for s in r['segs']}
         for L, r in R.items():

@@ -1,0 +1,43 @@
+# правка 431, положительный контроль для персонажей: L4, MISSION SELECT каждой миссии, через 4 с клетки под городскими персонажами выгружаются (flag dropnpc),
+# персонажи обязаны скрыться (NPCSCENE431 hide) и вернуться (show) после загрузки клеток; пол и герой не падают
+flag nosave
+scene B
+wait 3
+flag golevel 4
+wait 14
+scene S0
+flag msnsel 0
+wait 4
+flag dropnpc
+wait 4
+scene S1
+flag msnsel 1
+wait 4
+flag dropnpc
+wait 4
+scene S2
+flag msnsel 2
+wait 4
+flag dropnpc
+wait 4
+scene S3
+flag msnsel 3
+wait 4
+flag dropnpc
+wait 4
+scene S4
+flag msnsel 4
+wait 4
+flag dropnpc
+wait 4
+scene S5
+flag msnsel 5
+wait 4
+flag dropnpc
+wait 4
+scene S6
+flag msnsel 6
+wait 4
+flag dropnpc
+wait 4
+end

@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.10)
 project(sharview C)
-add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c)
+add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c watchdog.c watchdog_game.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c)
+
+# TEST93 (Данные-93, C2): список обязательных файлов набора для проверки полноты при старте (viewer/setcheck.h) генерируется из tools/ship_files.sh
+# (tools/gen_setfiles.sh -> viewer/setfiles.inc); пересчёт — когда изменились правила выпуска или сам скрипт. Нет bash/ошибка — остаётся закоммиченный файл
+add_custom_command(OUTPUT "${CMAKE_SOURCE_DIR}/setfiles.inc"
+  COMMAND sh -c "bash '${CMAKE_SOURCE_DIR}/../tools/gen_setfiles.sh' '${CMAKE_SOURCE_DIR}/setfiles.inc' || touch '${CMAKE_SOURCE_DIR}/setfiles.inc'"
+  DEPENDS "${CMAKE_SOURCE_DIR}/../tools/ship_rules.txt" "${CMAKE_SOURCE_DIR}/../tools/gen_setfiles.sh"
+  COMMENT "setfiles.inc: обязательные файлы набора" VERBATIM)
+add_custom_target(setfiles_inc DEPENDS "${CMAKE_SOURCE_DIR}/setfiles.inc")
+add_dependencies(sharview setfiles_inc)
 
 # правки 252/259 (03.10): кэш карты ARK-4 — все sceIoRead/sceIoWrite движка идут через viewer/msio.c (по одному, сброс кэша)
 target_compile_options(sharview PRIVATE "SHELL:-include ${CMAKE_SOURCE_DIR}/msio.h")   # SHELL: — CMake склеивает повторы «-include»

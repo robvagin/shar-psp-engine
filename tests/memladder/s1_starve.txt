@@ -1,0 +1,20 @@
+flag nosave
+scene BOOT
+flag golevel 4
+wait 50
+flag uimsndone 127
+wait 5
+flag boothstarve 0.05
+wait 1
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 3
+shot s1_menu
+press triangle
+wait 1
+flag boothstarve 1000
+wait 3
+end

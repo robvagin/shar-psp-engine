@@ -1,0 +1,9 @@
+flag nosave
+scene BOOT
+flag golevel 4
+wait 50
+flag uimsndone 127
+wait 1
+flag msnselfuzz 13 30
+wait 90
+end

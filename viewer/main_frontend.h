@@ -43,6 +43,8 @@ static int svcStart(void) {
 // Сценарий с «flag player» проверяет режим игрока (гейт tests/svc).
 static int svcMode;
 static int menuLevel = 1;   // служебный режим: уровень для NEW GAME (L / R в главном меню, «flag lvset N»); у игрока NEW GAME — уровень 1
+#include "datarev.h"   // TEST93: SETCHECK_OLD
+static int levelAvailable(int n);   // main_levels.h
 static int svcLabel;        // файл service рядом с EBOOT: подпись выбранного уровня в меню (у сценариев смоука её нет — снимки меню прежние)
 static int lvNoSave;        // отрицательный контроль гейта сохранений («flag lvnosave»): загрузка берёт уровень 1, а не уровень записи
 static int toLevel;         // уровень пройден: следующий (главный цикл, levelAdvance)
@@ -108,20 +110,47 @@ static int scrOpen1065(const char *site) {
   return rc2;
 }
 static int msOpenFail;   // служебное «flag msopenfail N»: следующие N попыток открыть пакет MISSION SELECT отказывают (-3) — проверка повторов и запасного списка (гейт tests/menu896)
-static int msOpenTry(const char *fn) { if (msOpenFail > 0) { msOpenFail--; uiScrClose(); return -3; } return uiScrOpen(fn); }
-static int msPackOpen(const char *fn) {
-  int rc = msOpenTry(fn);
-  for (int t = 0; rc && !MS_OPEN_OLD && t < 3; t++) {
-    char s_[112]; snprintf(s_, sizeof s_, "mssel_open_rc=%d_try=%d_lv=%d_free=%.1fM", rc, t, gameLevel, smokeHeapFree());
-    bbOp("fail", s_, 1);
-    if (smkOn) { snprintf(s_, sizeof s_, "MSNSEL openfail rc=%d try=%d level=%d free=%.2f t=%.1f\n", rc, t, gameLevel, smokeHeapFree(), smkT); smkWrite(s_); }
-    if (t == 0) uiScrWarmClear();                                             // пакет будки в куче — первым
-    { LdWait lw_ = {0}; lqn = 0; __asm__ volatile("" ::: "memory"); while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe1", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }   // загрузчик — на месте
-    if (t == 2) sceKernelDelayThread(100000);
-    rc = msOpenTry(fn);
-  }
+// Правка Роба 432: пакет читается кусками (границы только на началах разделов и картинок), а не цельным блоком 0,42 МБ: на PSP Роба после долгой погони свободно 4,1 МБ,
+// но наибольший блок 0,38 МБ (чёрный ящик TEST92, ui.c:509/532) — цельный блок не находился, кусками по 256 / 128 / 64 КБ находится. MSHEAL_OLD=1 — цельным блоком
+#ifndef MSHEAL_OLD
+#define MSHEAL_OLD 0
+#endif
+static int msOpenTry(const char *fn, int t) {
+  if (msOpenFail > 0) { msOpenFail--; uiScrClose(); return -3; }
+  if (!MSHEAL_OLD) uiPakSegMax1051(t <= 0 ? 256u << 10 : t == 1 ? 128u << 10 : 64u << 10);
+  int rc = uiScrOpen(fn);
+  if (!MSHEAL_OLD) uiPakSegMax1051(0);
   return rc;
 }
+// Правка Роба 432 (06.11, L4 после погони, фото IMG_8201): три повтора с очисткой пакета будки не хватало — пакет pextra.shr (0,42 МБ цельным блоком) не открывался, меню шло
+// запасным списком. Теперь ступени отдают место так же, как будка (№1051): сперва общий mem1060Pre, потом клетки дальше 50 м, дальше 20 м, все чужие; мир под паузой
+// виден, но после закрытия меню стрим возвращает клетки сам. Не вышло и после этого — меню в запасном виде, но главный цикл повторяет открытие (mvMissionSelectNeedPack).
+// MSHEAL_OLD=1 — три повтора как было
+static int msHeld432;   // клетки отданы под меню (BOOTH-режим малого радиуса подгрузки включён) — вернуть при закрытии меню
+static int msPackOpen(const char *fn) {
+  if (memLadOn) memLadResTake();   // правка 435: отложенный с начала уровня блок — в кучу перед чтением пакета
+  int rc = msOpenTry(fn, 0);
+  for (int t = 0; rc && !MS_OPEN_OLD && t < (MSHEAL_OLD ? 3 : 6); t++) {
+    char s_[112]; snprintf(s_, sizeof s_, "mssel_open_rc=%d_try=%d_lv=%d_free=%.1fM_blk=%.1fM", rc, t, gameLevel, smokeHeapFree(), (memMaxBlock ? memMaxBlock() : 0) / 1048576.f);
+    bbOp("fail", s_, 1);
+    if (smkOn) { snprintf(s_, sizeof s_, "MSNSEL openfail rc=%d try=%d level=%d free=%.2f blk=%.2f t=%.1f\n", rc, t, gameLevel, smokeHeapFree(), (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, smkT); smkWrite(s_); }
+    if (t == 0) uiScrWarmClear();                                             // пакет будки в куче — первым
+    { LdWait lw_ = {0}; lqn = 0; __asm__ volatile("" ::: "memory"); while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe1", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }   // загрузчик — на месте
+    if (!MSHEAL_OLD && memLadOn) {   // правка 435: ступени лестницы вместо частных (сегмент следующей попытки: 128 / 64 КБ, вся лестница — под 256 КБ первого куска)
+      memLadder("msnsel", t <= 0 ? 256u << 10 : 128u << 10, LAD_TOP); msHeld432 = msHeld432 || memLadStopped();
+    } else if (!MSHEAL_OLD) {
+      if (t == 1) mem1060Pre(1536u << 10, "pextra");
+      else if (t == 2) { boothRoom1051(0); msHeld432 = 1; }
+      else if (t == 3) { boothRoom1051(1); msHeld432 = 1; }
+      else if (t >= 4) { boothRoom1051(2); msHeld432 = 1; }
+    }
+    if (t == 2 || MSHEAL_OLD) sceKernelDelayThread(100000);
+    rc = msOpenTry(fn, t + 1);
+  }
+  if (smkOn && !rc && msHeld432) { char s_[96]; snprintf(s_, sizeof s_, "MSNSEL openheal level=%d free=%.2f blk=%.2f t=%.1f\n", gameLevel, smokeHeapFree(), (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, smkT); smkWrite(s_); }
+  return rc;
+}
+static void msRelease432(void) { if (msHeld432) { msHeld432 = 0; boothRelease1051(); } }   // меню закрыто: радиус подгрузки обычный, стрим догружает клетки
 static int saveBlocked;   // «flag nosave» среди первых flag сценария (или flag nosave 1): тур не пишет settings.bin и сохранения (савы Роба не трогать)
 static int playerFirst;   // №автотур «ИГРОК»: сценарий начинается с «flag player» — режим игрока с загрузки (титул, меню, RESUME как у игрока); press/wait/shot работают
 #define svcStartP() (svcStart() && !playerFirst)
@@ -609,7 +638,7 @@ static void menuFrame(int sel, void **fbp) {   // главное меню Scroob
   if (smkOn && !feFlying() && uiMenuItemBox[0] >= 0.f) {   // правка 412: пульс выбранного пункта по кадрам (tests/menu/item_pulse.sh)
     char s_[160]; snprintf(s_, sizeof s_, "MENUITEM t=%.3f sel=%d ms=%.1f s=%.4f x0=%.2f y0=%.2f x1=%.2f y1=%.2f\n", smkT, sel, uiMenuItemBox[0], uiMenuItemBox[1],
                            uiMenuItemBox[2], uiMenuItemBox[3], uiMenuItemBox[4], uiMenuItemBox[5]); smkWrite(s_); }
-  if (svcLabel && !feFlying()) { char t[48]; snprintf(t, sizeof t, "SERVICE  L/R  LEVEL %d", menuLevel); resetState(); uiText(0, 8, 8, 0xff40ffffu, t); }
+  if (svcLabel && !feFlying()) { char t[48]; int miss_ = !SETCHECK_OLD && !levelAvailable(menuLevel); snprintf(t, sizeof t, miss_ ? "SERVICE  L/R  LEVEL %d MISSING" : "SERVICE  L/R  LEVEL %d", menuLevel); resetState(); uiText(0, 8, 8, miss_ ? 0xff909090u : 0xff40ffffu, t); }   // TEST93 C3: нет набора — серая строка
   resetState(); irisOver();   // правка 154: меню после титульного/демо раскрывается из ириса
   sceGuClutMode(GU_PSM_8888, 0, 0xff, 0);
   feCapGrab((void *)((unsigned)sceGeEdramGetAddr() + (unsigned)*fbp), !fb16);   // правка 293 (служебное fecap): готовый кадр перелёта -> ОЗУ
@@ -726,6 +755,7 @@ static int cellsRingAt(const float *c, int bar, void **fbp) {
   // п.4: остаток (всё, если загрузчик не брал) — укрупнёнными чтениями, порциями по 24 клетки (между порциями кадр газеты)
   short *idx = need ? malloc((size_t)need * sizeof *idx) : 0; int n = 0;
   for (unsigned i = 0; idx && i < ncell; i++) if (!cl[i].owner && !cl[i].state && cellDist(&cl[i], c[0], c[1], c[2]) < r && n < need) idx[n++] = (short)i;
+  if (n && memLadOn) memLadder("ring", RING_RUNMAX, LAD_TOP);   // правка 435: буфер кольца (512 КБ) — через лестницу; не вышло — читаем по клетке (запасной путь cellsReadRuns)
   if (n) { SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); unsigned reads = 0, bytes = 0;
     for (int a = 0; a < n; a += 24) { int m = n - a < 24 ? n - a : 24;
       cellsReadRuns(fd, idx + a, m, NULL); reads += ringReads; bytes += ringBytes; done += m;
@@ -799,6 +829,7 @@ static int cellsRingNear1209(const float *c, float r, int *outBytes) {
   for (unsigned i = 0; i < ncell && n < need; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
     if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
     if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) idx[n++] = (short)i; }
+  if (memLadOn) memLadder("ring", RING_RUNMAX, LAD_TOP);
   SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); unsigned bytes = 0;
   if (fd >= 0) { for (int a = 0; a < n; a += 24) { int m = n - a < 24 ? n - a : 24; cellsReadRuns(fd, idx + a, m, NULL); bytes += ringBytes; bbBeatTick(); } sceIoClose(fd); }
   else n = -2;
@@ -1755,7 +1786,9 @@ static void homerShadow(const ColWorld *w) {
   sceGuDepthMask(GU_FALSE); resetState();
 }
 #define STICK_ACTIVE 40   // правка 159: стик дальше 40 из 128 от центра — активность игрока (не дрейф)
+static int hnrNoBust;   // служебное: flag nobust 1 — ареста нет (только тест: показ ветки limbo правки 433 вживую)
 static int hnrForceBust;   // служебное: flag hnrbust — арест сразу (гейт правки 227 tests/hnr/bust_freeroam.sh)
+static float hnrMarkT; static int hnrLimbo;   // правка 433: секунды помеченной погони; 1 — копы уже бросили погоню
 static int hnrMusic, hnrActive; static float hnrMsgT, hnrCatchT, hnrSpawnT, hnrIdleT;
 // Правка 121 (30.09, «доводи логику до оригинала, сверяйся напрямую»): погоня и арест — правила исполняемого файла PAL
 // SLES_518.97 (разбор hit-and-run-web/src/hit-and-run.ts и pursuit.ts, MIT: обновление 0x251c78), порядок проверок — как там.
@@ -1970,16 +2003,20 @@ static void hnrPursuit(float dt) {
     if (HNREND_OLD || HNRMARK_OLD) { mvPolice(0); chasers = 0; best = 1e9f; }
     else {   // сверка g09b-menu круг 7 (P03 Д2): помеченные (шкала 0) снимаются по одной — дальше 110 м (проход раз в 0,5 с) и те, что игрок не видит дольше 5 с подряд
       static float outT_[32], farT2_; int dropped_ = 0;
-      if ((farT2_ += dt) >= HNR_FAR_S) { farT2_ = 0.f; mvPoliceFar(px, pz, HNR_REMOVE_R); dropped_ = 1; }
+      if ((farT2_ += dt) >= HNR_FAR_S) { farT2_ = 0.f; int n0_ = chasers; mvPoliceFar(px, pz, HNR_REMOVE_R); dropped_ = 1; if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR far-pass t=%.1f police_before=%d near=%.0f\n", smkT, n0_, best); smkWrite(s_); } }
       for (int i = 0; i < m->n && i < 32; i++) {
         if (!(m->c[i].on && mvIsPolice(m->c[i].name))) { outT_[i] = 0.f; continue; }
         const Car *k = &m->c[i].car; float bx_[6] = {k->x - 2.f, k->y, k->z - 2.f, k->x + 2.f, k->y + 2.f, k->z + 2.f};
-        if (mrHnrOutStep(&outT_[i], visBox(bx_, 0.f, 0.f, 0.f), dt)) { mvPoliceDrop(i); outT_[i] = 0.f; dropped_ = 1; }
+        if (mrHnrOutStep(&outT_[i], visBox(bx_, 0.f, 0.f, 0.f), dt)) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "HNR drop out5s t=%.1f car=%d v=%.1f dist=%.0f visible=%d limbo=%d\n", smkT, i, k->v, hypotf(k->x - px, k->z - pz), visBox(bx_, 0.f, 0.f, 0.f), hnrLimbo); smkWrite(s_); } mvPoliceDrop(i); outT_[i] = 0.f; dropped_ = 1; }
       }
+      if (mrHnrMarkCap(&hnrMarkT, 1, dt) && !hnrLimbo) {   // правка 433: шкала 0 дольше HNR_MARK_CAP_S, а коп всё гонится — бросает погоню и тормозит (EnterLimbo оригинала); никто не исчезает в кадре, снимает прежнее правило
+        mvPoliceLimbo(1); hnrLimbo = 1;
+        if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR limbo t=%.1f\n", smkT); smkWrite(s_); } }
       if (dropped_) { chasers = 0; best = 1e9f;
         for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
           const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; } }
     } }   // защёлка отпущена — полиция уезжает (после ареста стоит, №627); сверка g09b-menu (P03-Д2): стоящие остаются и гонятся, пока шкала не 0 и они не дальше 110 м
+  if (!(chasers && !G.hnrLatched && !bustPolice && hnrHeat <= 0.f)) { mrHnrMarkCap(&hnrMarkT, 0, dt); if (hnrLimbo) { if (chasers) mvPoliceLimbo(0); hnrLimbo = 0; } }   // правка 433: вне помеченного состояния счёт с нуля
   if (!HNRNEWAI_OLD) {   // P10-22: слежение за первой не отмеченной машиной погони
     static unsigned done_; int first = -1;
     if (!chasers || (!HNRNEWAI3_OLD && onFoot())) done_ = 0;   // круг 3: слежение только пока игрок в машине, при выходе снимается
@@ -1999,7 +2036,7 @@ static void hnrPursuit(float dt) {
   if (hnrMusCaught >= 0.f && (hnrMusCaught -= dt) <= 0.f) {   // арест: через 110 кадров музыка места снова
     hnrMusCaught = -1.f; if (sndMusicState() == SND_MUS_HITRUN_CAUGHT && !sndMusicOwned()) sndMusic(onFoot() ? SND_MUS_ONFOOT : SND_MUS_FREEROAM); }
   float spd = onFoot() ? homer.speed : fabsf(car.v);
-  int caught = gameHnrCatch(&hnrCatchT, dt, hnrActive && chasers && !G.hnrRoom && G.hnrBusted <= 0.f, best, spd, onFoot());   // №430: game.c
+  int caught = hnrNoBust ? 0 : gameHnrCatch(&hnrCatchT, dt, hnrActive && chasers && !G.hnrRoom && G.hnrBusted <= 0.f, best, spd, onFoot());   // №430: game.c
   if (caught || hnrForceBust) {   // арест (hnrForceBust — служебный flag hnrbust)
     hnrForceBust = 0;
     // №627: шкала после штрафа 5 и спадает до 0 за ~3 с (PS2, кадр 1700: 0): пауза 1,3 с + 5 ед. при спаде 3/с (1,7 с). BUSTED_PS2_OLD=1 — сразу 0
@@ -2015,7 +2052,8 @@ static void hnrPursuit(float dt) {
     if (smkOn) { int pn = 0; const MsnCars *m2 = mvCars(); if (m2) for (int i = 0; i < m2->n; i++) if (m2->c[i].on && mvIsPolice(m2->c[i].name)) pn++;
       char s[96]; snprintf(s, sizeof s, "BUSTED arrest police_after=%d t=%.2f\n", pn, smkT); smkWrite(s); }   // №627: гейт tests/hnr/busted_ps2.sh
   }
-  { static float lt; if (smkOn && (lt += dt) >= 1.f) { lt = 0.f; char s_[112]; snprintf(s_, sizeof s_, "HNRV t=%.1f heat=%.3f latch=%d police=%d near=%.0f busted=%.1f\n", smkT, hnrHeat, G.hnrLatched, chasers, chasers ? best : -1.f, G.hnrBusted); smkWrite(s_); } }   // служебное: шкала раз в секунду
+  { static float lt; if (smkOn && (lt += dt) >= 1.f) { lt = 0.f; char s_[128]; float pvm_ = 0.f; if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && fabsf(m->c[i].car.v) > pvm_) pvm_ = fabsf(m->c[i].car.v);
+    snprintf(s_, sizeof s_, "HNRV t=%.1f heat=%.3f latch=%d police=%d near=%.0f busted=%.1f pv=%.1f limbo=%d\n", smkT, hnrHeat, G.hnrLatched, chasers, chasers ? best : -1.f, G.hnrBusted, pvm_, hnrLimbo); smkWrite(s_); } }   // служебное: шкала раз в секунду
 }
 // Правка Роба 63 (запись PS2 33:40): угон — Гомер пешком у машины трафика (едет или стоит), ближе, чем у своей: △ — машина
 // игрока становится ею (ходовые из .con модели, размеры и посадка — модели трафика), машина трафика уходит с дороги/места
@@ -2636,7 +2674,7 @@ static void newGame(void) {
   ldStep("pre-traffic"); if (haveTraffic) trafficReset(&traffic, &world);   // стоящие машины на места, трафик и пешеходы — заново вокруг спавна
   if (ldOn || audioDefer) ldAudio = 1;   // правка 20: под экраном загрузки звучит стингер газеты — атмосфера и музыка уровня после него (loadEnd)
   else levelAudioStart();
-  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = cellsMakeRoom; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; msnStart();
+  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = memLadRoomUi; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; msnStart();
   // NPC_ASYNC (видео TEST17: «подгрузка NPC роняет FPS до 11»): mvPump означает «идёт экран загрузки», а здесь он ставился один раз и жил до конца игры, поэтому фоновое
   // чтение моделей персонажей (msn_view.c modelFor/modelPrefetch, коммит 85ac58e4) не срабатывало ни в одном туре: все MSNNPC load шли синхронно в кадре (44–82 мс на
   // файл, 40 загрузок за тур, ни одной с async=1). Теперь после старта уровня насос снимается: дальше модели читаются в фоне, NPC до готовности не рисуется.

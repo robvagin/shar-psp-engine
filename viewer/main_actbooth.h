@@ -7,18 +7,18 @@
         phoneViewSetProgress(svLvReached(&lvKeep));   // №682: пройденные уровни открывают свои машины в будке
         phoneCheatAll = !CHEATS1104_OLD && gameCheatOn(CH_VEHICLES);   // №1104: код Vehicles — все машины-награды в будке
         phoneViewSetCar(mvForcedCar(), car.destroyed ? 1.f : car.damage);   // правка 104: «Damaged: N %» у машины, на которой игрок сейчас
-        if (boothMem1051 && !PHONE_ROOM842_OLD) boothRoom1051(0);   // №1051: место — до первой попытки, не после неудачи
+        if (boothMem1051 && !PHONE_ROOM842_OLD) { unsigned b0_ = memMaxBlock ? memMaxBlock() : 0, f0_ = heapFreeBytes(); int n_ = boothRoom1051(0); if (n_) memLadNote("booth", 2, b0_, f0_, "pre"); }   // №1051: место — до первой попытки, не после неудачи (правка 435: ступень 2 лестницы)
         int po_ = phoneFailTest > 0 ? (phoneFailTest--, -1) : phoneViewOpen(mvShop(), sd);   // phoneFailTest — №842 тест
         if (po_ != 0 && boothMem1051 && !PHONE_ROOM842_OLD) {   // №1051: не вышло — ступенями больше места: дальше 20 м, потом все чужие клетки
           uiPakSegMax1051(256u << 10);   // ступени: пакет кусками по 256 КБ (тесная раздробленная куча)
-          for (int st_ = 1; st_ <= 2 && po_ != 0; st_++) { boothRoom1051(st_); po_ = phoneViewOpen(mvShop(), sd); }
+          for (int st_ = 1; st_ <= 2 && po_ != 0; st_++) { unsigned b0_ = memMaxBlock ? memMaxBlock() : 0, f0_ = heapFreeBytes(); boothRoom1051(st_); memLadNote("booth", st_ == 1 ? 3 : 4, b0_, f0_, st_ == 1 ? "r20" : "all"); po_ = phoneViewOpen(mvShop(), sd); }
           uiPakSegMax1051(0);
           { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1051 result ok=%d t=%.1f\n", po_ == 0, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
           if (po_ != 0 && mem1060) {   // №1060: четвёртая ступень — газета, всё в кучу, при дроблении пересборка уровня; «unavailable» из-за памяти не бывает
-            po_ = boothScene1060(sd, &fbp0); mem1060Back = 1;
-            if (po_ != 0 && mem1060Rebuild) po_ = boothRebuild1060(sd, &fbp0);
+            { unsigned b0_ = memMaxBlock ? memMaxBlock() : 0, f0_ = heapFreeBytes(); po_ = boothScene1060(sd, &fbp0); mem1060Back = 1; memLadNote("booth", 4, b0_, f0_, po_ == 0 ? "scene-ok" : "scene-fail");
+              if (po_ != 0 && mem1060Rebuild) { b0_ = memMaxBlock ? memMaxBlock() : 0; f0_ = heapFreeBytes(); po_ = boothRebuild1060(sd, &fbp0); memLadNote("booth", 4, b0_, f0_, po_ == 0 ? "rebuild-ok" : "rebuild-fail"); } }
             { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1060 result ok=%d t=%.1f\n", po_ == 0, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
-            if (po_ != 0) { boothRelease1051(); mem1060Return(&fbp0); } }
+            if (po_ != 0) { memLadNote("booth", 5, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), "simplify"); boothRelease1051(); mem1060Return(&fbp0); } }
           else
           if (po_ != 0) boothRelease1051(); }
         else

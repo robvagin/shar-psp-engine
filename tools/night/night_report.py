@@ -7,7 +7,10 @@
 Миссии и догонялки (дорожка laneD, missions_L{N}): по каждой миссии — этапы, что прошёл, где встал (этап не менялся все циклы = недоходимая цель/зависший этап), провал, конец уровня;
 по погоне CH_i — цена кадра (STAT p95/max, медленные кадры); зависание — нет строки END / STALL в чёрном ящике."""
 import html, re, sys
+
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import watchdog_col
 from PIL import Image, ImageDraw
 
 N = Path(sys.argv[1]); R = N / 'runs'; out = []; text = []
@@ -145,6 +148,9 @@ for L in range(1, 8):
                f'<table border=1 cellpadding=3><tr><th>погоня</th><th>кадр</th><th></th></tr>{ch}</table>')
     nm = sheet(sorted(d.glob('ms_*_c*.png'))[::3][:48], N / f'ms_L{L}.png', cols=8, w=150, h=85)
     if nm: out.append(f'<img src="{nm}">')
+_wc, _wr = watchdog_col.scan(*sorted(R.glob('*/smoke.txt')), *sorted(R.glob('*/stdout.txt')))   # графа «сторож» (CLAUDE.md п.12): любое срабатывание = дыра
+text.append(watchdog_col.summary(_wc)); text.extend(watchdog_col.lines(_wr))
+out.append('<h2>Сторож</h2><p>' + html.escape(watchdog_col.summary(_wc)) + '</p><pre>' + html.escape('\n'.join(watchdog_col.lines(_wr, 30))) + '</pre>')
 if FIND: (N / 'findings_missions.tsv').write_text('\n'.join(FIND) + '\n')
 (N / 'report.html').write_text('<html><meta charset="utf-8"><body style="background:#111;color:#ddd;font-family:sans-serif">'
                                '<h1>Ночные боты</h1><pre>' + html.escape('\n'.join(text)) + '</pre>' + '\n'.join(out) + '</body></html>')

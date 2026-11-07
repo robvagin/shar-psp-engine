@@ -143,10 +143,11 @@ static void drawMesh(float w) {
 }
 
 volatile int geListOpen; unsigned geNestedN;
+static void holdEnd(void);
 int transitClose(void **fbp, const char *why) {
   if (!transitReady()) return 0;
   GE_NEST_GUARD_RET(why ? why : "transitClose", 0);   // №1186: внутри открытого списка кадра — отказ (взаимное ожидание очереди видеочипа)
-  T.why = why; T.active = 0; T.mode = 0; int shown = 0;
+  holdEnd(); T.why = why; T.active = 0; T.mode = 0; int shown = 0;
   T.cur = (why && !strncmp(why, "car_", 4) && T.slow == IRIS_SLOW) ? IRIS_CAR_SLOW : T.slow;   // правка 333
   unsigned vram = (unsigned)sceGeEdramGetAddr(), t0 = sceKernelGetSystemTimeLow();
   for (;;) {
@@ -231,6 +232,20 @@ void transitHold(float sec) {
 #define IRIS_LOADING_OLD 0
 #endif
 static float blackT;
+#ifndef SPAWNHOLD_OLD
+#define SPAWNHOLD_OLD 0
+#endif
+int (*transitHoldHook)(void);
+int transitHoldGate;   // 1 — шаг ириса зовёт игровой цикл (мир идёт): только тогда ирис ждёт героя; в меню Гомер не шагает и ожидание не кончилось бы
+void (*transitHoldNote)(const char *line);   // строка в чёрный ящик (main_frontend.h bbNote)
+static float holdT; static int holdWhy;
+static void holdEnd(void) {   // строка события (не кадра): сколько ирис продержали и почему
+  if (holdT <= 0.f) return;
+  char s[120]; snprintf(s, sizeof s, "SPAWNHOLD ms=%.0f why=%s iris=%s t=%.2f\n", holdT * 1000.f, holdWhy == 2 ? "scene" : "ground", T.why ? T.why : "-", T.clock ? *T.clock : 0.f);
+  if (T.log) T.log(s);
+  if (transitHoldNote) transitHoldNote(s);
+  holdT = 0.f;
+}
 void transitStep(float dt) {
   if (!IRIS_LOADING_OLD) { if (T.active && transitFullyClosed()) blackT += dt; else blackT = 0.f; }
   if (!T.active) return;
@@ -239,7 +254,13 @@ void transitStep(float dt) {
     if (T.ht >= T.hold) { T.active = 0; T.mode = 0; logFade("done", 0.f, T.ht); return; }
     logFade("hold", 1.f, T.ht); return;
   }
-  T.f += dt * T.fps / T.cur;
+  float nf_ = T.f + dt * T.fps / T.cur;
+  if (!SPAWNHOLD_OLD && transitHoldHook && transitHoldGate && nf_ > T.fOpen && T.f <= T.fOpen + 1e-3f) {   // закрыто, дальше раскрытие: ждём опору/сцену под героем
+    int why = transitHoldHook();
+    if (why && holdT < HOMER_SPAWN_WAIT_T + 1.f) { holdT += dt > 0.f ? dt : 0.f; holdWhy = why; T.f = T.fOpen; logFrame("hold", T.f, weightAt(T.f)); return; }
+    holdEnd();
+  } else if (T.f > T.fOpen + 1e-3f) holdEnd();
+  T.f = nf_;
   if (T.f >= T.fEnd) { T.active = 0; logFrame("done", T.fEnd, 1.f); return; }
   float w = weightAt(T.f);
   logFrame(T.f < T.fOpen ? "hold" : "open", T.f, w);

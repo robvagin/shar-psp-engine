@@ -502,6 +502,7 @@ void gameAfterCar(Game *g, const GamePad *p, float dt) {
     g->collAction = 0;
   }
   XS_LAP(12, xt_, xw_);
+  gameWatchdogStep(g, dt);   // сторож (CLAUDE.md п.12): nofloor / belowworld / stuck
 }
 
 #define WRENCH_REACH_FOOT .3f   // правило порта: запас к радиусу ключа (сфера ActionEvent 2.5 м) — пешком и в машине

@@ -1,0 +1,14 @@
+# Находка 07.11 (Кадры): L2, flag drive, машина кувыркается. Журнал PILOT раз в секунду: tilt (наклон кузова, °), roll, wh (колёс на земле), car (имя). Ожидание на новом коде: tilt не выше ~70 за 170 с
+scene F_FLIP_L2
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 2
+wait 40
+wait 3
+flag drive 170
+wait 172
+flag stop
+wait 2
+end

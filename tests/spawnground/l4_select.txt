@@ -1,0 +1,28 @@
+# правка 431: L4, выбор каждой миссии из MISSION SELECT (служебный msnsel), в журнале строки WATCHDOG и FALL1209
+flag nosave
+scene B
+wait 3
+flag golevel 4
+wait 14
+scene S0
+flag msnsel 0
+wait 6
+scene S1
+flag msnsel 1
+wait 6
+scene S2
+flag msnsel 2
+wait 6
+scene S3
+flag msnsel 3
+wait 6
+scene S4
+flag msnsel 4
+wait 6
+scene S5
+flag msnsel 5
+wait 6
+scene S6
+flag msnsel 6
+wait 6
+end

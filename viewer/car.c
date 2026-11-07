@@ -87,6 +87,8 @@ float carRollGain = 0.f;   // добавка к плечу крена боков
 #include "car_wheel_collision.h"
 #include "sverka_shared.h"
 #include <math.h>
+#include <stdio.h>
+#include "watchdog.h"
 #include <string.h>
 #include <stddef.h>
 #ifdef COL_DEBUG
@@ -262,6 +264,12 @@ extern int colDebug;
 #ifndef SV_AIRSTAB2_OLD
 #define SV_AIRSTAB2_OLD 0       // круг 6, 5.1: демпфирование 7·m·ω входит только вместе с моментом возврата (наклон больше 10°); угловое сопротивление игрока 3·m·ω — только в полёте (все 4 колеса без земли) и при доле > 0,01. Было: 7·m·ω всегда в полёте, 3·m·ω у игрока всегда, и на земле
 #endif
+#ifndef MARGE434_OLD
+#define MARGE434_OLD 0
+#endif
+#ifndef MARGE434_DY
+#define MARGE434_DY 0.3f
+#endif
 #ifndef SV_FLIPTILT_OLD
 #define SV_FLIPTILT_OLD 0       // круг 6, 4.3: «лежит на боку» — ось вверх тела ниже 0,2 (78,5°). Было: 0,2079 (78°)
 #endif
@@ -348,6 +356,16 @@ void (*carResetFlash)(void);   // сверка g09a-hud круг 2: белая �
 typedef struct { float x, y, z; } V3;
 typedef struct { V3 L, U, F; } M3;   // столбцы: оси тела (влево, вверх, вперёд) в мире
 
+// правка 436 (находка Кадров 07.11: L2, «газ в пол» в стену: rocke_v / atv_v / redbrick встают на корму и лезут по стене; хост tests/g01cars/wallclimb436.c, NOWHEELIE=1 — 55 → 16 из 864 заходов):
+// вилли (сдвиг центра масс при полном газе на малой скорости, данные .con) держится, пока газ полный и скорость мала, а упёртая в стену машина не разгоняется и скорость не растёт — сдвиг держит нос,
+// пока машина не встанет на корму. Вилли поднимает нос до CAR_WHEELIE436_PITCH рад (15°; свободный старт с места у всего флота даёт ≤ 7°, tests/g01cars: free); выше сдвиг снимается и нос опускается, ниже — снова вилли. CAR_WHEELIE436_OLD=1 — как было
+#ifndef CAR_WHEELIE436_OLD
+#define CAR_WHEELIE436_OLD 0
+#endif
+#ifndef CAR_WHEELIE436_PITCH
+#define CAR_WHEELIE436_PITCH 0.26f
+#endif
+static int wheelieRoom436(const Car *c) { return CAR_WHEELIE436_OLD || c->pitch < CAR_WHEELIE436_PITCH; }   // pitch > 0 — нос вверх
 static float clampf(float v, float a, float b) { return v < a ? a : v > b ? b : v; }
 static V3 v3(float x, float y, float z) { V3 r; r.x = x; r.y = y; r.z = z; return r; }
 static V3 add(V3 a, V3 b) { return v3(a.x + b.x, a.y + b.y, a.z + b.z); }
@@ -658,6 +676,9 @@ static void derive(Car *c) {
     c->comBase[1]=P->modelLift+c->modelRaise+P->bodyCentre[1]+P->cmY+wheelShift;
     c->comBase[2]=P->bodyCentre[2]+P->cmZ;
   }
+  // правка 434 (Роб 06.11, L4: «машина Мардж постоянно переворачивается»; решение: «добавь ей немного веса или привязки к дороге, минимально»): центр тяжести marge_v ниже на MARGE434_DY м
+  // (в .con SetCMOffsetY +0,05, у остальных семейных −0,1…0; она высокая и ставилась на два колеса при полном руле и газе у подъёма). Только эта машина. MARGE434_OLD=1 — как было
+  if (!MARGE434_OLD && !strcmp(P->name, "marge_v")) c->comBase[1] -= MARGE434_DY;
   float wb = P->wheelF + P->wheelR, zc = clampf(c->comBase[2], -P->wheelR * .9f, P->wheelF * .9f);
   float xc = clampf(c->comBase[0], -P->wheelX * .9f, P->wheelX * .9f);
   for (int i = 0; i < 4; i++) {
@@ -972,7 +993,34 @@ static void settle(Car *c, const ColWorld *w) {
   }
 }
 
+// Правка 431 (канон Роба 06.11): машину нельзя поставить в точку без опоры (ни миссией, ни сбросом, ни трафиком). Нет опоры под точкой — ближайшая ровная опора в CAR_SPAWN_RING_R,
+// иначе машина остаётся там, где стояла (если она хоть раз стояла на опоре). CAR_SPAWNGROUND_OLD=1 — как было (ставит куда сказали)
+#ifndef CAR_SPAWNGROUND_OLD
+#define CAR_SPAWNGROUND_OLD 0
+#endif
+#define CAR_SPAWN_RING_R 12.f
+static int carSpawnNearest(const ColWorld *w, float x, float y, float z, float out[3]) {
+  static const float RR[] = {1.f, 2.f, 3.f, 4.f, 6.f, 8.f, 10.f, CAR_SPAWN_RING_R};
+  for (unsigned r = 0; r < sizeof RR / sizeof *RR; r++) {
+    float best = 1e30f; int have = 0;
+    for (int k = 0; k < 16; k++) {
+      float a = (float)k * (6.2831853f / 16.f), px = x + RR[r] * sinf(a), pz = z + RR[r] * cosf(a), g, nn[3];
+      if (!colGround(w, px, pz, y + 3.f, y - 100.f, &g, nn) || nn[1] < .85f) continue;
+      int steady = 1; static const float NX[4] = {1.5f, -1.5f, 0.f, 0.f}, NZ[4] = {0.f, 0.f, 1.5f, -1.5f};
+      for (int q = 0; q < 4 && steady; q++) { float g2; if (!colGround(w, px + NX[q], pz + NZ[q], g + .8f, g - .8f, &g2, 0)) steady = 0; }
+      if (steady && fabsf(g - y) < best) { best = fabsf(g - y); out[0] = px; out[1] = g; out[2] = pz; have = 1; }
+    }
+    if (have) return 1;
+  }
+  return 0;
+}
 void carPlace(Car *c, const ColWorld *w, float x, float y, float z, float h) {
+  if (!CAR_SPAWNGROUND_OLD && w) {
+    float g0, o[3];
+    if (colGround(w, x, z, y + 2.f, -1e6f, &g0, 0)) c->spawnOk = 1;
+    else if (carSpawnNearest(w, x, y, z, o)) { char l[160]; snprintf(l, sizeof l, "ring from=%.2f,%.2f,%.2f to=%.2f,%.2f,%.2f", x, y, z, o[0], o[1], o[2]); wdFire("spawn", "car", l); x = o[0]; y = o[1]; z = o[2]; c->spawnRings++; c->spawnOk = 1; }
+    else if (c->spawnOk) { char l[160]; snprintf(l, sizeof l, "keep want=%.2f,%.2f,%.2f stay=%.2f,%.2f,%.2f", x, y, z, c->x, c->y, c->z); wdFire("spawn", "car", l); c->spawnKeeps++; return; }
+  }
   c->x = x; c->z = z; c->h = h; c->gx = c->gz = 0; c->steer = 0; c->slip = 0;
   memset(c->vel, 0, sizeof c->vel); memset(c->w, 0, sizeof c->w);
   memcpy(c->com, c->comBase, sizeof c->com);
@@ -1328,7 +1376,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   // центр масс: вилли — полный газ на малой скорости сдвигает его (назад: нос поднимается); точка тела при сдвиге
   // сохраняет скорость: v_cm += w x dr
   if(P->bodyMass<=0.f) {
-    int wh = P->wheelieRange > 0.f && thr > 0.99f && ratio < P->wheelieRange && c->wheels >= 2;
+    int wh = P->wheelieRange > 0.f && thr > 0.99f && ratio < P->wheelieRange && c->wheels >= 2 && wheelieRoom436(c);
     float tgt[3] = {c->comBase[0], c->comBase[1] + (wh ? P->wheelieY : 0.f), c->comBase[2] + (wh ? P->wheelieZ : 0.f)};
     if(P->bodyMass>0.f)for(int i=0;i<4;i++)tgt[1]+=P->wheelCentreWeight[i]*(c->comp[i]-c->eq);
     float k = fminf(1.f, dt * 4.f); V3 d;
@@ -1513,7 +1561,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       if(c->lim-ext>0.f) { compression[i]=fminf(c->lim,c->lim-ext);supported++; }
     }
     om=changeBodyTensor(c,&M,compression,om);
-    int wh=P->wheelieRange>0.f && thr>.99f && ratio<P->wheelieRange && supported>=2;
+    int wh=P->wheelieRange>0.f && thr>.99f && ratio<P->wheelieRange && supported>=2 && wheelieRoom436(c);
     float tgt[3]={c->comBase[0],c->comBase[1],c->comBase[2]};
     for(int i=0;i<4;i++)tgt[1]+=P->wheelCentreWeight[i]*(compression[i]-c->eq);
     if(!supported)tgt[1]+=P->weebleOffset; // observed cmOffsetY in PS2: -0.1 -> -0.95 airborne, restored on landing

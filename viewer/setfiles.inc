@@ -1,0 +1,25 @@
+// Сгенерировано tools/gen_setfiles.sh — не править руками. Обязательные файлы набора, 21 имён (уровень 1 — в корне, 2–7 — в l<N>/).
+static const char *const setFiles[] = {
+  "l2/level.shr",
+  "l2/traffic.shr",
+  "l2/ui.shr",
+  "l3/level.shr",
+  "l3/traffic.shr",
+  "l3/ui.shr",
+  "l4/level.shr",
+  "l4/traffic.shr",
+  "l4/ui.shr",
+  "l5/level.shr",
+  "l5/traffic.shr",
+  "l5/ui.shr",
+  "l6/level.shr",
+  "l6/traffic.shr",
+  "l6/ui.shr",
+  "l7/level.shr",
+  "l7/traffic.shr",
+  "l7/ui.shr",
+  "level.shr",
+  "traffic.shr",
+  "ui.shr",
+};
+#define SETFILES_N 21

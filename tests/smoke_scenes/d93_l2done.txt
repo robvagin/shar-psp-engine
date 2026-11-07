@@ -1,0 +1,15 @@
+# TEST93 Данные-93 (C3): конец уровня 2 КАК У ИГРОКА -> следующий уровень 3. В наборе без l3/level.shr: LEVELDONE n=2 next=0; старое молча уходит в меню, новое пишет SETCHECK nolevel n=3 first=l3/level.shr (экран — только у игрока, в служебном режиме строка журнала)
+flag menu
+flag lvset 2
+scene lv_boot
+wait 1.5
+press cross
+wait 9
+scene LV2_REAL
+flag realend 1
+flag lvwin
+wait 14
+flag lvlog
+wait 10
+shot d93_a
+end

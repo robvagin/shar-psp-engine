@@ -210,6 +210,7 @@ void gameMsnHnrPoliceAdd(GameMsn *m);   // сверка g09b-menu круг 5 (P0
 int gameMsnHnrPoliceLimit(const GameMsn *m);   // сколько машин погони положено уровню (SetNumChaseCars)
 void gameMsnHnrPoliceFar(GameMsn *m, float px, float pz, float R);   // снимает по одной машины погони дальше R м от игрока
 void gameMsnHnrPoliceDrop(GameMsn *m, int i);
+void gameMsnHnrPoliceLimbo(GameMsn *m, int on);   // правка 433: копы бросают погоню и тормозят (1) / возвращаются в погоню (0)
 int gameMsnHnrPoliceSuspend(GameMsn *m);   // круг 7: машины погони уходят в запас с позой; -> сколько
 void gameMsnHnrPoliceResume(GameMsn *m);   // и возвращаются на те же места   // круг 7: снять одну машину погони по номеру
 void gameMsnHnrPoliceHold(GameMsn *m);   // №627: полиция после ареста стоит на месте

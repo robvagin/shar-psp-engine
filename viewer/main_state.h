@@ -773,6 +773,12 @@ static unsigned char spSt[512]; static int spStInit;   // прошлые сос�
 static Game G = {&world, &car, &props, &sprops, &coins, &homer, &haveCol, &haveProps, &haveSP, &haveCoins, &haveHomer,
                  &hnrHeat, &hnrCalm, &wasDestroyed, spSt, &spStInit, &cv.lift,
                  {onPropKickFx, spChangeSnd, spFxOut, homerEvFx, afterHomerHud, coinSnd, homerDoor, resetMusic, 0}};
+// P0.2/A1 Опора-93 (канон Роба п.11): крючок ириса transit.c — герой ждёт опору (1) или сцену под точкой (2); 0 — готов или не пешком. Ирис в это время не раскрывается
+static int spawnHoldHook(void) {
+  if (!haveHomer || !haveCol || !onFoot() || !homerSpawnPending(&homer)) return 0;
+  const ColWorld *w_ = G.pHomerWorld ? G.pHomerWorld : &world; float g_;
+  return colGround(w_, homer.x, homer.z, homer.y + 2.f, homer.y - HOMER_SPAWN_PROBE, &g_, 0) ? 2 : 1;
+}
 // гаечный ключ взят (пункт 4, viewer/game.c gameWrenchStep): звук wrench_collect (world.spt), частицы wrench_collect2Shape (art/wrench.p3d)
 // сверка g11b-collect круг 7 (P04 W5): снаряд осы и мир — подвижные предметы и стейтпропы (game.c gameBoltProps) и пешеходы / трафик (traffic.c trafficBoltHit); удар применяется только к ближайшему
 static float waspBoltWorld(const float a[3], const float b[3], const float dir[3], int apply) {

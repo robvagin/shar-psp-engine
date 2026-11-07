@@ -1,0 +1,62 @@
+flag nosave
+scene BOOT
+flag golevel 4
+wait 50
+flag uimsndone 127
+wait 2
+flag msnselbreak 1
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1.5
+press triangle
+wait 1
+press start
+wait 1
+flag msnselbreak 2
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1.5
+press triangle
+wait 1
+press start
+wait 1
+flag msnselbreak 3
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1.5
+press triangle
+wait 1
+press start
+wait 1
+flag msnselbreak 4
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1.5
+press triangle
+wait 1
+press start
+wait 1
+flag msnselbreak 5
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 1.5
+press triangle
+wait 1
+press start
+wait 1
+end

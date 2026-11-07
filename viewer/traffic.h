@@ -232,6 +232,7 @@ int trafficPedGroup(Traffic *t, int group);
 void trafficRoutePoint(const Traffic *t, const TrCar *c, float ds, float p[3]);   // точка маршрута машины на ds м вперёд (служебное, №400)
 // кадр: после физики игрока и Гомера. player — машина игрока (удары меняют и её); driving 0 = игрок пешком
 // (ppos — ступни Гомера: машины тормозят, пешеходы ждут). eye/fwd — камера (спавн и удаление вне кадра).
+extern void (*trafficLogLine)(const char *line);   // P0.2/A2: журнал PEDAIR (main_loop.h ставит smkWrite при смоуке)
 void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, const float ppos[3],
                    const float eye[3], const float fwd[3], float dt);
 // Гомер: HomerSolidFn (homer.h) — вытолкнуть круг из кузовов машин и пешеходов; крыша машины — опора

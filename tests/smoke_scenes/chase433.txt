@@ -1,0 +1,18 @@
+# Правка 433 (Роб 06.11, L4): набрать розыск на 100, ехать автопилотом 70 с, шкала спадёт до 0; в smoke.txt строки HNRV (шкала/защёлка/число копов/ближайший коп) раз в секунду
+# и HNR markcap (правка 433: помеченная погоня снята по пределу). Ожидание на новом коде: после HNRV heat=0.000 latch=0 строка police=0 не позже HNR_MARK_CAP_S (6 с) спустя
+scene F_433_L4
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+wait 3
+flag nobust 1
+flag drive 110
+wait 14
+flag hnr 100
+wait 90
+flag stop
+wait 2
+end
