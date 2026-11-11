@@ -859,6 +859,7 @@ static void optionsRun(int mainSel, void **fbp) {
         optFlyMovie(0, mainSel, fbp);   // сверка g09b-menu (M3 №1): камера летит к ТВ (975–1005), потом ролик
         char rmv[24]; snprintf(rmv, sizeof rmv, "%s.rmv", MOVIES[r]); msnMovie(rmv, fbp);
         optFlyMovie(1, mainSel, fbp);   // и обратно (1005–1035)
+        if (movieTv105 && uiScrReady()) { unsigned av2_ = moviesAvail(); for (int k = 0; k < 9; k++) uiScrEnable(OPT_MOVIES, k, av2_ >> k & 1u); for (int r2_ = 0; r2_ < uiScrRows(0); r2_++) uiScrEnable(0, r2_, r2_ == rSound || r2_ == rCredits || r2_ == rMovies); }   // Р-рамка 105: пакет OPTIONS открыт заново после ролика
         sceCtrlPeekBufferPositive(&pad, 1); prev = pad.Buttons | smokePad(); last = sceKernelGetSystemTimeLow();
       }
       if (hit) optLog("menu", scr, sel[scr], r);

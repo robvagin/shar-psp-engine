@@ -352,6 +352,7 @@ void uiScrRays(int style);
 int  uiScrOpen(const char *path);                  // 0 = ок; файл целиком одной аллокацией (как uiInit)
 void uiScrClose(void);                             // освободить: куча как до uiScrOpen
 int  uiScrReady(void);
+const char *uiScrPath(void);                      // путь открытого второго пакета, 0 — не открыт
 void uiScrShow(int screen, int tag, int on);       // теги экрана пакета (Splash: UI_T_LOADING / UI_T_PRESS_START)
 void uiScrTint(int screen, int tag, unsigned abgr); // sprite multiplier; 0 clears, reset on packet close
 extern float uiPressStartBox[5];   // №405 (служебное): часы экрана, x0 y0 x1 y1 «Press START», как нарисована (пульс)

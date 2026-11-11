@@ -2110,12 +2110,15 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
 #ifndef CAR_CRASH_ANG_OLD
 #define CAR_CRASH_ANG_OLD 0
 #endif
+#ifndef CAR_CRASH_ANG_TMAX
+#define CAR_CRASH_ANG_TMAX 1.2f   // fiz105 (решение Роба 11.11: «верни скольжение как в 92–95, переворот дофиксил»): правило CAR_CRASH_ANG действует до этого отношения касательной к нормальной (t = tg угла от нормали); 1e9f — без предела (как 104). Записи PS2 на 26–35° от стены тормозят сильнее (82→7, 82→18), этот вариант дальше от них. 0,9: удар круче ~42° от нормали (пологий к стене, скос ≤ 48° от стены) идёт прежним правилом, а клин на два колеса (удар 17–35° от нормали) по-прежнему погашен
+#endif
           // Коллизия-96 (сверка PS2, плита b47 L4, Публичный-93, 11.2026): о стену под 20–35° к нормали на 82 км/ч оригинал за 6 кадров теряет почти всю скорость (82 → 7 км/ч)
           // и стоит на четырёх колёсах; у порта вдоль стены оставалось ~9 м/с, шины скользили боком и на 1 с клали машину на два колеса (крен 20–50°).
           // Потеря касательной растёт с наклоном к нормали (t = касательная / нормальная до удара): на 17° (b2_ram) остаётся 0,54 прежним правилом, к t = 0,7 (35°) — 5 %, дальше снова растёт (плита b166 L4, 26° от параллели, t ≈ 2: PS2 скользит вдоль стены и за 24 кадра теряет 82 → 18 км/ч, то есть остаётся ≈ 25 %).
           // Берём меньшее из прежнего и этого. -DCAR_CRASH_ANG_OLD=1 — как было
           if (!CAR_CRASH_ANG_OLD && wk < 1.f) { float t = fabsf(vn0) > 1e-3f ? tl / fabsf(vn0) : 0.f;
-            if (t > .31f) { float keep = t < .7f ? .54f - 1.26f * (t - .31f) : .05f + .13f * (fminf(t, 2.f) - .7f); tlNew = fminf(tlNew, tl * (wk + (1.f - wk) * keep)); } }
+            if (t > .31f && t <= CAR_CRASH_ANG_TMAX) { float keep = t < .7f ? .54f - 1.26f * (t - .31f) : .05f + .13f * (fminf(t, 2.f) - .7f); tlNew = fminf(tlNew, tl * (wk + (1.f - wk) * keep)); } }
           if (tl > 1e-4f) { tx /= tl; tz /= tl; } else { tx = tz = 0.f; }
           vel.x = vnNew * nx + tlNew * tx; vel.z = vnNew * nz + tlNew * tz;
         } else { vel.x *= k; vel.z *= k; }
@@ -2958,6 +2961,9 @@ static float hitterK(const Car *x, const Car *y, float tx, float tz) {
   if (-(y->vel[0] * tx + y->vel[2] * tz) / sy < .8660254f) return .5f;
   return 1.f;
 }
+#ifndef CARHIT_SHIFTCAP
+#define CARHIT_SHIFTCAP 0.08f   // fiz105: включено (решение дирижёра 11.11, зависимость от длины кадра); 0.f — прежнее
+#endif
 int carHitCar(Car *a, Car *b, const ColWorld *w) {
   V3 Uc = v3(0.f, 1.f, 0.f);
   if (!CARSLOPE879_OLD) { M3 Ma_ = quatM(a->q), Mb_ = quatM(b->q); V3 s_ = add(Ma_.U, Mb_.U); float l_ = len(s_);
@@ -2985,6 +2991,9 @@ int carHitCar(Car *a, Car *b, const ColWorld *w) {
   float ma = bodyMass(a), mb = bodyMass(b), sa = mb / (ma + mb), sb = ma / (ma + mb);
   // разведение с учётом мира (пункт 6: машина у стены не вдавливается в неё соседкой): каждая сдвигается, насколько
   // пускает мир; недостачу упёршейся берёт другая; упёрлись обе — остаётся перекрытие, его разведёт импульс
+  // fiz105: положение исправляется не больше CARHIT_SHIFTCAP м за вызов (на длинном кадре машина входит в тело глубже: 50 мс × 22 м/с = 1,1 м, и весь «залог» снимался рывком, до 0,3 м за кадр);
+  // остаток перекрытия выводит импульс и следующие кадры. CARHIT_SHIFTCAP=0 — прежнее (весь залог сразу)
+  if (CARHIT_SHIFTCAP > 0.f && depth > CARHIT_SHIFTCAP) depth = CARHIT_SHIFTCAP;
   float da = depth * sa, db = depth * sb;
   float ta = shiftRoom(a, w, nx * da, nz * da), tb = shiftRoom(b, w, -nx * db, -nz * db);
   float ga = da * ta, gb = db * tb, rest = depth - ga - gb;

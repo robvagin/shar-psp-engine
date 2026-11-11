@@ -504,6 +504,7 @@ int main(int argc, char **argv) {
     sibling(fn, "seller96old"); if (sceIoGetstat(fn, &st) >= 0) gameSeller96 = 0;   // L7 m2: продавец и бонус-персонаж, как было
     sibling(fn, "cardinfo96old"); if (sceIoGetstat(fn, &st) >= 0) uiCardInfo96Set(0);   // описание карточки: две строки, как было
     sibling(fn, "camin1041old"); if (sceIoGetstat(fn, &st) >= 0) camIn1041 = 0;
+    sibling(fn, "movietv105old"); if (sceIoGetstat(fn, &st) >= 0) movieTv105 = 0;   // тур 105: ролик при чужом пакете — как было (без рамки)
     sibling(fn, "msncamwallold"); if (sceIoGetstat(fn, &st) >= 0) mcWall103 = 0;   // Р3: наезд с диска без сдвига от стены, как было
     sibling(fn, "msncamfar"); { SceUID f_ = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f_ >= 0) { char b_[16] = {0}; sceIoRead(f_, b_, 15); sceIoClose(f_); float v_ = (float)atof(b_); if (v_ >= 10.f && v_ <= 300.f) camFar1041 = v_; } }   // Р3: длина наезда числом (метры от игрока)
     sibling(fn, "msncamshort96"); if (sceIoGetstat(fn, &st) >= 0) mcShort96 = 1;   // Р3: синтетический наезд 1246 вместо родных (файл)
@@ -1734,6 +1735,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "ramp1050")) colRamp1050 = sc.a != 0.f;   // №1050: flag ramp1050 0 — торец тонкой стенки гасит машину (красный контроль)
         else if (!strcmp(sc.name, "ramprail1050")) colRampRail1050 = sc.a != 0.f;   // №1050 (Б): flag ramprail1050 0 — торцы бортов держат (красный контроль)
         else if (!strcmp(sc.name, "camexit1170old")) camExit1170 = sc.a == 0.f;   // №1170: flag camexit1170old 1 — выход из наезда по прямой (красный контроль)
+        else if (!strcmp(sc.name, "movietv105")) movieTv105 = sc.a != 0.f;   // flag movietv105 0 — как было (красный контроль)
         else if (!strcmp(sc.name, "msncamfar")) camFar1041 = sc.a;   // Р3: flag msncamfar N — длина наезда, метры
         else if (!strcmp(sc.name, "msncamwall")) mcWall103 = sc.a != 0.f;   // Р3: flag msncamwall 0 — без сдвига от стены (красный контроль)
         else if (!strcmp(sc.name, "msncamshort96")) mcShort96 = sc.a != 0.f;   // 1246: flag msncamshort96 0 — наезды с диска (красный контроль)

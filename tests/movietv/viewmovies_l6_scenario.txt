@@ -1,0 +1,33 @@
+flag menu
+wait 12
+press down
+wait 1
+press down
+wait 1
+press down
+wait 1
+press cross
+wait 5
+flag moviesseen 511
+press down
+wait 1
+press cross
+wait 5
+press down
+wait .6
+press down
+wait .6
+press down
+wait .6
+press down
+wait .6
+press down
+wait .6
+press down
+wait .6
+shot list
+press cross
+wait 14
+shot mid
+wait 1.5
+end

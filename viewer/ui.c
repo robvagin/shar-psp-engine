@@ -616,6 +616,8 @@ static void pakSet(const UiPak *p) {
   memcpy(menuOff, p->menuOff, sizeof menuOff);
 }
 int uiScrReady(void) { return scrPak.H != 0; }
+static char scrOpenPath[320];   // путь открытого второго пакета (Р-рамка 105: ролик знает, чей экран открыт под ним)
+const char *uiScrPath(void) { return scrPak.H ? scrOpenPath : 0; }
 // uiScrRowText: текст строки k экрана sc второго пакета из кода (слоты сохранений, viewer/savemenu.c). Своя таблица на каждый
 // экран: подпись слота 0 не должна попадать на кнопку 0 экрана вопроса/сообщения (было 28.09: CONTINUE -> «LEVEL 1 28/09»)
 static const char *scrRowTxt[UI_SCREEN_MAX][12];
@@ -638,7 +640,7 @@ const char *uiScrRowShown(int sc, int row) {   // что нарисовано в
 void uiScrClose(void) {
   if (scrPak.pak && scrPak.pak != warmPak.pak) pakFreeAll(scrPak.pak, scrPak.seg);
   if (scrPak.texPix) free((void *)scrPak.texPix);
-  memset(&scrPak, 0, sizeof scrPak); memset(scrRowTxt, 0, sizeof scrRowTxt); memset(scrTint, 0, sizeof scrTint);
+  memset(&scrPak, 0, sizeof scrPak); memset(scrRowTxt, 0, sizeof scrRowTxt); memset(scrTint, 0, sizeof scrTint); scrOpenPath[0] = 0;
 }
 void uiScrWarmClear(void) {
   if(warmPak.pak && scrPak.pak==warmPak.pak)uiScrClose();
@@ -655,6 +657,7 @@ int uiScrWarm(const char *path) {
 int uiScrWarmReady(const char *path){return warmPak.H&&path&&!strcmp(path,warmPath);}
 int uiScrOpen(const char *path) {
   uiScrClose();
+  snprintf(scrOpenPath, sizeof scrOpenPath, "%s", path ? path : "");
   if(warmPak.H && path && !strcmp(path,warmPath)){
     scrPak=warmPak;
     unsigned n=warmPak.H->ntex?warmPak.H->ntex:1;

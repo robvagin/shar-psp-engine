@@ -128,7 +128,7 @@ void (*trfFadeHook)(float a); int trfFadeOn = !TRFFADE1202_OLD; unsigned trfFade
 #define TRF_SV_LANECHG_OLD 0   // 8.2/T5 (10, 26): смена полосы
 #endif
 #ifndef TRF_SV_DODGE_OLD
-#define TRF_SV_DODGE_OLD 0     // 8.1/T4 (9, 25): уворот от машины игрока
+#define TRF_SV_DODGE_OLD 1     // fiz105 (Роб 11.11: «NPC сами уворачиваются, как будто скользит, выталкивает»): ВЫКЛЮЧЕН по умолчанию. Правило 8.1/T4 (9, 25) взято чтением исходника, записей PS2 с уходом нет; наш уход = занос с углом колёс 120° (0,8 с): боковой уход 7 м, поворот 100–160°, угол кузов/скорость до 74° (tests/fiz105/dodge.c). 0 — включить (-DTRF_SV_DODGE_OLD=0), код цел
 #endif
 #ifndef TRF_SV_REJOIN_OLD
 #define TRF_SV_REJOIN_OLD 0    // P03-25, 8.7 (21, 44): условия возврата на полосу

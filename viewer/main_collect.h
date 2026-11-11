@@ -481,6 +481,12 @@ static void palTone(void *pal) {
   sceKernelDcacheWritebackRange(pal, 1024);
 }
 static int tvFrameOn = 1;
+// Тур Роба на 105: «на некоторых видео нет нашей рамки-телевизора» (VIEW MOVIES: ролик шёл при открытом пакете OPTIONS, а рамку рисовал экран 3 ЧУЖОГО пакета). Теперь ролик сам закрывает чужой
+// второй пакет, открывает boot.shr (экран рамки) и после ролика возвращает прежний пакет. MOVIETV105_OLD=1 / flag movietv105 0 / файл movietv105old — как было
+#ifndef MOVIETV105_OLD
+#define MOVIETV105_OLD 0
+#endif
+static int movieTv105 = !MOVIETV105_OLD;
 // правка Роба 89 (30.09): рамка меню на всех начальных экранах (лицензия, загрузка, титульный) — поверх экрана пакета boot.shr
 static int scrTvOver;
 #define SCR_CLOSE() (uiScrClose(), scrTvOver = 0)
@@ -649,6 +655,9 @@ static void msnMovie1(const char *rmv, void **fbp) {
   if (fmvWorld && !FMV_STOPMUSIC_OLD && !strcmp(nm, "fmv7")) sndMusic(SND_MUS_OFF);   // SetFMVInfo("fmv7.rmv","stopmusic") в m8l.mfk уровня 7: второй аргумент в данных; до хоста он не доходит (fmvCb получает только имя) — по имени из данных
   if (fmvWorld) movieWorldFade(fbp);   // P15-04: мир темнеет до чёрного за 0,5 с линейно, ролик цели стартует после
   sndMaster(0.f);
+  char keepPak[320]; keepPak[0] = 0;
+  if (movieTv105 && tvFrameOn && uiScrReady()) { char bf_[256]; sibling(bf_, "boot.shr"); const char *p_ = uiScrPath(); if (p_ && strcmp(p_, bf_)) { snprintf(keepPak, sizeof keepPak, "%s", p_); uiScrClose(); scrTvOver = 0;
+    if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "MOVIETV105 swap clip=%s kept=%s t=%.1f\n", nm, strrchr(p_, '/') ? strrchr(p_, '/') + 1 : p_, smkT); smkWrite(l_); } } }   // чужой пакет — на время ролика долой
   int err = 0, shot = 0, freed1239 = 0; movieVolSync(); Movie *m = movieOpen1239(fn, &err, fbp, nm, &freed1239);   // Будка-93 (1239): у ролика миссии памяти не проверяли вовсе
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
@@ -673,6 +682,7 @@ static void msnMovie1(const char *rmv, void **fbp) {
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
   if (tvPak) SCR_CLOSE();
+  if (keepPak[0]) { int rr_ = uiScrOpen(keepPak); if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "MOVIETV105 restore rc=%d t=%.1f\n", rr_, smkT); smkWrite(l_); } }   // прежний пакет обратно; его строки вызывающий включает заново
   MovieStats ms; memset(&ms, 0, sizeof ms); if (m) movieClose(m, &ms); else ms.err = err;
   if (fmvWorld) movieBlackTail(fbp);   // P15-04: после ролика 10 кадров сплошного чёрного, потом срез в мир
   movieSystem(0); sndMaster(1.f); movieReturn1239(fbp, freed1239);
