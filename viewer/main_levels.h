@@ -1,11 +1,21 @@
 #include "lvcheck.h"
+#ifndef ZONE3_BUDGET_OLD
+#define ZONE3_BUDGET_OLD 0   // 1 - области при старте все сразу (размер региона не по куче)
+#endif
+#ifndef ZPMUL_UNLOAD_OLD
+#define ZPMUL_UNLOAD_OLD 0   // 1 - таблица zpMul живёт до следующей загрузки уровня, как было
+#endif
 static void camcutLoad(void);   // №1119: определена ниже (камеры-вырезы уровня)
 // ---------- уровни 1–7: набор уровня в памяти, смена уровня (29.09, «уровни 2–7 как в оригинале») ----------
 // Оригинал (данные диска, docs/РЕЦЕПТ_УРОВНЯ.md §1, §9): уровень целиком описан файлами с номером; у каждого своя газета
 // загрузки loading{N} (load.shr, 7 кадров), свой радар l{N}hudmap и фон паузы ingamel{N} (ui.shr уровня), своя музыка и звуки
 // (audio/ уровня). Порт: levelUnload освобождает всё, что прочитали levelLoad и levelLoadAfter; levelUiSnd переоткрывает
 // интерфейс и звук уровня. Куча после круга 1 -> 2 -> 1 — та же ±64 КБ (гейт tests/levels/switch.sh, строки LEVEL)
-void svSurfaceBind(const ColWorld *w, const void *section, unsigned size); void svSurfaceFree(void);   // сверка g12-data P18-04, viewer/surface.c
+#if !COLRING_OLD
+#include "colring.h"
+static void colRingClean(void);   // Коллизия-96: ниже, у lvaSizeForLevel
+#endif
+void svSurfaceBind(const ColWorld *w, const void *section, unsigned size); void svSurfaceFree(void); void svSurfaceBindRing(const ColWorld *w, const void *srf, unsigned srfLen, uint32_t fp, uint32_t ntri);   // сверка g12-data P18-04, viewer/surface.c
 #include "svdata.h"   // сверка g12-data круг 6 (P12-08): объёмы «смена света» из svdata-l<N>.shr
 static unsigned char *svSideBuf;   // файл surf-l<N>.shr (читает svSurfaceSideLoad ниже)
 int svSurfaceSide(const void *side, unsigned n); int svSurfaceHave(void);   // сверка g12-data круг 4: тип поверхности из файла surf-l<N>.shr рядом с уровнем
@@ -16,6 +26,7 @@ static int loadedLevel;                 // чей набор сейчас в п�
 static int uiLevel = 1, sndLevel = 1;   // чей ui.shr / audio/ открыт (на заставке — уровня 1, как раньше)
 static unsigned char *levelData; static void *colMem; static float carLift;
 static int loaderUp;                    // загрузчик клеток запущен (levelUnload ждёт его простоя)
+static void slLightReset(void);   // spritelight.h (Build 95: сброс таблицы света в levelUnload)
 static int lvLeak;                      // отрицательный контроль гейта («flag lvleak»): выгрузка забывает PVS и коллизию
 // №757: тени деревьев уровня — какие текстуры не рисовать (main_render.h TREESH_SKIP). Отпечаток — мультимножество альфы уровня 0 (не зависит от порядка
 // палитры, полубайтов и swizzle): H = Σ mix(альфа) по 64×64 текселам; эталоны посчитаны по картинкам диска (treeshadow.bmp, treeshad_overcast.bmp)
@@ -194,10 +205,14 @@ extern unsigned memmapReport(char *buf, unsigned cap, float t, unsigned freeKB, 
 extern void memmapScan(void);
 extern int memMaxBlockStep(unsigned *lo, unsigned *hi, int iters);   // TEST90 MEMMAP (viewer/memwatch.c, memmap.h)
 extern void memmapSetOn(int on);
+extern void memmapDump(void (*out)(const char *), const char *tag);
+extern void memmapFreeMap(void (*out)(const char *), const char *tag);   // Опора-93: FREEMAP   // Опора-93: MEMLIVE (viewer/memwatch.c)
 static int memmapOff;   // файл memmapold
 static unsigned lvMx0;   // №696: крупнейший блок кучи в момент h0
 static void levelLog(const char *what, unsigned t0, unsigned h0) {   // smoke.txt: строка LEVEL (гейт tests/levels/switch.sh)
   if (!smkOn) return;
+  { extern unsigned smallPoolPages(void), smallPoolLive(void), smallPoolLiveMax(void), smallPoolOver(void); char sp_[96]; snprintf(sp_, sizeof sp_, "SMALLPOOL %s pages=%u live=%u livemax=%u over=%u\n", what, smallPoolPages(), smallPoolLive(), smallPoolLiveMax(), smallPoolOver()); smkWrite(sp_); }
+  if (!strcmp(what, "free") || !strcmp(what, "load")) { memmapDump(smkWrite, what); if (!strcmp(what, "free")) memmapFreeMap(smkWrite, what); }   // Опора-93: живые блоки >= 128 КБ по адресам в момент выгрузки и после загрузки
   char s[440];
   snprintf(s, sizeof s, "LEVEL ev=%s n=%d loaded=%d ms=%.0f heap0=%u heap=%u mx0=%u mx=%u spawn=%.2f,%.2f,%.2f,%.3f cells=%u tex=%u col=%d props=%d sp=%d "
            "traffic=%d msn=%d clt=%d rooms=%d fx=%d ui=%d/%d snd=%d/%d t=%.1f\n", what, gameLevel, loadedLevel,
@@ -445,6 +460,29 @@ static void levelLoadAfter(void) {   // после newGame (порядок ка�
 }
 static void pfClear(void);
 static int propFlatPending1167;   // №1167: предметы разобраны раньше таблицы текстур — пометить куски после её выделения
+#ifndef ZONE3CITYLEAK_OLD
+#define ZONE3CITYLEAK_OLD 0
+#endif
+static int z3CityLeakOff;   // файл zone3cityleakold рядом с EBOOT (cpFlagRead)
+static void zone3EndLevel(const char *why);   // П5 Зоны-95, ниже
+// Лестница-96 + Модели-96: дальние версии клеток (viewer/farcell.h). Читает l{N}/farcells.shr: заголовок, таблица клеток, таблица кусков; клеткам с дальней версией ставит fsize/foff. Нет файла, не сошёлся формат - farOk = 0, всё полное
+static void farcellFree(void) {
+  for (unsigned i = 0; cl && i < ncell; i++) { if (cl[i].swSt == 2 && cl[i].swMem) cpFree(cl[i].swMem); cl[i].swSt = 0; cl[i].swMem = 0; cl[i].fsize = cl[i].foff = 0; cl[i].wantFar = 0; cl[i].ver = 0; }
+  for (int k = 0; k < FAR_SW_MAX; k++) farSwq[k] = -1;
+  farFileFree(); memset(farSwT, 0, sizeof farSwT); memset(farSwSeen, 0, sizeof farSwSeen); memset(farBackT, 0, sizeof farBackT); farSwUniq = farSwRep = 0;
+}
+static void farcellLoad(void) {   // после таблицы кусков pc[] и клеток cl[]: farFileLoad (Модели-96) проверяет ключ и читает таблицы; клеткам с дальней версией ставим fsize/foff
+  farcellFree(); farLoads = farFulls = farSwaps = farSwapFail = farSwapStale = farFarBytes = 0;
+  if (!farOn || !ncell) return;
+  unsigned withFar = 0, kbFull = 0, kbFar = 0;
+  if (farFake) { for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner) { cl[i].fsize = cl[i].size; cl[i].foff = cl[i].off; withFar++; kbFull += cl[i].size >> 10; kbFar += cl[i].size >> 10; } farOk = withFar > 0; strcpy(farPath, "(level.shr, farfake)"); }
+  else {
+    levelFile(farPath, "farcells.shr");
+    if (!farFileLoad(farPath, levelShr)) { if (smkOn) { char s_[300]; SceIoStat st_; snprintf(s_, sizeof s_, "FARCELL level=%d on=0 file=none_or_bad path=%s exists=%d level=%s ncell=%u npc=%u\n", gameLevel, farPath, sceIoGetstat(farPath, &st_) >= 0, levelShr, ncell, npc); smkWrite(s_); } return; }
+    for (unsigned i = 0; i < ncell; i++) { unsigned off, sz; if (!cl[i].owner && farCellOnDisk((int)i, &off, &sz) && sz) { cl[i].fsize = sz; cl[i].foff = off; withFar++; kbFull += cl[i].size >> 10; kbFar += sz >> 10; } }
+    if (!withFar) farFileFree(); }
+  if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "FARCELL level=%d on=%d fake=%d cells=%u with_far=%u full_kb=%u far_kb=%u\n", gameLevel, farOk, farFake, ncell, withFar, kbFull, kbFar); smkWrite(s_); }
+}
 static void levelUnload(void) {   // всё, что держит набор уровня, — обратно в кучу (ui.shr и audio/ — levelUiSnd при чтении)
   if (starve1060 >= 0.f) { heapLeft(1000.f); starve1060 = -1.f; }   // №1060 служебное: потребитель уровня умер вместе с ним
   carLtReset();   // №853: длинные треугольники машин уровня (свой участок памяти)
@@ -471,13 +509,14 @@ static void levelUnload(void) {   // всё, что держит набор ур
   if(collAsyncFd>=0){sceIoClose(collAsyncFd);collAsyncFd=-1;}   // ТЕСТ90 П1: collStreamFree уже дождался фонового чтения
   if(collStreamFd>=0){sceIoClose(collStreamFd);collStreamFd=-1;}
   #endif
-  haveColl = 0; free(collPak); collPak = 0; free(cxTex); cxTex = 0; cxNtex = 0; G.pColl = 0;
+  haveColl = 0; lvaFree(collPak); collPak = 0; free(cxTex); cxTex = 0; cxNtex = 0; G.pColl = 0;
   // клетки города: очередь загрузчика пуста, он простаивает (ждёт семафор и клеток не трогает) — потом из кучи
   lqn = 0; __asm__ volatile("" ::: "memory");
   { LdWait lw_ = {0}; while (loaderUp && (!loaderIdle || loaderBusy)) { loaderWaitStep(&lw_, "unload", 0, 0); ldWaitLimit(&lw_, "unload", WAITLIMIT_UNLOAD_MS); sceKernelDelayThread(1000); } }
   ringState = 0; tailState = 0;   // загрузка 2 п.5/6: задания прежнего уровня сняты
   pfClear();
   for (unsigned i = 0; i < ncell; i++) unloadCell(&cl[i]);
+  farcellFree();   // Лестница-96
   stInit = 0; loadedBytes = 0;
   if (haveTraffic) { carFillFree(); toneBlkDel(traffic.base); trafficFree(&traffic); }
   haveTraffic = 0; trTexBase = 0;
@@ -489,6 +528,9 @@ static void levelUnload(void) {   // всё, что держит набор ур
   haveProps = 0; lvaFree(propSec); propSec = 0; propSecN = 0; propFlatPending1167 = 0;
   svdataFree(); winsprFree();   // сверка g12-data круг 6, №1099
   if (!lvLeak) { if (haveCol) { svSurfaceFree(); free(svSideBuf); svSideBuf = 0; colFree(&world); } lvaFree(colMem); }
+#if !COLRING_OLD
+  if (!lvLeak) colRingClean();   // Коллизия-96: после colFree мира (мир кольца уже не читает), пул страниц ушёл с lvaFree(colMem)
+#endif
   haveCol = 0; colMem = 0; memset(&world, 0, sizeof world);  chaseView = 0;   // №639: вид по SELECT не переходит на другой уровень
   haveCarVis = 0; doorHinge = -1; lvlCarOk = -9;   // машина следующего уровня — из его CAR1
   lvlLightOk = -9; skinLightLevel(0, 0, 0, 0);       // свет следующего уровня — из его CAR1 (пока — свет уровня 1)
@@ -498,6 +540,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   lspReset();   // аудит Сборки: таблица света не переживает смену уровня
   dalFree(); dimFree(); dripFree();   // №877, №770
   pvsEnt = 0; pvsPool = 0; pvsW = pvsH = 0; pvsRange = PVS_RANGE;
+  if (pvbOn) { for (int i_ = 0; i_ < 3; i_++) { free(pvbBuf[i_]); pvbBuf[i_] = 0; pvbKey[i_] = -1; } pvbOn = 0; pvbIdx = 0; pvbMask = 0; pvbGrp = 0; }   // П3: буферы разворота PVB1 (сам блок — lvaFree(pvsEnt) выше)
   free(regMask); regMask = 0; regW = regH = 0; regEye = 0xFFFFu;   // правка 95: маска регионов уровня
   free(zg); free(zp); zg = 0; zp = 0; nzg = nzp = zgOn = zgInit = zgStart = 0; regRes = 0xFFFFu; regNn = 0;   // правка 181
   for (unsigned i = 0; i < ntex; i++) if (!tex[i].pre && tex[i].slv[0] && tex[i].slv[0] != tex[i].lv[0]) free(tex[i].slv[0]);   // swizzleAll
@@ -509,11 +552,16 @@ static void levelUnload(void) {   // всё, что держит набор ур
   cgGen++; camLevelGen++; csNearPrevOk = 0; peOk = 0; nfAge = 99; phPrevOk = 0; phHold = 0;   // №654: кэши камеры не переживают уровень
   roadqFree();   // №864
   slLightResetReq = 1; toneJobCancel(); toneBlkDel(levelData); free(cl); cl = 0; free(cellBigF); cellBigF = 0; ncell = 0; lvaFree(levelData); levelData = 0; hm = wl = 0;
+  if (!LVA_WIDE_OLD) { fxFree(); hlodFree(); }   // Build 96 шаг 6: blob fx и hlod лежат в блоке уровня - свободить до lvaRelease (свободить после отдачи блока нельзя: указатель висит)
   lvaReset();   // №775: участок уровня пуст — следующий уровень кладёт резидентную часть, COL1 и PRP2 туда же
-  fxFree();
+  if (!lvLeak) lvaRelease();   // Z1 (Build 95): блок уровня отдан целиком, куча сливается в один кусок до следующей загрузки
+  fxFree();   // (при LVA_WIDE_OLD=0 уже освобождён выше)
   if (pinFree1) {   // ТЕСТ90 память: мелкие кэши прежнего уровня — сейчас, а не в конце загрузки нового (см. main_stream.h, PINFREE_OLD)
     unsigned mb0_ = smkOn ? memMaxBlock() : 0, f0_ = smkOn ? heapFreeBytes() : 0;
     sceGuSync(0, 0); geDeferFlush();   // GE свободен: отложенные освобождения (записи msnart.shr миссий, модели машин миссий — 11 блоков, 0,2–2 МБ) тоже сейчас, а не в первом кадре нового уровня
+    if (!LVA_LEVELBLOCK_OLD) slLightReset();   // Build 95: таблица пятен света прежнего уровня (slL, realloc 21-43 КБ) - сейчас, а не по slLightResetReq в кадре нового уровня: она торчала посреди свободной кучи на границе (FREEMAP L6)
+    if (!LVA_LEVELBLOCK_OLD && !ZPMUL_UNLOAD_OLD) { free(zpMul); zpMul = 0; zpN = 0; zpNpc = 0; zpApplied = 0; free(opqFar); opqFar = 0; pano917Free(); pano917Force = 1; }   // шаг 9в (хвост кучи): и opqFar (npc байт, 8 КБ, calloc там же); слоты панорамы (131 КБ, при отцепленном «месте» лежат в куче) жили до следующей загрузки - теперь прочь при выгрузке, панорамы перечитаются при рисовании: таблица множителей зон 1007б (≈32 КБ, calloc при загрузке уровня) жила до следующей flatListLoad и торчала посреди свободного хвоста - FREEMAP L1/L2 58 % вместо 99
+    zone3EndLevel("unload");   // П5 Зоны-95: отложенные освобождения кончились — области проверяются
     rfSpReset();
     for (int s_ = 0; s_ < SKY_TONE_N; s_++) { free(skyTone[s_].orig); memset(&skyTone[s_], 0, sizeof skyTone[s_]); } skyToneLevel = 0;   // исходные цвета купола неба (2 КБ × 9–26 блоков) тоже были бы пинами до первого кадра нового уровня
     if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "PINFREE site=unload maxblk=%u->%u free=%.2f->%.2f t=%.1f\n", mb0_, memMaxBlock(), f0_ / 1048576.f, heapFreeBytes() / 1048576.f, smkT); smkWrite(s_); }
@@ -625,11 +673,11 @@ static void playerLoad(void) {
   if (!same) {
     bbOp("player", strncmp(fn, base, bl) ? fn : fn + bl, 1);   // самописец: чтение с карты — строка до чтения
     SkinModel *old = homerM; homerM = 0; bbStep = "player-free"; skinFree(old);
-    bbStep = "player-read"; SkinModel *m = skinLoad(fn); bbStep = "player-init"; int ok = m && homerInit(&homer, m) == 0;
+    bbStep = "player-read"; SkinModel *m = skinLoadKeep(fn); bbStep = "player-init"; int ok = m && homerInit(&homer, m) == 0;
     if (!ok && !PLAYER_RETRY_OLD) {   // №775: отказ — причина в ящик (синхронно) и в журнал, одна повторная попытка того же файла, потом Гомер
       playerFailNote(strncmp(fn, base, bl) ? fn : fn + bl, m ? 5 : skinLoadErr);
-      if (m) skinFree(m); m = skinLoad(fn); ok = m && homerInit(&homer, m) == 0; }
-    if (!ok) { if (m) skinFree(m); sibling(fn, "homer.shr"); m = skinLoad(fn); ok = m && homerInit(&homer, m) == 0;   // запасной — Гомер
+      if (m) skinFree(m); m = skinLoadKeep(fn); ok = m && homerInit(&homer, m) == 0; }
+    if (!ok) { if (m) skinFree(m); sibling(fn, "homer.shr"); m = skinLoadKeep(fn); ok = m && homerInit(&homer, m) == 0;   // запасной — Гомер
       if (!ok && !PLAYER_RETRY_OLD) playerFailNote("homer.shr", m ? 5 : skinLoadErr); }
     if (!ok) { if (m) skinFree(m); m = 0; haveHomer = 0; pcPath[0] = 0; }
     else { snprintf(pcPath, sizeof pcPath, "%s", fn); skinWorn = 0; homer.solid = homerSolidAll; homer.solidUser = 0; }
@@ -787,6 +835,106 @@ static void prereadTakeover(unsigned char *data) {
   if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "PREREAD takeover ok=%d from=%u size=%u ms=%u t=%.1f\n", ok, prDone, prSize, (sceKernelGetSystemTimeLow() - t0) / 1000u, smkT); smkWrite(s_); }
   prState = ok ? 2 : 3;   // 3 — главный ниже прочитает резидент по-старому (там же предел замка и экран ошибки)
 }
+// Build 95 Z1 (паспорт уровня): размер блока уровня из заголовка level.shr - резидент (до таблицы кусков, @76), COL1 (до PVS1/PRP2), PRP2 (по своему заголовку) + запас 128 КБ + запас под гэги, PVS и трафик
+// (замер Опоры 08.11: по уровням 2,4-4,3 МБ; LVA_SOFT_KB 2560 - вмещает PVS, остальное по-прежнему в куче: 4608 на L1/L4 оставлял 1-1,4 МБ пустыми). Заголовок не прочитался - прежний размер LVA_BYTES_BASE. LVA_PASSPORT_OLD=1 - постоянный размер, как до паспорта
+#ifndef LVA_PASSPORT_OLD
+#define LVA_PASSPORT_OLD 0
+#endif
+#ifndef LVA_SOFT_KB
+#define LVA_SOFT_KB 2560u
+#endif
+static unsigned lvaFileSize(const char *name) { char fn[256]; levelFile(fn, name); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0; int s = sceIoLseek32(f, 0, PSP_SEEK_END); sceIoClose(f); return s > 0 && s < (8 << 20) ? (unsigned)s : 0; }
+#if !COLRING_OLD
+// Коллизия-96: COL1 кольцом (viewer/colring.c, tools/col_ring_build.py, docs/handoff/КОЛЛИЗИЯ_КОЛЬЦО_ПЛАН_2026-11-08.md). Файл colring.shr рядом с level.shr (сборщик кладёт его на L1 и L4, где COL1 ≈ 6 МБ);
+// нет файла, не сошлись размеры, файл colringold рядом с EBOOT или COLRING_LEVEL_OLD=1 — уровень читает COL1 целиком, как было. Запрос коллизии никогда не отвечает «пусто» из-за кольца: недостающее дочитывается (WATCHDOG colring sync)
+#ifndef COLRING_LEVEL_OLD
+#define COLRING_LEVEL_OLD 0
+#endif
+static ColRing *colRingG; static SceUID colRingFd = -1; static unsigned colRingPoolB; static char colRingPath[256]; static int colRingHave;
+static float colRingLx, colRingLz; static unsigned colRingFrames, colRingEnsures;
+static int colRingIoRead(void *u, unsigned off, void *dst, unsigned n) { (void)u; if (colRingFd < 0) return -1; if (sceIoLseek32(colRingFd, off, PSP_SEEK_SET) != (int)off) return -1; return sceIoRead(colRingFd, dst, n) == (int)n ? 0 : -1; }
+static void colRingLogLine(const char *s_) { if (smkOn) { char l_[220]; snprintf(l_, sizeof l_, "%s t=%.1f\n", s_, smkT); smkWrite(l_); } }
+static int colRingProbe(unsigned colSz) {   // 1 — для этого уровня есть годный colring.shr; colRingPoolB — байт под страницы (кольцо 250 м с запасом и кэшем вне кольца)
+  colRingPoolB = 0; if (COLRING_LEVEL_OLD || bonusTrack || !colSz) return 0;
+  { char fo_[256]; SceIoStat so_; sibling(fo_, "colringold"); if (sceIoGetstat(fo_, &so_) >= 0) return 0; }
+  levelFile(colRingPath, "colring.shr"); SceUID f_ = sceIoOpen(colRingPath, PSP_O_RDONLY, 0); if (f_ < 0) return 0;
+  unsigned h_[64]; int ok_ = sceIoRead(f_, h_, sizeof h_) == (int)sizeof h_; sceIoClose(f_);
+  if (!ok_ || memcmp(h_, "COLR", 4) || h_[1] != 2 || h_[19] != colSz || !h_[35] || h_[35] > 600 || h_[38] > 700) return 0;
+  colRingPoolB = ((h_[38] > h_[35] ? h_[38] : h_[35]) + 48u) * CRING_PAGEB; return 1;   // пул под кольцо 340 м (дальность 250 + загрузка клеток), старые файлы без h[38] — под 250 м
+}
+static void colRingClean(void) {
+  if (colRingG) { ColRingStats *S_ = &colRingG->st; if (smkOn) { char l_[240]; snprintf(l_, sizeof l_, "COLRING end sync=%u/%u load=%u/%u evict=%u/%u ioerr=%u poolshort=%u heappeak=%u respeak=%u blobpeak=%u frames=%u ensures=%u syncwant=%u/%u tiledist=%u/%u/%u/%u/%u/%u farhit=%u/%u kind=%u/%u/%u/%u/%u/%u/%u/%u/%u t=%.1f\n", S_->syncPages, S_->syncTiles, S_->loadPages, S_->loadTiles, S_->evictPages, S_->evictTiles, S_->ioErr, S_->poolShort, S_->heapPeak, S_->residentPeak, S_->blobPeak, colRingFrames, colRingEnsures, S_->syncWantPage, S_->syncWantTile, S_->syncTileDist[0], S_->syncTileDist[1], S_->syncTileDist[2], S_->syncTileDist[3], S_->syncTileDist[4], S_->syncTileDist[5], S_->farHitPage, S_->farHitTile, S_->syncByKind[0], S_->syncByKind[1], S_->syncByKind[2], S_->syncByKind[3], S_->syncByKind[4], S_->syncByKind[5], S_->syncByKind[6], S_->syncByKind[7], S_->syncByKind[8], smkT); smkWrite(l_); }
+    if (smkOn) { for (int q_ = 0; q_ < 12; q_++) if (colRingG->whoN[q_]) { char l_[120]; snprintf(l_, sizeof l_, "COLRING who rel=%ld n=%u fn=%p t=%.1f\n", colRingG->whoRel[q_], colRingG->whoN[q_], (void *)&colGroundMatId, smkT); smkWrite(l_); } }
+    colRingClose(colRingG); colRingG = 0; }
+  if (colRingFd >= 0) { sceIoClose(colRingFd); colRingFd = -1; }
+  colRingHave = 0; colRingFrames = colRingEnsures = 0;
+}
+static int levelColRingAdopt(void) {   // 1 — мир коллизии поднят из кольца; 0 — не вышло (всё убрано), вызывающий читает COL1 целиком
+  colRingFd = sceIoOpen(colRingPath, PSP_O_RDONLY, 0); if (colRingFd < 0) return 0;
+  void *pool_ = colRingPoolB ? lvaAlloc(colRingPoolB) : 0; ColRingIO io_ = { colRingIoRead, 0, colRingLogLine }; int err_ = 0;
+  colRingG = colRingOpen(&io_, pool_, pool_ ? colRingPoolB : 0, &err_);
+  int ok_ = colRingG != 0, ci_ = -99;
+  if (ok_) { if (!MCPROBE_BAKE_OLD) mcColHash = colRingG->mch; ci_ = colInitRing(&world, colRingG); ok_ = ci_ == 0; }
+  if (ok_) {
+    haveCol = 1; colMem = pool_; svSurfaceBindRing(&world, colRingG->srf, colRingG->lenSrf, colRingG->fp, colRingG->ntri);
+    colRingEnsure(colRingG, spawnP[0], spawnP[2]); colRingLx = spawnP[0]; colRingLz = spawnP[2]; colRingHave = 1; colRingEnsures++;
+    if (smkOn) { char l_[220]; snprintf(l_, sizeof l_, "COLRING level=%d on pool_kb=%u need250=%u res_kb=%u mch=%08x t=%.1f\n", gameLevel, colRingPoolB >> 10, colRingG->need250pg, colRingResidentBytes(colRingG) >> 10, colRingG->mch, smkT); smkWrite(l_); }
+    svSurfaceSideLoad(); svDataLoad(); winsprLoad();
+    return 1;
+  }
+  if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "COLRING level=%d fallback open_err=%d init=%d t=%.1f\n", gameLevel, err_, ci_, smkT); smkWrite(l_); }
+  memset(&world, 0, sizeof world); colRingClean(); lvaFree(pool_); return 0;
+}
+static void levelColLegacy(const unsigned char *hdr_, unsigned pvsOff_, unsigned propOff_) {   // кольцо не поднялось: COL1 целиком, как было (из блока уровня или, если не влезет, из кучи)
+  unsigned colOff_ = *(const unsigned *)(hdr_ + 92), end_ = 0; if (pvsOff_ && (!end_ || pvsOff_ < end_)) end_ = pvsOff_; if (propOff_ && (!end_ || propOff_ < end_)) end_ = propOff_;
+  if (!colOff_ || end_ <= colOff_) return;
+  SceUID f_ = sceIoOpen(levelShr, PSP_O_RDONLY, 0); if (f_ < 0) return;
+  unsigned sz_ = end_ - colOff_; void *m_ = lvaAlloc(sz_); sceIoLseek32(f_, colOff_, PSP_SEEK_SET);
+  if (m_ && sceIoRead(f_, m_, sz_) == (int)sz_) levelColAdopt(m_, sz_); else if (m_) lvaFree(m_);
+  sceIoClose(f_);
+}
+static void colRingFrame(float fx, float fz) {   // раз в кадр, вне запросов: кольцо идёт за игроком; скачок дальше 120 м (сторож, телепорт без экрана) — кольцо готовится целиком
+  if (!colRingG) return;
+  { float want_ = drawDist + 80.f; if (want_ < 250.f) want_ = 250.f; if (want_ > 340.f) want_ = 340.f;   // клетки города грузятся до drawDist + 75 (LOAD_DIST): объекты в них спрашивают коллизию, кольцо шире на 5 м
+    if (colRingG->need340pg == 0 && want_ > 250.f) want_ = 250.f;   // файл старого вида (пул под 250 м)
+    float cur_ = colRingRadius(colRingG); if (want_ > cur_ + 8.f || want_ < cur_ - 8.f) colRingSetRadius(colRingG, want_); }
+  float dx = fx - colRingLx, dz = fz - colRingLz; colRingFrames++;
+  if (!colRingHave || dx * dx + dz * dz > 120.f * 120.f) { colRingEnsure(colRingG, fx, fz); colRingEnsures++; colRingHave = 1; }
+  else colRingTick(colRingG, fx, fz);
+  colRingLx = fx; colRingLz = fz;
+  if (smkOn && (colRingFrames % 600u) == 0) { ColRingStats *S_ = &colRingG->st; char l_[200]; snprintf(l_, sizeof l_, "COLRING stat sync=%u/%u load=%u/%u res=%u blobkb=%u syncwant=%u/%u tiledist=%u/%u/%u/%u/%u/%u farhit=%u/%u dd=%.0f t=%.1f\n", S_->syncPages, S_->syncTiles, S_->loadPages, S_->loadTiles, S_->residentPages, S_->blobBytes >> 10, S_->syncWantPage, S_->syncWantTile, S_->syncTileDist[0], S_->syncTileDist[1], S_->syncTileDist[2], S_->syncTileDist[3], S_->syncTileDist[4], S_->syncTileDist[5], S_->farHitPage, S_->farHitTile, drawDist, smkT); smkWrite(l_); }
+}
+#endif
+static void lvaSizeForLevel(void) {
+  if (LVA_OLD || LVA_LEVELBLOCK_OLD || LVA_PASSPORT_OLD || lvaBase || bonusTrack) return;
+  char fn[256]; levelFile(fn, "level.shr"); SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0); if (fd < 0) return;
+  unsigned char hdr[104]; int ok = sceIoRead(fd, hdr, 104) == 104 && !memcmp(hdr, "SHR7", 4);
+  unsigned ncell = *(unsigned *)(hdr + 80), cellOff = *(unsigned *)(hdr + 84), resident = cellOff + 48 * ncell, pvsOff = *(unsigned *)(hdr + 88), colOff = *(unsigned *)(hdr + 92), propOff = *(unsigned *)(hdr + 96);
+  unsigned colSz = 0, propSz = 0;
+  if (ok) {
+    if (!LEVEL_TAIL_OLD && *(unsigned *)(hdr + 76) > 104 && *(unsigned *)(hdr + 76) < resident) resident = *(unsigned *)(hdr + 76);
+    unsigned end = 0; if (pvsOff && (!end || pvsOff < end)) end = pvsOff; if (propOff && (!end || propOff < end)) end = propOff; if (colOff && end > colOff) colSz = end - colOff;
+    if (propOff) { unsigned char ph[64]; sceIoLseek32(fd, propOff, PSP_SEEK_SET); int pn = sceIoRead(fd, ph, 64); propSz = levelPropSize(ph, pn); } }
+  sceIoClose(fd);
+  if (!ok || !resident || resident > (40u << 20) || colSz > (20u << 20) || propSz > (10u << 20)) return;   // заголовок не годится - прежний размер
+#if !COLRING_OLD
+  if (colSz && colRingProbe(colSz)) colSz = colRingPoolB;   // Коллизия-96: COL1 в блок уровня не кладётся, вместо него пул страниц кольца
+#endif
+  static unsigned lvaBytesDef; if (!lvaBytesDef) lvaBytesDef = lvaBytes;   // прежний постоянный размер (17,96 МБ): потолок запаса
+  unsigned core = resident + colSz + propSz + (128u << 10), full = core + (LVA_SOFT_KB << 10);
+  lvaBytes = ((full <= lvaBytesDef ? full : (core > lvaBytesDef ? core : lvaBytesDef)) + 63u) & ~63u;   // L2-L7: точный размер + запас под PVS/гэги (меньше прежнего); L1/L4: без запаса сверх прежних 17,96 МБ (запас блока не добавляет памяти, только переносит PVS из кучи)
+  lvaWideB = 0;
+  if (!LVA_WIDE_OLD) {   // Build 96 шаг 6 (Fable): к блоку уровня хвост под fx.shr, traffic.shr (читает загрузчик) и hlod.shr
+    unsigned w = 0, n_;
+    if (!pfOld && loaderUp) { if ((n_ = lvaFileSize("traffic.shr"))) w += ((n_ + 63u) & ~63u) + 64u; if ((n_ = lvaFileSize("fx.shr"))) w += ((n_ + 63u) & ~63u) + 64u; }
+    if ((n_ = lvaFileSize("hlod.shr"))) w += ((n_ + 63u) & ~63u) + 64u;
+    lvaBytes += w; lvaWideB = w; }   // основная часть - прежняя (L1/L4 без запаса сверх 17,96 МБ: больший запас забирает временный буфер хвоста таблиц и пакет гэгов всё равно в кучу, замер 08.11), хвост - ровно под файлы, что раньше лежали в куче
+  if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "LVAPASS level=%d res=%u col=%u prop=%u soft_kb=%u block=%u\n", gameLevel, resident, colSz, propSz, LVA_SOFT_KB, lvaBytes); smkWrite(l_); }
+}
+#ifndef ZONE3_EARLY_OLD
+#define ZONE3_EARLY_OLD 0   // 1 - как было (области после блока уровня). 0 (Build 95 шаг 9в) - один регион областей сразу над Z0, до блока уровня; уступка уровню только сжатием с верхнего края (zone3.h), прицепка обратно на тот же адрес
+#endif
+static void zone3Boot(void); static void zone3FitLevel(void); static unsigned z3FitLvaB;   // шаг 9в: ниже по файлу
 static void levelPreread(void) {
   if (!prereadOld) loaderEnsure();
   if (prereadOld || !loaderUp || levelData || prState || prBuf) {
@@ -798,6 +946,8 @@ static void levelPreread(void) {
   if (!LEVEL_TAIL_OLD && *(unsigned *)(hdr + 76) > 104 && *(unsigned *)(hdr + 76) < resident) resident = *(unsigned *)(hdr + 76);   // таблицы кусков и клеток (хвост) в участок не читаются: levelLoad берёт их отдельно
   unsigned dend = lmapDenseEnd((unsigned)hw_, (unsigned)hh_); SceIoStat st; levelFile(lf, "lmap.shr");
   unsigned start = (!LMAP_OLD && dend < resident && sceIoGetstat(lf, &st) >= 0) ? dend : 0;
+  lvaSizeForLevel();
+  if (!ZONE3_EARLY_OLD && !LVA_LEVELBLOCK_OLD) { zone3Boot(); z3FitLvaB = lvaBase ? 0u : (unsigned)LVA_BYTES; zone3FitLevel(); z3FitLvaB = 0; }   // шаг 9в: области - до первого блока уровня, и сверка с уровнем - ДО блока: предчтение берёт блок раньше levelLoad и садился на домашний адрес отцепленной области (regrow-miss на каждом уровне)
   lvaInit(); prBuf = lvaAlloc(resident); if (!prBuf) return;
   snprintf(prPath, sizeof prPath, "%s", fn); prOff = start; prSize = resident; prDone = 0; __asm__ volatile("" ::: "memory"); prState = 1; ldSignal();
   if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "PREREAD start off=%u size=%u t=%.1f\n", start, resident, smkT); smkWrite(s_); }
@@ -902,14 +1052,17 @@ static void texToonStat(Tex *t, const unsigned char *pal) {   // pal — ИСХ�
 #define TXB_CH 24
 typedef struct { char magic[4]; unsigned rev, ntex, tkey, tpct, pad[3]; } TxbHead;
 typedef struct { unsigned in, out; unsigned char ts[8]; unsigned char fl[16]; unsigned char pal[1024]; } TxbRec;   // fl — поля flat* (texToonStat → flatScan пишет их, когда заливка не из файла)
-static int texBakeOld = TEXBAKE_OLD, texBakeDump, texBakeCheck, texBakeCorrupt;
+static int texBakeOld = TEXBAKE_OLD, texBakeDump, texBakeCheck, texBakeCorrupt, texBakeDiag;   // texBakeDiag — файл-флаг texbakediag: печать составляющих ключа первых трёх записей с miss (диагностика расхождения PSP и эмулятора, правка 09.11)
 static struct { SceUID rd, wr; int ok; unsigned n, tk, tp, used, live, miss, bad, cmp, mismatch, firstBad; TxbRec *buf; unsigned bufAt, bufN; } txb;
 static unsigned txbFnv(const void *p, unsigned bytes, unsigned h) { const unsigned *w = (const unsigned *)p; for (unsigned i = 0; i < bytes / 4; i++) h = (h ^ w[i]) * 16777619u; return h; }
+static unsigned txbMix(const Tex *t, unsigned tk, unsigned tp) {   // метки/размеры/ключ тона ключа входа (вынесено для диагностики texbakediag; значение то же)
+  return ((unsigned)t->w << 16 | (unsigned)t->h) ^ ((unsigned)t->levels << 24) ^ (t->t4 ? 1u << 3 : 0u) ^ (t->pre ? 1u << 4 : 0u) ^ ((unsigned)t->tstat[4] << 8) ^ (t->ground ? 1u << 20 : 0u) ^ (flatFromFile ? 1u << 21 : 0u) ^ tk * 2654435761u ^ tp << 12 ^ TXB_REV << 5;
+}
 static unsigned txbIn(const Tex *t, unsigned tk, unsigned tp) {
   unsigned h = txbFnv(t->pal, 1024, 2166136261u);
   unsigned rb = (unsigned)texRowBytes(t->t4, t->pre, t->w), rows = t->pre ? ((unsigned)t->h + 7) & ~7u : (unsigned)t->h, nw = rb * rows / 4, st = nw > 128 ? nw / 128 : 1; const unsigned *px = (const unsigned *)t->lv[0];
   for (unsigned i = 0; px && i < nw; i += st) h = (h ^ px[i]) * 16777619u;   // выборка ≤ 128 слов верхнего мипа: texToonStat читает точки, одна палитра ключом мало
-  unsigned m = ((unsigned)t->w << 16 | (unsigned)t->h) ^ ((unsigned)t->levels << 24) ^ (t->t4 ? 1u << 3 : 0u) ^ (t->pre ? 1u << 4 : 0u) ^ ((unsigned)t->tstat[4] << 8) ^ (t->ground ? 1u << 20 : 0u) ^ (flatFromFile ? 1u << 21 : 0u) ^ tk * 2654435761u ^ tp << 12 ^ TXB_REV << 5;
+  unsigned m = txbMix(t, tk, tp);
   return (h ^ m) * 16777619u ^ rb;
 }
 static unsigned txbOut(const TxbRec *r) { return txbFnv(r->fl, 16, txbFnv(r->ts, 8, txbFnv(r->pal, 1024, 2166136261u))); }
@@ -918,7 +1071,7 @@ static void txbFlSet(Tex *t, const unsigned char *f) { memcpy(&t->flatC, f, 4); 
 static void txbBegin(unsigned ntexLevel) {
   memset(&txb, 0, sizeof txb); txb.rd = txb.wr = -1; txb.n = ntexLevel; txb.tk = toneKey(); txb.tp = (unsigned)toneToonTexPct();
   char fn[256];
-  if (!texBakeOld && !texBakeDump && toneToon() && !palToneOff) {
+  if (!texBakeOld && (!texBakeDump || texBakeDiag) && toneToon() && !palToneOff) {   // texbakediag вместе с texbakedump: печёный файл открыт только для диагностики miss (в дампе не используется)
     levelFile(fn, "texbake.shr"); txb.rd = sceIoOpen(fn, PSP_O_RDONLY, 0);
     if (txb.rd >= 0) { TxbHead h; if (sceIoRead(txb.rd, &h, sizeof h) == (int)sizeof h && !memcmp(h.magic, "TXB1", 4) && h.rev == TXB_REV && h.ntex == ntexLevel && h.tkey == txb.tk && h.tpct == txb.tp &&
         (txb.buf = memalign(64, sizeof(TxbRec) * TXB_CH))) txb.ok = 1; else { sceIoClose(txb.rd); txb.rd = -1; } } }
@@ -935,6 +1088,14 @@ static const TxbRec *txbRec(unsigned i, unsigned ink) {
   if (r->in != ink) { txb.miss++; return 0; }
   if (r->out != txbOut(r)) { txb.bad++; return 0; }
   return r;
+}
+static void txbDiag(unsigned i, unsigned ink, const Tex *t) {   // texbakediag: что именно разошлось в ключе (строка TXBMISS в журнале; сверять с печёным in)
+  if (!smkOn) return;
+  unsigned hp = txbFnv(t->pal, 1024, 2166136261u), h = hp;
+  unsigned rb = (unsigned)texRowBytes(t->t4, t->pre, t->w), rows = t->pre ? ((unsigned)t->h + 7) & ~7u : (unsigned)t->h, nw = rb * rows / 4, st = nw > 128 ? nw / 128 : 1; const unsigned *px = (const unsigned *)t->lv[0];
+  for (unsigned k = 0; px && k < nw; k += st) h = (h ^ px[k]) * 16777619u;
+  char s[360]; snprintf(s, sizeof s, "TXBMISS level=%d i=%u in=%08x ink=%08x pal=%08x palpx=%08x m=%08x rb=%u nw=%u w=%d h=%d lv=%d t4=%d pre=%d ts4=%u gr=%d ff=%d tk=%08x tp=%u px0=%08x\n", gameLevel, i, txb.buf[i % TXB_CH].in, ink, hp, h, txbMix(t, txb.tk, txb.tp), rb, nw, t->w, t->h, t->levels, t->t4, t->pre, (unsigned)t->tstat[4], t->ground, flatFromFile, txb.tk, txb.tp, px ? px[0] : 0u);
+  smkWrite(s);
 }
 static void txbPut(unsigned i, unsigned ink, const Tex *t) {
   if (txb.wr < 0 || !txb.buf) return;
@@ -1027,6 +1188,32 @@ static void opq863Apply(const unsigned char *tab) {
 }
 // №1068: PVS1 не влез в запас участка lva (L1/L4) — таблица клеток (≈ 26 КБ) и пул кусками ≤ 256 КБ из кучи (viewer/pvschunk.h) вместо одного блока 2,2–2,6 МБ.
 // fd стоит на таблице клеток PVS1 (сразу за заголовком 32 Б). Разрезать нельзя (формат не тот) — один блок из кучи, как до правки. Не вышло — уровень без PVS, как раньше
+// П3: PVB1 целиком одним чтением в блок уровня (lvaAllocSoft) + три буфера разворота по npc+1 u16 из кучи. 1 — PVB1 принят (pvsEnt указывает на блок, pvbOn), 0 — нет файла или не тот (читается PVS1)
+static int pvbLoad(int tailBg, const unsigned char *tab, unsigned npc) {
+  char fn[256]; levelFile(fn, "pvb.shr"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0;
+  unsigned h[16] = {0}; int ok = 0, why = 0; unsigned sz = (unsigned)sceIoLseek32(f, 0, PSP_SEEK_END); sceIoLseek32(f, 0, PSP_SEEK_SET);
+  if (sceIoRead(f, h, 64) != 64 || memcmp(h, "PVB1", 4)) why = 1;
+  else if ((h[1] != 1 && h[1] != 2) || h[3] != npc || npc > 65535u) why = 2;
+  else if (h[2] != pvs2Sig(tab, npc)) why = 3;
+  else if (h[5] != (unsigned)pvsW || h[6] != (unsigned)pvsH) why = 4;
+  else { unsigned nuniq = h[11], rowB = h[12], ngrp = h[14], ib = (unsigned)pvsW * (unsigned)pvsH * 2u; ib = (ib + 3u) & ~3u; unsigned ver = h[1], mb = ver == 2 ? (nuniq + 1u) * 4u : (nuniq * rowB + 3u) & ~3u;
+    if (nuniq >= 0xFFFFu || (ver == 1 && (!rowB || rowB * 8u < ngrp)) || 64u + ib + mb + (ver == 2 ? h[15] : ngrp * 8u) != sz) why = 5;
+    else { void *m = lvaAllocSoft(sz, 0, tailBg); unsigned short *b[3] = {0, 0, 0};
+      for (int i = 0; i < 3 && m; i++) { b[i] = (unsigned short *)memalign(16, (npc + 1u) * 2u); if (!b[i]) { for (int j = 0; j < i; j++) free(b[j]); lvaFree(m); m = 0; } }
+      if (!m) why = 6;
+      else { sceIoLseek32(f, 0, PSP_SEEK_SET);
+        if (sceIoRead(f, m, sz) != (int)sz) { lvaFree(m); for (int i = 0; i < 3; i++) free(b[i]); why = 7; }
+        else { const unsigned char *c = (const unsigned char *)m;
+          pvbIdx = (const unsigned short *)(c + 64); pvbVer = (int)ver; pvbNpc = npc;
+          if (ver == 2) { pvbOffs = (const unsigned *)(c + 64 + ib); pvbStream = c + 64 + ib + mb; if (pvbOffs[nuniq] != h[15]) { /* смещения не сходятся с длиной потока */ lvaFree(m); for (int i = 0; i < 3; i++) free(b[i]); why = 5; m = 0; } }
+          else { pvbMask = c + 64 + ib; pvbGrp = (const unsigned *)(c + 64 + ib + mb); pvbRowB = rowB; pvbNgrp = ngrp; }
+          if (m) {
+          for (int i = 0; i < 3; i++) { pvbBuf[i] = b[i]; pvbKey[i] = -1; pvbUse[i] = 0; } pvbTick = pvbExpands = pvbHits = 0;
+          pvsEnt = (unsigned *)m; pvsPool = 0; pvbOn = 1; ok = 1; } } } } }
+  sceIoClose(f);
+  if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "PVBLOAD level=%d ok=%d why=%d bytes=%u grp=%u rowb=%u\n", gameLevel, ok, why, sz, h[14], h[12]); smkWrite(s_); }
+  return ok;
+}
 static void pvsLoadChunks(SceUID fd, unsigned nent, unsigned npool, unsigned sz) {
   unsigned eb = nent * 8u, b[PVSCH_MAX + 1]; int k = 0, got = 0, bad = 0;
   unsigned pos = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_CUR); float hb0 = smkOn ? heapFreeBytes() / 1048576.f : 0.f, bk0 = smkOn ? memMaxBlockMB() : 0.f;
@@ -1053,18 +1240,209 @@ static void pvsLoadChunks(SceUID fd, unsigned nent, unsigned npool, unsigned sz)
                            pvsEnt != 0, pvsEnt && !pvsChN, sum_, hb0, bk0); smkWrite(s_); }
 }
 // 1Б: режим пула клеток на этот уровень — файл `cellpoolold` рядом с EBOOT (прежнее: клетки прямо в кучу), `cellpoolcls` (a / b — таблица классов); при живых плитах таблица не меняется
-static void cpSecLine(void) { char l_[360]; cpStatLine(l_, sizeof l_, smkT); smkWrite(l_); }
+// П5 Зоны-95 (Fable-спецификация 08.11, раздел А): зона эпизода — области «миссия» (модели персонажей и машин миссий, картинки миссий) и «место» (комната, пакеты меню/паузы/будки/лавки,
+// ролик, панорамы) одним постоянным блоком, взятым при первой загрузке игры, пока куча цельная. Размеры: файл `zone3sz` рядом с EBOOT («миссия_КБ место_КБ»), по умолчанию 3072 3072 7168.
+// Выключатель: файл `zone3old` рядом с EBOOT или сборка -DZONE3_OLD=1 — клиенты берут память из кучи, как до 95. Отказ области лечат ступени z3ReclaimHook, потом пролив в кучу
+// (WATCHDOG mem who=… zone=… spill — дыра, чинить в корне). Строка ZONE3 — раз в 5 с смоука и перед каждым входом (комната, ролик, будка).
+static unsigned z3FitLvaB;   // шаг 9б: блок уровня ещё не взят - его размер вычитается из свободной кучи при сверке
+static int z3CpFileOld, z3FitOld, z3NoFit, z3NeedOld;   // z3FitOld — файл zone3fitold: прежняя сверка без кольца (красный контроль сторожа круга)
+static int z3CitySlabs;   // файл cityslabs рядом с EBOOT: клетки города лежат в плитах по классам (прежний пул), без файла — каждая клетка своим блоком области (лучший подходящий)
+// Шаг 8 (расчёт tools/z2_sim.py по таблицам клеток, езда 20 мин): плиты 16/32/64/128/192 требуют области города 9,4–12,2 МБ на дальности 220 м, блок по размеру (zone3.h) — 5,1–8,0 МБ (−35–40 %).
+// Хвосты клеток (cpAlloc) остаются в кусках по 256 КБ. CITYDIRECT_OLD=1 / файл cityslabs — как до правки
+#ifndef CITYDIRECT_OLD
+#define CITYDIRECT_OLD 0
+#endif
+static void z3SyncCp(void) { cpOld = z3CpFileOld || !zone3CityOnX(); if (zone3CityOnX() && !z3CitySlabs && !CITYDIRECT_OLD) cpCellsOff = 1; }
+static void z3Log(const char *s) { if (smkOn) smkWrite(s); bbNote(s); }
+static int z3ReclaimHook(int area, const char *who, unsigned need, int step) {
+  (void)who; (void)need; unsigned m0 = zone3MaxFreeX(area);
+  if (area == Z3A_PLACE) { if (step == 1) uiScrWarmClear(); else if (step == 2) mcrPreDropAll(); else return 0; }   // место: тёплый пакет будки, затем предчтение машин миссий
+  else { if (step == 1) mcrPreDropAll(); else return 0; }                                                          // миссия: предчтение машин
+  return zone3MaxFreeX(area) > m0;
+}
+extern unsigned collStreamPlanN, collStreamPlanKB;   // coll_stream.c (99)
+static void z3Line(const char *why) { char s[420]; zone3StatLineX(s, sizeof s, smkT, why); z3Log(s);
+  static unsigned pn_; if (smkOn && collStreamPlanN != pn_) { pn_ = collStreamPlanN; char g_[100]; snprintf(g_, sizeof g_, "GAGPLAN heap_n=%u heap_kb=%u t=%.1f\n", collStreamPlanN, collStreamPlanKB, smkT); smkWrite(g_); } }
+static void zone3Boot(void) {
+  static int done; if (done) return; done = 1;
+#if ZONE3_OLD
+  return;
+#endif
+  char fn[256]; SceIoStat st_; unsigned kb[3] = { 3072, 3072, 7168 };
+  sibling(fn, "zone3old"); if (sceIoGetstat(fn, &st_) >= 0) { if (smkOn) smkWrite("ZONE3CFG off=file\n"); return; }
+  sibling(fn, "zone3sz"); { SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { char b[40] = {0}; sceIoRead(f, b, 39); sceIoClose(f); unsigned a = 0, c = 0, d = 0; for (char *q = b; *q; q++) if (*q == '_' || *q == ',') *q = ' '; int k = sscanf(b, "%u %u %u", &a, &c, &d); if (k >= 2 && a >= 256 && c >= 256) { kb[0] = a; kb[1] = c; if (k == 3) kb[2] = d; } } }   // «миссия_КБ место_КБ город_КБ» (город 0 — без области города)
+  sibling(fn, "zone3fitold"); z3FitOld = sceIoGetstat(fn, &st_) >= 0;
+  sibling(fn, "zone3needold"); z3NeedOld = sceIoGetstat(fn, &st_) >= 0;   // прежняя таблица нужд уровня
+  sibling(fn, "zone3scribble"); { int sc_ = sceIoGetstat(fn, &st_) >= 0;   // шаг 7 Fable: служебная сборка «висячих указателей» — после сброса и освобождения области заливаются 0xFF
+#ifdef ZONE3_SCRIBBLE
+    sc_ = 1;
+#endif
+    { SceIoStat st4_; char f4_[256]; sibling(f4_, "zone3scribble4k"); if (sceIoGetstat(f4_, &st4_) >= 0) sc_ = 2; }   // 4 КБ: дешёвая заливка (только первые 4 КБ блока)
+    zone3SetScribbleX(sc_); if (sc_ && smkOn) { char l_[64]; snprintf(l_, sizeof l_, "ZONE3CFG scribble=%d\n", sc_); smkWrite(l_); } }
+  sibling(fn, "zone3nofit"); z3NoFit = sceIoGetstat(fn, &st_) >= 0;   // служебно (замер нужд уровня): области не отцепляются и не прицепляются по уровню
+  sibling(fn, "zone3tightold"); if (sceIoGetstat(fn, &st_) >= 0) zone3SetTightX(Z3A_PLACE, 0);   // шаг 9в-3: без ужатия «места», как было (сразу отцепка)
+  sibling(fn, "zone3regold"); if (sceIoGetstat(fn, &st_) >= 0 || ZONE3_EARLY_OLD || LVA_LEVELBLOCK_OLD) zone3SetRegionOldX(1);   // шаг 9в: файл — прежняя посадка областей
+  sibling(fn, "cityspill"); cpCitySpill = sceIoGetstat(fn, &st_) >= 0;
+  sibling(fn, "cityslabs"); z3CitySlabs = sceIoGetstat(fn, &st_) >= 0;
+  zone3SetHooks(z3ReclaimHook, z3Log); sibling(fn, "cellpoolold"); z3CpFileOld = sceIoGetstat(fn, &st_) >= 0;
+  unsigned b0 = memMaxBlock ? memMaxBlock() : 0;
+  // шаг 9в (2): размер региона при старте - по куче, а не «12 МБ, а там отцепим»: наибольший цельный кусок за вычетом блока уровня (паспорт, 16-18 МБ) и того, что уровень берёт вне блока и областей (замер ballast 9 на L1: 7,1 МБ, запас 2 МБ).
+  // Иначе на тесной куче области съедали её до блока уровня (heap 0,05 МБ, MEMFAILSZ 16 на старте L1). Не влезшие области прицепит zone3FitLevel, когда уровню хватает. Файл zone3budgetold - прежнее «всё сразу»
+  unsigned budget = 0xFFFFFFFFu; sibling(fn, "zone3budgetold");
+  if (!ZONE3_BUDGET_OLD && sceIoGetstat(fn, &st_) < 0 && b0) { unsigned lv_ = (unsigned)LVA_BYTES + (9u << 20); budget = b0 > lv_ ? b0 - lv_ : 0u; }
+  int ok = zone3InitX(kb[0] << 10, kb[1] << 10, kb[2] << 10, budget);
+  z3SyncCp();   // пул клеток работает только внутри области города (замер 1Б: без зон он вредит)
+  if (smkOn) { char s[300]; snprintf(s, sizeof s, "ZONE3CFG budget_kb=%u on=%d city=%d cpold=%d mission_kb=%u place_kb=%u city_kb=%u blk_before=%.2f blk_after=%.2f free=%.2f home=%x,%x,%x t=%.1f\n", budget >> 10, ok, zone3CityOnX(), cpOld, kb[0], kb[1], kb[2], b0 / 1048576.f, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, heapFreeBytes() / 1048576.f, zone3HomeX(Z3A_MISSION), zone3HomeX(Z3A_PLACE), zone3HomeX(Z3A_CITY), smkT); smkWrite(s); }
+}
+// Зона 2 «город», ступень 3 (спецификация А.5): клетки дальше дальности + 20 м уже отданы, а места под новую нет — дальность ×0,6 на 10 с (возвращает memLadTick), клетки дальше новой дальности прочь.
+// Ступени 1–2 для города — streamer (отдача далёкого при memTight), ступень 4 (мир стоит) — лестница комнат/будки под закрытым экраном. Куча в этом пути не участвует
+// 99: «упёрлись в ёмкость» области города (z2Oom: нужное при этой дальности не умещается) - тот же возврат и потолок «места», что у сторожа круга: через CELLTHRASHREST_QUIET_S секунд без событий дальность растёт
+// плавно (раньше возврат по памяти ждал почти пустую область - на L2 это никогда, дальность стояла 150 м минутами), со второго такого случая подряд - потолок = дальность на начале × 0,85. Событие считается новым,
+// если прошло >10 с от прошлого (повторы z2Oom раз в секунду - один случай). Выключатель - те же CELLTHRASHREST_OLD / CELLTHRASHCEIL_OLD
+static void cellCapEvent(float dd0) {
+  unsigned now = sceKernelGetSystemTimeLow(); int fresh_ = now - cellThrashEvT > 10000000u || !cellThrashEvT;
+  cellThrashHeld = 1; cellThrashEvT = now;
+  if (!fresh_ || cellThrashCeilOff) return;
+  float dx_ = cellThrashPx - cellThrashAx, dz_ = cellThrashPz - cellThrashAz;
+  if (cellThrashCirc > 0 && dx_ * dx_ + dz_ * dz_ > CELLTHRASHCEIL_R * CELLTHRASHCEIL_R) cellThrashCirc = 0;
+  if (cellThrashCirc == 0) { cellThrashAx = cellThrashPx; cellThrashAz = cellThrashPz; cellThrashCeil = 0.f; }
+  cellThrashCirc++;
+  char l_[140]; if (cellThrashCirc >= 2) { float c_ = dd0 * CELLTHRASHCEIL_K; if (c_ < 150.f) c_ = 150.f; cellThrashCeil = c_; }
+  snprintf(l_, sizeof l_, "WATCHDOG cellcap circ=%d dd=%.0f ceil=%.0f t=%.1f\n", cellThrashCirc, dd0, cellThrashCeil, smkOn ? smkT : 0.f); if (smkOn) smkWrite(l_); bbNote(l_);
+}
+static int z2Oom(float x, float y, float z) {
+  if (!memLadOn || memLadStopped()) return 0;
+  cellCapEvent(drawDist);
+  float keep = drawDist; unsigned f0 = zone3FreeTotX(Z3A_CITY), b0 = memMaxBlock ? memMaxBlock() : 0; int n = 0;
+  memLadDdMul = LAD_DD_MUL; memLadShrinkT = sceKernelGetSystemTimeLow(); drawDist = keep * LAD_DD_MUL;
+  for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state != 2) continue; if (cellDist(c, x, y, z) > drawDist + 20.f) { cellThrashSiteNow = 4; unloadCellP(c); n++; } }
+  drawDist = keep; memLadQPush("range", 0);
+  memLadLog("WATCHDOG", "cells", 0, 3, b0, heapFreeBytes(), n ? "city-more" : "city-none"); (void)f0;
+  return n;
+}
+// Области уступают уровню (канон п.13/п.14: зависания нет). Перед загрузкой уровня сверяем кучу с тем, что он снимет вне участка и вне клеток города (КБ по замеру тура 21:04, раздел 2.3 аудита,
+// минус кольцо клеток) плюс запас 1,5 МБ: не хватает — отцепляем пустые области (город, потом место, потом миссию) и отдаём память куче (WATCHDOG zone3 shrink); хватает с запасом —
+// прицепляем обратно (regrow). Город отцеплен — клетки в куче без пула (cpOld, замер 1Б: пул без зоны вредит)
+// Перекалибровка шага 9в (08.11): прежняя таблица {10500, 5000, 7000, 10500, 7000, 8000, 7500} считала и резидент уровня, а он теперь внутри блока уровня (паспорт Опоры, 16-18 МБ) - двойной счёт. Нынешняя = замер вне блока:
+// цепочка L1->L7 без балласта с флагом zone3nofit (области не трогаются): свободное после выгрузки - свободное после загрузки - блок уровня = 8,45 / 4,48 / 4,80 / 9,11 / 3,95 / 4,71 / 6,59 МБ; запас 1,5 МБ прибавляет zone3FitLevel. z3NeedOld / файл zone3needold - прежняя таблица
+static const unsigned z3LevelNeedKB[8] = { 0, 8500, 4500, 4800, 9200, 4000, 4800, 6600 };
+#ifndef Z3_RESERVE_KB
+#define Z3_RESERVE_KB 3072u   // запас сверх замера вне блока (первый запуск с 1536 на ballast 5 дал отказы на старте L1: замер L1 берёт и разовые постоянные блоки)
+#endif
+static const unsigned z3LevelNeedOldKB[8] = { 0, 10500, 5000, 7000, 10500, 7000, 8000, 7500 };
+static const unsigned z3LevelRingKB[8] = { 0, 5000, 3000, 3500, 6300, 3000, 3500, 4800 };   // первый круг клеток (раздел 2.3 аудита: L1 4,1–6,3, L4 6,3, остальные 2,0–4,8 МБ)
+static void zone3FitLevel(void) {
+  if (!zone3WantedX() || z3NoFit) return;
+  int lv_ = gameLevel >= 1 && gameLevel <= 7 ? gameLevel : 4;
+  zone3SetFloorX(lv_ >= 2);   // «место» ужатое не отцепляется совсем с L2 (двери L4 на PSP); на L1 память нужна мисс-арту старта
+  unsigned need = ((z3NeedOld ? z3LevelNeedOldKB[lv_] + 1536u : z3LevelNeedKB[lv_] + Z3_RESERVE_KB)) << 10, ring = z3FitOld ? 0u : z3LevelRingKB[lv_] << 10, hf = heapFreeBytes();
+  // шаг 9в: блок уровня (LVA_BYTES, 16-18 МБ по паспорту) должен лечь ЦЕЛЫМ куском рядом с регионом: пока он не взят, считаем наибольший цельный кусок, а не всю свободную кучу (L2: 34,5 МБ свободно, но цельных 21,5 -
+  // область города прицепилась на 7 МБ, блока на 16 МБ не нашлось - lva miss). ZONE3_REGION_OLD / zone3regold - прежний счёт
+  if (z3FitLvaB && !zone3RegionIsOldX() && !ZONE3_EARLY_OLD && memMaxBlock) { unsigned mb_ = memMaxBlock(); if (mb_ < hf) hf = mb_; }
+  hf = hf > z3FitLvaB ? hf - z3FitLvaB : 0u;
+  char why[64]; snprintf(why, sizeof why, "level=%d need_kb=%u ring_kb=%u heap_kb=%u", gameLevel, need >> 10, ring >> 10, hf >> 10);
+  // кольцо клеток старта лежит в городе; город отцеплен — оно в куче, и уровню нужно ещё и оно (иначе загрузка ходит по кругу: клетки грузятся и отдаются как лишние — зависание на ballast 5)
+  for (int g_ = 0; g_ < 4; g_++) {
+    unsigned want_ = need + (zone3CityOnX() ? 0u : ring);
+    if (hf >= want_) break;
+    unsigned fr_ = zone3ShrinkX(1, why); if (!fr_) break; hf += fr_;
+  }
+  // отложенный блок меню (memLadRes, 448 КБ) при отцепленном «месте» ложился на тике в середину свободного хвоста (458 КБ булавка: FREEMAP L4-L7 80 % при ballast 9). Теперь: перед прицепкой он уходит (домашний адрес
+  // области может быть под ним), после сверки кладётся заново - сразу над регионом, до блока уровня, где он не дробит хвост. ZONE3_REGION_OLD / zone3regold - как было
+  // блок уровня уже взят предчтением (оно сверялось само, до блока): прицепка сейчас упёрлась бы в него на домашнем адресе (regrow-miss), не пробуем
+  int lvaTaken_ = !z3FitLvaB && lvaBase && !zone3RegionIsOldX() && !ZONE3_EARLY_OLD;
+  int resMove_ = !lvaTaken_ && !zone3RegionIsOldX() && !ZONE3_EARLY_OLD && !MEMLADZ_OLD && memLadResOn;
+  if (resMove_ && hf >= need && memLadRes) { free(memLadRes); memLadRes = 0; }
+  if (hf >= need && !lvaTaken_) zone3RegrowX(hf, need, ring, why);
+  if (!lvaTaken_) zone3EnsureFloorX(why);   // шаг 9в-3: с L2 «место» хотя бы ужатым (до блока уровня, на домашний адрес)
+  if (resMove_ && !MEMLADRES0_OLD && !MEMLAD_RESKEEP) { if (memLadRes) { free(memLadRes); memLadRes = 0; } }   // Лестница-96 (Fable шаг 9): при Z3 отложенного блока нет и после посадки областей
+  else if (resMove_ && !zone3AreaOnX(Z3A_PLACE) && !memLadRes) { memLadRes = memalign(64, memLadResKb << 10); if (memLadRes) { memLadResN++; memset(memLadRes, 0, 64); } }   // memLadResPut на загрузке молчит (лестница стоит) - берём сами
+  z3SyncCp();
+}
+static void cellThrashAct(int fires, unsigned total, unsigned heapFree) {
+  unsigned now = sceKernelGetSystemTimeLow();
+  cellThrashHeld = 1; cellThrashEvT = now;
+  if (!cellThrashCeilOff) {   // потолок «места»: второй круг подряд - дальность на начале круга × 0,85 (не ниже 150), якорь - здесь
+    float dx_ = cellThrashPx - cellThrashAx, dz_ = cellThrashPz - cellThrashAz;
+    if (cellThrashCirc > 0 && dx_ * dx_ + dz_ * dz_ > CELLTHRASHCEIL_R * CELLTHRASHCEIL_R) cellThrashCirc = 0;   // круги подряд - в одном месте
+    if (cellThrashCirc == 0) { cellThrashAx = cellThrashPx; cellThrashAz = cellThrashPz; cellThrashCeil = 0.f; }
+    cellThrashCirc++;
+    if (cellThrashCirc >= 2) { float c_ = drawDist * CELLTHRASHCEIL_K; if (c_ < 150.f) c_ = 150.f; cellThrashCeil = c_; { char l_[120]; snprintf(l_, sizeof l_, "WATCHDOG cellthrash ceil=%.0f circ=%d t=%.1f\n", c_, cellThrashCirc, smkOn ? smkT : 0.f); if (smkOn) smkWrite(l_); bbNote(l_); } }
+  }
+  memLadDdMul = fires >= 3 ? 0.4f : LAD_DD_MUL; memLadShrinkT = now; memLadQPush("range", 0);
+  char s[200]; snprintf(s, sizeof s, "WATCHDOG cellthrash fires=%d total=%u dd_mul=%.1f heap=%.2f giveup=%d sites=trim:%u,retry:%u,ladder:%u,z2:%u dd=%.0f t=%.1f\n", fires, total, memLadDdMul, heapFree / 1048576.f, fires >= 3, cellThrashSite[1], cellThrashSite[2], cellThrashSite[3], cellThrashSite[0], drawDist, smkT);
+  if (fires <= 6 || fires % 20 == 0) { if (smkOn) smkWrite(s); bbNote(s); }   // строки не чаще нужного: при вечном круге счётчик fires растёт, журнал нет
+}
+static void zone3EndLevel(const char *why) {   // конец уровня: все владельцы уже отдали блоки — «миссия» стирается, «место» проверяется (живые блоки = утечка владельца, строка WATCHDOG zone3 leak)
+  if (!zone3OnX()) return;
+  zone3ResetX(Z3A_MISSION, why); zone3CheckX(Z3A_PLACE, why); if (!ZONE3CITYLEAK_OLD && !z3CityLeakOff) zone3LeakCityX(why); z3Line(why);   // «место» хранит слоты панорамы на весь уровень (pano917.h их не отдаёт) — только строка, не утечка
+}
+static void cpSecLine(void) { char l_[360]; static unsigned z3n; cpStatLine(l_, sizeof l_, smkT); smkWrite(l_); if (zone3OnX() && ++z3n % 5u == 1u) z3Line("tick"); }
 static void cpFlagRead(void) {
   char fn[256]; SceUID f;
+  sibling(fn, "zone3cityleakold"); if ((f = sceIoOpen(fn, PSP_O_RDONLY, 0)) >= 0) { sceIoClose(f); z3CityLeakOff = 1; }
   sibling(fn, "cellpoolold"); if ((f = sceIoOpen(fn, PSP_O_RDONLY, 0)) >= 0) { sceIoClose(f); cpOld = 1; }
   sibling(fn, "cellpoolon"); if ((f = sceIoOpen(fn, PSP_O_RDONLY, 0)) >= 0) { sceIoClose(f); cpOld = 0; }   // CELLPOOL_ON=0 по умолчанию: файл включает пул
   sibling(fn, "cellpooltails"); if ((f = sceIoOpen(fn, PSP_O_RDONLY, 0)) >= 0) { sceIoClose(f); cpOld = 0; cpCellsOff = 1; }   // замер: пул только для хвостов клеток
   sibling(fn, "cellpoolcls"); if ((f = sceIoOpen(fn, PSP_O_RDONLY, 0)) >= 0) { char t = 'a'; if (sceIoRead(f, &t, 1) == 1) cpSetTable(t == 'b' || t == 'B' ? 'b' : 'a'); sceIoClose(f); }
   if (smkOn) { smkSecHook = cpSecLine; char s_[120]; snprintf(s_, sizeof s_, "CELLPOOLCFG level=%d old=%d ncls=%d top_kb=%u\n", gameLevel, cpOld, cpNCls, cpClsKB[cpNCls - 1]); smkWrite(s_); }
 }
+#ifndef Z0LITE_OLD
+#define Z0LITE_OLD 0   // Build 94 «Z0-лайт»: 1 — постоянные блоки (кольца музыки, модель игрока, спрайты ws) как раньше, на каждый уровень заново / по первому показу
+#endif
+static void wsPreload(void);   // spritelight.h
+extern void *(*collStreamAllocHook)(unsigned n); extern void (*collStreamFreeHook)(void *p);   // coll_stream.c
+static void *collPackAlloc(unsigned n) { return lvaAllocSoft(n, 0, 1); }   // Build 95 Z1: пакет гэгов - в блок уровня, не влезло - в кучу
+static void collPackFree(void *p) { lvaFree(p); }
+// Лестница-96 (срочно, видео Роба на Build 97, L6 после будки: пропали небо и машина игрока, шлейф): небо (куски владельца 2) и кузов машины игрока (владелец 1) лежат в клетках-владельцах (Cell.owner), которых
+// не трогает ни один выброс (стрим, трим, ступени лестницы), и грузятся ОДИН раз в levelLoad. Отказ памяти (раздробленная куча при пересборке после будки) ставил state=3 навсегда: ни неба, ни машины, и кадр без
+// очистки цвета (небо рисуется последним). Теперь: (1) загрузка владельцев идёт через лестницу и до 3 повторов; (2) сторож раз в секунду перечитывает не готовую клетку-владельца (WATCHDOG owner …);
+// (3) пока неба нет целиком, цвет кадра чистится (нет шлейфа). MEMLADOWN_OLD=1 / flag ownerold 1 - как было. Служебно: flag ownerdrop N - выгрузить клетки владельца N (гейт s11)
+#ifndef MEMLADOWN_OLD
+#define MEMLADOWN_OLD 0
+#endif
+static int memLadOwnOld = MEMLADOWN_OLD; static unsigned ownFixN, ownFixFail;
+static void ownLog(const char *what, int i, int tries, int ok) {
+  char l_[200]; snprintf(l_, sizeof l_, "WATCHDOG owner %s cell=%d owner=%u size=%u tries=%d ok=%d blk=%.2f free=%.2f t=%.1f\n", what, i, cl[i].owner, cl[i].size, tries, ok, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, heapFreeBytes() / 1048576.f, smkT);
+  if (smkOn) smkWrite(l_); bbNote(l_);
+}
+#ifndef MEMLADOWNHEAP_OLD
+#define MEMLADOWNHEAP_OLD 0   // 1 / flag ownerheap 0 - владельцы из области «город», как до правки (красный контроль s13)
+#endif
+static int memLadOwnHeap = !MEMLADOWNHEAP_OLD;
+static void ownLoadOne(SceUID fd, int i) { cpCityBypass = memLadOwnHeap; cl[i].state = 0; loadCell(fd, i); cpCityBypass = 0; }
+static int ownCellLoad(SceUID fd, int i, const char *what) {   // клетка-владелец: чтение с лестницей и повторами; 1 - готова
+  Cell *c = &cl[i]; if (c->state != 2) ownLoadOne(fd, i);
+  int t = 0; for (; c->state != 2 && t < 3; t++) {
+    if (memLadOn) memLadder("owner", c->size + (64u << 10), 2); else cellsMakeRoom(c->size + (64u << 10));
+    ownLoadOne(fd, i); }
+  if (t) { ownLog(what, i, t, c->state == 2); ownFixN++; if (c->state != 2) ownFixFail++; }
+  return c->state == 2;
+}
+static short ownIdx[24]; static int ownN, ownKeyN = -1; static const void *ownKeyCl;
+static void ownList(void) { if (ownKeyCl == (const void *)cl && ownKeyN == (int)ncell) return; ownKeyCl = cl; ownKeyN = (int)ncell; ownN = 0; for (unsigned i = 0; i < ncell && ownN < 24; i++) if (cl[i].owner) ownIdx[ownN++] = (short)i; }
+static int ownSkyBad(void) { if (memLadOwnOld || !cl || !ncell) return 0; ownList(); for (int k = 0; k < ownN; k++) if (cl[ownIdx[k]].owner == 2 && cl[ownIdx[k]].state != 2) return 1; return 0; }   // кадр: неба нет целиком
+static void ownerWatch(float dt) {   // раз в секунду: не готовая клетка-владелец (отказ при загрузке уровня или выгрузка) - перечитать
+  static float acc; acc += dt; if (acc < 1.f) return; acc = 0.f;
+  if (memLadOwnOld || !cl || !ncell || !pc || ldOn || loaderBusy || !levelShr[0]) return;
+  ownList(); int bad = 0; for (int k = 0; k < ownN; k++) if (cl[ownIdx[k]].state != 2 && cl[ownIdx[k]].state != 1) bad++;
+  if (!bad) return;
+  SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); if (fd < 0) return;
+  for (int k = 0; k < ownN; k++) { int i = ownIdx[k]; if (cl[i].state == 2 || cl[i].state == 1) continue; ownLog("reload", i, 0, 0); ownCellLoad(fd, i, "reload-done"); }
+  sceIoClose(fd);
+}
 static void levelLoad(void **fbp) {
+  cellThrashCeilReset(); cityCapReset();
   cpFlagRead();
-  lvaInit();   // №775: участок под три крупных куска уровня — при первой загрузке игры (куча ещё чистая), дальше тот же
+  if (!LVA_LEVELBLOCK_OLD) { collStreamAllocHook = collPackAlloc; collStreamFreeHook = collPackFree; }   // Опора-93 шаг 4a: пакет гэгов уровня в блок уровня
+  lvaSizeForLevel();   // №775 + Опора-93 шаг 6: размер блока уровня по паспорту (LVA_PASSPORT_OLD)
+  // Build 95 шаг 9б (замер Опоры на 95c, d3f9f540): области Z3 (12 МБ) лежали ПОСЛЕ блока уровня, и на границе уровня свободная куча делилась ими на два куска ([блок уровня - дыра][области][хвост]:
+  // FREEMAP 17,5 + 10,3 МБ, 56-62 % вместо 99 %). Теперь области (и их отцепка/прицепка по уровню) идут ДО блока уровня, сразу над Z0, а блок уровня берётся последним из больших. ZONE3_EARLY_OLD=1 - как было
+  if (ZONE3_EARLY_OLD || LVA_LEVELBLOCK_OLD) { lvaInit(); zone3Boot(); }
+  else { zone3Boot(); z3FitLvaB = lvaBase ? 0u : (unsigned)LVA_BYTES; }   // блок мог быть взят предчтением следующего уровня (levelPreread) - тогда он уже вычтен из кучи
+  if (!Z0LITE_OLD) { static int z0Once_; if (!z0Once_) { z0Once_ = 1; wsPreload(); } }   // Опора-93 Z0-лайт: после областей, до первого уровня
+  zone3FitLevel();   // уровню хватает кучи? нет — области отцепляются, да — прицепляются обратно
+  if (!(ZONE3_EARLY_OLD || LVA_LEVELBLOCK_OLD)) { z3FitLvaB = 0; lvaInit(); }
   if (fragHeapMB) { fragHeap(fragHeapMB << 20); fragHeapMB = 0; }   // №775 тест: «flag fragheap N» — один раз, перед игроком уровня
   skyHorizonInvalidate();   // a new sky mesh, texture, or palette must be sampled
   BBP(BBP_LOAD);   // правка 103: сторож — долгое чтение уровня видно как фаза load, а не как зависание кадра
@@ -1152,11 +1530,18 @@ static void levelLoad(void **fbp) {
   unsigned propOff = *(unsigned *)(hdr + 96);
   // загрузка 2 п.3: секции читаются в порядке файла (tools/shr_order.py: COL1, PRP2, CAR1, REG1, PVS1 подряд за резидентной частью, потом клетки);
   // LOADORDER_OLD=1 — прежний порядок чтения PVS1, REG1, COL1, PRP2, CAR1 (для файлов прежней раскладки он же и возрастающий)
+#if !COLRING_OLD
+  int colRingUse = 0; { unsigned co_ = *(unsigned *)(hdr + 92), en_ = 0; if (pvsOff && (!en_ || pvsOff < en_)) en_ = pvsOff; if (propOff && (!en_ || propOff < en_)) en_ = propOff; if (co_ && en_ > co_) colRingUse = colRingProbe(en_ - co_); }   // Коллизия-96
+#endif
   int tailBg = 0;   // загрузка 2 п.6: COL1 и PRP2 читает загрузчик (разбор — после таблиц текстур/кусков/клеток, tailFinish ниже)
   { unsigned colOff_ = *(unsigned *)(hdr + 92);
     if (!TAILBG_OLD && loaderUp && colOff_ && propOff && !tailState) {
       unsigned end = 0; if (pvsOff && (!end || pvsOff < end)) end = pvsOff; if (propOff && (!end || propOff < end)) end = propOff;
-      if (end > colOff_) { tailColOff = colOff_; tailColSz = end - colOff_; tailPropOff = propOff; tailCol = tailProp = 0; tailPropSz = 0; tailColAl = tailPropAl = 0; tailBg = 1;
+      if (end > colOff_) { tailColOff = colOff_; tailColSz = end - colOff_;
+#if !COLRING_OLD
+        if (colRingUse) tailColSz = 0;   // Коллизия-96: COL1 не читаем, кольцо поднимет levelColRingAdopt
+#endif
+        tailPropOff = propOff; tailCol = tailProp = 0; tailPropSz = 0; tailColAl = tailPropAl = 0; tailBg = 1;
         __asm__ volatile("" ::: "memory"); tailState = 1; ldSignal(); } } }
   if (!pfOld && loaderUp) { char fn_[256], nm_[32], px_[304]; pfTakeHook = pfTake;   // №PFETCH: целые файлы — следом за хвостом
     levelFile(fn_, "traffic.shr"); pfQueue(fn_, "traffic.shr");
@@ -1173,8 +1558,10 @@ static void levelLoad(void **fbp) {
         pvsOx = pf[0]; pvsOz = pf[1]; pvsCell = pf[2]; pvsW = pu[0]; pvsH = pu[1];
         if (!PVS_FAR_OLD && pu[3] >= 115 && pu[3] <= 1000) pvsRange = (float)pu[3];   // правка 497: дальность списков из заголовка (0 — 115)
         unsigned sz = pvsW * pvsH * 8 + pu[2] * 2;
-        void *m = lvaAllocSoftEx(sz, 0, tailBg, pvsChunkOld);   // №962: запас участка, если COL1/PRP2 уже или заведомо влезут; №1068: не влез — кусками, не одним блоком кучи
-        if (m && sceIoRead(fd, m, sz) == (int)sz) { pvsEnt = m; pvsPool = (unsigned short *)((char *)m + pvsW * pvsH * 8); }
+        int pvbDone = !pvb1Old && pvbLoad(tailBg, tab, npc);   // П3: PVB1 (pvb.shr) вместо PVS1 — 0,5 МБ вместо 2,75; нет файла / подпись другого экспорта — PVS1 как был
+        void *m = pvbDone ? 0 : lvaAllocSoftEx(sz, 0, tailBg, pvsChunkOld);   // №962: запас участка, если COL1/PRP2 уже или заведомо влезут; №1068: не влез — кусками, не одним блоком кучи
+        if (pvbDone) {}
+        else if (m && sceIoRead(fd, m, sz) == (int)sz) { pvsEnt = m; pvsPool = (unsigned short *)((char *)m + pvsW * pvsH * 8); }
         else if (m) lvaFree(m);
         else if (!pvsChunkOld) pvsLoadChunks(fd, (unsigned)(pvsW * pvsH), pu[2], sz);
         if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "PVSLOAD level=%d bytes=%u ok=%d chunks=%d arena=%d old=%d\n", gameLevel, sz, pvsEnt != 0, pvsChN, pvsEnt && lvaOwns(pvsEnt), pvsChunkOld); smkWrite(s_); }   // №1068
@@ -1231,10 +1618,14 @@ static void levelLoad(void **fbp) {
         if (pvsOff && (!end || pvsOff < end)) end = pvsOff;
         if (propOff && (!end || propOff < end)) end = propOff;
         if (!end) end = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_END);
-        unsigned sz = end - colOff; void *m = lvaAlloc(sz);
+        unsigned sz = end - colOff;
+#if !COLRING_OLD
+        if (colRingUse && levelColRingAdopt()) {} else
+#endif
+        { void *m = lvaAlloc(sz);
         sceIoLseek32(fd, colOff, PSP_SEEK_SET);
         if (m && sceIoRead(fd, m, sz) == (int)sz) levelColAdopt(m, sz);
-        else if (m) lvaFree(m);
+        else if (m) lvaFree(m); }
       } }
     } break;
     case 3: {
@@ -1332,7 +1723,7 @@ static void levelLoad(void **fbp) {
     }
     ph3Add(0);
     const TxbRec *br = 0; unsigned ink = 0;   // №bake-3А: запечённые tstat и палитра после тона
-    if (txb.ok || txb.wr >= 0) { ink = txbIn(&tex[i], txb.tk, txb.tp); br = txbRec(i, ink); }
+    if (txb.ok || txb.wr >= 0) { ink = txbIn(&tex[i], txb.tk, txb.tp); unsigned m0_ = txb.miss; br = txbRec(i, ink); if (!br && txb.miss > m0_ && txb.miss <= 3 && texBakeDiag) txbDiag(i, ink, &tex[i]); if (texBakeDump) br = 0; }
     if (br && !texBakeCheck) {
       memcpy(tex[i].tstat, br->ts, 4); tex[i].tstatOk = br->ts[5]; if (!flatFromFile) txbFlSet(&tex[i], br->fl); ph3Add(1);
       if (sky954Need && sky954Need[i]) sky954Build(i, &tex[i]);   // читает исходную палитру: до подмены
@@ -1399,13 +1790,16 @@ static void levelLoad(void **fbp) {
     cl[i].state = 0; cl[i].mem = 0;
   }
   lvaFree(tabBuf); tab = cellTab = 0;   // таблицы скопированы в pc[] и cl[]
-  ldStep("cells"); marksLoad();   // №912
+  ldStep("cells"); farcellLoad(); marksLoad();   // №912; Лестница-96: дальние версии клеток
   if (!FARROAD934_OLD && road934On) road934Load(gameLevel);   // №934: дальние дороги и мосты (road934.shr, ~0,2–0,4 МБ) читаются здесь, под экраном загрузки, а не рывком в кадре
   { char rq_[256]; levelFile(rq_, "roadq864.bin"); roadqLoad(rq_, ncell); }   // №864 пропечка 2: клетки впереди по дороге
   if (tailBg) {   // п.6: дождаться COL1 и PRP2 (загрузчик читал их, пока считались текстуры), разобрать в прежнем порядке: COL1, потом PRP2
     unsigned tw = sceKernelGetSystemTimeLow();
     { LdWait lw_ = {0}; while (tailState == 1) { if (loaderWaitStep(&lw_, "tail", 0, 1)) { tailReadSync(); break; } loadPump(); sceKernelDelayThread(1000); } }   // №LOADWAIT: загрузчик молчит — читаем хвост сами
     tailState = 0;
+#if !COLRING_OLD
+    if (colRingUse) { if (!levelColRingAdopt()) levelColLegacy(hdr, pvsOff, propOff); } else
+#endif
     if (tailCol) levelColAdopt(tailCol, tailColSz);
     if (tailProp) levelPropAdopt(tailProp, tailPropSz);
     tailCol = tailProp = 0;
@@ -1415,7 +1809,7 @@ static void levelLoad(void **fbp) {
   // №RESUME-круг (аудит времени загрузки 16.10): при RESUME / LOAD игрок стартует у своей миссии (L1: в 562 м от spawnP), а фоновый круг вокруг spawnP — 240 клеток, 7 МБ — читался зря
   // (238 клеток потом выбрасывались, 171 дочитывались с ожиданием 606 мс, 7 МБ мешали чтению level.shr). На RESUME круг теперь читает cellsRingAt вокруг настоящей точки старта (loadOneAt).
   // RESUME_RING_OLD=1 или файл resumeringold рядом с EBOOT — прежнее. NEW GAME как раньше
-  if (!svResumeOn || resumeRingOld) cellRingStart(spawnP);   // загрузка 2 п.5: круг клеток у старта читает загрузчик, пока главный грузит остальное
+  if ((!svResumeOn || resumeRingOld) && !ringHeroOn) cellRingStart(spawnP);   // загрузка 2 п.5: круг клеток у старта читает загрузчик, пока главный грузит остальное
   // этап 5: трафик, стоящие машины, пешеходы (1.35 МБ, резидентно). Текстуры машин TRF1 — в конец tex[] (trTexBase)
   ph3T = ph3Now(); memset(ph3Acc, 0, sizeof ph3Acc);
   if (haveCol) { char fn[256]; levelFile(fn, "traffic.shr");
@@ -1453,7 +1847,7 @@ static void levelLoad(void **fbp) {
   if (ldOn) loadFrame(4 * LOAD_RES_SHARE / 6, fbp);
   // машина и небо — сразу; город вокруг старта — cellsRing перед игрой (12а: после главного меню), остальное фоном
   SceUID lfd = sceIoOpen(levelShr, PSP_O_RDONLY, 0);
-  for (unsigned i = 0; i < ncell; i++) if (cl[i].owner) { loadCell(lfd, i); ldStep("owner-cell"); }
+  for (unsigned i = 0; i < ncell; i++) if (cl[i].owner) { if (memLadOwnOld) loadCell(lfd, i); else ownCellLoad(lfd, (int)i, "load"); ldStep("owner-cell"); }
   sceIoClose(lfd); ldStep("cells-done");
   skyPump = LOAD_SMOOTH_OLD ? NULL : loadPump; skyFogColor(); skyPump = NULL; ldStep("sky");
   groundCoverPump = LOAD_SMOOTH_OLD ? NULL : loadPump; groundCoverReset(&groundCover,haveCol?&world:NULL); groundCoverPump = NULL; ldStep("cover");
@@ -1521,6 +1915,13 @@ static int newGameFmv, pauseOld;
 // содержит — она кончается логотипами Fox/Gracie): всё, что ставит игрока, — под той же газетой, до круга клеток: старт миссии
 // строки MISSION SELECT, перенос сценария поглощается (ириса и второй газеты нет), круг клеток — вокруг того места, где игрок
 // начнёт, комнаты и камеры уровня (levelLoadAfter) — тоже под газетой. Прежнее — «flag lvtwice» / -DLOAD_ONE_OLD=1 (красный гейта)
+// Лестница-96 (канон п.14 «одна загрузка вместо двух», вопрос дирижёра по туру 99): фоновый круг клеток читался вокруг машины (spawnP) при входе в уровень, а Гомер вставал в 277-487 м оттуда
+// (L2 277, L3 474, L6 409, L1 487; точка Гомера известна только после newGame/msnStart), и круг у машины сразу выбрасывался (CELLRING released=207 на L3, 182 на L6) - 7 МБ чтения и второй круг у Гомера.
+// Теперь при NEW GAME круг у spawnP не стартует; сразу после newGame (Гомер поставлен) загрузчик читает круг у настоящей точки старта, а главный поток дочитывает остальное под газетой.
+// RINGHERO_OLD=1 / «flag ringhero 0» - как было (круг у spawnP в levelLoad)
+#ifndef RINGHERO_OLD
+#define RINGHERO_OLD 0
+#endif
 static int loadOneRow, loadOneTele;
 // №943 (Роб 24.10: «остаётся миссия "приехать домой"»): при выбранной строке стартовая цель уровня (первая непройденная сюжетная — у L1 «домой» к дому Симпсонов) не ставится:
 // msn_level_start откладывает её (rt->defer_first), строка стартует сама; не вышло — стартует отложенная (mvStartFirstIfIdle). LVDEFER_OLD=1 / «flag lvdeferold 1» — прежнее: два старта подряд
@@ -1532,6 +1933,13 @@ static void loadOneStart(void) {   // под газетой: миссия выб
   loadOneRow = msPendRow;
   if (msPendRow >= 0) { int ok_ = mvMissionSelectStartRow(msPendRow); if (!ok_) mvStartFirstIfIdle(); msPendRow = -1; chase.init = 0; loadPump(); }   // правка 348: миссия строки — под газетой
   float tp[3]; loadOneTele = mvTeleported(tp);   // перенос поглощён: главный цикл не закроет ирис и не откроет вторую газету
+}
+static void loadOnePoint(float c[3]) {   // где игрок начнёт (без журнала): комната - её дверь, пешком - Гомер, иначе машина
+  int ft = onFoot(), room = inRoom() && rs.lastDoor >= 0 && rs.lastDoor < rooms.ndoor;
+  if (room) { const float *d = rooms.door[rs.lastDoor].p; c[0] = d[0]; c[1] = d[1]; c[2] = d[2]; }
+  else if (ft) { c[0] = homer.x; c[1] = homer.y; c[2] = homer.z; }
+  else if (haveCol) { c[0] = car.x; c[1] = car.y; c[2] = car.z; }
+  else { c[0] = spawnP[0]; c[1] = spawnP[1]; c[2] = spawnP[2]; }
 }
 static void loadOneAt(float c[3]) {   // где игрок начнёт: в комнате (L4, L7 — Гомер дома) — у её двери в городе, иначе — где стоит
   int ft = onFoot(), room = inRoom() && rs.lastDoor >= 0 && rs.lastDoor < rooms.ndoor;
@@ -1549,11 +1957,13 @@ static void menuStartGame(void **fbp, unsigned t0, int after) {   // NEW GAME: �
   gameMsnResumeStart(svResumeOn);   // after: набор уровня только что прочитан — комнаты и камеры уровня (levelLoadAfter) читаются здесь
   gameMsnDeferStart = !lvDeferOld && !loadOneOld && svResumeOn && msPendRow >= 0;   // №943: выбранная строка стартует сама, стартовая цель уровня не ставится
   audioDefer = 1; newGame(); audioDefer = 0; gameMsnDeferStart = 0; if (svResumeOn) { saveApply(&svPending); svResumeOn = 0; saveLog("load"); } else { memset(&lvKeep, 0, sizeof lvKeep); if (svmOn()) saveLog("new"); }   // облако 05.10: новая игра — прогресс уровней пуст   // LOAD / RESUME GAME
+  if (ringHeroOn) { float rc_[3]; loadOnePoint(rc_); cellRingStart(rc_); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "RINGHERO at=%.1f,%.1f spawn_m=%.0f t=%.1f\n", rc_[0], rc_[2], sqrtf((rc_[0] - spawnP[0]) * (rc_[0] - spawnP[0]) + (rc_[2] - spawnP[2]) * (rc_[2] - spawnP[2])), smkT); smkWrite(s_); } }   // Лестница-96: Гомер поставлен (новая игра, перенос, загрузка) - круг клеток читает загрузчик у его точки
   bonusSession = 1; if (haveColl) bonusOpenFromColl(fresh ? "new" : "load"); else bonusOpenFromSave(fresh ? NULL : &svPending, "load");   // правка 421
   float c[3]; int one = !loadOneOld;
   if (one) { loadOneStart();                                      // правка 356: всё, что ставит игрока, — под этой газетой
     if (after) { levelLoadAfter(); after = 0; } else msnRoomSync();   // комнаты, камеры старта миссий и зон уровня — тоже
-    loadOneAt(c); }
+    loadOneAt(c);
+    if (menuRingAt1225On) { c[0] = menuRingAt1225[0]; c[1] = menuRingAt1225[1]; c[2] = menuRingAt1225[2]; } }   // Будка-93 (1225): круг клеток — у будки, где стоял Гомер
   ldWarmC[0] = one ? c[0] : spawnP[0]; ldWarmC[1] = one ? c[1] : spawnP[1]; ldWarmC[2] = one ? c[2] : spawnP[2]; ldWarmOn = 1;   // №538: точка старта для прогрева на хвосте экрана загрузки
   int n = one ? cellsRingAt(c, ldOn ? 1 : 0, fbp) : cellsRing(ldOn ? 1 : 0, fbp), audio = ldAudio, fmv = fresh && gameLevel == 1 && (!svcMode || newGameFmv);
   if (fmv) ldAudio = 0;   // звук уровня — после ролика
@@ -1605,6 +2015,41 @@ static void lvStateLine(const char *when) {
   char ic[160]; mvIconState(ic, sizeof ic); char s[320];
   snprintf(s, sizeof s, "LVSTATE when=%s level=%d phone=%d shop=%d ward=%d pause=%d brief=%d talk=%d icon=%s t=%.1f\n", when, gameLevel, phoneViewOn(), shopViewOn(), wardrobeOn(), uiPaused(), mvBriefing(), mvTalkActive(), ic, smkT); smkWrite(s);
 }
+// Build 96 (Fable §6 шаг 10): LEVEL_NEXT и LEVEL_START целиком на машине переходов (ldrRun): план памяти до газеты, газета (один экран на переход), ступени лестницы на отказе, SIMPLIFY, строки TFSM levelup / menustart.
+// Отказ чтения уровня: levelLoad сам не возвращает ошибку, готовность — loadedLevel == gameLevel в его конце. Выключатель LVLDR96_OLD=1 / файл lvldr96old / flag lvldr96 0 / flag tfsm95old 1 — прежнее тело (газета, выгрузка, levelLoad, menuStartGame подряд).
+#ifndef LVLDR96_OLD
+#define LVLDR96_OLD 0
+#endif
+static int lvLdr96 = !LVLDR96_OLD;
+typedef struct { void **fbp; unsigned t0; int kind, sw, unl, tries, started; const SaveGame *carry; } LvCtx96;   // kind 0 — LEVEL_NEXT (levelAdvance), 1 — LEVEL_START (смена уровня из меню)
+static void lvNews96(void *u) {   // CLOSE: газета уровня и стингер, начало шкалы загрузки (те же вызовы, что были подряд в теле)
+  LvCtx96 *c = (LvCtx96 *)u;
+  if (c->kind == 0) {
+    int rc_ = scrOpen1065("levelup"); if (memLoad1065 && rc_ == -3) { levelUnload(); c->unl = 1; scrOpen1065("levelup-unloaded"); } scrTvOver = 0;
+    sndMaster(1.f); feStinger(sndLevelChangeStinger());
+    ldMenuNew = 0; ldBase = LOAD_RES_SHARE; loadBegin(c->fbp);
+  } else {
+    int rc_ = scrOpen1065("menustart"); if (memLoad1065 && rc_ == -3 && c->sw) { levelUnload(); c->unl = 1; scrOpen1065("menustart-unloaded"); } scrTvOver = 0;
+    feNewsStinger("newspaper_spin");
+    ldMenuNew = !svResumeOn; ldBase = levelReady && !c->sw ? 0 : LOAD_RES_SHARE; loadBegin(c->fbp);
+    if (!svResumeOn && !musOld) { audioHoldStreams(1); levelHold = 1;
+      if (smkOn) { char s_[48]; snprintf(s_, sizeof s_, "SNDHOLD on t=%.1f\n", smkT); smkWrite(s_); } }
+    menuT0 = c->t0;
+  }
+}
+static int lvFree96(void *u) { LvCtx96 *c = (LvCtx96 *)u; if (!c->unl) { levelUnload(); c->unl = 1; } return 0; }   // FREE: прежний уровень — в кучу (если ещё не выгружен до газеты)
+static void lvStart96(LvCtx96 *c) { if (c->started) return; c->started = 1; if (c->kind == 0) { svPending = *c->carry; svResumeOn = 1; } menuStartGame(c->fbp, c->t0, c->kind == 0 ? 1 : c->sw); }
+static int lvLoad96(void *u) {   // LOAD: чтение уровня; повтор после ступеней начинается с выгрузки недочитанного
+  LvCtx96 *c = (LvCtx96 *)u; if (c->tries++) levelUnload();
+  levelLoad(c->fbp);
+  if (loadedLevel != gameLevel) return 0;
+  lvStart96(c); return 1;
+}
+static int lvSimplify96(void *u) {   // SIMPLIFY: честный путь без отказа игроку — уровень читается как раньше, одним заходом, и игра идёт
+  LvCtx96 *c = (LvCtx96 *)u;
+  if (loadedLevel != gameLevel) { if (loadedLevel) levelUnload(); levelLoad(c->fbp); }
+  lvStart96(c); return 1;
+}
 static void levelAdvance1(int n, void **fbp);
 static void levelAdvance(int n, void **fbp) { unsigned t0_ = sceKernelGetSystemTimeLow(); levelAdvance1(n, fbp); xnEnd("level", t0_, n); }   // №1206: время перехода
 static void levelAdvance1(int n, void **fbp) {
@@ -1625,6 +2070,15 @@ static void levelAdvance1(int n, void **fbp) {
   int unl_ = 0;   // №1065: газета не открылась — предыдущий уровень выгружается ДО неё (куча пуста), открытие повторяется
   if (unloadFirst1b && loadedLevel) { unsigned mb0_ = smkOn ? memMaxBlock() : 0; levelUnload(); unl_ = 1;   // TEST90 1В: уровень выгружен ДО газеты и музыки загрузки — их блоки ложатся в чистую кучу, а не в дыры старого уровня (UNLOAD_FIRST_OLD=1 — как в TEST89)
     if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "UNLOADFIRST site=levelup maxblk=%u->%u free=%.2f t=%.1f\n", mb0_, memMaxBlock(), heapFreeBytes() / 1048576.f, smkT); smkWrite(s_); } }
+  Transit tl_; memset(&tl_, 0, sizeof tl_); tl_.name = "levelup"; tl_.screen = TFS_NEWS; tl_.need = 1u << 20; tl_.at[0] = spawnP[0]; tl_.at[1] = spawnP[1]; tl_.at[2] = spawnP[2];
+  if (lvLdr96 && !tfsm95Old) {   // Build 96: LEVEL_NEXT целиком на ldrRun
+    LvCtx96 lc_ = { fbp, t0, 0, 0, unl_, 0, 0, &carry };
+    tl_.u = &lc_; tl_.closeFn = lvNews96; tl_.freeFn = lvFree96; tl_.load = lvLoad96; tl_.simplify = lvSimplify96; tl_.noFreeAllStep = 1; tl_.noReturn = 1;
+    ldrRun(&tl_, fbp);
+    lvStateLine("after");
+    return;
+  }
+  if (!tfsm95Old) tfExtBegin(&tl_); else transitPlan("levelup", 1u << 20, 0);   // Будка-93 (1233) и Build 95 П2: общий вход перехода, класс LEVEL_NEXT виден машине (тело своё: газета, выгрузка, levelLoad)
   { int rc_ = scrOpen1065("levelup"); if (memLoad1065 && rc_ == -3) { levelUnload(); unl_ = 1; scrOpen1065("levelup-unloaded"); } scrTvOver = 0; }   // экран загрузки: газета уровня n
   sndMaster(1.f); feStinger(sndLevelChangeStinger());   // правка 20; №1128: на смену уровня оригинал играет Loading_screen (одно из трёх), Newspaper_Spin только при старте игры из меню
   ldMenuNew = 0; ldBase = LOAD_RES_SHARE; loadBegin(fbp);   // сверка g09b-menu круг 2: смена уровня — не из меню, звук мира приглушён
@@ -1632,17 +2086,20 @@ static void levelAdvance1(int n, void **fbp) {
   levelLoad(fbp);
   svPending = carry; svResumeOn = 1;
   menuStartGame(fbp, t0, 1);   // + комнаты и камеры уровня (levelLoadAfter): правка 356 — под газетой
+  if (!tfsm95Old) tfExtEnd(&tl_, 1);
   lvStateLine("after");
 }
 // правка Роба 28.09: × по пункту — перелёт камеры оригинала к его предмету (viewer/frontend3d.h feFly; кадры таймлайна
 // FE_CameraController, пункт -> отрезок из данных). Пока камера летит, ввод не принимается, сценарий смоука идёт
 static void menuFly(int item, int mode, int sel, void **fbp) {
   if (!feFly(item, mode)) return;
+  menuFlyGo = mode == FE_GO;   // №1245: последний кадр перелёта «туда» — тоже без строки меню
   char s[160]; unsigned last = sceKernelGetSystemTimeLow(), t0 = last, sw0 = swapN, late0 = swapLateN, wait0 = swapWaitN; float f0 = feFrame();
   while (feFlying()) {
     unsigned t = sceKernelGetSystemTimeLow(); float dt = (t - last) * 1e-6f; last = t; if (dt > .05f) dt = .05f;
     SmokeCmd sc; while (smokeNext(dt, &sc)) if (sc.op == 2 && !strcmp(sc.name, "feglow")) feGlowTest = (int)sc.a;
                                              else if (sc.op == 2 && !strcmp(sc.name, "flynoframe")) flyNoFrame = 1;
+                                             else if (sc.op == 2 && !strcmp(sc.name, "tvlastold")) tvLastOld = (int)sc.a;   // №1245 служебно
                                              else if (!BONUSGO1180_OLD && sc.op == 2 && !strncmp(sc.name, "bonus", 5)) bnsFlag(&sc);   // №1180
                                              else swapFlag(&sc);
     menuFrame(sel, fbp);
@@ -1651,6 +2108,9 @@ static void menuFly(int item, int mode, int sel, void **fbp) {
                         feFrame(), (sceKernelGetSystemTimeLow() - t0) * 1e-6f, smkT, swapN - sw0, swapLateN - late0, swapWaitN - wait0, swapOld);
                smkWrite(s); }
   feCapFlush();   // правка 293 (служебное fecap): кадры перелёта из ОЗУ — на карту (после перелёта, кадры не тормозит)
+  if (smkOn && tvFlyEnd && mode == FE_GO) {   // №1245 (служебно): снимок ПОСЛЕДНЕГО кадра перелёта «туда» — он держится на экране, пока грузится игра; 2 с, чтобы снимок успел
+    snprintf(s, sizeof s, "SHOT TV_flyend %.1f pos 0.00 0.00 0.00 0.0000\n", smkT); smkWrNow = 1; smkWrite(s); sceKernelDelayThread(2000000); }
+  menuFlyGo = 0;
 }
 // главное меню → LOAD GAME: слоты оригинала (fsave.shr, viewer/savemenu.c) над гостиной; 1 — выбрана запись (svmLoaded)
 static int saveMenuRun(int mainSel, void **fbp) {
@@ -1766,6 +2226,8 @@ static void menuRun(void **fbp) {
                                             else if (sc.op == 2 && !strcmp(sc.name, "fegagseg")) feGagSeg = (int)sc.a;   // №404: отрезок сценки Гомера
                                             else if (sc.op == 2 && !strcmp(sc.name, "flynoframe")) flyNoFrame = 1;   // отрицательный контроль правки 49
                                             else if (sc.op == 2 && !strcmp(sc.name, "tvhold")) tvHold = sc.a != 0.f;   // №1169 служебно
+                                            else if (sc.op == 2 && !strcmp(sc.name, "tvlastold")) tvLastOld = (int)sc.a;   // №1245 служебно: прежнее
+                                            else if (sc.op == 2 && !strcmp(sc.name, "tvflyend")) tvFlyEnd = sc.a != 0.f;   // №1245 служебно: снимок последнего кадра перелёта
                                             else if (sc.op == 2 && !strcmp(sc.name, "loadfast")) ldFast = 1;   // отрицательный контроль: без минимального показа
                                             else if (sc.op == 2 && !strcmp(sc.name, "spinlag")) ldLag = 1;     // отрицательный контроль: рывки разворота
                                             else if (sc.op == 2 && !strcmp(sc.name, "loadpumpoff")) loadPumpOff = 1;   // правка 244: красный — без подкачки кадров
@@ -1894,6 +2356,14 @@ static void menuRun(void **fbp) {
   int unl_ = 0;   // №1065: см. levelAdvance
   if (unloadFirst1b && sw && loadedLevel) { unsigned mb0_ = smkOn ? memMaxBlock() : 0; levelUnload(); unl_ = 1;   // TEST90 1В: см. levelAdvance
     if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "UNLOADFIRST site=menustart maxblk=%u->%u free=%.2f t=%.1f\n", mb0_, memMaxBlock(), heapFreeBytes() / 1048576.f, smkT); smkWrite(s_); } }
+  Transit tm_; memset(&tm_, 0, sizeof tm_); tm_.name = "menustart"; tm_.screen = TFS_NEWS; tm_.need = 1u << 20;
+  if (lvLdr96 && !tfsm95Old && sw && levelReady) {   // Build 96: смена уровня из меню (LEVEL_START) целиком на ldrRun; первый вход без смены остаётся наблюдаемым ниже
+    LvCtx96 lc_ = { fbp, t0, 1, sw, unl_, 0, 0, NULL };
+    tm_.u = &lc_; tm_.closeFn = lvNews96; tm_.freeFn = lvFree96; tm_.load = lvLoad96; tm_.simplify = lvSimplify96; tm_.noFreeAllStep = 1; tm_.noReturn = 1;
+    ldrRun(&tm_, fbp);
+    return;
+  }
+  if (!tfsm95Old) tfExtBegin(&tm_); else transitPlan("menustart", 1u << 20, 0);   // Будка-93 (1233) и Build 95 П2: класс LEVEL_START виден машине
   { int rc_ = scrOpen1065("menustart"); if (memLoad1065 && rc_ == -3 && sw) { levelUnload(); unl_ = 1; scrOpen1065("menustart-unloaded"); } scrTvOver = 0; }   // загрузка уровня: Loading.scr (газета уровня gameLevel) — на время загрузки
   feNewsStinger("newspaper_spin");   // правки 20, 134: газета влетает — один Newspaper_Spin с доли темы меню
   ldMenuNew = !svResumeOn; ldBase = levelReady && !sw ? 0 : LOAD_RES_SHARE; loadBegin(fbp);   // сверка g09b-menu круг 2 (ldMenuNew: NEW GAME из меню, газета со стингером); правка Роба 35: газета влетает до чтения, огонь без возврата
@@ -1903,6 +2373,7 @@ static void menuRun(void **fbp) {
   if (!levelReady) return;   // первое меню: уровень ещё не читался — main читает его под этим экраном, потом menuStartGame
   if (sw) { if (!unl_) levelUnload(); levelLoad(fbp); }
   menuStartGame(fbp, t0, sw);   // сменили уровень — и его комнаты и камеры (levelLoadAfter)
+  if (!tfsm95Old) tfExtEnd(&tm_, 1);
 }
 
 // Интро оригинала (Роб 28.09): после заставки GONE Makers — родные логотипы создателей и ролик, потом главное меню.

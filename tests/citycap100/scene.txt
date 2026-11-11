@@ -1,0 +1,11 @@
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L5_load
+flag golevel ${LV}
+wait 45
+scene L5_ride
+flag drive 120
+wait 123
+flag stop
+wait 1

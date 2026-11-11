@@ -315,6 +315,19 @@ static void collLog(const char *what, int idx, const char *name) {
            haveCoins ? coins.collected : 0, smkT);
   smkWrite(s);
 }
+// Пропечка-96 COLLSPLIT (текстуры): запись текстуры пакета (формат SHR7) -> Tex в cxTex; движок зовёт при чтении текстуры гэга и при её отдаче
+static void cxTexBind(unsigned k, unsigned char *b, unsigned size) {
+  if (!cxTex || k >= cxNtex || size < 16 + 1024) return;
+  Tex *t = &cxTex[k]; const unsigned short *t2 = (const unsigned short *)b; memset(t, 0, sizeof *t);
+  t->w = t2[0]; t->h = t2[1]; t->levels = t2[2]; t->pre = b[7] == 1; t->t4 = b[6] == 4 && t->pre; t->pal = b + 16; unsigned p = 16 + 1024;
+  int lw = t->w, lh = t->h;
+  for (int l = 0; l < t->levels; l++) {
+    if (l < 8) { t->lv[l] = b + p; if (t->pre) t->slv[l] = b + p; }
+    p += texRowBytes(t->t4, t->pre, lw) * (t->pre ? (lh + 7) & ~7 : lh); p = (p + 15) & ~15u; lw >>= 1; lh = lh > 1 ? lh >> 1 : 1;
+  }
+  bound = -2;   // привязка GE: адрес текстуры сменился - прежняя привязка по номеру недействительна, следующий bindTex делает sceGuTexImage заново
+}
+static void cxTexUnbind(unsigned k) { if (cxTex && k < cxNtex) memset(&cxTex[k], 0, sizeof cxTex[k]); bound = -2; }
 static void collLoad(void) {   // один раз после fxInit и sndInit: пакет целиком, текстуры, частицы EFX — к fx.shr
   char fn[256]; levelFile(fn, "collect-l%d.shr");
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;   // нет пакета — уровень без карточек, ос и гэгов
@@ -338,6 +351,7 @@ static void collLoad(void) {   // один раз после fxInit и sndInit: 
   cxTex = calloc(coll.ntex ? coll.ntex : 1, sizeof(Tex)); cxNtex = coll.ntex;
   if (!cxTex && !LOADMEM1170_OLD) { smkWrite("COLL error=memory cxTex\n"); cxNtex = 0; if (collStreamFd >= 0) { sceIoClose(collStreamFd); collStreamFd = -1; } free(b); return; }   // №1170: без таблицы текстур карточек уровень без карточек, а не запись в NULL
   unsigned p = (unsigned)(coll.tex - b);   // текстуры — формат level.shr (заголовок 16 Б, палитра 1024 Б, уровни в swizzle)
+  if (collStreamTexSplitOn()) { collStreamTexBind = cxTexBind; collStreamTexUnbind = cxTexUnbind; collStreamTexRebind(); p = n; }   // COLLSPLIT: текстуры гэгов вне блока, читаются по номеру; постоянные (карточки, осы) привязаны сейчас
   for (unsigned i = 0; i < coll.ntex && p < n; i++) {
     const unsigned short *t2 = (const unsigned short *)(b + p); Tex *t = &cxTex[i];
     t->w = t2[0]; t->h = t2[1]; t->levels = t2[2]; t->pre = b[p + 7] == 1; t->t4 = b[p + 6] == 4 && t->pre; t->pal = b + p + 16; p += 16 + 1024;
@@ -356,7 +370,7 @@ static void collLoad(void) {   // один раз после fxInit и sndInit: 
   collPak = b; haveColl = 1; G.pColl = &coll;
   static const char *ws[6] = {"wasp_fade_in", "wasp_idle", "wasp_lasers", "laser_miss", "wasp_destroyed", "character_zapped"};
   for (int k = 0; k < 6; k++) waspSnd[k] = sndId(ws[k]);
-  char s[160]; snprintf(s, sizeof s, "COLL ok cards=%u wasps=%u gags=%u tex=%u inst=%u bytes=%u\n", coll.ncard, coll.nwasp, coll.ngag, coll.ntex, coll.sp.ninst, n);
+  char s[160]; snprintf(s, sizeof s, "COLL ok cards=%u wasps=%u gags=%u tex=%u inst=%u bytes=%u split=%d saved=%u verts=%u texsplit=%d texsaved=%u texres=%u\n", coll.ncard, coll.nwasp, coll.ngag, coll.ntex, coll.sp.ninst, n, collStreamSplitOn(), collStreamVertSaved, collStreamVertBytes, collStreamTexSplitOn(), collStreamTexSaved, collStreamTexBytes);
   smkWrite(s);
 }
 // звук гэга: дорожка music.sap с именем ресурса (варианты — «имя~k», tools/sound_export.py), поток диалогов, по месту гэга
@@ -517,6 +531,49 @@ static void movieVolSync(void) { movieVolume = cfg.voice < 0 ? 0 : cfg.voice > 1
 static int movieSeenBefore(const char *nm);   // ниже, после MOVIES
 // ролик гэга (GagPlayFMV): весь экран, мир стоит, START — пропустить; в сценарии смоука снимки берутся и здесь (как в интро)
 // в поставке (tools/ship_rules.txt): "movies/loot.smv" — единственный ролик гэгов уровня 1 (gag_tele, Kwik-E-Mart)
+// Будка-93 (правка Роба 1239 решение 3, спец Fable П2-94): ролику не хватило памяти. Раньше результат `mem1060Pre` не смотрели (у ролика миссии его не было вовсе), а `movieOpen` без памяти молча давал NULL:
+// ролик пропускался в тишине. Теперь: план (`transitPlan`), `mem1060Pre` с проверкой, и если ролик не открылся, то под прелоадером Itchy & Scratchy (LoadingFE, не газета): мир темнеет, все клетки и пакеты
+// в кучу (мир ролика не виден), вторая попытка; клетки вернутся после ролика (под тем же прелоадером). Не вышло и со второй попытки: надпись «MOVIE SKIPPED» и строка MOVIE1239 skipped,
+// игра идёт дальше; тишины нет. MOVIE1239_OLD=1 / файл movie1239old / flag movie1239old 1 — как было. Служебное flag moviefail N: следующие N открытий ролика отказывают (гейт tests/budka93/check_movie.py)
+#ifndef MOVIE1239_OLD
+#define MOVIE1239_OLD 0
+#endif
+static int movie1239Old = MOVIE1239_OLD, movieFailTest1239;
+static void mem1060Fade(void **fbp); static int mem1060FeIn(void **fbp); static void mem1060FeTo(void **fbp, int to, int frames, int shot); static void mem1060FeOut(void);
+static void mem1060BarTo(void **fbp, int to, int frames); static int mem1060Free(void); static void mem1060Return(void **fbp); static int mem1060Back, mem1060Bar;   // mem1060.h (подключён позже)
+typedef struct { const char *fn; int *err; Movie *m; } MovieCtx;
+static int movieLoadCb(void *c) { MovieCtx *x = (MovieCtx *)c; x->m = movieFailTest1239 > 0 ? (movieFailTest1239--, *x->err = -3, (Movie *)0) : movieOpen(x->fn, x->err); return x->m != 0; }
+static Movie *movieOpen1239Legacy(const char *fn, int *err, void **fbp, const char *who, int *freed);
+// Build 95 П2 (transit_fsm.h): класс MOVIE через ldrRun. Экран: нет, если блок есть, иначе прелоадер Itchy & Scratchy; ступени FREE_MORE, город в кучу под прелоадером, возврат клеток ПОСЛЕ ролика (deferReturn,
+// movieReturn1239); все ступени без результата: SIMPLIFY с надписью «MOVIE SKIPPED» и WATCHDOG. TFSM95_OLD=1 / MOVIE1239_OLD — прежние пути
+static Movie *movieOpen1239(const char *fn, int *err, void **fbp, const char *who, int *freed) {
+  audioWarmMission();   // Звук-96: ролик миссии позади — её звуки уже в кэше
+  if (tfsm95Old || movie1239Old) return movieOpen1239Legacy(fn, err, fbp, who, freed);
+  *freed = 0; MovieCtx cx = {fn, err, 0}; Transit t; memset(&t, 0, sizeof t);
+  t.name = "movie"; t.need = 2560u << 10; t.at[0] = homer.x; t.at[1] = homer.y; t.at[2] = homer.z;
+  t.screen = (memMaxBlock && memMaxBlock() >= t.need && !transitNoFit) ? TFS_NONE : TFS_PRELOADER;
+  t.load = movieLoadCb; t.u = &cx; t.freeAllOnPreloader = 1; t.deferReturn = 1; t.simplifyText = "";   // в библии оригинала строки «ролик пропущен» нет: без надписи (Данные-93), WATCHDOG остаётся
+  (void)who; int ok = ldrRun(&t, fbp); *freed = mem1060Back; (void)ok;
+  return cx.m;
+}
+static Movie *movieOpen1239Legacy(const char *fn, int *err, void **fbp, const char *who, int *freed) {
+  *freed = 0;
+  unsigned need = 2560u << 10; float at_[3] = {homer.x, homer.y, homer.z};
+  if (!movie1239Old) transitPlan("movie", need, at_);
+  int ok = mem1060Pre(need, who);
+  Movie *m = movieFailTest1239 > 0 ? (movieFailTest1239--, *err = -3, (Movie *)0) : movieOpen(fn, err);
+  if (m || movie1239Old) return m;
+  if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "MOVIE1239 open-fail who=%s pre=%d blk=%u err=%d t=%.1f\n", who, ok, memMaxBlock ? memMaxBlock() : 0, *err, smkT); smkWrite(s_); }
+  mem1060Bar = 0; mem1060Fade(fbp);                      // мир гаснет без кучи
+  int fe = mem1060FeIn(fbp); if (fe) mem1060FeTo(fbp, 300, 6, 0); else mem1060BarTo(fbp, 300, 6);   // прелоадер Itchy & Scratchy; нет места под него: шнур
+  int n = mem1060Free(); mem1060Back = 1; *freed = 1;    // клетки и пакеты про запас в кучу: мир ролика не виден
+  if (fe) mem1060FeOut();                                // load.shr закрыт до чтения ролика
+  m = movieFailTest1239 > 0 ? (movieFailTest1239--, *err = -3, (Movie *)0) : movieOpen(fn, err);
+  if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "MOVIE1239 retry who=%s fe=%d dropped=%d ok=%d blk=%u t=%.1f\n", who, fe, n, m != 0, memMaxBlock ? memMaxBlock() : 0, smkT); smkWrite(s_); }
+  if (!m) { if (uiReady) uiMessage("MOVIE SKIPPED", -1, 1.5f); if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "MOVIE1239 skipped who=%s t=%.1f\n", who, smkT); smkWrite(s_); } }
+  return m;
+}
+static void movieReturn1239(void **fbp, int freed) { if (freed && (!movie1239Old || !tfsm95Old)) mem1060Return(fbp); }   // клетки города обратно под прелоадером (стрим дальше сам)
 static void gagMovie(int g, void **fbp) {
   GE_NEST_GUARD("gagMovie");   // №1186/№1188
   char fn[256], rel[64]; snprintf(rel, sizeof rel, "movies/%s.smv", coll.gag[g].fmv); sibling(fn, rel);
@@ -524,8 +581,8 @@ static void gagMovie(int g, void **fbp) {
   if (waspLoop) { audioStop(waspLoop); waspLoop = 0; }
   if (!MOVIE_RULES_OLD) movieWorldFade(fbp);   // P15 Д1: мир темнеет до чёрного за 0,5 с, ролик гэга стартует после
   sndMaster(0.f);
-  mem1060Pre(2560u << 10, "movie");   // №1060: кольцо кусков и кадр ролика (≈1,6 МБ) — цельным блоком; экран ролика закрывает мир
-  int err = 0, shot = 0; movieVolSync(); Movie *m = movieOpen(fn, &err);
+  if (zone3OnX() && smkOn) { char z_[460]; zone3StatLineX(z_, sizeof z_, smkT, "movie_in"); smkWrite(z_); }   // П5 Зоны-95
+  int err = 0, shot = 0, freed1239 = 0; movieVolSync(); Movie *m = movieOpen1239(fn, &err, fbp, "movie", &freed1239);   // Будка-93 (1239): результат памяти обязателен, прелоадер вместо тишины (включает прежний mem1060Pre)
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
   unsigned last = sceKernelGetSystemTimeLow(); char s[160]; unsigned t00 = last; int skipping = 0; float skipT = 0.f;
@@ -552,7 +609,7 @@ static void gagMovie(int g, void **fbp) {
 #if !TICKET_CONTENT_C3_OLD
   if(!TICKET_CONTENT_C3_OLD && st.frames>0 && coll.gag[g].pad==2) movieSeen(coll.gag[g].fmv);
 #endif
-  movieSystem(0); sndMaster(1.f);
+  movieSystem(0); sndMaster(1.f); movieReturn1239(fbp, freed1239);
   snprintf(s, sizeof s, "COLLEV fmv idx=%d name=%s frames=%d shown=%d dropped=%d under=%d err=%d t=%.1f\n", g, coll.gag[g].fmv, st.frames, st.shown,
            st.dropped, st.underruns, st.err, smkT); smkWrite(s);
 }
@@ -592,7 +649,7 @@ static void msnMovie1(const char *rmv, void **fbp) {
   if (fmvWorld && !FMV_STOPMUSIC_OLD && !strcmp(nm, "fmv7")) sndMusic(SND_MUS_OFF);   // SetFMVInfo("fmv7.rmv","stopmusic") в m8l.mfk уровня 7: второй аргумент в данных; до хоста он не доходит (fmvCb получает только имя) — по имени из данных
   if (fmvWorld) movieWorldFade(fbp);   // P15-04: мир темнеет до чёрного за 0,5 с линейно, ролик цели стартует после
   sndMaster(0.f);
-  int err = 0, shot = 0; movieVolSync(); Movie *m = movieOpen(fn, &err);
+  int err = 0, shot = 0, freed1239 = 0; movieVolSync(); Movie *m = movieOpen1239(fn, &err, fbp, nm, &freed1239);   // Будка-93 (1239): у ролика миссии памяти не проверяли вовсе
   int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
   unsigned last = sceKernelGetSystemTimeLow(), t00 = last; int skipped = 0, skipping = 0; float skipT = 0.f;
@@ -618,7 +675,7 @@ static void msnMovie1(const char *rmv, void **fbp) {
   if (tvPak) SCR_CLOSE();
   MovieStats ms; memset(&ms, 0, sizeof ms); if (m) movieClose(m, &ms); else ms.err = err;
   if (fmvWorld) movieBlackTail(fbp);   // P15-04: после ролика 10 кадров сплошного чёрного, потом срез в мир
-  movieSystem(0); sndMaster(1.f);
+  movieSystem(0); sndMaster(1.f); movieReturn1239(fbp, freed1239);
   if (!padResyncOld) padResync = 1;   // правка 279: START пропуска ролика — не пауза в игре
   if (ms.frames > 0) movieSeen(nm);   // VIEW MOVIES: ролик открыт
   snprintf(s, sizeof s, "MSNFMV name=%s have=1 played=1 frames=%d shown=%d dropped=%d skipped=%d err=%d t=%.1f\n", nm, ms.frames, ms.shown,
@@ -900,6 +957,10 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
 #endif
     { float c[3], r; spBounds(sp, i, c, &r); float bb[6] = {c[0] - r, c[1] - r, c[2] - r, c[0] + r, c[1] + r, c[2] + r}; if (!visBox(bb, 0, 0, 0)) continue; }
     const SpType *T = &sp->type[sp->inst[i].type];
+    const char *vb_ = (const char *)collStreamVerts(sp->inst[i].type);   // Пропечка-96 COLLSPLIT: вершины и текстуры типа ещё читаются (или тип далеко) - не рисуем этот кадр
+    { static float nrT_[256]; static unsigned char nrL_[256];   // журнал для гейта: гэг города ближе 100 м не готов дольше 1,5 с (короче - переход/телепорт, ждёт чтение)
+      if (!vb_) { if (smkOn) { float dx_ = sp->run[i].x - ex, dz_ = sp->run[i].z - ez; unsigned q_ = i & 255; if (dx_ * dx_ + dz_ * dz_ < 100.f * 100.f && room < 0) { if (nrT_[q_] == 0.f) nrT_[q_] = smkT + .001f; else if (smkT - nrT_[q_] > 1.5f && !nrL_[q_]) { nrL_[q_] = 1; char l_[120]; snprintf(l_, sizeof l_, "COLLSPLIT notready inst=%u d=%.0f t=%.1f\n", i, sqrtf(dx_ * dx_ + dz_ * dz_), smkT); smkWrite(l_); } } } continue; }
+      nrT_[i & 255] = 0.f; nrL_[i & 255] = 0; }
     spPose(sp, i);
     for (unsigned k = 0; k < T->nPiece; k++) {
       if (!spPieceOn(sp, i, k)) continue;
@@ -913,7 +974,7 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
       float m[16]; spPieceMatrix(sp, i, k, m);
       Piece tmp; memset(&tmp, 0, sizeof tmp);
       tmp.r.tex = pp->tex; tmp.r.flags = pp->flags & (0xFF | F_ADDITIVE); tmp.r.ni = pp->ni;
-      tmp.v = (Vert *)((char *)sp->vertBase + pp->vOff);
+      tmp.v = (Vert *)(vb_ + pp->vOff);
       tmp.idx = (unsigned short *)((char *)sp->idxBase + pp->iOff);
       drawPieceM(&tmp, (const ScePspFMatrix4 *)m);
     }
@@ -928,6 +989,7 @@ static void collDraw(float ex, float ey, float ez, int inR, float t) {
     if (gag >= 0 && ((gagSnap >= 0 && gag != gagSnap) || (coll.gag[gag].random && !coll.st.gagPick[gag]))) continue;
 #endif
     const SpType *T = &sp->type[sp->inst[i].type];
+    if (!collStreamVerts(sp->inst[i].type)) continue;   // COLLSPLIT: текстуры или вершины типа ещё читаются
     for (unsigned b = 0; b < T->nBill; b++) {
       float v[12]; uint32_t col, bfl; int bt;
       if (!spBillQuad(sp, i, b, ex, ey, ez, v, &col, &bt, &bfl) || !(col >> 24)) continue;
@@ -999,4 +1061,49 @@ static void aoDrawRings(float ex, float ey, float ez, float t) {
     sceGuDrawArray(GU_TRIANGLE_STRIP, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, (N + 1) * 2, 0, v);
     sceGuDepthMask(GU_FALSE); sceGuDisable(GU_BLEND); sceGuEnable(GU_TEXTURE_2D);
   }
+}
+
+static int gagHoldHook1226(void) { return !gagHold1226Old && haveColl && inRoom() && collStreamPending() > 0; }   // Будка-93 (1226): гэги комнаты ещё читаются — ирис ждёт
+
+// Будка-93 (1233, T08/T09): лавка и гардероб при отказе памяти не молчат: ступени лестницы, вторая попытка, сообщение игроку. SHOPHEAL1233_OLD=1 / файл shopheal1233old / flag shopheal1233old 1 — как было (тихая отмена).
+// Служебное flag shopfail N: следующие N открытий пакета лавки и гардероба отказывают (красный и зелёный контроль гейта tests/budka93/check_shop.py)
+#ifndef SHOPHEAL1233_OLD
+#define SHOPHEAL1233_OLD 0
+#endif
+static int shopHeal1233Old = SHOPHEAL1233_OLD, shopFailTest1233;
+static int shopHeal1233(unsigned need) { unsigned b0 = memMaxBlock ? memMaxBlock() : 0; int ok = mem1060Pre(need, "shop");
+  if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "SHOPHEAL1233 need=%u blk=%u->%u ok=%d t=%.1f\n", need, b0, memMaxBlock ? memMaxBlock() : 0, ok, smkT); smkWrite(s_); } return ok; }
+static void shopFailNote1233(const char *what) { if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "SHOPFAIL1233 %s t=%.1f\n", what, smkT); smkWrite(s_); } if (uiReady) uiMessage(what, -1, 3.f); }
+// Build 95 П2: класс SHOP через ldrRun. Пакет лавки 0,3 МБ: экран нет (блок есть) или прелоадер; ступени только лестница (город виден за лавкой, «все клетки» пропущена); SIMPLIFY «STORE UNAVAILABLE» + WATCHDOG
+static int shopPackCb(void *u) { const char *fn = (const char *)u; int rc = shopViewFailTest > 0 ? (shopViewFailTest--, uiScrClose(), -3) : uiScrOpen(fn); return rc == 0; }
+static int shopOpenFsm(const char *fn) {
+  Transit t; memset(&t, 0, sizeof t);
+  t.name = "shop"; t.need = 512u << 10; t.at[0] = homer.x; t.at[1] = homer.y; t.at[2] = homer.z;
+  t.screen = (memMaxBlock && memMaxBlock() >= t.need && !transitNoFit) ? TFS_NONE : TFS_PRELOADER;
+  t.load = shopPackCb; t.cleanReload = transitReloadOverlay96; t.u = (void *)fn; t.noFreeAllStep = 1; t.noReturn = 1; t.simplifyText = "STORE UNAVAILABLE";
+  return ldrRun(&t, fbpG1226) ? 0 : -3;
+}
+static void shopHeal1233Wire(void) {
+  if (!tfsm95Old && !shopHeal1233Old) { shopViewOpenFn = shopOpenFsm; shopViewHeal = 0; shopViewFailNote = 0; return; }
+  shopViewOpenFn = 0; if (shopHeal1233Old) { shopViewHeal = 0; shopViewFailNote = 0; } else { shopViewHeal = shopHeal1233; shopViewFailNote = shopFailNote1233; } }
+typedef struct { const char *sd; int worn; } WardCtx;
+static int wardLoadCb(void *c) { WardCtx *x = (WardCtx *)c; int rc = shopFailTest1233 > 0 ? (shopFailTest1233--, -1) : wardrobeOpen(mvShop(), x->sd, x->worn); return rc == 0; }
+static int wardrobeOpen1233Legacy(const char *sd, int worn) {   // 1233 (г): ступень, вторая попытка, сообщение (SHOPHEAL1233_OLD=0, TFSM95_OLD=1)
+  int rc = shopFailTest1233 > 0 ? (shopFailTest1233--, -1) : wardrobeOpen(mvShop(), sd, worn);
+  if (rc != 0 && !shopHeal1233Old && !wardrobeOn()) {
+    shopHeal1233(1u << 20);
+    rc = shopFailTest1233 > 0 ? (shopFailTest1233--, -1) : wardrobeOpen(mvShop(), sd, worn);
+    if (rc != 0) shopFailNote1233("CHANGING ROOM UNAVAILABLE");
+  }
+  return rc;
+}
+// Build 95 П2 (transit_fsm.h): класс WARDROBE идёт через ldrRun. Экран: нет (блок есть) или прелоадер Itchy & Scratchy (нет блока; ступень 2 поднимает его сама); город под прелоадером в кучу, возврат даёт выход из комнаты
+static int wardrobeOpen1233(const char *sd, int worn) {
+  if (tfsm95Old || shopHeal1233Old) return wardrobeOpen1233Legacy(sd, worn);
+  if (wardrobeOn()) return wardrobeOpen(mvShop(), sd, worn);   // уже открыт: прежний отказ
+  WardCtx cx = {sd, worn}; Transit t; memset(&t, 0, sizeof t);
+  t.name = "wardrobe"; t.need = 1u << 20; t.at[0] = homer.x; t.at[1] = homer.y; t.at[2] = homer.z;
+  t.screen = (memMaxBlock && memMaxBlock() >= t.need && !transitNoFit) ? TFS_NONE : TFS_PRELOADER;
+  t.load = wardLoadCb; t.cleanReload = transitReloadOverlay96; t.u = &cx; t.freeAllOnPreloader = 1; t.noReturn = 1; t.simplifyText = "CHANGING ROOM UNAVAILABLE";
+  return ldrRun(&t, fbpG1226) ? 0 : -1;
 }

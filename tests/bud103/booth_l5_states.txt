@@ -1,0 +1,406 @@
+flag menu
+flag lvset 5
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=5 300
+wait 10
+flag player
+flag msn
+wait 3
+flag msnsel 0
+wait 4
+scene M0_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M0_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M0_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M0_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 1
+wait 4
+scene M1_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M1_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M1_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M1_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 2
+wait 4
+scene M2_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M2_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M2_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M2_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 3
+wait 4
+scene M3_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M3_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M3_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M3_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 4
+wait 4
+scene M4_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M4_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M4_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M4_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 5
+wait 4
+scene M5_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M5_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M5_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M5_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 6
+wait 4
+scene M6_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M6_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M6_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M6_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 7
+wait 4
+scene M7_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M7_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M7_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M7_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnsel 8
+wait 4
+scene M8_s0
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M8_p1
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M8_p2
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+flag msnpass
+wait 2.5
+scene M8_p3
+foot 23.39 85.72 0
+wait 1
+foot 11.39 85.72 0
+wait 1.2
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.5
+end

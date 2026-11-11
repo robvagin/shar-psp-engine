@@ -1,0 +1,28 @@
+# №1230 (Роб, L5 E3-5): Гомер бежит (○) по косой вдоль перил площадки Monorail — звено COL1 598 (x -241.38, z -465.5…-441.3, нормаль +x), угол к стене 30°.
+# old — flag runslide1230 0 (как было: встаёт), new — flag runslide1230 1 (скользит вдоль). Журнал BENCH1034 (flag benchlog 1). check.py old|new SMOKE
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene B_GO5
+flag golevel 5
+wait 40
+flag stop
+flag player
+flag benchlog 1
+scene R_old
+flag runslide1230 0
+foot -238.4 -460.6 -0.5236 28.95
+wait 2.5
+press circle 4.5
+stick 0 -1 4.0
+wait 5.5
+shot r_old
+scene R_new
+flag runslide1230 1
+foot -238.4 -460.6 -0.5236 28.95
+wait 2.5
+press circle 4.5
+stick 0 -1 4.0
+wait 5.5
+shot r_new
+end

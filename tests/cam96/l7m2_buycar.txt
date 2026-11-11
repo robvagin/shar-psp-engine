@@ -1,0 +1,21 @@
+# L7 m2: после запертого разговора стадия buycar (зомби-машина 500 монет) ждёт покупки; миссия sr3 сама не стартует
+scene L7M2_BUYCAR
+flag golevel 7
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 1
+wait 4
+flag msnpass 1
+wait 3
+flag msnpass 1
+wait 3
+flag msnpass 1
+wait 3
+flag msnpass 1
+wait 3
+shot b0
+wait 45
+shot b1
+end

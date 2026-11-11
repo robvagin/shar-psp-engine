@@ -1,0 +1,34 @@
+# Комнаты L4 в туре +3–4 мс (RDL_SIMP4_*, cmp_92_93final.md): дом Симпсонов L4, как tests/smoke_scenes/roomdl_ab_block.txt часть 2, без A/B листов (roomdl 0). Читать PHSEC (ph1, ph6, ph7, x_homer) и PH6SPLIT (stream_us) по сценам.
+scene F_L4
+flag cfgdefaults 1
+wait 4
+scene F_GO1_L4
+flag golevel 4
+wait 40
+flag stop
+flag player
+scene F_RDL_SIMP4_DOOR
+flag roomdl 0
+foot 228.94 183.30 0.0000 4.23
+wait 1.5
+press circle 0.3
+wait 1
+press triangle
+wait 6
+scene F_RDL_SIMP4_0A
+foot 496.340 396.775 0 -19.50
+wait 2
+wait 10
+scene F_RDL_SIMP4_1A
+foot 496.340 396.775 0 -19.50
+wait 2
+wait 10
+scene F_RDL_SIMP4_1B
+foot 496.340 396.775 0 -19.50
+wait 2
+wait 10
+scene F_RDL_SIMP4_0B
+foot 496.340 396.775 0 -19.50
+wait 2
+wait 10
+end

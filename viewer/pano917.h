@@ -21,7 +21,7 @@ static void pano917Step(const int *need, int pre) {
     for (int i = 0; i < PNO_SLOTS && !v; i++) if (pnoS[i].id < 0 && pnoS[i].st == 0) { v = &pnoS[i]; vi = i; }
     for (int i = 0; i < PNO_SLOTS && !v; i++) { if (pnoS[i].st != 2) continue; int in = 0; for (int q = 0; q < pre; q++) if (need[q] == pnoS[i].id) in = 1; if (!in) { v = &pnoS[i]; vi = i; } }
     if (!v) return;
-    if (!v->buf) { if (!memPrefetchRoom(pnoSz + (vi < 2 ? 1u << 20 : 3u << 20))) return; v->buf = (unsigned char *)memalign(64, pnoSz); if (!v->buf) return; }   // память на уровень: два слота (смена панорам) с запасом 1 МБ над резервом, третий (подкачка) — 3 МБ
+    if (!v->buf) { if (zone3AreaOnX(Z3A_PLACE) ? zone3MaxFreeX(Z3A_PLACE) < pnoSz : !memPrefetchRoom(pnoSz + (vi < 2 ? 1u << 20 : 3u << 20))) return; v->buf = (unsigned char *)zone3TryX(Z3A_PLACE, "pano", pnoSz, 64); if (!v->buf) return; }   // П5 Зоны-95: слоты панорамы — область «место»   // память на уровень: два слота (смена панорам) с запасом 1 МБ над резервом, третий (подкачка) — 3 МБ
     v->st = 1; v->id = need[k]; pnoStepT = now; __asm__ volatile("" ::: "memory"); pnoReq = vi; ldSignal();
     if (smkOn && pnoLogReady < 12) { pnoLogReady++; char s[96]; snprintf(s, sizeof s, "PANO917 req id=%d x=%.0f z=%.0f slot=%d\n", need[k], pnoE[need[k]].x, pnoE[need[k]].z, vi); smkWrite(s); }
     return;

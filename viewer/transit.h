@@ -32,6 +32,9 @@ int  transitBusy(void);                                    // 1 — ирис н�
 // SPAWNHOLD_OLD=1 — прежнее (ирис раскрывается по таймеру)
 extern int (*transitHoldHook)(void);
 extern int transitHoldGate;
+extern float transitHoldElapsed(void);
+extern int transitDropModal1259(void); extern int irisModal1259Old;   // Будка-93 (1259): модальный экран (провал миссии) снимает ирис перехода
+extern int irisStuck1258Old; extern unsigned irisStuck1258N; extern int (*transitStuckExempt)(void); extern const char *(*transitStuckInfo)(void);   // Будка-93 (1258): сторож вечного ириса   // Будка-93 (1257)
 extern void (*transitHoldNote)(const char *line);
 void transitDrop(void);                                    // №663: снять закрытый ирис, не раскрывая
 int  transitFullyClosed(void);                             // 1 — экран закрыт ирисом/чёрным целиком: мир под ним не виден (брифинг, main_loop.h)

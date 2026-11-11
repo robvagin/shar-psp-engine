@@ -183,6 +183,10 @@ static float drawDistMul = DRAWDIST_MUL;
 #endif
 static int testOverlayOn = !TEST_OVERLAY_OFF;   // TEST16E: оверлей видео-теста (только при сценарии smkOn)
 static float ddScale = 1.f, ddAvg;
+#ifndef SKYCLEAR1249_OLD
+#define SKYCLEAR1249_OLD 0   // 1 - цвет кадра не чистится при небе последним (как было); правка Роба 1249
+#endif
+static int skyClear1249Off = SKYCLEAR1249_OLD;
 // Слово Роба 15.10 (видео TEST19: «на причале вдалеке ничего не видно», «в погоне город вдали не появляется»): регулятор дальности стоял на полу 150 м почти весь тур.
 // У уровня с дальними версиями кусков (файл far_plain, SHR_FAR_PLAIN=1) пол выше: DD_FLOOR_FAR (200 м) — дальше 140 м клетки рисуются дальней версией без нарезки (−39 % треугольников).
 // DD_FLOOR_FAR_OLD=1 — прежний пол 150 для всех; «flag ddfloor N» — пол в метрах в сценарии (замер A/B)
@@ -192,6 +196,14 @@ static float ddScale = 1.f, ddAvg;
 #ifndef DD_FLOOR_FAR
 #define DD_FLOOR_FAR 200.f
 #endif
+// Правка Роба 1244 (08.11, тур 97 на PSP: пропуски кадров 14 -> 29 %, p95 32,7 -> 36,7 мс): Draw Distance 250 по умолчанию был ПОЛОМ регулятора (ddFloorOver = 250) - регулятор по времени кадра (ddScale, DD_*) не мог опустить дальность,
+// dd стоял на 250 при работе 31-44 мс. Теперь выбор 250 - ПОТОЛОК (ddCeilSet, им же ограничивается город вне зон, horizon.h), пол регулятора - 150 м; выбор 200 и 150 прежние (пол = выбранное). Рост дальности ждёт, пока стрим не догрузил
+// видимые клетки (stMissNow = 0); два регулятора (кадр и память) - минимум, а не произведение. DDREG1244_OLD=1 / файл ddreg1244old - как было. Служебно: «flag workmix N» подменяет работу кадра регулятора числом N мс (эмулятор
+// время кадра PSP не мерит), «flag ddsetting N» - строка Draw Distance, строка DDREG раз в секунду
+#ifndef DDREG1244_OLD
+#define DDREG1244_OLD 0
+#endif
+static int ddReg1244Off = DDREG1244_OLD; static float ddCeilSet, ddWorkMix = -1.f;
 static float ddFloorOver;
 #define PVS_RANGE 115.f   // PVS (tools/pvs.c DRAW) посчитан до 115 м; дальше куски берём по пирамиде клетками
 static int longView = 1;
@@ -435,6 +447,7 @@ typedef struct {
   void *mem;
   volatile unsigned reqT;       // исследование 03.10 П2: время первого запроса клетки (мкс | 1), 0 — не запрошена
   void *cg; unsigned char cgn[3], cgs; unsigned short cgk; int cgi; unsigned cgbytes;   // №620: сетка занятости видимой геометрии (camgrid.h), 0 — нет
+  unsigned fsize, foff, ldSize; void *swMem; unsigned char ver, wantFar, swWant, fpad; volatile int swSt;   // Лестница-96/Модели-96: дальняя версия клетки (farcell.h): размер и смещение в farcells.shr (0 — нет), размер загруженного блока, версия кусков (0 полная, 1 дальняя), версия, которую просят, обмен версий (swSt 0 нет, 1 читает загрузчик, 2 готов, swMem — новый блок)
 } Cell;
 
 // Правка Роба 509 (подложка по клеткам): Cell.pad = байт 0 регион+1 (правка 181), байт 1 глубина плоскости под низом ящика клетки в шагах 0,25 м,
@@ -460,6 +473,11 @@ static Piece *pc; static Cell *cl;
 #define GG_BIG_EDGE 8.f
 #define GG_BIG_H (GG_BIG854_OLD ? 3.2f : 4.5f)   // №840: глаз ниже этого над землёй (или земли под глазом нет) — срез крупных треугольников у камеры (№854: 4,5 м)
 static unsigned char *cellBigF;
+// П5 Зоны-95: плиты клеток и куски хвостов — из области «город» (зона 2), когда она взята; нет места — 0 (стрим ждёт и отдаёт далёкое, в кучу не уходит)
+static int cpCitySpill;   // файл cityspill: город полон — клетка идёт в кучу, а не ждёт (опыт А/Б)
+static int cpCityBypass;   // Лестница-96: клетки-владельцы (небо, машина игрока) живут весь уровень - не из области «город» (она к их загрузке уже полна кольцом старта): прямо из кучи (MEMLADOWNHEAP_OLD)
+static void *cpCityMem(unsigned al, unsigned sz) { if (cpCityBypass || !zone3CityOnX()) return memalign(al, sz); void *p = zone3TryX(Z3A_CITY, "cell", sz, al); return p || !cpCitySpill ? p : memalign(al, sz); }
+#define CP_MEM(al, sz) cpCityMem((al), (sz))
 #include "cellpool.h"
 #include "stripdraw.h"   // К4: куски города полосами (F_STRIP), ПЛАН_ОПТИМИЗАЦИЙ 17.10 п.1
 #include "camgrid.h"
@@ -480,7 +498,7 @@ static CullRec *cr;
 typedef struct { unsigned *buf; int tris, draws; unsigned bytes; unsigned char ok; unsigned short nb, pnb, fnb; unsigned char noise, pnoise, fnoise;   // №912: смен состояния текстуры (привязка или заливка) внутри листа
                  unsigned *pbuf; int ptris, pdraws; unsigned pbytes; unsigned long long pmask; unsigned char pok;
                  unsigned long long mkVal; unsigned mkEpoch;
-                 unsigned *fbuf; int ftris, fdraws; unsigned fbytes; unsigned char fok; unsigned *mbuf, *mbuf2; unsigned mbytes, mbytes2; int mtrisA, mtrisB; unsigned char mok, mok2; } CellDL;   // mbuf/mok (№912): отдельный лист разметки клетки (рисуется ближе MARK_RANGE)   // fbuf/fok: лист дальней версии клетки (far_plain, TEST23); fok 1 — собран, 3 — не собрался   // mkVal/mkEpoch: маска рискованных кусков для стоящей камеры (BOOM_CITY_OLD)
+                 unsigned *fbuf; int ftris, fdraws; unsigned fbytes; unsigned char fok; unsigned *mbuf, *mbuf2; unsigned mbytes, mbytes2; int mtrisA, mtrisB; unsigned char mok, mok2; unsigned retry; unsigned char retryN; } CellDL;   // Build 95: retry — не раньше этого времени (мкс) пробовать собрать лист снова после отказа памяти, retryN — сколько отказов подряд   // mbuf/mok (№912): отдельный лист разметки клетки (рисуется ближе MARK_RANGE)   // fbuf/fok: лист дальней версии клетки (far_plain, TEST23); fok 1 — собран, 3 — не собрался   // mkVal/mkEpoch: маска рискованных кусков для стоящей камеры (BOOM_CITY_OLD)
 static CellDL *cdl; static unsigned *cdlMark, cdlEpoch; static unsigned dlBuilt, dlBytesNow, dlCallsFrame, dlFallFrame;
 static void dlFree(unsigned ci) {
   if (!cdl || ci >= ncell) return;
@@ -519,8 +537,8 @@ static float farPlainD;
 #ifndef DD_FLOOR200_OLD
 #define DD_FLOOR200_OLD 0
 #endif
-static float ddFloorHard(void) { return ddFloorOver > 0.f ? ddFloorOver : (DD_FLOOR200_OLD ? DD_FLOOR_LONG : DD_FLOOR_FAR); }   // нижний предел дальности: 150 м; «flag ddfloor N» поднимает его до N (замер A/B жёсткого пола)
-static float ddFloorLong(void) { if (ddFloorOver > 0.f) return ddFloorOver; return (!DD_FLOOR_FAR_OLD && (farPlainD > 0.f || !DD_FLOOR200_OLD)) ? DD_FLOOR_FAR : DD_FLOOR_LONG; }   // пол регулятора дальности: у уровня с дальними версиями выше
+static float ddFloorHard(void) { return ddFloorOver > 0.f ? ddFloorOver : (DD_FLOOR200_OLD || !ddReg1244Off ? DD_FLOOR_LONG : DD_FLOOR_FAR); }   // нижний предел дальности: 150 м; «flag ddfloor N» поднимает его до N (замер A/B жёсткого пола)
+static float ddFloorLong(void) { if (ddFloorOver > 0.f) return ddFloorOver; if (!ddReg1244Off) return DD_FLOOR_LONG; return (!DD_FLOOR_FAR_OLD && (farPlainD > 0.f || !DD_FLOOR200_OLD)) ? DD_FLOOR_FAR : DD_FLOOR_LONG; }   // пол регулятора дальности: у уровня с дальними версиями выше
 static float pvsRange = PVS_RANGE;   // дальность, до которой списки PVS1 уровня полны (читается из файла)
 static unsigned *pvsEnt; static unsigned short *pvsPool; static float pvsOx, pvsOz, pvsCell; static int pvsW, pvsH;
 #include "pvschunk.h"   // №1068: пул PVS1 кусками, если в запас участка lva не влез (L1/L4)
@@ -528,6 +546,14 @@ static unsigned *pvsEnt; static unsigned short *pvsPool; static float pvsOx, pvs
 #define PVSCHUNK_OLD 0   // 1 / файл pvschunkold рядом с EBOOT / «flag pvschunkold 1» — как до правки: PVS1 одним куском из кучи
 #endif
 static int pvsChunkOld = PVSCHUNK_OLD; static unsigned short *pvsChP[PVSCH_MAX]; static unsigned pvsChB[PVSCH_MAX + 1]; static int pvsChN;   // pvsChN 0 — пул одним блоком (pvsPool)
+// П3 пропечка (Fable-спецификация 08.11, В.1): PVB1 — видимость битами по группам кусков (файл pvb.shr рядом с уровнем, tools/pvs_bits.py) вместо списков PVS1 (L4 2,75 МБ -> 0,5 МБ).
+// Список кусков ячейки сетки 20 м разворачивается из маски по требованию (pvbList, main_render.h): на каждый включённый бит — куски его группы (кроме не городских). Надмножество PVS1.
+// PVB1_OLD=1 / файл pvb1old рядом с EBOOT / «flag pvb1old 1» — читается PVS1, как раньше
+#ifndef PVB1_OLD
+#define PVB1_OLD 0
+#endif
+static int pvb1Old = PVB1_OLD, pvbOn, pvbVer; static const unsigned *pvbOffs; static const unsigned char *pvbStream; static const unsigned short *pvbIdx; static const unsigned char *pvbMask; static const unsigned *pvbGrp; static unsigned pvbRowB, pvbNgrp, pvbNpc;
+static unsigned short *pvbBuf[3]; static int pvbKey[3] = { -1, -1, -1 }; static unsigned pvbUse[3], pvbTick, pvbExpands, pvbHits;
 static unsigned rfPbUs, rfUiUs;   // RFAST: время блока запекания B1 (b1_us), интерфейса (ui_us)
 // Прогрев на хвосте экрана загрузки (№538, ЗАДАНИЕ_ЗАГРУЗКА_ВПРОК): показ идёт не меньше LOAD_MIN_S (3,5 с), чтение ~0,64 с — ~3 с простоя. Вокруг точки старта (ldWarmC) строятся листы целых клеток
 // и запекание B1, чтобы после снятия ириса этого не делать на глазах. LOAD_WARM_OLD=1 (бит 14 bisect) — как до правки
@@ -585,6 +611,20 @@ enum { TF_LEVEL = 0, TF_TRAFFIC = 1, TF_MCR = 2, TF_ROOM = 3 };   // правк�
 static Props props; static int haveProps; static Coins coins; static int haveCoins; static float hnrHeat, hnrCalm;  /* шкала Hit & Run 0..1 */ static float prevDmg; static int wasDestroyed;   // этап 3б: сбиваемые пропы (секция PRP1)
 static StateProps sprops; static int haveSP;   // SPR1: ящики, автоматы, будки, колонки, кусты-шары, щитки m4 + обломки деревьев/стекла/знаков
 static int artGal;   // служебная витрина предметов миссий (flag artgal)
+// Build 95: анимации текстур и мерцания на ИГРОВОМ времени (ROOMANIMGT95_OLD=1 / flag roomanimgt95 0 / файл roomanimgt95old — настенное, как было). У оригинала контроллеры анимации
+// двигаются на игровые миллисекунды менеджеров (пауза, меню, будка, лавка, гардероб, брифинг — dt = 0): экран автомата Kwik, монеты-спрайты, мерцание огней и капли на паузе стоят.
+// gtClock95 растёт на dt каждого кадра в main_loop (после обнуления dt в стоящих состояниях); gtUs95() — те же микросекунды, что sceKernelGetSystemTimeLow, но игровые
+#ifndef ROOMANIMGT95_OLD
+#define ROOMANIMGT95_OLD 0
+#endif
+static int gtOn95 = !ROOMANIMGT95_OLD; static double gtClock95;
+static inline unsigned gtUs95(void) { return gtOn95 ? (unsigned)((unsigned long long)(gtClock95 * 1e6) & 0xFFFFFFFFull) : sceKernelGetSystemTimeLow(); }
+// Build 95 (комнаты L4 в туре, ph6/ph7): строка PH6MEM — самый большой блок и свободная куча по секундам рядом с PH6SPLIT. PH6SPLIT95_OLD=1 / flag ph6split95 0 / файл ph6split95old — без неё
+#ifndef PH6SPLIT95_OLD
+#define PH6SPLIT95_OLD 0
+#endif
+static int ph6Split95 = !PH6SPLIT95_OLD;
+#include "dcache96.h"
 static AnimObjs ao; static int haveAo, aoAct;   // ANM1 (viewer/animobj.c): действия объектов уровня, живые объёмы COL1; aoAct — △ этого кадра объекту
 // сбитый DynaPhys с обломком BreakableObject: проиграть обломок в его исходной точке; 1 — у обломка есть меши, проп спрятать
 // + частицы удара по таблице ATC типа (PRP2 @44): обломок (вода гидранта, листья/щепа деревьев, стекло Krusty) и
@@ -774,7 +814,26 @@ static Game G = {&world, &car, &props, &sprops, &coins, &homer, &haveCol, &haveP
                  &hnrHeat, &hnrCalm, &wasDestroyed, spSt, &spStInit, &cv.lift,
                  {onPropKickFx, spChangeSnd, spFxOut, homerEvFx, afterHomerHud, coinSnd, homerDoor, resetMusic, 0}};
 // P0.2/A1 Опора-93 (канон Роба п.11): крючок ириса transit.c — герой ждёт опору (1) или сцену под точкой (2); 0 — готов или не пешком. Ирис в это время не раскрывается
+// Будка-93 (1226): комната прочитана, но гэги ещё читаются фоном (дорожки и скины: GAGSTREAM async/defer) — они не мигают и не «включаются» на глазах: ирис ждёт (причина 3, предел общий).
+// GAGHOLD1226_OLD=1 / flag gaghold1226old 1 — ирис раскрывается, как только Гомер на опоре
+#ifndef GAGHOLD1226_OLD
+#define GAGHOLD1226_OLD 0
+#endif
+static int gagHold1226Old = GAGHOLD1226_OLD;
+static int gagHoldHook1226(void);   // main_collect.h
+// Будка-93 (1257): гэги держат ирис не дольше GAGHOLDCAP1257_T (раньше до предела 7 с: PSP тур 100 - 0,5 с, эмулятор - 5 раз по 7 с). Дольше - раскрытие, как только пол и персонажи готовы; гэг догружается без экрана.
+// GAGHOLDCAP1257_OLD=1 / файл gagholdcap1257old / flag gagholdcap1257 0 - предела нет
+#ifndef GAGHOLDCAP1257_OLD
+#define GAGHOLDCAP1257_OLD 0
+#endif
+#define GAGHOLDCAP1257_T 1.5f
+static int gagHoldCap1257Old = GAGHOLDCAP1257_OLD;
+int dtBr1258;   // Будка-93 (1258): строка main_loop.h, обнулившая dt кадра (0 - не модальная ветка)
+static const char *irisStuckInfo1258(void) { static char b[160];   // Будка-93 (1258): какие модальные состояния были в кадре срабатывания (корень dt = 0)
+  snprintf(b, sizeof b, "pause%d,brief%d,talk%d,shop%d,foot%d,tut%d,msgbox%d,lvend%d,dtbr%d", uiPaused(), mvBriefing(), mvTalkActive(), shopViewOn(), onFoot(), tutActive(), mvMsgBox(0), mvLevelEnd(), dtBr1258); return b; }
+static int irisStuckExempt1258(void) { return uiPaused() || mvBriefing() || shopViewOn(); }   // Будка-93 (1258): модальные экраны игры - ирис закрыт по замыслу (transit.c stuckWatch)
 static int spawnHoldHook(void) {
+  if (gagHoldHook1226() && (gagHoldCap1257Old || transitHoldElapsed() < GAGHOLDCAP1257_T)) return 3;
   if (!haveHomer || !haveCol || !onFoot() || !homerSpawnPending(&homer)) return 0;
   const ColWorld *w_ = G.pHomerWorld ? G.pHomerWorld : &world; float g_;
   return colGround(w_, homer.x, homer.z, homer.y + 2.f, homer.y - HOMER_SPAWN_PROBE, &g_, 0) ? 2 : 1;

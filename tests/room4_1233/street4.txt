@@ -1,0 +1,26 @@
+# Как simp4.txt, но Гомер остаётся на улице у дома (в туре на железе кадр сцен RDL_SIMP4_* был на улице K9-7 229,183: BB-строка), чтобы мерить то же состояние: идёт stream(), рисуется город.
+scene F_L4
+flag cfgdefaults 1
+wait 4
+scene F_GO1_L4
+flag golevel 4
+wait 40
+flag stop
+flag player
+scene F_RDL_SIMP4_DOOR
+flag roomdl 0
+foot 228.94 183.30 0.0000 4.23
+wait 8
+scene F_RDL_SIMP4_0A
+foot 228.94 183.30 0.0000 4.23
+wait 12
+scene F_RDL_SIMP4_1A
+foot 228.94 183.30 0.0000 4.23
+wait 12
+scene F_RDL_SIMP4_1B
+foot 228.94 183.30 0.0000 4.23
+wait 12
+scene F_RDL_SIMP4_0B
+foot 228.94 183.30 0.0000 4.23
+wait 12
+end

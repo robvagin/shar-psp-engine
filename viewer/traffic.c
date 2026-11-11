@@ -1,5 +1,6 @@
 // Трафик, стоящие машины и пешеходы уровня (этап 5). Что и по каким данным — viewer/traffic.h. Чистый C99; на Маке
 // собирается с -DSKIN_HOST (tests/traffic/host.sh), на PSP — в EBOOT (viewer/CMakeLists.txt).
+#include "dcache96.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -232,6 +233,9 @@ int trafficParkModel(const Traffic *t, const char *name) {
 #ifndef TRAFFIC_PARK_FEW_OLD
 #define TRAFFIC_PARK_FEW_OLD 0
 #endif
+#ifndef TRF_LAZYPARK_OLD
+#define TRF_LAZYPARK_OLD 0     // Коллизия-96: 1 — сброс трафика сажает на землю все стоящие машины уровня сразу (дочитывание коллизии за 400 м от старта)
+#endif
 #ifndef TRF_SV_ZPARK_OLD
 #define TRF_SV_ZPARK_OLD 0     // круг 5, P03-19: 1 — места выбраны один раз на уровень (FNV), зона только прячет/показывает
 #endif
@@ -256,12 +260,14 @@ static int pedModel(Traffic *t, int i) {   // CHR1 внутри блоба пе�
   if (off > sz || sz - off < sizeof(SkinHeader)) return -1;
   const SkinHeader *h = (const SkinHeader *)(d + off);
 #define IN(o, l) ((uint32_t)(o) <= sz && (uint32_t)(l) <= sz - (uint32_t)(o))
-  if (memcmp(h->magic, "CHR1", 4) || h->version != 1 || h->size != sz || h->nJoints > SKIN_MAXJ || !h->nClips ||
+  if (memcmp(h->magic, "CHR1", 4) || (h->version != 1 && h->version != 2) || h->size != sz || h->nJoints > SKIN_MAXJ || !h->nClips ||
       !IN(h->offJoints, h->nJoints * 128) || !IN(h->offBatches, h->nBatches * 48) || !IN(h->offTex, h->nTex * 48) ||
       !IN(h->offClips, h->nClips * 80) || !IN(h->offBlink, h->nBlink * 8)) return -2;
   const SkinBatch *b = (const SkinBatch *)(d + h->offBatches);
   for (uint32_t k = 0; k < h->nBatches; k++) {
-    if (b[k].nb < 1 || b[k].nb > 8 || b[k].tex >= h->nTex || !IN(b[k].offVerts, b[k].nverts * b[k].stride)) return -3;
+    if (b[k].nb < 1 || b[k].nb > 8 || b[k].tex >= h->nTex) return -3;
+    if (b[k].flags & 4) continue;   // Модели-96: индексная пачка (CHR1 v2) — границы вершин и индексов проверяет skinBatchValid ниже, когда модель собрана
+    if (!IN(b[k].offVerts, b[k].nverts * b[k].stride)) return -3;
     for (int j = 0; j < b[k].nb; j++) if (b[k].bones[j] >= h->nJoints) return -3;
   }
   const SkinClip *c = (const SkinClip *)(d + h->offClips);
@@ -269,9 +275,10 @@ static int pedModel(Traffic *t, int i) {   // CHR1 внутри блоба пе�
   const SkinTex *x = (const SkinTex *)(d + h->offTex);
   for (uint32_t k = 0; k < h->nTex; k++) if (!IN(x[k].offClut, 1024) || !IN(x[k].offPix, (uint32_t)x[k].w * x[k].h)) return -5;
 #undef IN
-  SkinModel *m = &t->peds[i];
+  SkinModel *m = &t->peds[i]; skinFootForget(m);   // Модели-96: адрес тот же на каждом уровне — кеш поправки стоп прежнего уровня не годится
   m->base = d; m->h = h; m->j = (const SkinJoint *)(d + h->offJoints); m->b = b; m->tex = x; m->c = c;
   m->blink = (const SkinBlinkKey *)(d + h->offBlink);
+  for (uint32_t k = 0; k < h->nBatches; k++) if ((b[k].flags & 4) && !skinBatchValid(m, &b[k])) return -3;   // Модели-96: индексные пачки пешеходов
   skinSlotOpt(m);   // №914
   static const char *cn[TRC_N] = {"npd_loco_walk", "npd_loco_run", "npd_loco_idle_rest", "npd_flail", "npd_get_up", "npd_dodge",
                                   "npd_cringe", "npd_fall_land"};
@@ -411,6 +418,7 @@ int trafficLoad(Traffic *t, const char *path) {
   SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0); if (fd < 0) return -1;
   size = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_END); sceIoLseek32(fd, 0, PSP_SEEK_SET);
   d = trAllocHook ? (unsigned char *)trAllocHook(size) : (unsigned char *)memalign(64, size);
+  if (d) DCPRE96(d, size);
   if (!d || sceIoRead(fd, d, size) != (int)size) { sceIoClose(fd); TR_FREE(d); return -1; }
   sceIoClose(fd); }
 #endif
@@ -690,6 +698,18 @@ static void svParkReselect(Traffic *t) {
     t->park[cand[(int)(rnd(t) * nc) % nc]].sel = 1; active++;
   }
 }
+// Коллизия-96: включённое место садится на землю, когда игрок или глаз ближе PARK_LAZY_R (дальше стоящая машина не рисуется (125 м), не задевается и не будится; земля вдали не нужна
+// и кольцо коллизии не дочитывало бы её за сотни метров от игрока). Выбор мест зоны идёт по всей карте, поэтому раньше при загрузке уровня и входе в зону читалось всё
+#define PARK_LAZY_R 180.f
+static void parkLazyGround(Traffic *t, const ColWorld *w, const float ppos[3], const float eye[3]) {
+  for (int i = 0; i < t->npark; i++) {
+    TrParked *P = &t->park[i]; if (!P->lazy || P->gone) continue;
+    const TrPark *k = &t->parkd[i];
+    float dp = (k->x - ppos[0]) * (k->x - ppos[0]) + (k->z - ppos[2]) * (k->z - ppos[2]), de = (k->x - eye[0]) * (k->x - eye[0]) + (k->z - eye[2]) * (k->z - eye[2]);
+    if (dp > PARK_LAZY_R * PARK_LAZY_R && de > PARK_LAZY_R * PARK_LAZY_R) continue;
+    carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; P->stillT = 0.f; P->lazy = 0;
+  }
+}
 static void parkZones(Traffic *t, const ColWorld *w, const float ppos[3], const float eye[3], const float fwd[3]) {
   for (int i = 0; i < t->nLoader; i++) {
     const TrZone *Z = &t->loader[i]; float d[3] = {ppos[0] - Z->c[0], ppos[1] - Z->c[1], ppos[2] - Z->c[2]};
@@ -707,7 +727,7 @@ static void parkZones(Traffic *t, const ColWorld *w, const float ppos[3], const 
 #else
     (void)eye; (void)fwd;
 #endif
-    if (!want) { carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; P->stillT = 0.f; }
+    if (!want && !P->lazy) { carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; P->stillT = 0.f; }   // на землю сажено не было (lazy) — поза по данным и так на месте
     P->gone = !want;
   }
 }
@@ -2380,7 +2400,10 @@ void trafficReset(Traffic *t, const ColWorld *w) {
   for (int i = 0; i < TR_MAXPED; i++) t->ped[i].mode = TRP_OFF;
   for (int i = 0; i < t->npark; i++) {
     const TrPark *k = &t->parkd[i]; TrParked *P = &t->park[i];
-    carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4;   // сверка g01 круг 2 (7.4): вид для svBoom — стоящая
+    P->lazy = !TRF_LAZYPARK_OLD && TRAFFIC_ZONE_PARK && !TRF_SV_ZPARK_OLD;   // зонный режим: места сначала пусты, на землю садится только включённое (carInitDeferred)
+    if (P->lazy) carInitDeferred(&P->car, &t->params[k->model], k->x, k->y + .5f, k->z, k->h);
+    else carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h);
+    P->car.svKind = 4;   // сверка g01 круг 2 (7.4): вид для svBoom — стоящая
     P->state = 0; P->wreck = 0; P->stillT = 0.f; P->gone = (TRAFFIC_ZONE_PARK && !TRF_SV_ZPARK_OLD) ? 1 : P->off; P->sel = 0;   // круг 5: в зонном режиме сначала пусто, места выбирает загрузка зоны
     if (P->off) { P->car.x = P->car.z = 1e7f; P->car.y = -1000.f; P->car.v = 0.f; }   // место пустое: машины нет
   }
@@ -2404,6 +2427,25 @@ int trafficHitStill(Traffic *t, const ColWorld *w, const Car *k) {
     Car s = *k; if (near2(&P->car, &s, .3f) && carHitCar(&P->car, &s, w)) n++;
   }
   return n;
+}
+// правка Роба 1241 (L2: игрок сел в машину NPC, рядом припаркована его же машина — проехал сквозь неё): оставленная своя (oldCar) для машин трафика была твёрдой
+// (trafficHitStill), а для самого игрока в чужой машине её не было вовсе. Теперь она обычная машина мира, как стоящая машина трафика: удар игрока
+// сдвигает и разворачивает её (carHitCar с двумя телами), урон по тем же правилам (carRamDamage), после удара она живёт физикой с ручником и засыпает, когда
+// успокоилась (> 1 с тише 0,2 м/с). player = NULL — игрок пешком: только доживает движение. awake/still — состояние сна, ведёт вызывающий.
+// OLDCARHIT1241_OLD=1 — прежнее (проезд насквозь, оставленная не двигается)
+int trafficHitPlayerStill(const ColWorld *w, Car *player, Car *own, int *awake, float *still, float dt) {
+  if (OLDCARHIT1241_OLD || !own || !w || !awake || !still) return 0;
+  int hit = 0;
+  if (player && near2(player, own, .5f)) { float dmg = own->damage;
+    if (carHitCar(player, own, w)) { hit = 1; carRamDamage(own, dmg); *awake = 1; *still = 0.f; } carRamCapFrame(own, dmg); }
+  if (*awake) {
+    CarInput in = {0.f, 0.f, 0.f, 1.f};
+    carUpdate(own, w, &in, dt);
+    float wv = fabsf(own->w[0]) + fabsf(own->w[1]) + fabsf(own->w[2]);
+    *still = (fabsf(own->v) < .2f && fabsf(own->vl) < .2f && wv < .2f) ? *still + dt : 0.f;
+    if (*still > 1.f) *awake = 0;
+  }
+  return hit;
 }
 #ifndef USE_PED_GROUP_OLD
 #define USE_PED_GROUP_OLD 0
@@ -2440,6 +2482,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
   t->group = t->missionPedGroup >= 0 ? t->missionPedGroup : t->zoneGroup;
 #if TRAFFIC_ZONE_PARK
   parkZones(t, w, ppos, eye, fwd);
+  if (!TRF_LAZYPARK_OLD) parkLazyGround(t, w, ppos, eye);
 #endif
   // --- удаление и спавн
   for (int i = 0; i < t->maxCars; i++) {
@@ -2595,7 +2638,7 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
     int i = t->parkRR++ % t->npark; TrParked *P = &t->park[i]; const TrPark *k = &t->parkd[i];
     float dx = P->car.x - k->x, dz = P->car.z - k->z, px = k->x - ppos[0], pz = k->z - ppos[2];
     int moved = dx * dx + dz * dz > 1.f || fabsf(wrapPi(P->car.h - k->h)) > .2f || P->car.damage > 0.f;
-    if (moved && !P->off && !P->state && px * px + pz * pz > PARK_BACK * PARK_BACK && !inView(eye, fwd, P->car.x, P->car.y + 1.f, P->car.z, carR(&P->car), t->drawDist)) {
+    if (moved && !P->off && !P->lazy && !P->state && px * px + pz * pz > PARK_BACK * PARK_BACK && !inView(eye, fwd, P->car.x, P->car.y + 1.f, P->car.z, carR(&P->car), t->drawDist)) {
       carInit(&P->car, &t->params[k->model], w, k->x, k->y + .5f, k->z, k->h); P->car.svKind = 4; P->wreck = 0; }
   }
   TP(7);

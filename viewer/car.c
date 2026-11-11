@@ -81,6 +81,7 @@ float carRollGain = 0.f;   // добавка к плечу крена боков
 //      машину через 2 с ставит на колёса на месте.
 // Урон: удар о стену быстрее 2 м/с (о землю — 6 м/с) добавляет (v - порог) * 0.85 / 100 / (HitPoints / 3).
 #include "car.h"
+#include "colacc.h"   // Коллизия-96: TRI_AT
 #include "xsub.h"
 #include "carparams.h"
 #include "car_inertia.h"
@@ -318,6 +319,10 @@ extern int colDebug;
 #ifndef SV_DMG_IMPULSE_OLD
 #define SV_DMG_IMPULSE_OLD 0    // 7.1/7.2/P01-15: урон = нормированный импульс |J|/100000 (порог 0,06, делится на HitPoints), ударивший носом получает ×0,5; удары машина-машина > 0,8 (> 0,5 для bart_v+cklimo) и > 2 прерываются. Было: от скорости сближения (CAR_HIT_DMG_K, 0,019/м/с)
 #endif
+#ifndef DMGMERCY_OLD
+#define DMGMERCY_OLD 0         // Опора-93 (Роб: «машина разбивается как в оригинале»): пощада на последнем ударе один раз (damage до удара <= 0,98); 1 - как было, машина от ударов не взрывалась
+#endif
+int carDmgMercy96 = !DMGMERCY_OLD;   // flag dmgmercy96 0 / файл dmgmercy96old - как было (красный контроль)
 #ifndef SV_NOONEHIT_OLD
 #define SV_NOONEHIT_OLD 0       // 7.4/P01-09: урон машины игрока не убивает за один удар (остаётся «0,001» и окно 1 с без урона)
 #endif
@@ -515,6 +520,10 @@ int carParamsFor(const char *name, CarParams *p) {
   }
   conFill(&carCons[k >= 0 ? k : dflt], p);
   return k >= 0;
+}
+int carOpenFor(const char *name) {   // правка 1240: 1 — машина без верха над сиденьем (список tools/open_cars.txt)
+  if (name) for (int i = 0; i < CAR_OPEN_CONS; i++) if (!strcmp(carOpenCons[i], name)) return 1;
+  return 0;
 }
 int carIrisFor(const char *name) {
   if (name) for (int i = 0; i < CAR_IRIS_CONS; i++) if (!strcmp(carIrisCons[i], name)) return 1;
@@ -1083,6 +1092,18 @@ void carInit(Car *c, const CarParams *p, const ColWorld *w, float x, float y, fl
   c->safeT = -1e9f;
 }
 
+// Коллизия-96: место стоящей машины без опроса земли (сброс трафика ставил все места уровня, в том числе за 400 м от старта, и кольцо дочитывало вдали их плитки).
+// Поза по данным места, оседания на землю нет: оно будет, когда место включится в зоне (carInit). CAR_DEFERPLACE_OLD=1 — как было (трафик зовёт carInit)
+void carInitDeferred(Car *c, const CarParams *p, float x, float y, float z, float h) {
+  memset(c, 0, sizeof *c); c->latK = 1.f; c->boostZone = -1; c->hitEpAge = 99.f; c->boomDelay = CAR_BOOM_DELAY; c->svKind = 1;
+  if (p) c->p = *p; else carDefaults(&c->p);
+  derive(c);
+  c->x = x; c->y = y; c->z = z; c->h = h; memcpy(c->com, c->comBase, sizeof c->com); quatYaw(c->q, h);
+  syncOut(c);
+  c->ry = c->y; c->rpitch = c->pitch; c->rroll = c->roll; c->fallTop = c->y; c->flightZone = -1;
+  c->homeX = c->x; c->homeY = c->y; c->homeZ = c->z; c->homeH = c->h; c->safeT = -1e9f;
+}
+
 void carSetSpeed(Car *c, float v) {
   float q[4]; memcpy(q, c->q, sizeof q); M3 M = quatM(q);
   c->vel[0] = M.F.x * v; c->vel[1] = M.F.y * v; c->vel[2] = M.F.z * v; memset(c->w, 0, sizeof c->w);
@@ -1224,8 +1245,10 @@ static void dmgApply(Car *c, float d, float closing) {
   if (c->invuln) return;   // круг 2, P07 Д6: цель follow/dump неуязвима
   if (!CHEATS1104_OLD && carCheatInvincible && (c->huskDrive || c->svPlayer)) return;   // №1104: код Invincible Car — машина игрока урона не получает (оригинал: только текущая машина игрока)
   if (!SV_NOONEHIT_OLD && c->noDmgT > 0.f) return;
-  c->damage += d; c->lastHit = closing;
-  if (!SV_NOONEHIT_OLD && (SV_NOONEHIT_ALL_OLD ? (c->huskDrive || c->svPlayer || SV_FORCE_PLAYER) : 1) && !c->destroyed && c->damage > .98f) { c->damage = .999f; c->noDmgT = 1.f; return; }
+  float before = c->damage; c->damage += d; c->lastHit = closing;
+  // Пощада (оригинал, эталон Данных-93): ОДИН раз - удар, после которого жизнь ушла бы ниже 2 %, а до удара была выше 2 %, оставляет 0,001 очка и даёт окно 1 с.
+  // Прежний код (DMGMERCY_OLD=1) проверял только damage после прибавки: на 0,999 каждый удар снова давал пощаду и машина от ударов не взрывалась никогда
+  if (!SV_NOONEHIT_OLD && (SV_NOONEHIT_ALL_OLD ? (c->huskDrive || c->svPlayer || SV_FORCE_PLAYER) : 1) && !c->destroyed && c->damage > .98f && (!carDmgMercy96 || before <= .98f)) { c->damage = .999f; c->noDmgT = 1.f; return; }
   if (c->damage >= 1.f) { c->damage = 1.f; if (!c->destroyed) c->boomDelay = (SV_BOOM_NOW_OLD || c->huskDrive || c->svPlayer || SV_FORCE_PLAYER || c->svRace) ? CAR_BOOM_DELAY : 0.f; c->destroyed = 1; }
 }
 // нормированный импульс удара о неподвижное: масса · скорость сближения · (1 + e) / 100000; порог урона 0,06
@@ -2030,8 +2053,48 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
 #endif
       int allSeg = 1; for (int k = 0; k < b.n; k++) allSeg &= b.type[k] == COL_SEG;   // только заборы (ColSeg), не ящики и стены-треугольники
       float muWall = CAR_WALL_FRICTION_OLD || hardHit > CAR_CRASH_V || !allSeg || dot(vel, M.F) <= 0.f ? P->wallFriction : CAR_FENCE_MU;
+#ifndef CAR_SCRAPE_OLD
+#define CAR_SCRAPE_OLD 1   // 103-fiz (Роб, тур 102, Р6: «физика неродная, верни как в 98–99»): 1 = скольжение о стену как в TEST99 (без повышенного трения и без CAR_SCRAPE_MUX); 0 — a7c72281…b4b9c253
+#endif
+#ifndef CAR_SCRAPE_MU
+#define CAR_SCRAPE_MU 0.f   // трение стены на время скольжения: 0 — не повышать (прежнее a7c72281: 0,6; оно разворачивало нос в стену: клин на секунды при газе, а с порогом скорости — крен до 70° на диагональной стене, L3 C10-5)
+#endif
+#ifndef CAR_SCRAPE_T
+#define CAR_SCRAPE_T 0.7f
+#endif
+#ifndef CAR_SCRAPE_VMIN
+#define CAR_SCRAPE_VMIN 0.f   // м/с: порог скорости повышенного трения CAR_SCRAPE_MU (cd49b631: 6; красный контроль гейта wallstick)
+#endif
+#ifndef CAR_SCRAPE_DRAG
+#define CAR_SCRAPE_DRAG 0.f   // 1/с: торможение касательной к стене по центру масс независимо от прижатия (лёгкое касание бордюра тормозило бы так же, как удар): выключено
+#endif
+#ifndef CAR_SCRAPE_MUX
+#define CAR_SCRAPE_MUX 0.8f   // скользящий удар (CAR_SCRAPE_T с): трение по центру масс, пропорциональное прижатию к стене и без момента (повышенное трение у контакта разворачивало нос в стену): касательная теряет MUX × приращение нормальной скорости от решателя. 0,8: b166 82 -> ~27, 57 -> ~20 км/ч (PS2 18 и 17)
+#endif
+#ifndef CAR_SCRAPE_TAN
+#define CAR_SCRAPE_TAN 1.f
+#endif
+      // Коллизия-96 (PS2, плита b166 L4, три заезда): скользящий удар (касательная больше нормальной в CAR_SCRAPE_TAN раз) оригинал не отпускает: вдоль стены с искрами 82 → 18 км/ч за 0,5 с,
+      // 57 → 17 за 0,33 с; у порта на тех же заездах оставалось 34–49 км/ч. Пока машина стенку трёт, трение стены выше CAR_SCRAPE_MU. -DCAR_SCRAPE_OLD=1 — как было
+      if (!CAR_SCRAPE_OLD && hardHit > 2.f && c->wallN[0] * c->wallN[0] + c->wallN[1] * c->wallN[1] > .25f) {
+        float nl = hypotf(c->wallN[0], c->wallN[1]), nx = c->wallN[0] / nl, nz = c->wallN[1] / nl, vn = vx0 * nx + vz0 * nz, tx = vx0 - vn * nx, tz = vz0 - vn * nz;
+        if (hypotf(tx, tz) > CAR_SCRAPE_TAN * fabsf(vn) && hypotf(tx, tz) > 8.f && ng >= 3) c->scrapeT = CAR_SCRAPE_T;
+      }
+      if (!CAR_SCRAPE_OLD && c->scrapeT > 0.f && muWall < CAR_SCRAPE_MU && !(nSoft == n)) {
+        if (hypotf(c->vel[0], c->vel[2]) > CAR_SCRAPE_VMIN) muWall = CAR_SCRAPE_MU;
+      }
       if (!CAR_FENCE_LAT_OLD && allSeg && hardHit <= CAR_CRASH_V && dot(vel, M.F) > 0.f) c->fenceT = CAR_FENCE_LAT_T;
+      V3 velPre = vel;
       solve(c, &M, &vel, &om, ct, n, nSoft == n && (!allSeg || CAR_WALL_FRICTION_OLD) ? P->wallFriction * FOLIAGE_MU : muWall, popK, P->popMax, popR, 1);
+      if (!CAR_SCRAPE_OLD && CAR_SCRAPE_MUX > 0.f && c->scrapeT > 0.f && nSoft != n && ng >= 3 && c->wallN[0] * c->wallN[0] + c->wallN[1] * c->wallN[1] > .25f) {
+        float nl = hypotf(c->wallN[0], c->wallN[1]), nx = c->wallN[0] / nl, nz = c->wallN[1] / nl, dvn = (vel.x - velPre.x) * nx + (vel.z - velPre.z) * nz;
+        if (dvn > 0.f) { float vn = vel.x * nx + vel.z * nz, tx = vel.x - vn * nx, tz = vel.z - vn * nz, tl = hypotf(tx, tz), cut = fminf(tl, CAR_SCRAPE_MUX * dvn);
+          if (tl > 1e-4f) { vel.x -= tx / tl * cut; vel.z -= tz / tl * cut; } }
+      }
+      if (!CAR_SCRAPE_OLD && CAR_SCRAPE_DRAG > 0.f && c->scrapeT > 0.f && nSoft != n && ng >= 3 && c->wallN[0] * c->wallN[0] + c->wallN[1] * c->wallN[1] > .25f) {
+        float nl = hypotf(c->wallN[0], c->wallN[1]), nx = c->wallN[0] / nl, nz = c->wallN[1] / nl, vn = vel.x * nx + vel.z * nz, f = fmaxf(0.f, 1.f - CAR_SCRAPE_DRAG * dt);
+        vel.x = vn * nx + (vel.x - vn * nx) * f; vel.z = vn * nz + (vel.z - vn * nz) * f;
+      }
 #endif
       if (hardHit > CAR_CRASH_V) {   // правки 164/187: удар оригинала — машина гасит скорость на месте, без отскока и разворота
         float k = CAR_CRASH_KEEP + (1.f - CAR_CRASH_KEEP) * clampf((CAR_CRASH_V2 - hardHit) / (CAR_CRASH_V2 - CAR_CRASH_V), 0.f, 1.f);
@@ -2044,6 +2107,15 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
           float tx = vx0 - vn0 * nx, tz = vz0 - vn0 * nz, tl = hypotf(tx, tz);   // касательная — по скорости ДО удара (трение решателя уже съело часть)
           float vnNew = (1.f - wk) * CAR_CRASH_E * hardHit + wk * vn * k, tlNew = fmaxf(0.f, tl - (1.f - wk) * CAR_CRASH_MU * hardHit * (1.f + CAR_CRASH_E)) * 1.f;
           tlNew = wk * tl * k + (1.f - wk) * tlNew;
+#ifndef CAR_CRASH_ANG_OLD
+#define CAR_CRASH_ANG_OLD 0
+#endif
+          // Коллизия-96 (сверка PS2, плита b47 L4, Публичный-93, 11.2026): о стену под 20–35° к нормали на 82 км/ч оригинал за 6 кадров теряет почти всю скорость (82 → 7 км/ч)
+          // и стоит на четырёх колёсах; у порта вдоль стены оставалось ~9 м/с, шины скользили боком и на 1 с клали машину на два колеса (крен 20–50°).
+          // Потеря касательной растёт с наклоном к нормали (t = касательная / нормальная до удара): на 17° (b2_ram) остаётся 0,54 прежним правилом, к t = 0,7 (35°) — 5 %, дальше снова растёт (плита b166 L4, 26° от параллели, t ≈ 2: PS2 скользит вдоль стены и за 24 кадра теряет 82 → 18 км/ч, то есть остаётся ≈ 25 %).
+          // Берём меньшее из прежнего и этого. -DCAR_CRASH_ANG_OLD=1 — как было
+          if (!CAR_CRASH_ANG_OLD && wk < 1.f) { float t = fabsf(vn0) > 1e-3f ? tl / fabsf(vn0) : 0.f;
+            if (t > .31f) { float keep = t < .7f ? .54f - 1.26f * (t - .31f) : .05f + .13f * (fminf(t, 2.f) - .7f); tlNew = fminf(tlNew, tl * (wk + (1.f - wk) * keep)); } }
           if (tl > 1e-4f) { tx /= tl; tz /= tl; } else { tx = tz = 0.f; }
           vel.x = vnNew * nx + tlNew * tx; vel.z = vnNew * nz + tlNew * tz;
         } else { vel.x *= k; vel.z *= k; }
@@ -2107,7 +2179,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
           if(nl>.1f) {
             float foot=centre.y-radius,g,gn[3],top=1e30f;
             unsigned ref=contact[j].ref,kind=ref>>29,id=ref&0x1fffffffu;
-            if(kind==COL_TRI){const ColTri*t=&w->tri[id];
+            if(kind==COL_TRI){const ColTri*t=TRI_AT(w,id);
               if(!SEAM_WHEEL_SKIP_OLD && t->n[1]>COL_WALK_NY) continue;
               top=SEAM_WHEEL_TOP_OLD ? fmaxf(t->a[1],fmaxf(t->b[1],t->c[1])) : fminf(fmaxf(t->a[1],fmaxf(t->b[1],t->c[1])), contact[j].p[1] + 0.35f);
             }
@@ -2480,6 +2552,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   c->grounded = revert ? was : (ng > 0 || hullN > 0);
   c->bodyHit = hullN > 0;
   if (c->fenceT > 0.f) c->fenceT -= dt;
+  if (c->scrapeT > 0.f) c->scrapeT -= dt;
 
   // ---- 5) страховка
   float g_; int any = c->wheels > 0 || colGround(w, c->x, c->z, c->y + P->step + 1.f, -1e6f, &g_, 0);

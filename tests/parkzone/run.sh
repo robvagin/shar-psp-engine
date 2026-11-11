@@ -12,7 +12,7 @@ $PY tools/zones_check.py --swap > "$OUT/red_data_swap.txt" 2>&1
 if [ $? -ne 0 ]; then echo "красный (а, «;»/«:» наоборот): упал, как должен"; red=$((red + 1)); else echo "КРАСНЫЙ НЕ ПОЙМАН: (а) swap прошёл"; fi
 $PY tools/zones_check.py > "$OUT/green_data.txt" 2>&1; rcA=$?
 build() { cc -std=c11 -O2 -w -DSKIN_HOST -DTRAFFIC_ZONE_PARK=1 "$@" -I viewer tests/parkzone/host.c viewer/traffic.c viewer/skin.c \
-          viewer/col.c viewer/car.c -lm -o "$OUT/host$1" 2> "$OUT/build.txt" || { echo "FAIL: сборка"; head -5 "$OUT/build.txt"; exit 1; }; }
+          viewer/col.c viewer/car.c viewer/watchdog.c -lm -o "$OUT/host$1" 2> "$OUT/build.txt" || { echo "FAIL: сборка"; head -5 "$OUT/build.txt"; exit 1; }; }
 build -DGREEN; build -DTRZ_PLANT_NOVIEW
 "$OUT/host-DGREEN" build/level.shr build/traffic.shr swap > "$OUT/red_swap.txt" 2>&1
 if [ $? -ne 0 ] && grep -q "FAIL (3)" "$OUT/red_swap.txt"; then echo "красный (б, маски наоборот): упал, как должен"; red=$((red + 1))

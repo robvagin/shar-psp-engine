@@ -2,6 +2,8 @@
 // сторож (watchdog.h): приёмник журнала и часы — как у остальных служебных строк смоука
 static void wdSmkLine(const char *l) { if (!smkOn) return; char b[340]; snprintf(b, sizeof b, "%s\n", l); smkWrite(b); }
 static float wdSmkClock(void) { return smkT; }
+static int irisDt0Test1258;   // служебное flag irisdt0 1 (Будка-93, 1258)
+static int irisStuckExempt1258(void);
 // канон п.11 (вторая половина) и п.13: сцена города под точкой готова — клетки, покрывающие точку, в памяти (state 2). Нет покрытия (вода, пустота) — готова. Комната: её пол — это и есть сцена (резидентна)
 static float smkSceneHoldEnd;   // служебное «flag scenehold S» (A1 Опора-93): сцена города «не готова» до smkT + S — холодная клетка под героем без зависимости от скорости чтения
 static int sceneReadyMain(const ColWorld *w, float x, float z, int *failed) {
@@ -17,10 +19,20 @@ static int sceneReadyMain(const ColWorld *w, float x, float z, int *failed) {
 static int mvSceneMain(float x, float z) { return sceneReadyMain(&world, x, z, 0); }   // персонажи миссии (msn_view.c npcVisible, NPCSCENE431_OLD)
 // «клетку под точкой с высшим приоритетом»: неудавшиеся (state 3) снова в очередь загрузчика; память под неё освобождает лестница окна «Меню» (memLadderCell, необязательная — слабая ссылка)
 extern int memLadderCell(int cell) __attribute__((weak));
+#ifndef CELLREGFIX_OLD
+#define CELLREGFIX_OLD 0
+#endif
+static int streamEyeOv;   // Лестница-96: flag streameye 1 (служебно, сцены с eyeOv: trfgo, phonego, bonusgo)
+static int footFsm;   // Лестница-96 (№4б2): foot/goto сценария через transitClose + msnTeleport (flag footfsm 1)
+static int cellRegFix = !CELLREGFIX_OLD; static unsigned cellRegFixN;   // CELLREGFIX_OLD=1 / «flag cellregfix 0» - сторож cellfail только просит повтор
 static void sceneWantMain(const ColWorld *w, float x, float z) {
   if (w != &world || !ncell || !cl) return;
   for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || x < c->bb[0] || x > c->bb[3] || z < c->bb[2] || z > c->bb[5]) continue;
     if (c->state == 3) { if (memLadderCell) memLadderCell((int)i); c->state = 0; cellFail |= 2; cellFailT = 0; }   // повтор в ближайшем кадре
+    if (cellRegFix && zgOn && c->state == 0 && CELL_REG(c) && CELL_REG(c) <= 16 && !(((regRes | regPre) >> (CELL_REG(c) - 1)) & 1u)) {   // Опора-93, этап 2 (L1: cellfail failed=0 каждые 4 с 175 с): под героем клетка региона, которого нет в наборе ворот (перенос без ворот) - стрим её не берёт, повтор не помогает
+      regRes |= 1u << (CELL_REG(c) - 1); cellRegFixN++;
+      if (smkOn) { char s[110]; snprintf(s, sizeof s, "CELLREGFIX cell=%u reg=%u res=%04x t=%.2f\n", i, CELL_REG(c), regRes, smkT); smkWrite(s); } }
+    if (c->state == 0 && sceneBoost1257) { if (smkOn && sceneBoostCell != (int)i) { char s_[100]; snprintf(s_, sizeof s_, "SCENEBOOST cell=%u size=%u t=%.2f\n", i, c->size, smkT); smkWrite(s_); } sceneBoostCell = (int)i; sceneBoostUs = sceKernelGetSystemTimeLow(); }   // Будка-93 (1257): клетка под ждущим героем - в голову очереди загрузчика
     if (smkOn && c->state != 2) { char s[100]; snprintf(s, sizeof s, "SCENEWANT cell=%u state=%d at=%.1f,%.1f t=%.2f\n", i, c->state, x, z, smkT); smkWrite(s); } }
 }
 // сторож, вид cellfail: клетка города под героем не в памяти дольше WDG_CELL_T — просьба загрузить с приоритетом; строка WATCHDOG
@@ -31,7 +43,7 @@ static int wdCellCheck(void *u, float dt, char *info, int cap) {
   if (sceneReadyMain(&world, homer.x, homer.z, &failed)) { t = 0.f; return 0; }
   t += dt; if (t < 4.f) return 0;
   t = 0.f; sceneWantMain(&world, homer.x, homer.z);
-  snprintf(info, cap, "pos=%.2f,%.2f,%.2f failed=%d fix=requeue heap=%.2f", homer.x, homer.y, homer.z, failed, heapFreeBytes() / 1048576.f);
+  snprintf(info, cap, "pos=%.2f,%.2f,%.2f failed=%d fix=requeue regfix=%u heap=%.2f", homer.x, homer.y, homer.z, failed, cellRegFixN, heapFreeBytes() / 1048576.f);
   return 1;
 }
 // №808 (Роб 18.10: «когда включается мультик — минимальный знак, что думает, чтобы понимать, что не зависло»): пока палитры пересчитываются фоновым
@@ -52,11 +64,15 @@ static void heapFragSet(int kb) {
 // Правка Роба 432 (06.11): бот меню MISSION SELECT (flag msnselfuzz СЕМЯ ЧИСЛО_ПОСЛЕДОВАТЕЛЬНОСТЕЙ). Каждая последовательность: случайное состояние прохождения уровня и отказов пакета,
 // пауза, ↓ до пункта MISSION SELECT, ✕, 3..12 случайных кнопок меню (↑ ↓ ◄ ► L R, круг/треугольник/START), выход. Свидетель mvMsnSelOracle читает состояние независимо от самопроверки
 // и после КАЖДОГО кадра открытого меню должен молчать (иначе строка MSNSELBAD). ✕ на строке не нажимается (старт миссии — отдельная проверка). Итог MSNSELFUZZ
+#ifndef MSNFUZZWAIT_OLD
+#define MSNFUZZWAIT_OLD 0   // 1 - сценарий ждёт фиксированное время, а не конец бота (на медленной машине итога MSNSELFUZZ нет)
+#endif
 static int msFuzzOn, msFuzzSeq, msFuzzMax, msFuzzSteps, msFuzzBad, msFuzzWait, msFuzzLeft = -1, msFuzzOpened; static unsigned msFuzzS;
 static unsigned msFuzzRnd(void) { msFuzzS = msFuzzS * 1664525u + 1013904223u; return msFuzzS >> 8; }
 static unsigned msFuzzHit(void) {
   if (msFuzzWait > 0) { msFuzzWait--; return 0; }
-  if (msFuzzSeq >= msFuzzMax) { if (msFuzzOn == 1) { msFuzzOn = 2; if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "MSNSELFUZZ seq=%d steps=%d opened=%d bad=%d fixes=%d fallback=%d lad=%u/%u/%u/%u fail=%u t=%.1f\n", msFuzzSeq, msFuzzSteps, msFuzzOpened, msFuzzBad, mvMsnSelCount(), mvMsnSelFallbacks(), memLadStep[1], memLadStep[2], memLadStep[3], memLadStep[4], memLadFail, smkT); smkWrite(l_); } } return 0; }
+  if (msFuzzSeq >= msFuzzMax) { if (msFuzzOn == 1) { msFuzzOn = 2; if (smkOn && !MSNFUZZWAIT_OLD) smkWait = 0.f; if (smkOn) {   // Лестница-96: бот кончил - ожидание сценария снимается (прогон не зависит от скорости эмулятора)
+     char l_[160]; snprintf(l_, sizeof l_, "MSNSELFUZZ seq=%d steps=%d opened=%d bad=%d fixes=%d fallback=%d lad=%u/%u/%u/%u fail=%u t=%.1f\n", msFuzzSeq, msFuzzSteps, msFuzzOpened, msFuzzBad, mvMsnSelCount(), mvMsnSelFallbacks(), memLadStep[1], memLadStep[2], memLadStep[3], memLadStep[4], memLadFail, smkT); smkWrite(l_); } } return 0; }
   if (mvMissionSelectOn()) {
     msFuzzSteps++; if (mvMsnSelOracle()) msFuzzBad++;
     if (msFuzzLeft < 0) msFuzzLeft = 3 + (int)(msFuzzRnd() % 10u);
@@ -225,7 +241,19 @@ static void loFallWatch(float dt) {
   }
 }
 
+#ifndef Z0INIT_OLD
+#define Z0INIT_OLD 0   // Build 95: 1 - постоянные блоки (кольца звука, модель игрока, спрайты, отложенный блок) лениво, как было
+#endif
+extern void audioPrealloc(void); extern void skinKeepPrealloc(void); extern void uiZonePrealloc(void);
+static void z0Init(void) {   // Z0-init: всё постоянное выделяется ОДИН раз при старте, пока куча чиста, - внизу, до участка уровня и до того, как середина кучи занята
+  if (Z0INIT_OLD) return;
+  uiZonePrealloc(); audioPrealloc(); skinKeepPrealloc(); wsPreload(); coinSprPreload(); memLadResPut();
+}
+extern void smallPoolInit(void);   // memwatch.c: пул мелких блоков (Build 95 шаг 1) - первым вызовом, самым низом кучи
 int main(int argc, char **argv) {
+  smokeBallastEarly(argc > 0 ? argv[0] : 0);   // служебно (только если рядом лежит файл ballast): балласт у края кучи, до пула и Z0
+  smallPoolInit();
+  z0Init();
   bmBegin(argc > 0 ? argv[0] : 0, SHR_KEEP_SMOKE || !SHR_REL);   // №1192: шаги старта на карту (bootmark.txt), самый первый вызов
   feAllocHook = feMemAlloc841; feFreeHook = feMemFree841;   // №841: гостиная меню без уровня — в участок уровня
   fxGlowGlint = glowGlintQ_;   // №839: искры, подбор, огни машин (fx.c, collectfx.c, carvis.c) — в очередь бликов кадра
@@ -234,7 +262,7 @@ int main(int argc, char **argv) {
   msnartBeam995 = beam995Draw;   // №995: свет под тарелкой — конус от днища до земли (lightsprite.h)
   mvFlatGlow = vecGlowHook;   // №793: пятна <рисунок>_shadow под значками миссий — векторно (lightsprite.h)
   movieNote = movieNote1206;
-  bmMark("msioInit>"); msioInit(); bmMark("msioInit<");   // правки 252/259: обращения к карте по одному, сброс кэша ARK-4 (viewer/msio.h) — до первого чтения
+  bmMark("msioInit>"); msioInit(); { char fn_[256]; SceIoStat st_; sibling(fn_, "farminold"); if (sceIoGetstat(fn_, &st_) >= 0) farMinOn = 0; sibling(fn_, "farheadold"); if (sceIoGetstat(fn_, &st_) >= 0) farHeadOn = 0; sibling(fn_, "farcellold"); if (sceIoGetstat(fn_, &st_) >= 0) farOn = 0; sibling(fn_, "farfake"); if (sceIoGetstat(fn_, &st_) >= 0) farFake = 1; sibling(fn_, "skyclear1249old"); if (sceIoGetstat(fn_, &st_) >= 0) skyClear1249Off = 1; sibling(fn_, "citycap100old"); if (sceIoGetstat(fn_, &st_) >= 0) cityCapOff = 1; sibling(fn_, "ddreg1244old"); if (sceIoGetstat(fn_, &st_) >= 0) ddReg1244Off = 1; sibling(fn_, "cellthrashold"); if (sceIoGetstat(fn_, &st_) >= 0) cellThrashOff = 1; sibling(fn_, "cellthrashrestold"); if (sceIoGetstat(fn_, &st_) >= 0) cellThrashRestOff = 1; sibling(fn_, "streamtight99l4"); if (sceIoGetstat(fn_, &st_) >= 0) streamTight99L4 = 1; sibling(fn_, "streamtight99old"); if (sceIoGetstat(fn_, &st_) >= 0) streamTight99Off = 1; sibling(fn_, "cellthrashceilold"); if (sceIoGetstat(fn_, &st_) >= 0) cellThrashCeilOff = 1; } bmMark("msioInit<");   // правки 252/259: обращения к карте по одному, сброс кэша ARK-4 (viewer/msio.h) — до первого чтения
   bmMark("bootFirst>"); bootFirst(argv[0]); bmMark("bootFirst<");   // правка Роба 28: первый кадр нашей заставки — самым первым делом (viewer/bootscreen.h)
 // Правка Роба 263 (04.10: «зачем-то убрал звук запуска, будто кулер начинает крутиться; поставил музыку игры — не надо вообще,
 // музыка игры будет в игре, слишком рано и жёстко»): под заставкой GONE Makers только звук включения (кнопка, кулер, бип —
@@ -339,7 +367,7 @@ int main(int argc, char **argv) {
     sibling(fn, "nolayer"); f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { sceIoClose(f); layerBias = 0; }
     sibling(fn, "toonworld"); f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { sceIoClose(f); levelToonWanted = 1; } }   // №679: служебный файл — уровень-мультик с первой загрузки (смоук)
   int fbBpp = fb16 ? 2 : 4;
-  void *fbp0 = (void *)0, *fbp1 = (void *)(BUF_W * SCR_H * fbBpp), *zbp = (void *)(BUF_W * SCR_H * fbBpp * 2);
+  void *fbp0 = (void *)0, *fbp1 = (void *)(BUF_W * SCR_H * fbBpp), *zbp = (void *)(BUF_W * SCR_H * fbBpp * 2);  fbpG1226 = &fbp0;   // Будка-93 (1226): roomOpen закрывает ирис сам
 #ifndef BOOT_CLEAR_OLD
 #define BOOT_CLEAR_OLD 0
 #endif
@@ -352,7 +380,7 @@ int main(int argc, char **argv) {
   if (fb16) { static const ScePspIMatrix4 dith = {{-4, 0, -3, 1}, {2, -2, 3, -1}, {-3, 1, -4, 0}, {3, -1, 2, -2}};
               sceGuSetDither(&dith); sceGuEnable(GU_DITHER); }
   sceGuFrontFace(GU_CCW);   // лицевой обход CCW (gebench, tools/wind.c); отсечение включает setFlags по флагам куска
-  sceGuDepthBuffer(zbp, BUF_W);
+  sceGuDepthBuffer(zbp, BUF_W); guZbpG = zbp; { char fn_[256]; SceIoStat st_; sibling(fn_, "gurestateold"); if (sceIoGetstat(fn_, &st_) >= 0) guRestateOff = 1; else guPwrInit(); }
   sceGuOffset(2048 - SCR_W / 2, 2048 - SCR_H / 2); sceGuViewport(2048, 2048, SCR_W, SCR_H);
   sceGuDepthRange(65535, 0); sceGuScissor(0, 0, SCR_W, SCR_H); sceGuEnable(GU_SCISSOR_TEST);
   sceGuDepthFunc(GU_GEQUAL); sceGuEnable(GU_DEPTH_TEST); sceGuDisable(GU_CULL_FACE);
@@ -382,7 +410,7 @@ int main(int argc, char **argv) {
   if (!sndReady() || sndLevel != gameLevel || sndLangPending()) { char ad[256]; if (sndReady() && sndLangPending()) sndShutdown(); levelFile(ad, "audio/"); sndInit(ad); sndLevel = gameLevel; }   // №1111 (g08): сменился язык озвучки — пакет читается заново   // нет пакета — тишина, игра идёт; правка 205: уровень 1 уже поднят под заставкой
   bmMark("sndInit<");
   bmMark("transitLoad>"); { char fn[256]; sibling(fn, "iris.shr"); transitLoad(fn);   // нет пакета — переходы мгновенные
-    transitSetup(fb16 ? GU_PSM_5650 : GU_PSM_8888, BUF_W * SCR_H * fbBpp, smkWrite, &smkT); transitHoldHook = spawnHoldHook; transitHoldNote = bbNote; }
+    transitSetup(fb16 ? GU_PSM_5650 : GU_PSM_8888, BUF_W * SCR_H * fbBpp, smkWrite, &smkT); transitHoldHook = spawnHoldHook; transitHoldNote = bbNote; transitStuckExempt = irisStuckExempt1258; transitStuckInfo = irisStuckInfo1258; }
   bmMark("transitLoad<"); bmMark("bootLicense>"); bootLicense(licT0, &fbp0); bmMark("bootLicense<");   // лицензия не короче LICENSE_MS, дальше BootupLoad
   bmMark("smokeInit>"); smokeInit(path); bmMark("smokeInit<");   // служебное: smokelog / scenario.txt (viewer/smoke.h)
   acctInit();        // учёт шести счетов (acct.h): сценарий или файл acct
@@ -399,6 +427,8 @@ int main(int argc, char **argv) {
   { char fn[256], nb[16] = {0}; sibling(fn, "mefxmax"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);   // ME-доля, вариант B: предел элементов задания частиц на ME
     if (f >= 0) { sceIoRead(f, nb, sizeof nb - 1); sceIoClose(f); fxSetMeMax(atoi(nb)); } }
   {char fn[256];SceIoStat st;sibling(fn,"gagskinstreamold");if(sceIoGetstat(fn,&st)>=0)gagSkinStreamOld=1;}
+  {char fn[256];SceIoStat st;sibling(fn,"gagplan99old");if(sceIoGetstat(fn,&st)>=0)gagPlan99Off=1;}
+  {char fn[256];SceIoStat st;sibling(fn,"collsplitold");if(sceIoGetstat(fn,&st)>=0)collSplitOld=1;}   // Пропечка-96: файл-выключатель COLLSPLIT (вершины гэгов в блоке пакета, как в Build 95)
   pcOld = smokeWantsFlag(path, "pcold") || PC_OLD_DEF;   // правка 352: красный контроль — на всех уровнях Гомер (до меню: LOAD ставит уровень)
   { char fn[256]; SceIoStat st; sibling(fn, "pcold"); if (sceIoGetstat(fn, &st) >= 0) pcOld = 1; }
   // TEST27 (план финала, Камера): сверка с оригиналом по умолчанию ВКЛ; откат — -D*_OLD=1 при сборке или пустой файл рядом с EBOOT (coneold, homerspotold, homerlitold)
@@ -414,6 +444,25 @@ int main(int argc, char **argv) {
     sibling(fn, "shadow973old"); if (sceIoGetstat(fn, &st) >= 0) sh973 = 0;   // №973: тень машины плоскостью по центру, как было
     sibling(fn, "icon993old"); if (sceIoGetstat(fn, &st) >= 0) icon993Old = 1;   // №993: значок дома №623 вне задания, как было
     sibling(fn, "boothmem1051old"); if (sceIoGetstat(fn, &st) >= 0) boothMem1051 = 0;   // №1051: файл-флаг — будка как в TEST72
+    sibling(fn, "deathring1239old"); if (sceIoGetstat(fn, &st) >= 0) deathRing1239Old = 1;   // Build 95 П2: файл-выключатель
+    sibling(fn, "carhard96old"); if (sceIoGetstat(fn, &st) >= 0) carHard96On = 0;   // Build 96 (1250): файл-выключатель
+    sibling(fn, "carvis96old"); if (sceIoGetstat(fn, &st) >= 0) carVis96 = 0;   // Build 96 (1250): файл-выключатель
+    sibling(fn, "cleanreload96old"); if (sceIoGetstat(fn, &st) >= 0) cleanReload96 = 0;
+    sibling(fn, "irismodal1259old"); if (sceIoGetstat(fn, &st) >= 0) irisModal1259Old = 1; sibling(fn, "irisstuck1258old"); if (sceIoGetstat(fn, &st) >= 0) irisStuck1258Old = 1; sibling(fn, "sceneboost1257old"); if (sceIoGetstat(fn, &st) >= 0) sceneBoost1257 = 0; sibling(fn, "gagholdcap1257old"); if (sceIoGetstat(fn, &st) >= 0) gagHoldCap1257Old = 1; sibling(fn, "gagpend1257old"); if (sceIoGetstat(fn, &st) >= 0) collGagPend1257Old = 1;   // Будка-93 (1257): файлы-выключатели   // Build 96: файл-выключатель чистой перезагрузки
+    sibling(fn, "lvldr96old"); if (sceIoGetstat(fn, &st) >= 0) lvLdr96 = 0;   // Build 96: файл-выключатель LEVEL_NEXT/LEVEL_START на ldrRun
+    sibling(fn, "tplanplace96old"); if (sceIoGetstat(fn, &st) >= 0) tplanPlace96 = 0;   // Build 96: файл-выключатель
+    sibling(fn, "tfsm95old"); if (sceIoGetstat(fn, &st) >= 0) tfsm95Old = 1;   // Build 95 П2: файл-выключатель
+    sibling(fn, "movie1239old"); if (sceIoGetstat(fn, &st) >= 0) movie1239Old = 1;   // Будка-93 (1239): файл-выключатель
+    sibling(fn, "lvsavenext1234old"); if (sceIoGetstat(fn, &st) >= 0) lvSaveNext1234Old = 1;   // Будка-93 (1234): файл-выключатель
+    sibling(fn, "shopheal1233old"); if (sceIoGetstat(fn, &st) >= 0) shopHeal1233Old = 1;   // Будка-93 (1233 T08/T09): файл-выключатель
+    shopHeal1233Wire();
+    sibling(fn, "loadcord1233old"); if (sceIoGetstat(fn, &st) >= 0) loadCord1233Old = 1;   // Будка-93 (1233 T01/T02): файл-выключатель
+    sibling(fn, "t03old"); if (sceIoGetstat(fn, &st) >= 0) t03Old = 1;   // Будка-93 (1233 T03): файл-выключатель
+    sibling(fn, "transitplanold"); if (sceIoGetstat(fn, &st) >= 0) transitPlanOld = 1;   // Будка-93 (1233): файл-выключатель
+    sibling(fn, "booth1225old"); if (sceIoGetstat(fn, &st) >= 0) booth1225Old = 1;   // Будка-93 (1225): файл-выключатель
+    sibling(fn, "dooriris1226old"); if (sceIoGetstat(fn, &st) >= 0) doorIris1226Old = 1;   // Будка-93 (1226): файл-выключатель
+    sibling(fn, "gaghold1226old"); if (sceIoGetstat(fn, &st) >= 0) gagHold1226Old = 1;
+    sibling(fn, "pvb1old"); if (sceIoGetstat(fn, &st) >= 0) pvb1Old = 1;   // П3: файл-выключатель — PVS1 списками, как до PVB1
     sibling(fn, "mem1060old"); if (sceIoGetstat(fn, &st) >= 0) mem1060 = 0;   // №1060: файл-флаг — будка как в №1051 (три ступени)
     sibling(fn, "memmapold"); if (sceIoGetstat(fn, &st) >= 0) { memmapOff = 1; memmapSetOn(0); }   // TEST90 MEMMAP: без учёта живых выделений и строк
     sibling(fn, "talkroomfloorold"); if (sceIoGetstat(fn, &st) >= 0) msnTalkRoomOld = 1;   // радиус разговора в комнате как в TEST89
@@ -426,13 +475,39 @@ int main(int argc, char **argv) {
     sibling(fn, "memload1065old"); if (sceIoGetstat(fn, &st) >= 0) memLoad1065 = 0;   // №1065: файл-флаг — порядок загрузки и открытие газеты как в TEST77
     sibling(fn, "mem1060rebuildold"); if (sceIoGetstat(fn, &st) >= 0) mem1060Rebuild = 0;   // №1060: без пересборки уровня
     sibling(fn, "memtrim1060old"); if (sceIoGetstat(fn, &st) >= 0) memTrim1060 = 0;   // №1060: выгрузка клеток при тесной куче разом, как было
+    sibling(fn, "dcache96old"); if (sceIoGetstat(fn, &st) >= 0) dcache96 = 0;   // Build 96: без записи кэша на месте и очистки перед чтением с карты, как было
+    sibling(fn, "dcacheall96"); if (sceIoGetstat(fn, &st) >= 0) dcAll96On = 1;   // Build 96 диагностика (только тур-сборка): sceKernelDcacheWritebackAll в начале кадра и перед закрытием списков
     sibling(fn, "memtrim2old"); if (sceIoGetstat(fn, &st) >= 0) memTrim2 = 0;   // №1060в: эпизод выгрузки по перемеру кучи каждый кадр, как MEMTRIM1060
     sibling(fn, "camclipfast1060old"); if (sceIoGetstat(fn, &st) >= 0) camClipFast1060 = 0;   // №1060: счётчик CAMCLIPSTAT полным обходом, как было
     sibling(fn, "mem1060feold"); if (sceIoGetstat(fn, &st) >= 0) mem1060Fe = 0;   // №1060б: переход газетой уровня или шнуром, как в №1060
+    sibling(fn, "spawnholdold"); if (sceIoGetstat(fn, &st) >= 0) homerSceneGate431 = homerSpawnWait431 = 0;   // правка 431: постановка без ожидания опоры и сцены, как было
+    sibling(fn, "mcrlad1238old"); if (sceIoGetstat(fn, &st) >= 0) mcrLad1238 = 0;   // №1238: машина миссии мимо лестницы, как было
+    sibling(fn, "mcrwait94old"); if (sceIoGetstat(fn, &st) >= 0) mcrWait94On = 0;   // Build 94: машина миссии без метки «ждёт память», повтор каждый кадр, как было
+    msnartWatch = msnartWatchLog94;   // Build 94: строки WATCHDOG от повтора чтения записей миссии (и при служебном старте flag msn)
+    sibling(fn, "ph6split95old"); if (sceIoGetstat(fn, &st) >= 0) ph6Split95 = 0;   // Build 95: без строки PH6MEM
+    sibling(fn, "dlretry95old"); if (sceIoGetstat(fn, &st) >= 0) dlRetry95 = 0;   // Build 95: лист клетки после отказа памяти пробуется каждый кадр и молча, как было
+    sibling(fn, "roomanimgt95old"); if (sceIoGetstat(fn, &st) >= 0) gtOn95 = 0;   // Build 95: анимации текстур и мерцания на настенном времени, как было
+    sibling(fn, "gagreset96old"); if (sceIoGetstat(fn, &st) >= 0) collectGagReset96 = 0;   // Build 96: гэги комнаты на входе не сбрасываются, как было
+    sibling(fn, "roomplace96old"); if (sceIoGetstat(fn, &st) >= 0) homerRoomPlace96 = 0;   // Build 96: постановка на пол комнаты снова «hold» сторожа, как было
+    sibling(fn, "msnartretry94old"); if (sceIoGetstat(fn, &st) >= 0) msnartRetry94 = 0;   // Build 94: запись предмета миссии без повтора, как было
+    sibling(fn, "runslide1230old"); if (sceIoGetstat(fn, &st) >= 0) homerRunSlide1230 = 0;   // №1230: бег по косой вдоль стены гасится в ноль, как было
+    sibling(fn, "memchk1237old"); if (sceIoGetstat(fn, &st) >= 0) memChk1237 = 0;   // №1237: без экрана про Use Extra Memory
+    sibling(fn, "npcretry96old"); if (sceIoGetstat(fn, &st) >= 0) npcRetry96 = 0;   // Build 96: повтор модели персонажа как было (каждый опрос, строка на каждый)
+    sibling(fn, "npclad1235old"); if (sceIoGetstat(fn, &st) >= 0) npcLad1235 = 0;   // №1235: модель персонажа миссии мимо лестницы, молча пусто при нехватке памяти, как было
+    sibling(fn, "camlr1231old"); if (sceIoGetstat(fn, &st) >= 0) camLR1231 = 0;   // №1231: L+R пешком — как было (ничего не делает)
+    sibling(fn, "drop1229old"); if (sceIoGetstat(fn, &st) >= 0) uiDrop1229 = 0;   // №1229: «Item Dropped!» как было (висит до конца миссии, крупнее и ниже)
+    sibling(fn, "glass1224old"); if (sceIoGetstat(fn, &st) >= 0) glassSolid1224 = 0;   // №1224: целое стекло пустое для Гомера пешком, как было
     sibling(fn, "bench1034old"); if (sceIoGetstat(fn, &st) >= 0) bench1034 = 0;   // №1034: скамейки и большие низкие пропы пустые для Гомера пешком, как было
     sibling(fn, "ramp1050old"); if (sceIoGetstat(fn, &st) >= 0) colRamp1050 = 0;   // №1050: торец тонкой стенки гасит машину, как было
     sibling(fn, "ramprail1050old"); if (sceIoGetstat(fn, &st) >= 0) colRampRail1050 = 0;   // №1050 (Б): торцы бортов трамплина L5 держат, как было
-    sibling(fn, "camin1041old"); if (sceIoGetstat(fn, &st) >= 0) camIn1041 = 0;   // №1041: наезд с первого кадра и склейка на выходе, как было
+    sibling(fn, "dmgmercy96old"); if (sceIoGetstat(fn, &st) >= 0) carDmgMercy96 = 0;   // Опора-93: пощада на последнем ударе как была (машина от ударов не взрывалась)
+    sibling(fn, "seller96old"); if (sceIoGetstat(fn, &st) >= 0) gameSeller96 = 0;   // L7 m2: продавец и бонус-персонаж, как было
+    sibling(fn, "cardinfo96old"); if (sceIoGetstat(fn, &st) >= 0) uiCardInfo96Set(0);   // описание карточки: две строки, как было
+    sibling(fn, "camin1041old"); if (sceIoGetstat(fn, &st) >= 0) camIn1041 = 0;
+    sibling(fn, "msncamwallold"); if (sceIoGetstat(fn, &st) >= 0) mcWall103 = 0;   // Р3: наезд с диска без сдвига от стены, как было
+    sibling(fn, "msncamfar"); { SceUID f_ = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f_ >= 0) { char b_[16] = {0}; sceIoRead(f_, b_, 15); sceIoClose(f_); float v_ = (float)atof(b_); if (v_ >= 10.f && v_ <= 300.f) camFar1041 = v_; } }   // Р3: длина наезда числом (метры от игрока)
+    sibling(fn, "msncamshort96"); if (sceIoGetstat(fn, &st) >= 0) mcShort96 = 1;   // Р3: синтетический наезд 1246 вместо родных (файл)
+    sibling(fn, "msncamshort96old"); if (sceIoGetstat(fn, &st) >= 0) mcShort96 = 0;   // 1246: наезды с диска, как было   // №1041: наезд с первого кадра и склейка на выходе, как было
     sibling(fn, "trfcost1001bold"); if (sceIoGetstat(fn, &st) >= 0) trfCost1001b = 0;   // №1001б: pathGap прежним полным обходом
     sibling(fn, "shadowpplold"); if (sceIoGetstat(fn, &st) >= 0) slPplOld = 1;
     sibling(fn, "cityopqold"); if (sceIoGetstat(fn, &st) >= 0) cityOpqOn = 0;   // №907-город: куски города с пустым смешиванием остаются полупрозрачными, как было
@@ -505,6 +580,10 @@ int main(int argc, char **argv) {
     sibling(fn, "trfgeo984old"); if (sceIoGetstat(fn, &st) >= 0) trfGeoOld = 1;   // №984: прежний расчёт проверок риска GE
     sibling(fn, "tone1026old"); if (sceIoGetstat(fn, &st) >= 0) toneSet1026(0);   // №1026: вывески мимо шагов мультика и контраста, как в TEST71
     sibling(fn, "coin1020old"); if (sceIoGetstat(fn, &st) >= 0) fxCoin1020 = 0;   // №1020: блики монет кольцом из трёх, кадр оборота общий, как в TEST71
+    sibling(fn, "glow1261old"); if (sceIoGetstat(fn, &st) >= 0) glow1261On = 0;   // №1261: без свечения
+    sibling(fn, "bubble1262old"); if (sceIoGetstat(fn, &st) >= 0) uiBubble1262Set(0);   // №1262: без выезда
+    sibling(fn, "bubble1251old"); if (sceIoGetstat(fn, &st) >= 0) uiBubble1251Set(0);   // №1251: кружок и рамка вместе
+    sibling(fn, "bubble1247old"); if (sceIoGetstat(fn, &st) >= 0) { uiBubble1247Set(0); mvBubble1247Old = 1; }   // №1247: пузырь как в TEST96
     sibling(fn, "bubble1040old"); if (sceIoGetstat(fn, &st) >= 0) uiBubble1040Set(0);   // №1040: появление пузыря как в TEST72
     sibling(fn, "wrap1037old"); if (sceIoGetstat(fn, &st) >= 0) uiWrap1037Set(0);   // №1037: перенос текстов как в TEST72
     sibling(fn, "inksep1009old"); if (sceIoGetstat(fn, &st) >= 0) inkSep1009 = 0;   // №1009: порядок рисования машин трафика как в TEST71
@@ -550,7 +629,7 @@ int main(int argc, char **argv) {
   { char fn[256]; SceIoStat st; sibling(fn, "roomcamswitchold"); if (sceIoGetstat(fn, &st) >= 0) roomCamSwitchOld = 1; }   // №229 школа: откат правила смены камеры комнаты
   if (smokeWantsFlag(path, "resumeringold")) resumeRingOld = 1;
   { char fn[256]; SceIoStat st; sibling(fn, "colbakeold"); if (sceIoGetstat(fn, &st) >= 0) colBakeOld = 1; sibling(fn, "colbakecheck"); if (sceIoGetstat(fn, &st) >= 0) colBakeCheck = 1; sibling(fn, "colbakedump"); if (sceIoGetstat(fn, &st) >= 0) colBakeDumpF = 1; }   // №bake-3Б
-  { char fn[256]; SceIoStat st; sibling(fn, "texbakeold"); if (sceIoGetstat(fn, &st) >= 0) texBakeOld = 1; sibling(fn, "texbakedump"); if (sceIoGetstat(fn, &st) >= 0) texBakeDump = 1; sibling(fn, "texbakecheck"); if (sceIoGetstat(fn, &st) >= 0) texBakeCheck = 1;   // №bake-3А
+  { char fn[256]; SceIoStat st; sibling(fn, "texbakeold"); if (sceIoGetstat(fn, &st) >= 0) texBakeOld = 1; sibling(fn, "texbakedump"); if (sceIoGetstat(fn, &st) >= 0) texBakeDump = 1; sibling(fn, "texbakecheck"); if (sceIoGetstat(fn, &st) >= 0) texBakeCheck = 1; sibling(fn, "texbakediag"); if (sceIoGetstat(fn, &st) >= 0) texBakeDiag = 1;   // №bake-3А
     sibling(fn, "texbakecorrupt"); SceUID cf_ = sceIoOpen(fn, PSP_O_RDONLY, 0); if (cf_ >= 0) { char c_ = '1'; if (sceIoRead(cf_, &c_, 1) < 1) c_ = '1'; texBakeCorrupt = c_ == '2' ? 2 : 1; sceIoClose(cf_); } }
   { char fn[256]; SceIoStat st; sibling(fn, "lmaphashold"); if (sceIoGetstat(fn, &st) >= 0) lmapHashOld = 1; }   // №bake-3Д: откат
   { char fn[256]; SceIoStat st; sibling(fn, "resumeringold"); if (sceIoGetstat(fn, &st) >= 0) resumeRingOld = 1; }   // №RESUME-круг: откат
@@ -574,7 +653,7 @@ int main(int argc, char **argv) {
     introRun(&fbp0, 0, !FE_START_INTRO_OLD || FE_COLD_FLOW_OLD || (svcMode && !feColdRequested) ? 5 : 4);
   if (menuOn) { SCR_CLOSE(); menuRun(&fbp0); }   // boot.shr закрыт до меню (куча меню без пакетов); NEW GAME оставляет открытым Loading.scr — под ним читается уровень
   { char fn[256]; sibling(fn, "homer.shr");
-    homerM = skinLoad(fn);   // этап 4: Гомер (tools/homer_export.py)
+    homerM = skinLoadH(fn);   // этап 4: Гомер (tools/homer_export.py)
     if (homerM && homerInit(&homer, homerM) == 0) haveHomer = 1;
     homerDoorCan = homerDoorCanFn;   // №667
     if (haveHomer) { homer.solid = homerSolidAll; homer.solidUser = 0; homerCamRayExtra = camCarsFrac; } }   // 284: камера пешком обходит машины   // ящики/автоматы, трафик и пешеходы — твёрдые
@@ -674,6 +753,7 @@ int main(int argc, char **argv) {
     if (camDet && smkOn) dt = 1.f / 30.f;   // служебное (flag camdet): прогоны старого и нового кода идут кадр в кадр
     unsigned hit = hwHit | smHit;
     if (msFuzzOn && smkOn) hit |= msFuzzHit();   // правка 432: бот меню (flag msnselfuzz)
+    ownerWatch(dt);   // Лестница-96: клетки неба и машины игрока не готовы - перечитать (WATCHDOG owner)
     memLadTick(dt);   // правка 435: лестница памяти — раз в секунду наибольший кусок, очередь «вернуть»
     if (msHeld432 && !mvMissionSelectOn()) msRelease432();   // правка 432: меню закрыто — радиус подгрузки обычный
 #ifndef MSNBOT_OLD
@@ -698,7 +778,7 @@ int main(int argc, char **argv) {
     if (uiReady && !uiPaused() && (wardrobeOn() || phoneViewOn() || shopViewOn())) { uiPadRepeatLR(phoneViewOn() && !boothLR1057Old); hit = uiPadRepeat(pad.Buttons, hit); uiPadRepeatLR(0); }   // №1057: в будке повторяются и L R   // №706: зажатая ◄ ► листает гардероб, будку, лавку (пауза делает это ниже)
     toneJobStep();   // 16.10: смена тона без остановки — несколько палитр за кадр (main_save.h)
     flatPoll();   // №912
-    float wallDt = dt;   // служебное: сценарий идёт и в паузе (там dt = 0)
+    float wallDt = dt; dtBr1258 = 0;   // служебное: сценарий идёт и в паузе (там dt = 0)
     int resetCar = 0;
     if (uiReady && uiPaused()) {                   // этап 7: пауза — мир стоит, кнопки идут в меню (X выбрать, START/O — назад)
       hit = uiPadRepeat(pad.Buttons, hit);         // правка 202: зажатая ↑/↓ — автоповтор по спискам паузы
@@ -752,7 +832,7 @@ int main(int argc, char **argv) {
       else if (act == UI_P_ABORT_MISSION) { if (!PAUSE_CONFIRM_OLD) uiPauseCloseNow(); mvPauseAbort(); chase.init = 0; hnrAbortMsn = 1; }   // сверка g09b-menu круг 3: отмена миссии — не победа (шкала Hit & Run)
       else if (act == UI_P_QUIT_GAME && !(svmOn() && (mvFreeRoam() || svmQuitAsks()) && savePauseOpen(svmQuitAsk(mvFreeRoam())) == 0)) {   // «Do you want to save your game?»; сверка g09b-menu (М2 Д2, P13-1): сначала «Are you sure you want to quit?» в обеих паузах
         if (mainNew >= 0) toMenu = 1; else { blackBox(1); exitSafeNow(); } }   // 12а: в главное меню
-      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (mvLevelEnd()) {                     // конец уровня (LevelEnd.scr): мир стоит, X — дальше (следующий уровень)
       if (!lsEndLogged) { levelStatsLog("end"); lsEndLogged = 1; lsEndT = 0.f; }
       lsEndT += smkShot[0] ? 0.f : wallDt;   // служебный запуск: экран стоит 3 с (как прежняя вспышка) и уходит сам — гейты уровней идут без X;
@@ -766,14 +846,14 @@ int main(int argc, char **argv) {
       // Для проверки на железе: файл lvlogoson рядом с EBOOT или «flag lvlogoson 1» — логотипы как у игрока TEST88 (№1192, зависание после роликов)
       if (!mvLevelEnd() && gameLevel == 1 && (LVEND_LOGOS_OLD ? (!svcMode || realLevelEnd >= 1) : lvLogosOn)) {   // №1192: «flag realend 1» — служебный запуск проходит конец уровня как игрок (ролики Fox и Gracie); правка 54: финал уровня 1 (запись PS2 42:45–43:10) — логотипы Fox и Gracie Films
         msnMovie("foxlogo.rmv", &fbp0); msnMovie("gracie.rmv", &fbp0); chase.init = 0; padE.init = 0; prev = smokePad(); }
-      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (wardrobeOn()) {                     // правка 107: гардероб — мир стоит
-      wardrobeInput(mvShop(), hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      wardrobeInput(mvShop(), hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (phoneViewOn()) {                    // правка 94: экран телефонной будки — мир стоит, ◄ ► ✕ △ ○
-      phoneViewInput(mvShop(), hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      phoneViewInput(mvShop(), hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (mvMsgBox(0)) {                      // правка 122: окно сообщения (Message.scr) — мир стоит, ✕ / ○ закрыть
       mvMsgBoxInput(hit); if (hit & PSP_CTRL_CROSS) uiPopHookFire(UI_EV_ACCEPT);
-      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
 #ifndef PAUSE_BAN_OLD
 #define PAUSE_BAN_OLD 0   // сверка g10b-loop: 1 — пауза открывается и на смене этапа, при ожидающей смене миссии и в затемнении HUD (прежнее)
 #endif
@@ -784,16 +864,16 @@ int main(int argc, char **argv) {
       // сверка g10b-loop, P13:17: пока в подсказке Барта звучит реплика, START открывает паузу поверх подсказки; после паузы подсказка на месте.
       // Реплика кончилась: START ничего не делает (ветка ниже). TUT_PAUSE_OLD=1 — прежнее
       if (uiPauseMissionGrey) uiPauseMissionGrey(1);   // сверка g09a-hud круг 3 (P13:Д3): пауза поверх подсказки обучения — Restart/Abort серые
-      uiPauseMission(!pauseOld && mvInMission()); pauseMsAccess(); uiPause(1); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      uiPauseMission(!pauseOld && mvInMission()); pauseMsAccess(); uiPause(1); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (tutActive()) {                      // подсказка Барта (Tutorial.scr): мир стоит, X — Continue, □ — Disable Tutorials
       int dis = 0; tutInput(hit, wallDt, &dis);
       if (dis) cfg.tutorial = 0;
       if (dis || cfg.tutSeen != tutShown()) { cfg.tutSeen = tutShown(); cfgSave(); }   // показанные — в settings.bin (RESUME не повторит)
-      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (mvBriefing()) {                     // пункт 8: брифинг миссии (MissionLoad) — мир стоит, X / △
-      mvBriefingInput(hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      mvBriefingInput(hit); hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__;
     } else if (mvInput(&hit)) {                    // пункт 8: провал миссии — MissionOver (YES/NO, X), мир стоит
-      pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f;
+      pad.Buttons = 0; pad.Lx = pad.Ly = 128; dt = 0.f; dtBr1258 = __LINE__; transitDropModal1259();   // Будка-93 (1259): экран провала не под закрытым ирисом
     } else if (!LB_START_SKIP_OLD && (hit & PSP_CTRL_START) && (mcPlay || mvTalkActive() || (!BOOTH_CAM_SKIP_OLD && (phoneAnimT >= 0.f || phoneCamT >= 0.f))
 #if !TICKET_CONTENT_C3_OLD
                || ticketViewBusy(&ticketView)
@@ -801,7 +881,7 @@ int main(int argc, char **argv) {
                )) {
       // Роб 17.10: пока чёрные полосы (облёт / камера старта миссии, разговор, квитанция) — START сначала ПРОПУСКАЕТ этот момент, как у роликов
       // и заставок; меню паузы — только когда полос уже нет (было: START сразу открывал паузу поверх облёта). LB_START_SKIP_OLD=1 — прежнее
-      if (mcPlay) { if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "MSNCAM skip start t=%.1f\n", smkT); smkWrite(s_); } mcPlay = 0; chase.init = 0; }
+      if (mcPlay) { if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "MSNCAM skip start t=%.1f\n", smkT); smkWrite(s_); if (mcPlay == &mcSyn96) { snprintf(s_, sizeof s_, "MSNCAM done t=%.2f skip=1\n", smkT); smkWrite(s_); } } mcPlay = 0; chase.init = 0; }
       else if (!BOOTH_CAM_SKIP_OLD && (phoneAnimT >= 0.f || phoneCamT >= 0.f)) {   // №792: перебивка будки — START пропускает (камера сразу за игроком)
         if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "PHONECAM skip start t=%.1f\n", smkT); smkWrite(s_); } phoneAnimT = -1.f; phoneCamT = -1.f; chase.init = 0; }
       else if (mvTalkActive()) { mvTalkInput(PSP_CTRL_CROSS); if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "TALK skip start t=%.1f\n", smkT); smkWrite(s_); } }
@@ -873,7 +953,8 @@ int main(int argc, char **argv) {
       if (ld == 1 && levelAvailable(gameLevel + 1)) {
         if (g10bLevelAsk(mainNew, smkOn && realLevelEnd < 2, svcMode && realLevelEnd < 2, svmOn(), uiReady, bpass)) {   // №1192: «flag realend 2» — и вопрос «сохранить?» как у игрока
           uiPause(1); uiPauseMenuHide(1);
-          if (savePauseOpen(1) == 0) { lvSaveAsk = gameLevel + 1; if (smkOn) smkWrite("LVSAVEASK open\n"); } else { uiPauseMenuHide(0); uiPause(0); toLevel = gameLevel + 1; }
+          lvSaveNext1234 = gameLevel + 1; int sp_ = savePauseOpen(1); lvSaveNext1234 = 0;   // Будка-93 (1234): запись с вопроса хранит уровень N+1
+          if (sp_ == 0) { lvSaveAsk = gameLevel + 1; if (smkOn) smkWrite("LVSAVEASK open\n"); } else { uiPauseMenuHide(0); uiPause(0); toLevel = gameLevel + 1; }
         } else toLevel = gameLevel + 1;
       }
 #ifndef C3_ENDING_OLD
@@ -920,7 +1001,7 @@ int main(int argc, char **argv) {
 #endif
     if (mvFrozen() || G.hnrBusted > 0.f || bustFadeT >= 0.f || (!TICKET_CONTENT_C3_OLD&&TICKET_BUSY())) { hit &= PSP_CTRL_START; pad.Buttons &= PSP_CTRL_START; pad.Lx = pad.Ly = 128; }   // пункт 8: отсчёт 3-2-1 — игрок стоит; правка 112: арест — заморозка на таймер ареста (1,48 с, №430)
     if (mcPlay) {   // правка 40: камера старта миссии — игрок стоит; X / START — пропустить; №792: и SELECT
-      if (hit & (PSP_CTRL_CROSS | PSP_CTRL_START | (BOOTH_CAM_SKIP_OLD ? 0 : PSP_CTRL_SELECT))) { if (smkOn) { char s[64]; snprintf(s, sizeof s, "MSNCAM skip t=%.1f\n", smkT); smkWrite(s); } mcPlay = 0; chase.init = 0; }
+      if (hit & (PSP_CTRL_CROSS | PSP_CTRL_START | (BOOTH_CAM_SKIP_OLD ? 0 : PSP_CTRL_SELECT))) { if (smkOn) { char s[64]; snprintf(s, sizeof s, "MSNCAM skip t=%.1f\n", smkT); smkWrite(s); if (mcPlay == &mcSyn96) { snprintf(s, sizeof s, "MSNCAM done t=%.2f skip=1\n", smkT); smkWrite(s); } } mcPlay = 0; chase.init = 0; }
       hit = 0; pad.Buttons = 0; pad.Lx = pad.Ly = 128; }
     if (!BOOTH_CAM_SKIP_OLD && (phoneAnimT >= 0.f || phoneCamT >= 0.f) && (hit & (PSP_CTRL_CROSS | PSP_CTRL_SELECT))) {   // №792: перебивка будки — ✕ / SELECT пропускают (не прыжок и не смена вида)
       if (smkOn) { char s[64]; snprintf(s, sizeof s, "PHONECAM skip t=%.1f\n", smkT); smkWrite(s); }
@@ -965,6 +1046,9 @@ int main(int argc, char **argv) {
     else gameStick(ax, ay, &ax, &ay);   // сверка g10-flow P17-9: зона 0,25 по оси с пересчётом в 0..1 и ступень 0,05 (viewer/game.c)
     ccStX = ccStY = 0.f; ccStDown = (pad.Buttons & PSP_CTRL_DOWN) != 0 ? 1.f : 0.f;
     if (!CHEATS1104_OLD && ccStickView(chaseView) && gameCheatOn(CH_CAMERAS) && !onFoot()) { ccStX = ax; ccStY = -ay; ax = 0.f; ay = 0.f; }   // №1119: в видах comedy, kull, tracker, debug аналог ведёт камеру, руль — крестовина
+    homerCamLR = 0; homerCamLRx = homerCamLRy = 0.f;   // №1231: пешком L+R вместе — стик вращает камеру вокруг Гомера, бег выключен; одиночные L и R — как раньше (правка 75, ниже)
+    if (camLR1231 && haveHomer && onFoot() && !fly && !inRoom() && !mvTalkActive() && (pad.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) == (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)) {
+      homerCamLR = 1; homerCamLRx = ax; homerCamLRy = ay; ax = 0.f; ay = 0.f; }
     if (mvTalkActive()) gameHnrFreeze(&G, .1f);   // сверка g10-flow P03-07: в разговоре нарушения Hit & Run не считаются (спад стоит — отдельно, HNR_LEVEL_DECAY_OLD g10b-loop)
     if (autodrive == 5 && haveHomer && onFoot() && haveTraffic) {   // TEST14 §5: Гомер по путям пешеходов (viewer/smkpilot.h), бегом; стик — от камеры, как у бота
       float tx_, tz_; adT += dt;
@@ -1037,7 +1121,7 @@ int main(int argc, char **argv) {
 #define SHOP_PHASE_OLD 0   // сверка g10b-loop круг 2 (g07 P05:11): 1 — гардероб доступен всегда (прежнее)
 #endif
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && inRoom() && (SHOP_PHASE_OLD || mvShopAllowed()) && wardrobeNear(homer.x, homer.y, homer.z)) {   // правка 107: △ у места костюмов; круг 2: только вступление миссии и вне миссий
-      char sd[256]; levelFile(sd, ""); if (wardrobeOpen(mvShop(), sd, skinWorn) == 0) { hit &= ~PSP_CTRL_TRIANGLE; sndMusic(SND_MUS_STORE); } }   // правка 235: гардероб — Store
+      char sd[256]; levelFile(sd, ""); if (wardrobeOpen1233(sd, skinWorn) == 0) { hit &= ~PSP_CTRL_TRIANGLE; sndMusic(SND_MUS_STORE); } }   // правка 235: гардероб — Store
     if ((hit & PSP_CTRL_TRIANGLE) && haveHomer && !fly && !flyChord && onFoot() && roomsDoorNear(&rooms, &rs, &G)) {   // правка 41: △ у двери / выхода комнаты — войти / выйти
       rs.action = 1; hit &= ~PSP_CTRL_TRIANGLE; }
 #include "main_actbooth.h"   // сверка g10b-loop круг 3: блок будки вынесен в файл (текст тот же), ранг см. выше
@@ -1082,30 +1166,41 @@ int main(int argc, char **argv) {
       v = vy = 0; chase.init = 0; fly = 0; props.havePreviousCar = 0;
     }
     if (haveCol) smokePose(car.x, car.y, car.z, car.h);   // служебное: позиция машины в строку SHOT (сверка гейтами)
+    gtClock95 += dt;   // Build 95: игровое время для анимаций текстур и мерцаний (стоит там, где dt = 0)
     { SmokeCmd sc; for (float sdt = wallDt; smokeNext(sdt, &sc); sdt = 0.f) {   // служебное: команды scenario.txt (viewer/smoke.h)
-        if (sc.op == 1) { x = sc.a; z = sc.b; h = sc.c; y = 200; v = vy = 0; float g; if (ground(x, z, y, 0.f, &g)) y = g;
+        if (sc.op == 1) { int fsmg_ = 0; if (footFsm && haveCol && rs.room < 0 && !rg.mem && hypotf(sc.a - x, sc.b - z) > 80.f) { frames += transitClose(&fbp0, "teleport") / (longView ? 2 : 1); msnTeleNews1239 = 0; msnTeleport(sc.a, y, sc.b, &fbp0); msnTeleNews1239 = 1; fsmg_ = 1; }   // Лестница-96 (№4б2)
+          x = sc.a; z = sc.b; h = sc.c; y = 200; v = vy = 0; float g; if (ground(x, z, y, 0.f, &g)) y = g;
           if (haveCol) { carPlace(&car, &world, x, y, z, h); x = car.x; y = car.y; z = car.z; h = car.h; }
           camx = x - sinf(h) * 7.5f; camy = y + 3.2f; camz = z - cosf(h) * 7.5f; chase.init = 0; fly = 0; props.havePreviousCar = 0;
-          if (haveTraffic) trafficReset(&traffic, &world); }   // телепорт: трафик и пешеходы заново вокруг
+          if (haveTraffic) trafficReset(&traffic, &world); if (fsmg_) { chase.init = 0; smkSettle(); } }   // телепорт: трафик и пешеходы заново вокруг
         else if (sc.op == 3) {   // foot X Z H [Y]: Гомер пешком (машина стоит где стоит); из комнаты — сначала в город
+          int fsm_ = 0; if (footFsm && haveHomer && haveCol && rs.room < 0 && !rg.mem && (isnan(sc.d) || sc.d >= -10.f) && hypotf(sc.a - homer.x, sc.b - homer.z) > 80.f) { float g_ = isnan(sc.d) ? 0.f : sc.d; frames += transitClose(&fbp0, "teleport") / (longView ? 2 : 1); msnTeleNews1239 = 0; msnTeleport(sc.a, g_, sc.b, &fbp0); msnTeleNews1239 = 1; fsm_ = 1; }   // Лестница-96 (№4б2); Y < -10 - точка в комнате, туда не переносим; после постановки - smkSettle (как у остальных переходов: ирис раскрывается)
           if (haveHomer && haveCol) { float g = sc.d; if (isnan(g)) { g = 200.f; if (!ground(sc.a, sc.b, g, 0.f, &g)) g = car.y; }
             if (inRoom() && !isnan(sc.d) && sc.d < -10.f) { homerPlace(&homer, G.pHomerWorld, sc.a, g, sc.b, sc.c); }   // Y под городом — точка в этой же комнате (в триггере выхода — выход, если взведён)
             else if (!FOOTROOM1209_OLD && !footRoom1209Old && !isnan(sc.d) && sc.d < -10.f && (footLowland1209Old || npcRoomAt(sc.a, sc.d, sc.b))) { char s9_[128]; snprintf(s9_, sizeof s9_, "FOOTSKIP1209 room=%d mem=%d t=%.1f\n", rs.room, rg.mem != 0, smkT); smkWrite(s9_); }   // №1209: точка в комнате, а Гомер ещё не в ней (дверь на PSP открывается дольше) — не ставить в город под землю
             else { if (rs.room >= 0 || rg.mem) roomLeave();
               homerPlace(&homer, &world, sc.a, g, sc.b, sc.c); }
-            homerDoor(0, 0.f); chase.init = 0; fly = 0; autodrive = 0; }
+            homerDoor(0, 0.f); chase.init = 0; fly = 0; autodrive = 0; if (fsm_) smkSettle(); }
           char s[128]; snprintf(s, sizeof s, "FOOT %.2f %.2f %.2f %.3f t=%.1f\n", homer.x, homer.y, homer.z, homer.h, smkT); smkWrite(s); }
         else if (!strcmp(sc.name, "sellergo") && haveHomer && haveCol && mvShop() && (int)sc.a >= 0 && (int)sc.a < mvShop()->nseller) {   // служебное (№314 п.3, tests/shop/shops_levels): Гомер рядом с продавцом N там, где он сейчас стоит (лавка идёт за самим продавцом, правка 288)
           const ShopSeller *v_ = &mvShop()->seller[(int)sc.a]; float g = v_->y + 2.f; if (!ground(v_->x + .9f, v_->z, g, 0.f, &g)) g = v_->y;
           if (rs.room >= 0 || rg.mem) roomLeave();
           homerPlace(&homer, &world, v_->x + .9f, g, v_->z, -GU_PI / 2); homerDoor(0, 0.f); chase.init = 0; fly = 0; autodrive = 0;
           char s[160]; snprintf(s, sizeof s, "SELLERGO %d npc=%s at=%.1f,%.1f,%.1f t=%.1f\n", (int)sc.a, v_->npc, v_->x, v_->y, v_->z, smkT); smkWrite(s); }
+        else if (!strcmp(sc.name, "phonein")) {   // служебное (Переход/Р2 гейт будок): Гомер в центре триггера будки k пешком (ground), строка PHONEIN k ok=; только сценарий
+          int k_ = (int)sc.a, ok_ = haveHomer && haveCol && k_ >= 0 && (unsigned)k_ < world.nphone;
+          if (ok_) { const float *P_ = world.phone[k_].p; float g_ = P_[1] + 3.f; if (!ground(P_[0], P_[2], g_, 0.f, &g_)) g_ = P_[1];
+            if (rs.room >= 0 || rg.mem) roomLeave();
+            homerPlace(&homer, &world, P_[0], g_, P_[2], 0.f); homerDoor(0, 0.f); chase.init = 0; fly = 0; autodrive = 0; smkSettle(); }
+          if (smkOn) { char l_[80]; snprintf(l_, sizeof l_, "PHONEIN k=%d ok=%d n=%d t=%.1f\n", k_, ok_, haveCol ? (int)world.nphone : -1, smkT); smkWrite(l_); } }
         else if ((!strcmp(sc.name, "bonusgo") || !strcmp(sc.name, "phonego")) && haveHomer && haveCol) {   // служебное (спрайты значков 18.10): Гомер в 6 м
           // от k-го персонажа бонус-миссии со значком «!» (bonusgo) или от будки k (phonego), глаз сбоку в 7 м на высоте значка, взгляд на значок; flag eyeon 0 снимает
           // k = -1 у bonusgo — собеседник текущей цели (значок «!» над ним, msn_view.c)
           int ph_ = sc.name[0] == 'p', k_ = (int)sc.a; float xz_[2], hy_ = ph_ ? 1.1f : 3.f, g = 0.f, gy_, tk_[4];
           int ok_ = ph_ ? (k_ >= 0 && (unsigned)k_ < world.nphonex) : k_ < 0 ? mvTalkNpcAt(tk_) : mvGiverAt(UI_R_BONUS, k_, xz_);
-          if (ok_ && ph_) { xz_[0] = world.phonex[k_].loc[0]; xz_[1] = world.phonex[k_].loc[2]; g = world.phonex[k_].loc[1]; }
+          if (ok_ && ph_) { xz_[0] = world.phonex[k_].loc[0]; xz_[1] = world.phonex[k_].loc[2]; g = world.phonex[k_].loc[1];
+            if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "PHONEX k=%d n=%d loc=%.2f,%.2f,%.2f t=%.1f\n", k_, (int)world.nphonex, xz_[0], g, xz_[1], smkT); smkWrite(l_);
+              if ((unsigned)k_ < world.nphone) { snprintf(l_, sizeof l_, "PHONEW k=%d p=%.2f,%.2f,%.2f r=%.2f\n", k_, world.phone[k_].p[0], world.phone[k_].p[1], world.phone[k_].p[2], world.phone[k_].r); smkWrite(l_); } } }   // Build 96: координаты будок для сценариев (1250)
           else if (ok_ && k_ < 0) { xz_[0] = tk_[0]; xz_[1] = tk_[2]; g = tk_[1]; hy_ = tk_[3] + 3.f; }
           else if (ok_) { g = 200.f; if (!ground(xz_[0], xz_[1], g, 0.f, &g)) g = 0.f; }
           if (ok_) {
@@ -1209,11 +1304,41 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "boothstarve")) { if (sc.a >= 999.f) { heapLeft(1000.f); starve1060 = -1.f; } else { starve1060 = sc.a; heapLeft(sc.a); } }   // №1060 служебно: оставлять кучу не больше N МБ свободной после каждой выгрузки клеток (1000 — отдать)
         else if (!strcmp(sc.name, "mem1060log")) mem1060Stat((int)sc.a);   // №1060 служебно: состояние кучи и клеток (гейт)
         else if (!strcmp(sc.name, "heapfrag")) heapFragSet((int)sc.a);   // правка 432 служебно: раздробить кучу — свободное остаётся дырами по N КБ (0 — вернуть); модель кучи PSP Роба после погони (свободно 4 МБ, блок 0,38 МБ)
+        else if (!strcmp(sc.name, "cityfill")) { static void *cf_[256]; static int cfn_; while (cfn_) free(cf_[--cfn_]); if (sc.a != 0.f && zone3CityOnX()) { for (int k_ = 0; k_ < 256; k_++) { void *m_ = zone3TryX(Z3A_CITY, "fill", 32u << 10, 16); if (!m_) break; cf_[cfn_++] = m_; } }   // служебно: область «город» забита до отказа (как кольцо старта к загрузке владельцев) - гейт s13
+          char l_[100]; snprintf(l_, sizeof l_, "CITYFILL on=%d blocks=%d cityon=%d free_kb=%u maxfree_kb=%u t=%.1f\n", sc.a != 0.f, cfn_, zone3CityOnX(), zone3CityOnX() ? zone3FreeTotX(Z3A_CITY) >> 10 : 0u, zone3CityOnX() ? zone3MaxFreeX(Z3A_CITY) >> 10 : 0u, smkT); if (smkOn) smkWrite(l_); }
+        else if (!strcmp(sc.name, "ringhero")) ringHeroOn = sc.a != 0.f;   // Лестница-96: 0 - круг старта у машины в levelLoad, как до правки (красный контроль)
+        else if (!strcmp(sc.name, "cityfit")) cityFitOn = sc.a != 0.f;   // Лестница-96: 0 - просьбы клеток без проверки места области города, как до правки (красный контроль)
+        else if (!strcmp(sc.name, "cellregfix")) cellRegFix = sc.a != 0.f;   // Опора-93: 0 - сторож cellfail не добавляет регион клетки под героем
+        else if (!strcmp(sc.name, "ringcap")) ringCapOn = sc.a != 0.f;   // Лестница-96: 0 - дальность после урезанного круга не держится (красный контроль s19)
+        else if (!strcmp(sc.name, "footfsm")) footFsm = sc.a != 0.f;   // Лестница-96 (№4б2): 1 - foot/goto сценария идут настоящим путём переноса (экран перехода, круг клеток под ним), а не голой телепортацией
+        else if (!strcmp(sc.name, "farmin")) farMinOn = sc.a != 0.f;   // Лестница-96: 0 - клетка может менять версию без интервала 3 с
+        else if (!strcmp(sc.name, "farhead")) farHeadOn = sc.a != 0.f;   // Лестница-96: 0 - обмен версий клетки без ожидания запаса кадра
+        else if (!strcmp(sc.name, "farcell")) farOn = sc.a != 0.f;   // Лестница-96: 0 - только полные клетки
+        else if (!strcmp(sc.name, "farfake")) farFake = sc.a != 0.f;   // Лестница-96, служебно: проба очереди версий - «дальняя» версия та же полная (ставить ДО загрузки уровня)
+        else if (!strcmp(sc.name, "streameye")) streamEyeOv = sc.a != 0.f;   // Лестница-96: 1 - стрим грузит вокруг глаза сценария (eyeOv), а не камеры игры
+        else if (!strcmp(sc.name, "dblprov")) cellDblProv = sc.a != 0.f;   // Лестница-96, служебно: круг клеток грузит каждую клетку дважды подряд (честное красное для dblguard 0)
+        else if (!strcmp(sc.name, "dblguard")) cellDblGuard = sc.a != 0.f;   // Лестница-96 (утечка 102): 0 - клетку, уже загруженную очередью, круг/очередь грузят второй раз (красный контроль)
+        else if (!strcmp(sc.name, "bonusshrink")) bonusShrink107 = sc.a != 0.f;   // Лестница-96: 0 - без отцепки областей перед бонус-трассой
+        else if (!strcmp(sc.name, "visstuck")) visStuckOn = sc.a != 0.f;   // Лестница-96: 0 - сторож видимых недогруженных клеток выключен (красный контроль s18)
+        else if (!strcmp(sc.name, "cellstuck")) cellStuckInj = sc.a != 0.f;   // Лестница-96, служебно: stream() не берёт каждую третью клетку (имитация отсева тура 100)
+        else if (!strcmp(sc.name, "ringfit")) ringFitOn = sc.a != 0.f;   // Лестница-96: 0 - круг старта берёт все клетки радиуса, как до правки (красный контроль)
+        else if (!strcmp(sc.name, "toondrop")) { extern int skinToonDropOn; skinToonDropOn = sc.a != 0.f; }   // Лестница-96: 0 - оболочки брошенных моделей остаются в кэше до смены уровня (красный контроль s15)
+        else if (!strcmp(sc.name, "z3dump")) { char d_[300]; zone3DumpX(Z3A_MISSION, d_, sizeof d_); char l_[360]; snprintf(l_, sizeof l_, "Z3LIVE t=%.1f %s\n", smkT, d_); smkWrite(l_); }   // Лестница-96 диагностика: живые блоки области «миссия» по владельцам
+        else if (!strcmp(sc.name, "ownerheap")) memLadOwnHeap = sc.a != 0.f;   // Лестница-96: 0 - клетки неба и машины игрока из области «город» (как было), красный контроль s13
+        else if (!strcmp(sc.name, "ownerold")) memLadOwnOld = sc.a != 0.f;   // Лестница-96: 1 - клетки неба и машины игрока как до правки (красный контроль s11)
+        else if (!strcmp(sc.name, "ownerdrop")) { int n_ = 0; for (unsigned i = 0; i < ncell; i++) if (cl[i].owner == (unsigned)sc.a) { unloadCell(&cl[i]); cl[i].state = 3; n_++; } char l_[96]; unsigned mn_ = ~0u; for (unsigned i = 0; i < ncell; i++) if (cl[i].owner == (unsigned)sc.a && cl[i].size < mn_) mn_ = cl[i].size; snprintf(l_, sizeof l_, "OWNERDROP owner=%d cells=%d minsz_kb=%u t=%.1f\n", (int)sc.a, n_, mn_ == ~0u ? 0u : mn_ >> 10, smkT); if (smkOn) smkWrite(l_); }   // служебно: выгрузить клетки неба (2) или машины игрока (1), как после отказа загрузки
+        else if (!strcmp(sc.name, "ladnpcold")) memLadNpcOld = sc.a != 0.f;   // Лестница-96: 1 - без правки для npc/car миссии (красный контроль s9 на том же EBOOT)
+        else if (!strcmp(sc.name, "ladnpc")) { unsigned b0_ = memMaxBlock ? memMaxBlock() : 0, need_ = sc.a > 0.f ? (unsigned)sc.a << 10 : b0_ + (48u << 10);   /* 0 - на 48 КБ больше сегодняшнего куска (гейт не зависит от раздробления кучи) */ int ok_ = memLadNpc1235("npc", need_, 1); char l_[140]; snprintf(l_, sizeof l_, "LADNPC need=%u ok=%d blk=%.2f->%.2f dd=%.0f mul=%.2f t=%.1f\n", need_ >> 10, ok_, b0_ / 1048576.f, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, drawDist, memLadDdMul, smkT); if (smkOn) smkWrite(l_); }   // Лестница-96 служебно: просьба «npc» миссии на N КБ цельным куском, как у загрузчика модели (гейт s9)
+        else if (!strcmp(sc.name, "memfailfake")) { extern void memFailFake(unsigned n); memFailFake((unsigned)sc.a); }   // Лестница-96 служебно: выдуманные отказы для проверки печати серий
+        else if (!strcmp(sc.name, "fragblk")) fragBlkSet(sc.a);   // П4: раздробить кучу до наибольшего куска F МБ (0 - снять)
         else if (!strcmp(sc.name, "boothhog")) boothHog1051Set((int)sc.a);   // №1051 служебно: занять N МБ кучи (имитация нехватки памяти), 0 — вернуть
         else if (!strcmp(sc.name, "phonefail")) phoneFailTest = (int)sc.a;   // №842 тест: следующие N открытий будки — как без памяти   // №841 тест: следующие N чтений гостиной — без памяти   // №775 тест: куча раздроблена до N МБ перед следующей загрузкой уровня
         else if (!strcmp(sc.name, "loadwaitstat")) { char s[96]; snprintf(s, sizeof s, "LOADWAITSTAT retries=%d giveups=%d t=%.1f\n", lwRetries, lwGiveups, smkT); smkWrite(s); }
         else if (!strcmp(sc.name, "saystat")) { char s[1400]; sndSayStats(s, sizeof s); char s2[1500]; snprintf(s2, sizeof s2, "t=%.1f %s", smkT, s); smkWrite(s2); }   // №683
         else if (!strcmp(sc.name, "carglass")) { char s[128]; snprintf(s, sizeof s, "CARGLASS t=%.1f old=%d frames=%u blend=%u opaque=%u tqown=%u flips=%u\n", smkT, carGlassOld, cgFrames, cgBlendTris, cgOpaqTris, tqOwnItems, tqOwnFlips); smkWrite(s); cgBlendTris = cgOpaqTris = cgFrames = tqOwnItems = tqOwnFlips = 0; }
+        else if (!strcmp(sc.name, "cardhud") && haveColl && uiReady) { cardHudT = COLL_HUD_CARD_S; uiHudSet(UI_F_CARD_TITLE, (int)sc.a); smkWrite("CARDHUD shown\n"); }   // служебно (№1261б): баннер «COLLECTOR CARD!» с карточкой N
+        else if (!strcmp(sc.name, "glowphase")) { glow1261Phase = sc.a; }   // служебно (№1261): фаза пульса свечения, рад (отрицательная — по времени)
+        else if (!strcmp(sc.name, "glow1261old")) { glow1261On = sc.a == 0.f; }   // №1261: 1 — без свечения (красный контроль)
         else if (!strcmp(sc.name, "trfoff") && haveTraffic) { traffic.car[0].mode = TRM_OFF; smkWrite("TRFOFF\n"); }   // служебное (гейт 413): тот же кадр без машины 0
         else if (!strcmp(sc.name, "trfstill") && haveTraffic && traffic.car[0].mode != TRM_OFF) {   // служебное (гейт правки 184): машина трафика 0 стоит (тело без водителя-ИИ)
           traffic.car[0].mode = TRM_PHYS; traffic.car[0].stillT = 0.f; memset(traffic.car[0].car.vel, 0, sizeof traffic.car[0].car.vel); }
@@ -1458,6 +1583,39 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "regon")) { regOff = 0; smkWrite("REG on\n"); }
         else if (!strcmp(sc.name, "reglog")) { char s[96]; snprintf(s, sizeof s, "REG eye %.1f %.1f mask %04x cut %d drawn %d\n", eyeX, eyeZ, regEye, regCut, nd); smkWrite(s); }
         else if (!strcmp(sc.name, "flyin")) msncamStart((int)sc.a);   // гейт tests/camera/msncam: камера старта миссии N
+        else if (!strcmp(sc.name, "tfsm95old")) { tfsm95Old = sc.a != 0.f; shopHeal1233Wire(); }   // Build 95 П2: 1 — переходы прежним путём
+        else if (!strcmp(sc.name, "deathring1239old")) deathRing1239Old = sc.a != 0.f;   // Build 95 П2: 1 — клетки у точки возврата стримом, как было
+        else if (!strcmp(sc.name, "boothfsm95old")) boothFsm95Old = sc.a != 0.f;   // Build 95 П2: 1 — тело будки прежнее (main_actbooth.h)
+        else if (!strcmp(sc.name, "tfnofit")) transitNoFit = sc.a != 0.f;   // служебно: transitPlan всегда «не хватает» (путь прелоадера при !fits)
+        else if (!strcmp(sc.name, "carhard96")) carHard96On = sc.a != 0.f;   // Build 96 (1250, решение Роба): flag carhard96 0 — прежние надпись и подмена машины (красный контроль)
+        else if (!strcmp(sc.name, "carvis96")) carVis96 = sc.a != 0.f;   // Build 96 (1250): flag carvis96 0 — как было (красный контроль)
+        else if (!strcmp(sc.name, "carhide96")) carHide96 = (int)sc.a;   // Build 96 служебно (1250): 1 — модель машины игрока в кадре «не пришла» (сторож откатит на машину уровня)
+        else if (!strcmp(sc.name, "carfail96")) carFailSim96 = (int)sc.a;   // Build 96 служебно (1250): N отказов подряд при вызове машины из будки
+        else if (!strcmp(sc.name, "irismodal1259")) irisModal1259Old = sc.a == 0.f;   // Будка-93 (1259): flag irismodal1259 0 - экран провала под ирисом, как было (красный контроль)
+        else if (!strcmp(sc.name, "irisstuck1258")) irisStuck1258Old = sc.a == 0.f;   // Будка-93 (1258): flag irisstuck1258 0 - сторожа вечного ириса нет (красный контроль)
+        else if (!strcmp(sc.name, "irisdt0")) irisDt0Test1258 = sc.a != 0.f;   // Будка-93 служебно (1258): ирису отдаётся dt = 0 (как в модальном экране) - проверка сторожа
+        else if (!strcmp(sc.name, "sceneboost1257")) sceneBoost1257 = sc.a != 0.f;   // Будка-93 (1257): flag sceneboost1257 0 - клетка под ждущим героем без головы очереди (красный контроль)
+        else if (!strcmp(sc.name, "gagholdcap1257")) gagHoldCap1257Old = sc.a == 0.f;   // Будка-93 (1257): flag gagholdcap1257 0 - гэги держат ирис до предела (красный контроль)
+        else if (!strcmp(sc.name, "gagpend1257")) collGagPend1257Old = sc.a == 0.f;   // Будка-93 (1257): flag gagpend1257 0 - счёт ожидания гэгов как был (красный контроль)
+        else if (!strcmp(sc.name, "cleanreload96")) cleanReload96 = sc.a != 0.f;   // Build 96: flag cleanreload96 0 — после лестницы сразу SIMPLIFY (красный контроль)
+        else if (!strcmp(sc.name, "lvldr96")) lvLdr96 = sc.a != 0.f;   // Build 96: flag lvldr96 0 — LEVEL_NEXT/LEVEL_START прежним телом (красный контроль)
+        else if (!strcmp(sc.name, "tplanplace96")) tplanPlace96 = sc.a != 0.f;   // Build 96: flag tplanplace96 0 — план комнаты мерит только кучу (красный контроль)
+        else if (!strcmp(sc.name, "tfbonusfail")) tfFailBonus = (int)sc.a;   // Build 96 служебно: отказ памяти на BONUS
+        else if (!strcmp(sc.name, "tfmsnfail")) tfFailMsn = (int)sc.a;   // Build 96 служебно: отказ памяти на MISSION_SELECT (пакет меню)
+        else if (!strcmp(sc.name, "tfmenufail")) tfFailMenu = (int)sc.a;   // Build 96 служебно: отказ памяти на MENU_FROM_GAME (гостиная)
+        else if (!strcmp(sc.name, "tffail")) tfFailTest = (int)sc.a;   // служебно: следующие N попыток LOAD машины переходов отказывают
+        else if (!strcmp(sc.name, "moviefail")) movieFailTest1239 = (int)sc.a;   // Будка-93 (1239): следующие N открытий ролика отказывают
+        else if (!strcmp(sc.name, "movie1239old")) movie1239Old = sc.a != 0.f;   // 1 — как было (молчаливый пропуск)
+        else if (!strcmp(sc.name, "shopfail")) { shopFailTest1233 = shopViewFailTest = (int)sc.a; }   // Будка-93 (1233 T08/T09): следующие N открытий пакета лавки и гардероба отказывают
+        else if (!strcmp(sc.name, "shopheal1233old")) { shopHeal1233Old = sc.a != 0.f; shopHeal1233Wire(); }   // 1 — тихая отмена, как было
+        else if (!strcmp(sc.name, "loadcord1233old")) loadCord1233Old = sc.a != 0.f;   // Будка-93 (1233 T01/T02): 1 — чёрный экран загрузки при отказе газеты, как было
+        else if (!strcmp(sc.name, "t03old")) t03Old = sc.a != 0.f;   // Будка-93 (1233 T03): 1 — как было (газета без шнура, второй ирис)
+        else if (!strcmp(sc.name, "t03double")) t03DoubleArm = sc.a != 0.f;   // служебно: как только ирис «msn» на экране — Continue снимает его и тут же второй перенос (1228)
+        else if (!strcmp(sc.name, "transitplanold")) transitPlanOld = sc.a != 0.f;   // Будка-93 (1233): 1 — без строк TPLAN, будка прежним выражением
+        else if (!strcmp(sc.name, "booth1225old")) booth1225Old = sc.a != 0.f;   // Будка-93 (1225): 1 — будка как была (сцена, пересборка, возврат, наезд)
+        else if (!strcmp(sc.name, "camtest1225")) msncamStartPhase("m3sd", "mission3camShape");   // служебно: заявка камеры старта миссии 3 (проверка окна без наезда)
+        else if (!strcmp(sc.name, "gaghold1226old")) gagHold1226Old = sc.a != 0.f;   // Будка-93 (1226): 1 — ирис раскрывается, не ожидая гэгов комнаты
+        else if (!strcmp(sc.name, "dooriris1226old")) doorIris1226Old = sc.a != 0.f;   // Будка-93 (1226): 1 — комната читается до ириса, как было
         else if (!strcmp(sc.name, "startcam")) startCamSvc = sc.a > 0.f;   // правка 40: «flag startcam 1» — камеры старта фаз и в служебном запуске
         else if (!strcmp(sc.name, "rollps2")) { carRollGain = sc.a <= 0.f ? 0.f : sc.a == 1.f ? CAR_ROLLPS2_GAIN : fminf(sc.a, 1.5f); char s[64]; snprintf(s, sizeof s, "ROLLPS2 %.2f\n", carRollGain); smkWrite(s); }   // №388: «flag rollps2 N» для A/B в туре (0 выкл, 1 = 0,22, иначе число, м); только сценарий, без флага — как файл rollps2 или прежнее
         else if (!strcmp(sc.name, "zoneoff")) { zoneOff = 1; smkWrite("ZONECAM off\n"); }
@@ -1516,6 +1674,8 @@ int main(int argc, char **argv) {
           if (bi_ >= 0) { Coin *c = &coins.c[bi_]; float dd_ = sqrtf(bd_) + 1e-3f, ux_ = (hx_ - c->x) / dd_, uz_ = (hz_ - c->z) / dd_, D_ = sc.d > .1f ? sc.d : 2.5f;
             smkCamRel = 0; smkCam[0] = c->x + ux_ * D_; smkCam[1] = c->y + .62f; smkCam[2] = c->z + uz_ * D_; smkCam[3] = -ux_ * D_; smkCam[4] = -.3f; smkCam[5] = -uz_ * D_; smkCam[6] = 0.f; smkCamOn = 1;
             char s_[128]; snprintf(s_, sizeof s_, "COINCAM i=%d at=%.2f,%.2f,%.2f dist=%.1f t=%.1f\n", bi_, c->x, c->y, c->z, sqrtf(bd_), smkT); smkWrite(s_); } }
+        else if (!strcmp(sc.name, "oldcarram") && oldCarOn) { oldCar.x = car.x + sinf(car.h) * 6.f; oldCar.z = car.z + cosf(car.h) * 6.f; oldCar.y = car.y; oldCarX0 = oldCar.x; oldCarZ0 = oldCar.z; car.vel[0] = sinf(car.h) * 12.f; car.vel[2] = cosf(car.h) * 12.f; char s_[96]; snprintf(s_, sizeof s_, "OLDCARRAM at=%.1f,%.1f t=%.1f\n", oldCar.x, oldCar.z, smkT); smkWrite(s_); }   // служебное (гейт 1241): оставленная своя встала в 6 м перед машиной игрока, машине игрока дана скорость 12 м/с вперёд
+        else if (!strcmp(sc.name, "oldcarhitold")) oldCarHit1241Old = 1;   // отрицательный контроль правки 1241
         else if (!strcmp(sc.name, "jackoff")) jackOff = 1;   // отрицательный контроль правки 63
         else if (!strncmp(sc.name, "phonecar_", 9)) { int ok = mvPhoneCar(sc.name + 9); chase.init = 0;   // служебное (гейт правки 333): машина игрока — эта награда уровня на том же месте, как из будки
           char s[96]; snprintf(s, sizeof s, "PHONECAR %s ok=%d iris=%d t=%.1f\n", sc.name + 9, ok, carIrisFor(car.p.name), smkT); smkWrite(s); }
@@ -1539,11 +1699,46 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "shadow973old")) sh973 = sc.a == 0.f;   // №973: 1 — тень машины плоскостью по центру (красный контроль)
         else if (!strcmp(sc.name, "icon993")) icon993Old = sc.a == 0.f;   // №993: flag icon993 0 — значок дома №623 вне задания, как было (красный контроль)
         else if (!strcmp(sc.name, "benchlog")) benchLog1034 = sc.a != 0.f;   // №1034: служебное — строки BENCH1034 (положение Гомера по кадрам)
+        else if (!strcmp(sc.name, "spawnhold")) homerSceneGate431 = homerSpawnWait431 = sc.a != 0.f;   // правка 431: flag spawnhold 0 — герой не ждёт сцену (красный контроль гейтов, которые 431 маскирует: tests/loadorder r10)
+        else if (!strcmp(sc.name, "runslide1230")) homerRunSlide1230 = sc.a != 0.f;   // №1230: flag runslide1230 0 — бег по косой вдоль стены гасится в ноль (красный контроль)
+        else if (!strcmp(sc.name, "npcretry96")) npcRetry96 = sc.a != 0.f;   // Build 96: flag npcretry96 0 - красный контроль
+        else if (!strcmp(sc.name, "npclad1235")) npcLad1235 = sc.a != 0.f;   // №1235: flag npclad1235 0 — модель персонажа как было (красный контроль)
+        else if (!strcmp(sc.name, "mcrlad1238")) mcrLad1238 = sc.a != 0.f;   // №1238: flag mcrlad1238 0 — машина миссии мимо лестницы (красный контроль)
+        else if (!strcmp(sc.name, "mcrfail")) mcrFailSim1238 = (int)sc.a;   // №1238 служебное: N отказов чтения блока машины миссии подряд
+        else if (!strcmp(sc.name, "msnartfailmissgen")) msnartFailMissgen = (int)sc.a;   // Кольцо-96 служебно: N отказов памяти только у missgen.p3d
+        else if (!strcmp(sc.name, "msnartpicwaitold")) msnartPicWaitOld = (int)sc.a;   // Кольцо-96: 1 — прежние мгновенный повтор и 8 с чёрного для картинки брифинга (красный контроль)
+        else if (!strcmp(sc.name, "zone3danglefree")) zone3DangleFreeX();   // шаг 7 Fable, красный контроль: владелец освобождает блок канарейки
+        else if (!strcmp(sc.name, "zone3dangle")) zone3DangleX((int)sc.a, "canary");   // шаг 7 Fable, красный контроль: канарейка в области N (0 миссия, 1 место) и оставленный указатель; после сброса/освобождения (при файле zone3scribble) WATCHDOG zone3 dangling
+        else if (!strcmp(sc.name, "colwire")) colWire1223 = (int)sc.a;   // №1223 служебно: flag colwire N — зелёный каркас ящиков коллизии мира в радиусе N м (0 — выкл.)
+        else if (!strcmp(sc.name, "ph6split95")) ph6Split95 = sc.a != 0.f;   // Build 95: flag ph6split95 0 — без строки PH6MEM
+        else if (!strcmp(sc.name, "dlretry95")) dlRetry95 = sc.a != 0.f;   // Build 95: flag dlretry95 0 — без паузы повтора и строки (красный контроль)
+        else if (!strcmp(sc.name, "dlfail")) dlFailSim95 = (int)sc.a;   // Build 95 служебно: N первых выделений листа клетки «нет памяти»
+        else if (!strcmp(sc.name, "roomanimlog")) roomAnLog95 = sc.a != 0.f;   // служебно: ROOMANIM — смены ключа анимации текстур комнаты (экран автомата Kwik)
+        else if (!strcmp(sc.name, "roomanimgt95")) gtOn95 = sc.a != 0.f;   // Build 95: flag roomanimgt95 0 — настенное время (красный контроль)
+        else if (!strcmp(sc.name, "gagreset96")) collectGagReset96 = sc.a != 0.f;   // Build 96: flag gagreset96 0 — гэг остаётся разбитым между входами (красный контроль)
+        else if (!strcmp(sc.name, "roomplace96")) homerRoomPlace96 = sc.a != 0.f;   // Build 96: flag roomplace96 0 — hold вместо roomplace (красный контроль)
+        else if (!strcmp(sc.name, "dcache96")) dcache96 = sc.a != 0.f;   // Build 96: flag dcache96 0 — как было
+        else if (!strcmp(sc.name, "dcacheall96")) dcAll96On = sc.a != 0.f;   // Build 96 диагностика
+        else if (!strcmp(sc.name, "mcrwait94")) mcrWait94On = sc.a != 0.f;   // Build 94: flag mcrwait94 0 — повтор каждый кадр (красный контроль)
+        else if (!strcmp(sc.name, "msnartretry94")) msnartRetry94 = sc.a != 0.f;   // Build 94: flag msnartretry94 0 — без повтора (красный контроль)
+        else if (!strcmp(sc.name, "msnartfail")) msnartFailSim94 = (int)sc.a;   // Build 94 служебное: N первых чтений записи предмета «нет памяти»
+        else if (!strcmp(sc.name, "npcfail")) npcFailSim1235 = (int)sc.a;   // №1235 служебное: N следующих чтений модели персонажа миссии «не вышли по памяти»
+        else if (!strcmp(sc.name, "memeat")) memEat1235((int)sc.a);   // №1235 служебное: занять кучу так, чтобы наибольший цельный кусок стал меньше N КБ (0 — отдать)
+        else if (!strcmp(sc.name, "camlr1231")) camLR1231 = sc.a != 0.f;   // №1231: flag camlr1231 0 — L+R пешком как было (красный контроль)
+        else if (!strcmp(sc.name, "dropsim")) mvDropSim(0, (int)sc.a);   // №1229 служебное: предмет N миссии «выпал»
+        else if (!strcmp(sc.name, "dropget")) mvDropSim(1, (int)sc.a);   // №1229 служебное: предмет N «подобран»
+        else if (!strcmp(sc.name, "drop1229")) uiDrop1229 = sc.a != 0.f;   // №1229: flag drop1229 0 — «Item Dropped!» как было (красный контроль)
+        else if (!strcmp(sc.name, "glass1224")) glassSolid1224 = sc.a != 0.f;   // №1224: flag glass1224 0 — целое стекло пустое для Гомера пешком (красный контроль)
         else if (!strcmp(sc.name, "bench1034")) bench1034 = sc.a != 0.f;   // №1034: flag bench1034 0 — скамейки пустые для Гомера пешком (красный контроль)
         else if (!strcmp(sc.name, "carcon1050")) carDbgOn1050 = sc.a != 0.f;   // №1050: строки CARCON — что держит машину (контакты кузова, колёс, откат подшага)
         else if (!strcmp(sc.name, "ramp1050")) colRamp1050 = sc.a != 0.f;   // №1050: flag ramp1050 0 — торец тонкой стенки гасит машину (красный контроль)
         else if (!strcmp(sc.name, "ramprail1050")) colRampRail1050 = sc.a != 0.f;   // №1050 (Б): flag ramprail1050 0 — торцы бортов держат (красный контроль)
         else if (!strcmp(sc.name, "camexit1170old")) camExit1170 = sc.a == 0.f;   // №1170: flag camexit1170old 1 — выход из наезда по прямой (красный контроль)
+        else if (!strcmp(sc.name, "msncamfar")) camFar1041 = sc.a;   // Р3: flag msncamfar N — длина наезда, метры
+        else if (!strcmp(sc.name, "msncamwall")) mcWall103 = sc.a != 0.f;   // Р3: flag msncamwall 0 — без сдвига от стены (красный контроль)
+        else if (!strcmp(sc.name, "msncamshort96")) mcShort96 = sc.a != 0.f;   // 1246: flag msncamshort96 0 — наезды с диска (красный контроль)
+        else if (!strcmp(sc.name, "bubskip")) bubShotSkip = (int)sc.a;
+        else if (!strcmp(sc.name, "bubshots")) { bubShotN = (int)sc.a; uiBubRiseFr = 0; }   // №1247: снимок каждого кадра после подъёма пузыря цели (a — сколько, b — сколько кадров пропустить)
         else if (!strcmp(sc.name, "camin1041")) camIn1041 = sc.a != 0.f;   // №1041: flag camin1041 0 — наезд с первого кадра и склейка на выходе (красный контроль)
         else if (!strcmp(sc.name, "icon993old")) icon993Old = sc.a != 0.f;
         else if (!strcmp(sc.name, "trfcost1001b")) trfCost1001b = sc.a != 0.f;   // №1001б: flag trfcost1001b 0 — прежний обход препятствий (красный контроль)
@@ -1590,6 +1785,8 @@ int main(int argc, char **argv) {
           for (unsigned i = 0; i < nf; i++) msnartLoad(f[i], 1); }   // №944 служебно: пакеты входов L1 (как LoadP3DFile миссий)
         else if (!strcmp(sc.name, "g944list") && smkOn) msnartList944(g944ListOut);
         else if (!strcmp(sc.name, "g944draw")) { g944DrawIdx = (int)sc.a; if (smkOn && g944DrawIdx >= 0 && g944DrawIdx < (int)(sizeof g944DrawNames / sizeof g944DrawNames[0])) { char l_[96]; snprintf(l_, sizeof l_, "G944DRAW idx=%d name=%s has=%d\n", g944DrawIdx, g944DrawNames[g944DrawIdx], msnartHas(g944DrawNames[g944DrawIdx])); smkWrite(l_); } }   // №944 служебно: рисовать рисунок входа из таблицы (msnart.shr: *_door, *_doors, *_doorstar) без миссии; -1 — нет
+        else if (!strcmp(sc.name, "footbakeold")) skinSetFootBakeOld(sc.a != 0.f);   // Модели-96: 1 — поправку стоп не читать из данных, считать на месте (как в 100)
+        else if (!strcmp(sc.name, "footvtxold")) skinSetFootVtxOld(sc.a != 0.f);   // Модели-96: 1 — стопы по суставам, как было
         else if (!strcmp(sc.name, "soleold")) skinSetSoleOld(sc.a != 0.f);   // №762: 1 — персонажи с подошвой не на нуле висят/тонут, как было   // Роб 17.10: Гомер у двери дальше от борта на N м (0 — как было), рука не уходит в дверь   // №748/749: 1 — тени как в TEST31 (без людей миссий и предметов, Гомер 20 %, без прыжка и края)
         else if (!strcmp(sc.name, "coinspr")) coinSprite = sc.a != 0.f;
         else if (!strcmp(sc.name, "coinmirror")) csRSign = sc.a != 0.f ? -1.f : 1.f;   // служебное: кадр монеты зеркально (сверка знака)   // 17.10: монеты спрайтами одной пачкой (0 — 3D-модель каждой)
@@ -1756,6 +1953,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "raceresetold")) gameMsnRaceResetOld = sc.a != 0.f;   // правка 1205: красный контроль — основная фаза уличной гонки без посадки игрока (L5 sr1–sr3)
         else if (!strcmp(sc.name, "msnresetold")) gameMsnResetAlways = 1;   // отрицательный контроль правки 61   // отрицательный контроль правки 60
         else if (!strcmp(sc.name, "shopvoff")) { shopViewPlant(1); smkWrite("SHOPV plant off\n"); }   // отрицательный контроль пункта 6: без экрана покупки
+        else if (!strcmp(sc.name, "cardinfo96")) uiCardInfo96Set(sc.a != 0.f);   // flag cardinfo96 0 — две строки описания карточки, как было
         else if (!strcmp(sc.name, "briefold")) { mvBriefOld(1); uiBriefMixedCase(1); }   // отрицательный контроль правки 52: прежняя карточка
         else if (!strcmp(sc.name, "radarharassold")) uiRadarHarassOld(sc.a != 0.f);   // №241
         else if (!strcmp(sc.name, "burnrepold")) sndBurnRepeatOld(sc.a != 0.f);   // №180/№184
@@ -1787,10 +1985,13 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "sellerlog")) mvServiceSellers();   // правка 288: продавцы
         else if (!strcmp(sc.name, "selleratloc")) gameSellerAtLoc = sc.a != 0.f;
         else if (!strcmp(sc.name, "boss967old")) gameBoss967Old = sc.a != 0.f;   // №967: 1 — тарелки и луча нет, событие не шлётся (как было)
+        else if (!strcmp(sc.name, "dmgmercy96")) carDmgMercy96 = sc.a != 0.f;   // flag dmgmercy96 0 - как было (красный контроль)
+        else if (!strcmp(sc.name, "seller96")) gameSeller96 = sc.a != 0.f;   // flag seller96 0 — как было (красный контроль)
         else if (!strcmp(sc.name, "shopfirstold")) gameShopFirstOld = sc.a != 0.f;
         else if (!strcmp(sc.name, "talkcarold")) gameTalkCarOld = sc.a != 0.f;
         else if (!strcmp(sc.name, "ldfinpri")) { ldFinPriOn = sc.a != 0.f; if (smkOn) { char l_[80]; snprintf(l_, sizeof l_, "LDFINPRI on=%d old=%d t=%.1f\n", ldFinPriOn, LDFINISHPRI1173_OLD, smkT); smkWrite(l_); } }   // №1173: переключатель разбора клеток ниже главного
         else if (!strcmp(sc.name, "susloopold")) sndSusLoopOld = sc.a != 0.f;
+        else if (!strcmp(sc.name, "wageracceptold")) { extern int svWagerAcceptOld; svWagerAcceptOld = sc.a != 0.f; }   // Данные-93: 1 — ✕ на ставочной карточке не платит взнос (прежнее)
         else if (!strcmp(sc.name, "talkroomfloorold")) msnTalkRoomOld = sc.a != 0.f;   // 1 — разговор в комнате без нижней границы радиуса 2,6 м
         else if (!strcmp(sc.name, "talkold")) msnTalkOld = sc.a != 0.f;   // правка 345: прежний радиус разговора 3 м + 1 м (красный)
         else if (!strcmp(sc.name, "pcsayold")) sndPcSayOld = sc.a != 0.f;   // правка 345: без реплик старта миссии и выхода из машины (красный)
@@ -1906,6 +2107,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "dlnolist")) dlNoList = sc.a != 0.f;   // правка 275: служебно — клетки целиком без листов
         else if (!strcmp(sc.name, "phonewarmold")) phoneViewWarmOld(sc.a!=0.f);
         else if (!strcmp(sc.name, "gagskinstreamold")) gagSkinStreamOld=sc.a!=0.f;
+        else if (!strcmp(sc.name, "collsplitold")) collSplitOld=sc.a!=0.f;
+        else if (!strcmp(sc.name, "collhold")) collHoldMs=(unsigned)sc.a;   // Пропечка-96: до загрузки уровня
         else if (!strcmp(sc.name, "policewarmold")) policeModelWarmOld=sc.a!=0.f;
         else if (!strcmp(sc.name, "stripbench")) { if (sc.a != 0.f) sbRun(&fbp0); }   // тур полос (stripbench.h): «flag stripbench 1» в сценарии тура; отчёт stripbench.txt и строки STRIPBENCH в журнал смоука
         else if (!strcmp(sc.name, "ggbatchold")) ggBatchOld=sc.a!=0.f;
@@ -1974,7 +2177,7 @@ int main(int argc, char **argv) {
 #ifndef C3_WARDROBE_TEST_OLD
         // Codex-3 wardrobe gate: open the real screen without staging a room trip.
         // Purchases, previews and homerWear still use the normal frame/input path.
-        else if (!strcmp(sc.name, "wardtestopen")) { char sd[256]; levelFile(sd, ""); wardrobeOpen(mvShop(), sd, skinWorn); smkSettle(); }
+        else if (!strcmp(sc.name, "wardtestopen")) { char sd[256]; levelFile(sd, ""); wardrobeOpen1233(sd, skinWorn); smkSettle(); }
 #endif
         else if (!strcmp(sc.name, "uifitfile")) {   // №619 (служебно): тексты из uifit.txt рядом с EBOOT (по строке) через настоящую раскладку пузыря задания; a=1 — пузырь без значка
           char fn[256]; sibling(fn, "uifit.txt"); SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0);
@@ -2056,9 +2259,15 @@ int main(int argc, char **argv) {
         else if (!strcmp(sc.name, "cardsset") && haveColl)   // служебно (гейт VIEW CARDS): карточки уровня по маске a собраны
           { collectSetProgress(&coll, gameLevel, (unsigned)sc.a, collectWasps(&coll, gameLevel), collectGags(&coll, gameLevel)); bonusOpenFromColl("cardsset"); }
         else if (!strcmp(sc.name, "msnmain")) { mvServiceMain((int)sc.a); chase.init = 0; smkSettle(); }   // основная часть миссии N (гейт tests/aicar/emu.sh)
+        else if (!strcmp(sc.name, "msnfinal")) { mvServiceFinal(); chase.init = 0; smkSettle(); }   // Будка-93 (1234): последняя сюжетная миссия уровня
+        else if (!strcmp(sc.name, "lvsavenext1234old")) lvSaveNext1234Old = sc.a != 0.f;   // Будка-93 (1234): 1 — запись конца уровня хранит пройденный уровень, как было
+        else if (!strcmp(sc.name, "msnprior")) mvServicePrior((int)sc.a);   // Будка-93 (1234): все сюжетные миссии кроме N пройдены
         else if (!strcmp(sc.name, "msnmainat")) { float v_ = sc.a != 0.f || isnan(sc.d) ? sc.a : sc.d; mvServiceMainAt((int)v_); chase.init = 0; smkSettle(); }   // отрицательный код (фаза 0, прогулка) — сырым sc.d: smoke.h режет a до 0 (помощник 302)   // правка 302: миссия с этапа (M*100+S)
         else if (!strcmp(sc.name, "msnfar")) { mvServiceGo(sc.a > 0.f ? sc.a : 30.f); chase.init = 0; smkSettle(); }   // мимо цели (отрицательный контроль)
         else if (!strcmp(sc.name, "view60")) longView = 0;
+        else if (!strcmp(sc.name, "gureset")) guSimClobber();   // правка 1243: имитация сброса состояния GE после сна
+        else if (!strcmp(sc.name, "workmix")) ddWorkMix = sc.a >= 0.f ? sc.a : -1.f;   // №1244: работа кадра регулятора дальности = N мс (отрицательное - снять)
+        else if (!strcmp(sc.name, "ddsetting") && sc.a >= 0.f && sc.a <= 2.f) { cfg.drawDist = (int)sc.a; cfgApply(); }   // №1244: строка Draw Distance (0=150, 1=200, 2=250)
         else if (!strcmp(sc.name, "far150")) far150On = sc.a != 0.f;   // №887: даль 150 м + силуэты вкл/выкл
         else if (!strcmp(sc.name, "dalramp")) dalRampOn = sc.a != 0.f;   // рампа границы дали (dal877.h): «flag dalramp 0» — прежняя ступенька
         else if (!strcmp(sc.name, "dalimp")) dimOn = sc.a != 0.f;   // ориентиры дали (dalimp.h): «flag dalimp 0» — как до правки
@@ -2120,6 +2329,9 @@ int main(int argc, char **argv) {
       gameCarLimits(&G, &in);      // остов стоит, пешком водителя нет
       gameExitAssist(&G, &in);     // правка 168: △ на ходу — машина тормозит и Гомер выходит
       mvFreezeCar(&in);            // пункт 8: отсчёт 3-2-1 — машина на ручнике, газ и руль не проходят (и служебный автопилот)
+#if !COLRING_OLD
+      if (colRingG && haveCol && !inRoom()) colRingFrame(haveHomer && onFoot() ? homer.x : car.x, haveHomer && onFoot() ? homer.z : car.z);   // Коллизия-96: кольцо за игроком (до шага машины)
+#endif
       XS_FRAME(smkOn); smkMark(0); BBP(BBP_CAR);
       { static float vPrev1050; float v0_ = hypotf(car.vel[0], car.vel[2]);
       camSvThr = in.throttle; camSvBrk = in.brake;   // сверка g06: газ и тормоз игрока для камеры заднего хода (main_camera.h)
@@ -2146,6 +2358,7 @@ int main(int argc, char **argv) {
             if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "CARSTUCK1200 at=%.1f,%.1f,%.1f wheels=%d fw=%.1f bk=%.1f t=%.1f\n", car.x, car.y, car.z, car.wheels, fw_, bk_, smkT); smkWrite(s_); }
             st_ = fw_ = bk_ = 0.f; } } }
       if (haveCarVis) {
+        if (carRevert96) { carRevert96 = 0; if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "WATCHDOG car revert t=%.1f\n", smkT); smkWrite(s_); } phoneSummon(phoneK >= 0 ? phoneK : 0); }   // Build 96 (1250): модель машины игрока так и не пришла — своя машина уровня
         if (!mvForcedCar()) carVisUpdate(&cv, &car, &in, dt); else carVisSpin(&cv, &car, dt);   // №955б: колёса машины миссии/угнанной крутятся
         if (smkOn && autodrive) { static int lf_, lon_, lno_, lrv_; lf_++; if (cv.brake) { lon_++; if (in.brake <= 0.f) lno_++; } if (cv.reverse) lrv_++;   // правка 435: факт про стоп-сигналы — кадров, фонарь стоп горит, из них без тормоза во вводе, задний ход
           if ((lf_ & 255) == 0) { char l_[120]; snprintf(l_, sizeof l_, "LAMP436 t=%.1f frames=%d brake_on=%d brake_on_no_input=%d reverse_on=%d\n", smkT, lf_, lon_, lno_, lrv_); smkWrite(l_); } }
@@ -2166,7 +2379,7 @@ int main(int argc, char **argv) {
         { const MsnCars *mc_ = mvCars(); if (mc_) for (int k_ = 0; k_ < mc_->n && k_ < MC_MAX; k_++) if (mc_->c[k_].on) propsHitCar(&props, &world, (Car *)&mc_->c[k_].car, NULL); }
         propsKickOther = 0;
       }
-      { static int wdInit_; if (!wdInit_) { wdInit_ = 1; wdSetLog(wdSmkLine); wdSetClock(wdSmkClock); sceneReadyHook = sceneReadyMain; sceneWantHook = sceneWantMain; if (smkOn) trafficLogLine = smkWrite; wdRegister("cellfail", "stream", wdCellCheck, 0); } }   // сторож (watchdog.h): строки WATCHDOG в журнал смоука, время игры
+      { static int wdInit_; if (!wdInit_) { wdInit_ = 1; homerRoomPointHook = roomPoint96; wdSetLog(wdSmkLine); wdSetClock(wdSmkClock); sceneReadyHook = sceneReadyMain; sceneWantHook = sceneWantMain; if (smkOn) trafficLogLine = smkWrite; wdRegister("cellfail", "stream", wdCellCheck, 0); } }   // сторож (watchdog.h): строки WATCHDOG в журнал смоука, время игры
       gameAfterCar(&G, &gp, dt); smkMarkX(2);   // Гомер и его удары, пропы, стейтпропы, монеты (viewer/game.c; звук и частицы — хуки выше)
       if (haveHomer && onFoot() && !inRoom()) {   // сверка g04-homer круг 3 (ГОМЕР 5.7): пешего сбивают только машины ИИ миссий (погоня, цели, полиция) быстрее 1 м/с
         const MsnCars *mk_ = mvCars();
@@ -2183,6 +2396,12 @@ int main(int argc, char **argv) {
           for (int q_ = 0; q_ < 4; q_++) { float sl_ = q_ & 1 ? 1.f : -1.f, sw_ = q_ & 2 ? 1.f : -1.f; cA_[q_][0] = cbA_.x + cbA_.fx * cbA_.hl * sl_ + rxA_ * cbA_.hw * sw_; cA_[q_][1] = cbA_.y; cA_[q_][2] = cbA_.z + cbA_.fz * cbA_.hl * sl_ + rzA_ * cbA_.hw * sw_; }
           aoSetCar(&ao, cA_); }
         aoStep(&ao, &sprops, &world, ft ? homer.x : car.x, ft ? homer.y : car.y, ft ? homer.z : car.z, ft, aoAct, dt); aoAct = 0;
+        if (smkOn && colWire1223 > 0 && haveAo && ((int)(smkT * 1.f) != (int)((smkT - dt) * 1.f))) {   // №1223 служебно: живые объекты ANM1 рядом — поза рисунка (poseF) и центр первого ящика, раз в секунду
+          float px_ = ft ? homer.x : car.x, pz_ = ft ? homer.z : car.z;
+          for (unsigned o_ = 0; o_ < ao.nobj; o_++) { const AoObj *O_ = &ao.obj[o_]; if (!O_->nVol || !O_->nInst) continue; const SpInst *in_ = &sprops.inst[O_->firstInst];
+            if (hypotf(in_->x - px_, in_->z - pz_) > 95.f) continue;
+            const SpRun *rn_ = &sprops.run[O_->firstInst]; const ColBox *b_ = 0; for (unsigned q_ = O_->firstVol; q_ < O_->firstVol + O_->nVol && q_ < ao.nvol; q_++) if (ao.vol[q_].kind == 0 && ao.vol[q_].col < world.nbox) { b_ = &world.box[ao.vol[q_].col]; break; }
+            char l_[240]; if (O_->nVol >= 10) smkGateInst = O_->firstInst; snprintf(l_, sizeof l_, "AOLOG t=%.1f obj=%u inst=(%.1f %.1f %.1f) type=%u poseF=%.1f alive=%d state=%d drawable=%d nfr=%u box0=(%.2f %.2f %.2f) gate=%u eye=(%.1f %.1f %.1f) pl=(%.1f %.1f %.1f) pb=%d baked=%u still=%d inel=%d ndyn=%u inR=%d dd=%.0f\n", smkT, o_, in_->x, in_->y, in_->z, in_->type, rn_->poseF, rn_->alive, (int)rn_->state, spDrawable(&sprops, O_->firstInst, px_, pz_, 400.f), (unsigned)O_->nfr, b_ ? b_->c[0] : 0.f, b_ ? b_->c[1] : 0.f, b_ ? b_->c[2] : 0.f, O_->firstInst == smkGateInst ? smkGateMask : 0u, eyeX, eyeY, eyeZ, px_, ft ? homer.y : car.y, pz_, pbS.on, pbS.on ? (unsigned)pbS.baked[O_->firstInst] : 0u, pbS.on ? (int)pbS.still[O_->firstInst] : -1, pbS.on ? (int)pbS.inel[O_->firstInst] : -1, pbS.ndyn, -1, drawDist); smkWrite(l_); } }
         if (uiReady && ft && !uiPaused() && aoWantsAction(&ao) >= 0) { uiHudShow(UI_T_ACTION, 1); uiActionText("Use"); } }
       if (!SVTELEPORT_OLD && svTeleportCount() && haveHomer && haveCol) {   // сверка g12-data круг 7 (P18-12): площадки Teleport (L3 R5T01, lightport, Z5T1; те же на L6)
         float pp_[3] = {homer.x, homer.y + 1.f, homer.z}; int k_ = onFoot() && !inRoom() ? svTeleportAt(pp_) : -1;
@@ -2190,7 +2409,7 @@ int main(int argc, char **argv) {
           int g_ = svTpGo; svTpGo = -1; float to_[3], th_;
           if (svTeleportTarget(g_, to_, &th_)) {
             frames += transitClose(&fbp0, "teleport") / (longView ? 2 : 1);
-            float dx_ = to_[0] - homer.x, dz_ = to_[2] - homer.z; if (dx_ * dx_ + dz_ * dz_ > 80.f * 80.f) msnTeleport(to_[0], to_[1], to_[2], &fbp0);   // далеко — город с экрана загрузки, как у переноса миссии
+            float dx_ = to_[0] - homer.x, dz_ = to_[2] - homer.z; if (dx_ * dx_ + dz_ * dz_ > 80.f * 80.f) { msnTeleNews1239 = 0; msnTeleport(to_[0], to_[1], to_[2], &fbp0); msnTeleNews1239 = 1; }   // далеко — город с экрана загрузки, как у переноса миссии
             homerPlace(&homer, &world, to_[0], to_[1], to_[2], th_); chase.init = 0; smkSettle(); k_ = -1;
             if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "TELEPORT pad=%d to=%.1f,%.1f,%.1f h=%.2f t=%.1f\n", g_, to_[0], to_[1], to_[2], th_, smkT); smkWrite(s_); } } }
         if (k_ >= 0 && uiReady && !uiPaused()) { uiHudShow(UI_T_ACTION, 1); uiActionText("Use"); }
@@ -2199,7 +2418,7 @@ int main(int argc, char **argv) {
         if (tw) { frames += transitClose(&fbp0, tw) / (longView ? 2 : 1); chase.init = 0; smkSettle(); camIrisCut = !strcmp(tw, "car_in"); } }
       smkMark(2); BBP(BBP_ROOMS);
       roomPrefetchTick();   // ТЕСТ90 П1: комната ближайшей двери читается впрок
-      { int ev = roomsStep(&rooms, &rs, &G, roomOpen, 0);   // 11.2: пешком у двери — в комнату, у выхода — к двери (viewer/rooms.c)
+      { door1226Gate = 1; int ev = roomsStep(&rooms, &rs, &G, roomOpen, 0); door1226Gate = 0;   // 11.2: пешком у двери — в комнату, у выхода — к двери (viewer/rooms.c)
         rs.action = 0;                                      // правка 41: △ этого кадра двери отдан (или нет)
         { int jp; if (!ev && uiReady && !uiPaused() && !mvWantsAction() && jackNear(&jp) >= 0) { uiHudShow(UI_T_ACTION, 1); uiActionText("Get Into Car"); } }   // 306: подпись миссии у собеседника не перебивается   // правка 63: △ у чужой машины
         { int pk_ = phoneNear(); pbStep(&pbArm, pk_, !mvBoothsOff());   // ps2-twin P05:25: каждый кадр — вошёл ли в будку при включённых (viewer/phonebusy.h)
@@ -2216,7 +2435,7 @@ int main(int argc, char **argv) {
 #endif
         if (ev && !JM_ROOM_OLD) { sndJustMusic(1); jmRoomOn = 1; }   // круг 2 (g08 P09:15): на время перехода в помещение и из него — только музыка
         if (ev && !MSN_STATE_OLD) mvSetState(1, 0, ev > 0 ? roomName() : "");   // круг 2: на время ириса входа/выхода таймер и провалы миссии стоят, имя интерьера — миссии
-        if (ev) { frames += transitClose(&fbp0, ev > 0 ? "room_in" : "room_out") / (longView ? 2 : 1); chase.init = 0; roomLog(ev); smkSettle(); roomHoldStart(ev);
+        if (ev) { if (ev > 0 && irisPre1226) { frames += irisPre1226Frames / (longView ? 2 : 1); irisPre1226 = 0; } else frames += transitClose(&fbp0, ev > 0 ? "room_in" : "room_out") / (longView ? 2 : 1); chase.init = 0; roomLog(ev); smkSettle(); roomHoldStart(ev);
           if (ev < 0 && !ROOMEXITRING1209_OLD && !roomExitRing1209Old && haveHomer) { float rc_[3] = {homer.x, homer.y, homer.z}; roomRing1209(rc_, "exit"); } } }   // ag/loadorder: город у двери готов, пока ирис закрыт   // ирис: правило порта по IrisWipe.scr   // переход — как goto: кадр чтения комнаты счётчики сцены не берут
       mvSetInterior(roomName());   // пункт 8 + 11.2: миссия видит комнату, где Гомер (Апу, ведёрко; NULL — город)
       if (jmRoomOn && !JM_ROOM_OLD) { sndJustMusic(0); jmRoomOn = 0; }   // круг 2: переход кончился (ирис блокирующий, к этому кадру он уже прошёл)
@@ -2276,7 +2495,7 @@ int main(int argc, char **argv) {
 #define BRIEF_IRIS_SKIP_OLD 0   // 1 — после Continue ирис старта миссии доигрывает паузу и раскрытие под уезжающей карточкой (TEST18)
 #endif
       { static int exWas; int exNow = uiBriefExitBusy();   // №625: начало выезда карточки (Continue) — ирис, закрытый под брифингом, снимается
-        if (exNow && !exWas && !BRIEF_IRIS_SKIP_OLD) transitSkipMsn();
+        if (exNow && !exWas && !BRIEF_IRIS_SKIP_OLD && transitSkipMsn() && !t03Old) msIrisSkipWin = T03_IRISWIN_FRAMES;   // Будка-93 (1228): ирис снят, второго не будет
         exWas = exNow; }
 #ifndef BRIEF_EXIT_HOLD_OLD
 #define BRIEF_EXIT_HOLD_OLD 0   // 1 — ирис переноса старта закрывается сразу после Continue, карточка не успевает уехать (TEST17)
@@ -2284,6 +2503,8 @@ int main(int argc, char **argv) {
       // №612 (видео TEST17): карточка миссии уезжает с рукой ДО ириса старта — телепорт ждёт конца выезда (≤ 0,45 с), событие остаётся в очереди
       { float tp[3]; int tele = (BRIEF_EXIT_HOLD_OLD || !uiBriefExitBusy()) && mvTeleported(tp);
         if (msLateWin > 0) msLateWin--;
+        if (msIrisSkipWin > 0) msIrisSkipWin--;
+        if (t03DoubleArm && transitBusy()) { t03DoubleArm = 0; if (transitSkipMsn() && !t03Old) msIrisSkipWin = T03_IRISWIN_FRAMES; msNewsPend = MS_NEWS_WAIT + 1; }
         if (!tele && msNewsPend && !uiBriefExitBusy() && (msFlowOld || !mvMsnSetup() || ++msSetupWait > MS_SETUP_CAP) && --msNewsPend <= 1) {   // №893: миссия MISSION SELECT перенос не дала — газета на месте игрока (№1072: не раньше конца подготовки фазы)
           if (!msFlowOld) msLateWin = MS_LATE_WIN;
           int drv_ = !haveHomer || homerDriving(&homer);
@@ -2291,10 +2512,11 @@ int main(int argc, char **argv) {
           if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNEWS fallback at %.1f %.1f t=%.1f\n", tp[0], tp[2], smkT); smkWrite(s_); } }
         if (tele) {   // сценарий переставил игрока: камера заново; далеко (или выбор MISSION SELECT, №893) — город с экрана загрузки
           int always = msNewsPend > 0 || (!msFlowOld && msLateWin > 0); msNewsPend = 0; msLateWin = 0;   // №1072: поздний перенос того же выбора — тоже с загрузкой
-          frames += transitClose(&fbp0, "msn") / (longView ? 2 : 1); chase.init = 0; smkSettle();   // ирис закрывается, город читается, ирис раскрывается
+          if (!t03Old && msIrisSkipWin > 0) { msIrisSkipWin = 0; always = 0; chase.init = 0; smkSettle(); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNEWS2 1228 second tele without iris t=%.1f\n", smkT); smkWrite(s_); } }   // Будка-93 (1228): ирис уже снят по Continue, второй раз не закрываем
+          else { frames += transitClose(&fbp0, "msn") / (longView ? 2 : 1); chase.init = 0; smkSettle(); }   // ирис закрывается, город читается, ирис раскрывается
           float dx = tp[0] - eyeX, dz = tp[2] - eyeZ;
           float rc_[3] = {tp[0], tp[1], tp[2]}; int rk_ = -1, toRoom_ = !TELEDOOR1209_OLD && !teleDoor1209Old && roomDoorOf(tp, rc_, &rk_);   // ag/loadorder: точка переноса в комнате — город читается у её двери, а не у кармана комнат
-          if (always || dx * dx + dz * dz > 80.f * 80.f) msnTeleport(rc_[0], rc_[1], rc_[2], &fbp0);
+          if (always || dx * dx + dz * dz > 80.f * 80.f) { msnTeleNews1239 = always; msnTeleport(rc_[0], rc_[1], rc_[2], &fbp0); msnTeleNews1239 = 1; }
           else if (toRoom_ && !(rs.room == rk_ && rg.mem)) roomRing1209(rc_, "tele-door");   // из комнаты в другую комнату рядом: экрана нет, кольцо у двери под закрытым ирисом
           if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNEWS always=%d far=%d t=%.1f\n", always, dx * dx + dz * dz > 80.f * 80.f, smkT); smkWrite(s_); }
           if (msMusPend) { msMusPend = 0;   // №1070: после экрана загрузки — звук старта (пешком) или езда; миссия с музыкой — её начало заново
@@ -2302,6 +2524,7 @@ int main(int argc, char **argv) {
             if (sndMusicOwned()) mvMusicResume(); else if (foot_) { sndMusic(SND_MUS_OFF); feStinger("level_intro"); } else sndMusic(SND_MUS_FREEROAM);
             if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "MSFLOW1070 music owned=%d foot=%d t=%.1f\n", sndMusicOwned(), foot_, smkT); smkWrite(s_); } }
           msnRoomSync(); } }   // фаза в комнате (SetDynaLoadData «…@») — вход в неё; в городе — выход
+      if (camHold1225 > 0 && !phoneViewOn()) camHold1225--;   // Будка-93 (1225): отсчёт окна без наезда — только вне будки
       { const char *ph, *cn; if (mvStartCam(&ph, &cn)) msncamStartPhase(ph, cn); }   // правка 40: фаза с камерой старта, игрок поставлен — «наезд»
       if (haveTraffic && !inRoom()) {   // этап 5: после машины игрока и Гомера (в комнате город стоит); камера прошлого кадра — спавн и удаление вне кадра
         int drv = !haveHomer || homerDriving(&homer);
@@ -2316,6 +2539,8 @@ int main(int argc, char **argv) {
         if (!CAR_HUSK_OLD && oldCarOn && traffic.nextra < TR_MAXEXTRA) traffic.extra[traffic.nextra++] = &oldCar;
         trfProfOn = smkOn; TRFSUB_T(0); trafficUpdate(&traffic, &world, &car, drv, pp, e3, f3, dt);
         if (!CAR_HUSK_OLD && oldCarOn) trafficHitStill(&traffic, &world, &oldCar);
+        if (!CAR_HUSK_OLD && !OLDCARHIT1241_OLD && !oldCarHit1241Old && oldCarOn && haveCol) trafficHitPlayerStill(&world, drv ? &car : NULL, &oldCar, &oldCarAwake, &oldCarStill, dt);   // правка 1241: игрок в чужой машине таранит оставленную свою, она сдвигается и получает урон
+        if (smkOn && oldCarOn && drv) { float d_ = hypotf(car.x - oldCar.x, car.z - oldCar.z); static unsigned n_; if (d_ < 10.f && !(n_++ % 20)) { char s_[96]; snprintf(s_, sizeof s_, "OLDCARDIST d=%.2f v=%.1f old=%d moved=%.2f dmg=%.2f t=%.1f\n", d_, car.v, oldCarHit1241Old, hypotf(oldCar.x - oldCarX0, oldCar.z - oldCarZ0), oldCar.damage, smkT); smkWrite(s_); } }   // для гейта 1241
         if (!CAR_HUSK_OLD && oldCarOn && traffic.nextra > 0 && traffic.extra[traffic.nextra - 1] == &oldCar) traffic.nextra--;
         if (trLog && smkOn) for (int i = 0; i < TR_MAXCAR; i++) if (trWas[i] == TRM_OFF && traffic.car[i].mode != TRM_OFF) trSpawnPend |= 1u << i;   // правка 328
         TRFSUB_T(1);
@@ -2552,6 +2777,7 @@ int main(int argc, char **argv) {
         } else czs.cur = -1;
 #endif
         homer.camTurn = onFoot() && !fly ? ((pad.Buttons & PSP_CTRL_RTRIGGER) ? 1.f : 0.f) - ((pad.Buttons & PSP_CTRL_LTRIGGER) ? 1.f : 0.f) : 0.f;   // правка 75
+        if (homerCamLR && camLR1231) homer.camTurn = homerCamLRx * fabsf(homerCamLRx) * 1.5f;   // №1231: L+R — аналоговый облёт (до ~2,4 рад/с при полном отклонении; одиночные L/R — 1,6)
         if (cfg.invertCam && !camTurnOld) homer.camTurn = -homer.camTurn;   // правка 362: Settings паузы → Invert Camera Control (по умолчанию On)
         // Правка Роба 361 (05.10: «вышли из машины, вылетели, машина взорвалась — камера преследует точку машины; надо показывать по
         // направлению движения героя»): правило 199 ниже выключено, камера пешком идёт за курсом Гомера (homer.c: после выброса — курс
@@ -2566,6 +2792,7 @@ int main(int argc, char **argv) {
         }
 #endif
         if (onFoot()) { homerCamera(&homer, G.pHomerWorld ? G.pHomerWorld : &world, dt, cp, lk); chase.init = 0;
+          if (smkOn && camLogOn) { char s_[200]; snprintf(s_, sizeof s_, "CAMLR1231 t=%.2f on=%d yaw=%.1f pitch=%.2f turn=%.2f sx=%.2f hx=%.2f hz=%.2f eye=%.2f,%.2f,%.2f\n", smkT, homerCamLR, homer.camYaw * 57.2958f, homerCamLRpitch, homer.camTurn, homerCamLRx, homer.x, homer.z, cp[0], cp[1], cp[2]); smkWrite(s_); }   // №1231: служебное
           { float hp_[3] = {homer.x, homer.y, homer.z}; walkFovK = walkCamSv(hp_, cp, lk, hypotf(homer.speed, homer.vy), dt); }   // сверка g06 (g06-camera:8,17,33,34): склон, автозум, крен уровня 7 (main_camera.h)   // этап 4: камера пешком (в комнате — её стены)
           if (inRoom() && nrcam) {   // 11.2: камера комнаты из данных — та, в чьём триггере Гомер (нет такой — камера пешком)
             float hp[3] = {homer.x, homer.y, homer.z}, e3[3], l3[3], fy;
@@ -2624,17 +2851,33 @@ int main(int argc, char **argv) {
           talkPrevOn_ = talkCamOn; }
         if (mcPlay && !inRoom()) {   // правка 40: «наезд» — поза камеры из анимации диска
           float up3[3], dur = (mcPlay->nfr - 1) / mcPlay->fps;
-          int going = msncamPose(mcPlay, mcPlant == 1 ? dur - mcT : mcT, cp, lk, up3, &mcFovY);
+          int going, syn_ = mcPlay == &mcSyn96;
+          if (syn_) {   // 1246: короткий наезд — от точки позади и выше к обычной игровой позе (cp/lk этого кадра — игровая камера, игрок стоит)
+            float u = fminf(1.f, mcT / dur), k = 1.f - u * u * (3.f - 2.f * u);
+            float bx = cp[0] - lk[0], bz = cp[2] - lk[2], bl = hypotf(bx, bz);
+            if (bl < .01f) { float hh_ = onFoot() ? homer.h : car.h; bx = -sinf(hh_); bz = -cosf(hh_); bl = 1.f; }
+            if (mcF96 < 0.f) {   // отход не дальше свободного места: луч от игровой позы к точке отхода (стена здания не закрывает кадр)
+              float a_[3] = {cp[0], cp[1], cp[2]}, b_[3] = {cp[0] + bx / bl * MCSHORT96_BACK, cp[1] + MCSHORT96_UP, cp[2] + bz / bl * MCSHORT96_BACK};
+              float fr_ = haveCol ? colRayFrac(onFoot() && G.pHomerWorld ? G.pHomerWorld : &world, a_, b_, 0) : 1.f;
+              mcF96 = fr_ >= .999f ? 1.f : fmaxf(0.f, fr_ - .6f / hypotf(MCSHORT96_BACK, MCSHORT96_UP));   // 0,6 м до стены
+              if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MSNCAM short free=%.2f t=%.2f\n", mcF96, smkT); smkWrite(s_); } }
+            cp[0] += bx / bl * MCSHORT96_BACK * k * mcF96; cp[2] += bz / bl * MCSHORT96_BACK * k * mcF96; cp[1] += MCSHORT96_UP * k * mcF96;
+            mcFovY = onFoot() ? lensFoot() : lensCar(); going = mcT < dur; }
+          else {
+          going = msncamPose(mcPlay, mcPlant == 1 ? dur - mcT : mcT, cp, lk, up3, &mcFovY);
           mcFovY = lensData(mcFovY);   // mcPlant — отрицательный контроль гейта
+          if (mcWall103 && haveCol) { float hd_[3] = {onFoot() ? homer.x : car.x, (onFoot() ? homer.y : car.y) + 1.6f, onFoot() ? homer.z : car.z};   // Р3: глаз не за стеной
+            if (mcWallPull(onFoot() && G.pHomerWorld ? G.pHomerWorld : &world, hd_, cp, &mcWallSt, dt) && smkOn) { static int wn_; if (!(wn_++ % 30)) { char s_[96]; snprintf(s_, sizeof s_, "MSNCAM wall st=%.2f t=%.2f\n", mcWallSt, smkT); smkWrite(s_); } } }
+          }
           if (mcPlant == 1) going = mcT < dur;
           if (mcPlant == 2) { cp[0] += 20.f; lk[0] += 20.f; }
           if (smkOn) { char s[200]; snprintf(s, sizeof s, "MSNCAMP t=%.3f ct=%.4f phase=%s eye=%.3f,%.3f,%.3f look=%.3f,%.3f,%.3f fovy=%.2f homer=%.2f,%.2f,%.2f car=%.2f,%.2f\n",
                                              smkT, mcT, mcPlay->phase, cp[0], cp[1], cp[2], lk[0], lk[1], lk[2], mcFovY, homer.x, homer.y, homer.z, car.x, car.z); smkWrite(s); }
           if (!going) {
-            if (smkOn) { char s[64]; snprintf(s, sizeof s, "MSNCAM end t=%.1f\n", smkT); smkWrite(s); }
+            if (smkOn) { char s[64]; snprintf(s, sizeof s, "MSNCAM end t=%.1f fr=%u\n", smkT, smkFrameAbs); smkWrite(s); if (syn_) { snprintf(s, sizeof s, "MSNCAM done t=%.2f\n", smkT); smkWrite(s); } }
             mcPlay = 0; chase.init = 0; homer.camInit = 0;
-            if (camIn1041) { camBlendFrom(cp, lk, CAMIN1041_BLEND); camBArc = camBExit = camExit1170; } }   // №1041: на выходе плавный переход от позы наезда, не склейка; №1170: по дуге вокруг точки взгляда
-          mcT += dt; }
+            if (camIn1041 && !syn_) { camBlendFrom(cp, lk, CAMIN1041_BLEND); camBArc = camBExit = camExit1170; } }   // №1041: на выходе плавный переход от позы наезда, не склейка; №1170: по дуге вокруг точки взгляда
+          if (syn_ && transitBusy() && mcHold96 < 4.f) mcHold96 += dt; else mcT += dt; }   // 1246: короткий наезд начинается, когда ирис раскрыт (под ирисом его не видно); не дольше 4 с
         if (carCam && onFoot()) { memcpy(cp, ccp, 12); memcpy(lk, clk, 12); }   // правка 167: выходит — ещё камера машины
         { // правка 167: смена камеры машина <-> пешком — плавно от последней позы (выход 0,55 с, посадка 1 с), не склейкой
           static int lastCarCam = -1; static float lastE[3], lastL[3];
@@ -2855,7 +3098,7 @@ int main(int argc, char **argv) {
     if (flyPathV > 0.f) flyPathStep(dt, &ex, &ey, &ez, &cfx, &cfy, &cfz);   // служебное: замер стриминга
     if (cmV != 0.f || cmYaw != 0.f) { cmA += cmYaw * dt; float c_ = cosf(cmA), s_ = sinf(cmA), fx_ = cfx * c_ - cfz * s_, fz_ = cfx * s_ + cfz * c_; cfx = fx_; cfz = fz_; cmP[0] += cfx * cmV * dt; cmP[1] += cfz * cmV * dt; ex += cmP[0]; ez += cmP[1]; }   // служебное «flag cammove V» (м/с вперёд по взгляду) и «flag camyaw рад/с»: камера идёт и поворачивается поверх сценария — замер отсечения и списков на скорости (в эмуляторе машина едет медленнее PSP)
     if (haveColl && !fly && !bpass) { float sy_ = ey; collShake(&ex, &ey, &ez); if (!floorNearOld && ey < sy_ && haveCol && !inRoom()) floorEyeClamp(&ey, ex, ez, sy_); }   // В5: тряска камеры гэга (GagSetCameraShake); №861: после неё глаз над полом
-    drawDist = (opt & O_D100) ? 100.f : (longView ? DIST_LONG : DIST_SHORT) * drawDistMul * (DD_ADAPT_OLD ? 1.f : ddScale) * memLadDdMul;   // до stream(): радиусы загрузки идут от дальности; ddScale — бюджет кадра (DD_ADAPT_OLD)
+    drawDist = (opt & O_D100) ? 100.f : (longView ? DIST_LONG : DIST_SHORT) * drawDistMul * (DD_ADAPT_OLD ? 1.f : (ddReg1244Off || memLadDdMul >= 1.f ? ddScale * memLadDdMul : fminf(ddScale, memLadDdMul)));   // №1244: два регулятора (по времени кадра и по памяти) - минимум, а не произведение (0,6 х 0,6 давали 90 м при полу 150)   // до stream(): радиусы загрузки идут от дальности; ddScale — бюджет кадра (DD_ADAPT_OLD)
     // №887 (Роб 23.10: «крупная оптимизация — панорама дали»): бот-репортёр — даль 250 м нужна в 15–38 % мест, город до 150 м вместо 250 — −27…33 %
     // треугольников. Когда у уровня есть силуэты дали от 150 м (horizon.shr, tools/horizon_export.py --near 150 --cell 60), город, туман и подгрузка клеток —
     // до FAR150_D (только с файлом нового расчёта: радиус ленты < 180 м); дальше — плоский силуэт (стиль, принятый Робом 16.10: «фасады как в вестернах»). FAR150_OLD=1 / «flag far150 0» — прежняя даль
@@ -2871,7 +3114,21 @@ int main(int argc, char **argv) {
     int far909Hi = 0;   // №909: «высокий взгляд» — глаз высоко над землёй под ним (крыша, прыжок, мост), а не над центром ячейки ленты на склоне (far909.h)
     if (!FAR150_OLD && far150On && hzN) { float gy_ = 0.f, clr_ = ground(ex, ez, ey + 1.f, 0.f, &gy_) ? ey - gy_ : -1e9f; far909Hi = far909Step(&far909St, clr_, !(hzCur < 0 || ey < hzC[hzCur].ey + FAR150_UP), dt); }
     drawDist = hz913Apply(drawDist, ex, ez, dt, longView && !fly && !(opt & O_D100), far909Hi);   // №913: потолок города по зонам (hzzone913.h), см. horizon.h; прежнее правило №887 — 150 м вне зон, кроме FAR150_OLD / far150 0 / высокого взгляда №909
-    if (pano917Cap) drawDist = pano917Far;   // №917б: служебный кадр бота — дальность ровно заданная, регуляторы не трогают
+    cellThrashPx = ex; cellThrashPz = ez;
+    if (!cellThrashCeilOff && cellThrashCeil > 0.f) {   // потолок «места» после повторных кругов клеток; ушёл от места на CELLTHRASHCEIL_R - снят
+      float dx_ = ex - cellThrashAx, dz_ = ez - cellThrashAz;
+      if (dx_ * dx_ + dz_ * dz_ > CELLTHRASHCEIL_R * CELLTHRASHCEIL_R) { cellThrashCeil += 4.f * dt; if (cellThrashCeil >= 400.f) cellThrashCeilReset(); }   // ушёл из области: потолок плавно поднимается (4 м/с), без скачка дальности
+      if (cellThrashCeil > 0.f && drawDist > cellThrashCeil) drawDist = cellThrashCeil; }
+    if (!cityCapOff && cityCapTgt > 0.f && zone3CityOnX()) {   // 100: потолок по ёмкости области города (main_stream.h CITYCAP100_OLD)
+      if (!cityCapInit) { cityCapDd = cityCapTgt; cityCapInit = 1; }
+      else if (cityCapDd > cityCapTgt) { cityCapDd -= (cityCapDd - cityCapTgt <= 25.f ? 2.5f : 15.f) * dt;   // срез до 25 м - ползком (ниже порога качелей ddreg 3 м/с), глубже - быстро: памяти ждать нельзя
+       if (cityCapDd < cityCapTgt) cityCapDd = cityCapTgt; }
+      else if (cityCapDd < cityCapTgt) { cityCapDd += 2.f * dt; if (cityCapDd > cityCapTgt) cityCapDd = cityCapTgt; }
+      if (drawDist > cityCapDd) drawDist = cityCapDd; }
+    if (ringCapDd > 0.f) {   // Лестница-96 (№4б1): круг после переноса урезан по области - не рисуем дальше загруженного (main_stream.h RINGCAP_OLD)
+      if (!ringCapOn || ringCapDd >= drawDist) ringCapDd = 0.f; else { if (cityNoFitD - 2.f < ringCapDd && cityNoFitD > RINGCAP_FLOOR + 2.f) ringCapDd = cityNoFitD - 2.f;   /* клетка внутри дальности не влезла (область города раздроблена/полна): дальность под её край, дыры не будет */
+        if (stMissNow <= 0) { float up_ = ringCapDd + RINGCAP_RISE * dt; if (up_ > cityNoFitD - 2.f) up_ = cityNoFitD - 2.f; if (up_ > ringCapDd) ringCapDd = up_; } drawDist = ringCapDd < drawDist ? ringCapDd : drawDist; } }
+    if (pano917Cap) drawDist = pano917Far * (memLadNpcOld ? 1.f : memLadDdMul);   // №917б: служебный кадр бота — дальность ровно заданная, регуляторы не трогают; Лестница-96: кроме ступени 3 лестницы (memLadDdMul < 1 только пока памяти не хватает)
     int inR = inRoom();   // 11.2: в комнате город не подгружается и не рисуется (клетки у двери остаются в памяти)
     SMK5(4);   // ph5: остаток (ходьба без машины, служебное, ворота)
     smkMark(5);   // аудит FPS (№637): ph5 = камера и прочее до ворот, ph6 = ворота + stream + плоскости
@@ -2880,10 +3137,12 @@ int main(int argc, char **argv) {
     unsigned p6b_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
     stFx = cfx; stFz = cfz;   // взгляд этого кадра — для порядка клеток после большого прыжка (main_stream.h jumpRush)
     unsigned scT0 = sceKernelGetSystemTimeLow();
-    pending = inR ? 0 : stream(ex, ey, ez);
+    pending = inR ? 0 : (streamEyeOv && eyeOvOn && eyeOvOn != 3 ? stream(eyeOv[0], eyeOv[1], eyeOv[2]) : stream(ex, ey, ez));   // Лестница-96: flag streameye 1 - при глазе сценария (eyeOv) стрим грузит вокруг него, как рисуется (тур не показывает фальшивых дыр)
     if (smkOn) { static unsigned p6t_, p6n_, p6g_, p6s_, p6m_; unsigned p6c_ = sceKernelGetSystemTimeLow(); p6n_++; p6g_ += p6b_ - p6a_; p6s_ += p6c_ - p6b_; if (p6c_ - p6b_ > p6m_) p6m_ = p6c_ - p6b_;   // аудит FPS: ворота и stream() в мкс за секунду
       if (!p6t_) p6t_ = p6c_;
-      if (p6c_ - p6t_ >= 1000000u) { char l_[120]; snprintf(l_, sizeof l_, "PH6SPLIT t=%.1f frames=%u gates_us=%u stream_us=%u stream_max_us=%u\n", smkT, p6n_, p6g_ / (p6n_ ? p6n_ : 1), p6s_ / (p6n_ ? p6n_ : 1), p6m_); smkWrite(l_); p6t_ = p6c_; p6n_ = p6g_ = p6s_ = p6m_ = 0; } }
+      if (p6c_ - p6t_ >= 1000000u) { char l_[120]; snprintf(l_, sizeof l_, "PH6SPLIT t=%.1f frames=%u gates_us=%u stream_us=%u stream_max_us=%u\n", smkT, p6n_, p6g_ / (p6n_ ? p6n_ : 1), p6s_ / (p6n_ ? p6n_ : 1), p6m_); smkWrite(l_);
+        { static unsigned lc_, lb_, lpc_, lpb_; char d_[160]; snprintf(d_, sizeof d_, "DCACHE96 t=%.1f pre_calls=%u pre_kb=%u post_calls=%u post_kb=%u on=%d all=%d\n", smkT, dc96Calls - lc_, (dc96Bytes - lb_) >> 10, dc96PostCalls - lpc_, (dc96PostBytes - lpb_) >> 10, dcache96, dcAll96On); smkWrite(d_); lc_ = dc96Calls; lb_ = dc96Bytes; lpc_ = dc96PostCalls; lpb_ = dc96PostBytes; }
+        if (ph6Split95) { char m_[140]; snprintf(m_, sizeof m_, "PH6MEM t=%.1f blk=%.2f free=%.2f room=%d inR=%d pend=%d drawDist=%.0f\n", smkT, (memMaxBlock ? memMaxBlock() : 0u) / 1048576.f, heapFreeBytes() / 1048576.f, (int)inRoom(), inR, pending, drawDist); smkWrite(m_); } p6t_ = p6c_; p6n_ = p6g_ = p6s_ = p6m_ = 0; } }
     if (eyeOvOn == 3 && haveCol) { int ft_ = onFoot() && haveHomer; float px_ = ft_ ? homer.x : car.x, py_ = ft_ ? homer.y : car.y, pz_ = ft_ ? homer.z : car.z, hh_ = ft_ ? 0.f : car.h; if (ft_) { float ddx_ = sinf(0.f); (void)ddx_; hh_ = 1.5708f; } float fx_ = sinf(hh_), fz_ = cosf(hh_); ex = px_ - fx_ * eyeOv[0] + fz_ * eyeOv[2]; ey = py_ + eyeOv[1]; ez = pz_ - fz_ * eyeOv[0] - fx_ * eyeOv[2]; float dx_ = px_ - ex, dy_ = py_ + .5f - ey, dz_ = pz_ - ez, l_ = sqrtf(dx_ * dx_ + dy_ * dy_ + dz_ * dz_) + 1e-6f; cfx = dx_ / l_; cfy = dy_ / l_; cfz = dz_ / l_; }   // служебно (№680): «flag eyeon 3» — глаз сзади (eyex м), сбоку (eyez м), над машиной или героем (eyey м), взгляд на кузов
     else if (eyeOvOn) { ex = eyeOv[0]; ey = eyeOv[1]; ez = eyeOv[2]; cfx = eyeOv[3]; cfy = eyeOv[4]; cfz = eyeOv[5]; }   // №634 служебно
     if (smkOn) {   // №637/регресс ph6: цена stream() в главном потоке, строка STREAMCOST раз в ~2 с (среднее и максимум, мкс; клеток выгружено/запрошено за период)
@@ -2962,7 +3221,8 @@ rf_repeat_draw:
     uiFrDraws = uiFrVerts = uiFrAreaPx = uiFrMaxVerts = uiFrMaxAreaPx = 0;   // №1186: кадр проверки вызовов интерфейса
     if (pendTalkOut) { pendTalkOut = 0;   // №1186: ирис конца разговора — на границе кадра, список кадра ещё не открыт
       if (transitReady()) { frames += transitClose(&fbp0, "talk_out") / (longView ? 2 : 1); chase.init = 0; smkSettle(); } }
-    sceGuStart(GU_DIRECT, list); geListOpen = 1; BBP(BBP_CITY); CSM0();
+    DCALL96();   // dcacheall96: диагностика кэша — всё, что процессор записал за кадр, в ОЗУ до списка кадра
+    sceGuStart(GU_DIRECT, list); geListOpen = 1; guRestate(); BBP(BBP_CITY); CSM0();
     lstSumB += lstBinds; lstFrames++; lstBinds = 0; lstImm += (unsigned)binds; lstFlatImm += flatBinds; flatBinds = 0;   // №912: смены текстуры/заливки за прошлый кадр (листы и привязки на месте)
     resetState(); drawnTris = 0; draws = 0; binds = 0; ggVbUsed = 0; carFanN = 0; cltFrame++; cltBuiltF = 0; tsFrame(); geVbBegin();
     if (opt & O_QVP) { sceGuViewport(2048, 2048, SCR_W / 2, SCR_H / 2); sceGuScissor(SCR_W / 4, SCR_H / 4, SCR_W * 3 / 4, SCR_H * 3 / 4); }
@@ -2978,7 +3238,10 @@ rf_repeat_draw:
     int skyLast = (opt & O_SKYLAST) && (opt & O_SKY);
     if (trLeft == TR_FRAMES) { char t_[200]; int l_ = snprintf(t_, sizeof t_, "TRC frame inR=%d room=%d rmem=%p npc=%u fov=%.2f near=%.3f eye=%.1f,%.1f,%.1f dir=%.2f,%.2f,%.2f list=%d\n",
                                  inR, rs.room, (void *)rg.mem, rg.npc, curFovY, frameNear(inR, fly || bpass), ex, ey, ez, cfx, cfy, cfz, (int)sceGuCheckList()); trLine(t_, l_); }
-    sceGuClear((skyLast && !fly && !clearChk && !inR ? 0 : GU_COLOR_BUFFER_BIT) | GU_DEPTH_BUFFER_BIT);
+    // Правка Роба 1249 (08.11, тур 97 на PSP: вдалеке шлейф/фейд, «дальние пиксели тянутся, как незатёртый прошлый кадр»): цвет кадра не чистился (небо рисуется после города и «закрывает всё пустое»), но небо покрывает не всё:
+    // куски неба вне клеток/срезаны (SKYDRAW notres/culled), полоса между краем города (до drawDist, теперь 250 м) и небом/силуэтами, дыры в дальних листах - там оставался прошлый кадр. Теперь цвет чистится всегда цветом горизонта
+    // (fogCol уже выставлен выше), небо и город ложатся поверх: непокрытое = цвет дали, а не хвост. Цена - заливка кадра 480 x 272 (≈ 0,1-0,2 мс GE). SKYCLEAR1249_OLD=1 / файл skyclear1249old - как было
+    sceGuClear((skyLast && !fly && !clearChk && !inR && skyClear1249Off ? 0 : GU_COLOR_BUFFER_BIT) | GU_DEPTH_BUFFER_BIT);
     // Брифинг миссии (разбор тура 12): мир стоит (dt = 0), карточка с руками №512 поверх; прежде мир собирался и рисовался заново каждый кадр (кадр 36–51 мс, 15–19 к/с, руки рывками).
     // Теперь на третьем кадре брифинга, когда подгрузка кончилась и ирис не закрывает мир, кадр мира (до интерфейса и ириса) копируется в снимок в VRAM (область истории джиттера,
     // 272 КБ: в брифинге джиттер не работает), следующие кадры показывают снимок и рисуют только карточку (goto bf_world_done). Камера сдвинулась, закрылся экран брифинга,
@@ -3027,6 +3290,10 @@ rf_repeat_draw:
     CSM(0); { CSUBT0; floorNearFrame(inR, fly || bpass, ex, ey, ez, cfx, cfy, cfz, gFov); CSUB(5); }   // №861: ближняя плоскость по полу у низа кадра
     { CSUBT0; camSafeFrame(inR, fly || bpass, camAimWideFov(gFov, camAimC), ex, ey, ez, cfx, cfy, cfz, dt); CSUB(6); }   // №1160: по расширенному кадру Car Aim (при c = 0 тот же угол)
     CSM(1);   // правка 331: ближняя плоскость по свободному месту; замер
+    if (smkOn && camLogOn && haveTraffic) {   // №1232: служебное — глаз камеры и ближайшая машина трафика (для замера дрожи)
+            float dm_ = 1e9f, vm_ = 0.f; int mv_ = 0, ck_ = -1;
+            for (int i_ = 0; i_ < traffic.maxCars; i_++) if (traffic.car[i_].mode != TRM_OFF) { const Car *k_ = &traffic.car[i_].car; float d_ = hypotf(k_->x - ex, k_->z - ez); if (d_ < dm_) { dm_ = d_; float v_[3]; carAnchorVelocity(k_, v_); vm_ = hypotf(v_[0], v_[2]); mv_ = 1; ck_ = i_; } }
+            if (dm_ < 14.f) { char s_[220]; snprintf(s_, sizeof s_, "CAMTRF t=%.2f eye=%.3f,%.3f,%.3f look=%.3f,%.3f,%.3f home=%.2f,%.2f dmin=%.2f v=%.1f car=%d cp=%.2f,%.2f\n", smkT, ex, ey, ez, ex + cfx, ey + cfy, ez + cfz, homer.x, homer.z, dm_, vm_, ck_, ck_ >= 0 ? traffic.car[ck_].car.x : 0.f, ck_ >= 0 ? traffic.car[ck_].car.z : 0.f); smkWrite(s_); } (void)mv_; }
     { float l_ = sqrtf(cfx * cfx + cfy * cfy + cfz * cfz); if (l_ > 1e-6f) { camFwdN[0] = cfx / l_; camFwdN[1] = cfy / l_; camFwdN[2] = cfz / l_; } }   // clipguard.h: взгляд кадра для правила «по взгляду ближе 1,8 м»
     { float zn_ = frameNear(inR, fly || bpass); camNearNow = (camFollow && !inR && !fly && !bpass && !talkCamOn && haveCol) ? zn_ : 0.f; }   // №502: порог скрытия привязан к ближней плоскости только у следящей камеры (кинокамеры разговора/зон/комнат подобраны данными)
     // B2 (план оптимизации, 10.10): пешком у своей машины/остова ближняя плоскость падает до 0,35 только из-за машины (frameNear, правка 113), и город режется на процессоре (ggOn:
@@ -3166,12 +3433,16 @@ rf_repeat_draw:
       resetState();
     }
     if (inR && trLeft == TR_FRAMES) { char t_[64]; int l_ = snprintf(t_, sizeof t_, "TRC room n=%u list=%d\n", rg.npc, (int)sceGuCheckList()); trLine(t_, l_); }
+    CSMX(8);   // post до комнаты
     if (inR && gagSnap < 0) roomDrawMirrored();   // сверка g11b-collect круг 5 (P16-10): Moe's и BartRoom — отражённый проход под обычным; 11.2: комната вместо города (машина, пропы, монеты остались на улице — не рисуются)
     // небо последним из фона (шаг 1): после непрозрачного города, с тестом глубины — заливает только пустое;
     // машина/пропы рисуются поверх, полупрозрачное (очередь tq), частицы и HUD — после неба, как раньше
+    CSMX(9);   // комната
     if (trLeft == TR_FRAMES) { char t_[64]; int l_ = snprintf(t_, sizeof t_, "TRC sky list=%d\n", (int)sceGuCheckList()); trLine(t_, l_); }
     if (skyLast && gagSnap < 0 && !inR && !noSkyChk) { drawSky(ex, ey, ez, 1); sceGuEnable(GU_FOG); }
-    if (jitHist && !bpass && !inR && !uiPaused() && !pano917Cap && jitterWorld((unsigned)fbp0)) resetState();   // jitter.h: подмес мира до динамики (шлейфы), история мира в VRAM
+    CSMX(10);   // небо
+    if (jitHist && !bpass && !inR && !uiPaused() && !pano917Cap && jitterWorld((unsigned)fbp0)) resetState();
+    CSMX(11);   // подмес мира   // jitter.h: подмес мира до динамики (шлейфы), история мира в VRAM
     if (trLeft == TR_FRAMES) { char t_[64]; int l_ = snprintf(t_, sizeof t_, "TRC sky-done list=%d\n", (int)sceGuCheckList()); trLine(t_, l_); }
     // машина
     CSM(8); CSFLUSH();
@@ -3206,7 +3477,7 @@ rf_repeat_draw:
     }
     if (!inR && !forcedDrawn && !gameMsnCarHide) { float ca = cosf(h + GU_PI), sa = sinf(h + GU_PI);   // сверка g07 круг 5 (P06-15): на диалоге бонус-миссии машина рядом с героями спрятана
       if (lumaKey) sceGuFog(0.f, 1e-3f, LUMA_KEY_CAR & 0xffffff);   // гейт tests/light: машина сплошным ключом (вся в «тумане» ключа)
-      if (haveCarVis && haveCol && !bpass) carVisMtxScope(&cv, &car, 1);   carToonPlayerNow = 1;   // ТЕСТ90: общая часть матриц кусков — раз на сустав
+            if (haveCarVis && haveCol && !bpass) carVisMtxScope(&cv, &car, 1);   carToonPlayerNow = 1;   // ТЕСТ90: общая часть матриц кусков — раз на сустав
       for (int i = 0; i < ncarP; i++) {
         Piece *d = &pc[carP[i]]; if (cl[d->r.cell].state != 2) continue;
         if (lumaKey && (d->r.flags & 2)) continue;     // стёкла в маску не берём
@@ -3255,7 +3526,7 @@ rf_repeat_draw:
     if (inR) skinLights(rg.nlit, (const float (*)[3])rg.lit, rg.litc, rg.amb);
     else if (skinDataLit && lvlLightOk == 1 && lvlLight.ndir) skinLights((int)lvlLight.ndir, (const float (*)[3])lvlLight.dir, lvlLight.col, lvlLight.amb);   // 16.10: свет персонажей из LightGroup "sun" уровня целиком (3 направленных + фон), не форма порта «солнце + фон × множитель»
     XS_LAP(33, xt_, xw_);
-    if (haveHomer && haveCol && !bpass && gagSnap < 0 && (HOMER_SPAWNWAIT_OLD || !homerSpawnPending(&homer))) {   // правка 431: Гомер без опоры под точкой постановки не рисуется; этап 4: Гомер (и за рулём — виден в окна); GE-скиннинг, свой свет (в комнате — LightGroup комнаты)
+    if (haveHomer && haveCol && !bpass && gagSnap < 0 && (!homerSpawnWait431 || !homerSpawnPending(&homer))) {   // правка 431: Гомер без опоры под точкой постановки не рисуется; этап 4: Гомер (и за рулём — виден в окна); GE-скиннинг, свой свет (в комнате — LightGroup комнаты)
       float dx = homer.x - ex, dz = homer.z - ez;
       if (dx * dx + dz * dz < 80.f * 80.f) {
         if (lumaKey) sceGuFog(0.f, 1e-3f, LUMA_KEY_HOMER & 0xffffff);   // гейт tests/light: Гомер сплошным ключом
@@ -3273,7 +3544,8 @@ rf_repeat_draw:
         for (int i_ = 0; i_ < XS_N && xl_ < (int)sizeof x_ - 40; i_++) if (xsubC[i_] || xsubU[i_]) xl_ += snprintf(x_ + xl_, sizeof x_ - xl_, " [%d]%.0f:%.2f:%.0f", i_, (double)xsubU[i_] / c3F, (double)xsubC[i_] / c3F, (double)xsubW[i_] / 4.0 / c3F);
         x_[xl_++] = 10; x_[xl_] = 0; smkWrite(x_); memset(xsubU, 0, sizeof xsubU); memset(xsubC, 0, sizeof xsubC); memset(xsubW, 0, sizeof xsubW); }
 #endif
-      if (c3F >= 30) { char l_[120]; snprintf(l_, sizeof l_, "CAR3DSUB t=%.1f sc=%s shadow=%.3f car=%.3f homer=%.3f ms\n", smkT, smkScene, c3U[0] / 1000.0 / c3F, c3U[1] / 1000.0 / c3F, c3U[2] / 1000.0 / c3F); smkWrite(l_); c3U[0] = c3U[1] = c3U[2] = 0; c3F = 0; } }
+      if (c3F >= 30) { char l_[120]; snprintf(l_, sizeof l_, "CAR3DSUB t=%.1f sc=%s shadow=%.3f car=%.3f homer=%.3f ms\n", smkT, smkScene, c3U[0] / 1000.0 / c3F, c3U[1] / 1000.0 / c3F, c3U[2] / 1000.0 / c3F); smkWrite(l_);
+        { static unsigned fb0_, fc0_; if (skinFootBakedHits != fb0_ || skinFootComputed != fc0_) { char f_[100]; snprintf(f_, sizeof f_, "FOOTBAKE t=%.1f baked=%u computed=%u\n", smkT, skinFootBakedHits, skinFootComputed); smkWrite(f_); fb0_ = skinFootBakedHits; fc0_ = skinFootComputed; } }   /* Модели-96: сколько поправок стоп взято из данных и сколько посчитано на месте (новый клип) */ c3U[0] = c3U[1] = c3U[2] = 0; c3F = 0; } }
     BBP(BBP_NPC3D);
     if (haveCol && !bpass) { mvSetVis(trVis); mvSetSceneOk(mvSceneMain); mvSetGround(mvGroundHook); msnartGroundN = mvGroundNHook; mvSetGov(frameGov); mvDraw3D(ex, ey, ez, dt); resetState(); }   // пункт 8: персонажи миссий (Мардж, Апу)
     if (inR) skinLights(0, 0, 0, 0);
@@ -3350,8 +3622,12 @@ rf_repeat_draw:
       unsigned *cand_ = 0; unsigned nc_ = 0; { unsigned *dl_ = pbDynList(&pbS, &nc_); if (dl_) cand_ = dl_; else nc_ = spGridCollect(drawDist * .92f, e3_, (rfOld & RF_SP) ? 0 : (const float (*)[3])pl, &cand_); }
       if (smkOn) smkSpT[0] += (sceKernelGetSystemTimeLow() - spC0_) / 1000.0;   // №912: сбор кандидатов   // B1: динамические; иначе сетка: только клетки в дальности и кадре (SPROP_GRID_OLD)
       if (smkOn) smkSpCand += nc_;   // №912: обойдённые кандидаты стейтпропов (sp_inst — все экземпляры уровня)
+      if (smkOn) smkGateMask = 0;
       for (unsigned ci_ = 0; ci_ < nc_; ci_++) { unsigned i = cand_ ? cand_[ci_] : ci_;
+#define GB1223(b) do { if (smkOn && i == smkGateInst) smkGateMask |= (b); } while (0)
+        GB1223(1);
         if (!spDrawable(&sprops, i, ex, ez, drawDist * .92f)) continue;
+        GB1223(2);
         if (smkOn) smkSpDrawn++;   // №912: прошли spDrawable (sp_cand — кандидатов в цикле)
         if (geOver(GE_SOFT)) break;   // правка 103
         const SpType *T = &sprops.type[sprops.inst[i].type];
@@ -3360,8 +3636,10 @@ rf_repeat_draw:
           if (r_ >= 0.f && rfSphereOut((const float (*)[3])pl, e3_, c_, r_)) { rfSpCut++; continue; }
           if (spMinPx > 0.f && r_ >= 0.f) { float dx_ = c_[0] - e3_[0], dy_ = c_[1] - e3_[1], dz_ = c_[2] - e3_[2], d2_ = dx_ * dx_ + dy_ * dy_ + dz_ * dz_, k_ = r_ * SP_FOCAL_PX;   // 17.10: меньше spMinPx пикселей на экране — не рисуем
             if (k_ * k_ < spMinPx * spMinPx * d2_) { spSmallCut++; continue; } } }
+        GB1223(4);
         { const SpRun *rn_ = &sprops.run[i]; float c_[3], r_; spBounds(&sprops, i, c_, &r_);   // №502: небольшой стейтпроп (ящик, автомат, будка) у самого глаза не рисуется
           if (r_ <= 2.5f && clipGuardSphere(e3_[0], e3_[1], e3_[2], c_[0], c_[1], c_[2], r_, camNearSphere(e3_[0], e3_[1], e3_[2], c_[0], c_[1], c_[2], r_))) { (void)rn_; continue; } }
+        GB1223(8);
         // Правка «быстрый расчёт» (x_props ТОП-1 тура SHARTEST6: поза ~32 экземпляров на кадр, у кустов и деревьев 7–21 сустава на каждой):
         // качание далёких (> 30 м — через кадр, > 60 м — раз в 4 кадра) держит прошлую позу суставов; поза считается в свой кадр
         // (индекс + кадр), экземпляр, у которого позы ещё не было, и ближние — как раньше. -DSP_POSE_LOD_OLD=1 — прежнее
@@ -3399,6 +3677,7 @@ rf_repeat_draw:
           propPiece(&tmp, m); spDn_++;
           if (smkOn) smkSpT2[1] += (sceKernelGetSystemTimeLow() - pm1_) / 1000.0;
         }
+        if (spDn_) GB1223(16);
         if (smkOn) spTopAdd(sprops.inst[i].type, spDn_, T->nPiece, T->nJoint, T->nState, T->kind, T->nBill, T->pvisMask != 0);
         if (smkOn) smkSpT[2] += (sceKernelGetSystemTimeLow() - spP0_) / 1000.0;   // №912: куски (матрицы + propPiece)
       }
@@ -3483,6 +3762,7 @@ rf_repeat_draw:
       BBT(4, lspDraw(ex, ey, ez, inR));   // №599: постоянный свет — одной пачкой на текстуру, дальность со сглаживанием
       if (smkOn) { smkBbTm[4] -= lspStatMs; lspStatMs = 0; }   // №913: счётчики появления света — только в смоуке, в цену не входят
       BBT(5, slLightDraw(ex, ey, ez, inR));   // №658: авторские световые куски (конусы, пятна, неон) спрайтами из таблицы клеток (flag lightspr 1)
+      BBT(5, glow1261Draw(ex, ey, ez, inR));   // №1261: свечение дверей-входов и будок (glow1261.h)
       BBT(5, winsprFlush(0, inR));   // №1099: окна ближних клеток дальше WINSPR_DIST — ровными прямоугольниками одним вызовом (viewer/winspr.h)
       if (smkOn) smkBbTailMs += (sceKernelGetSystemTimeLow() - bbT1_) / 1000.0;
     }
@@ -3571,6 +3851,7 @@ rf_repeat_draw:
       float e_[3] = {ex, ey, ez}, l_[3] = {cfx, cfy, cfz};
       if (showTreeDraw(e_, l_, gFov, p_, ok_ ? (const float (*)[3])tri_ : NULL)) resetState();
     }
+    if (smkOn && colWire1223 > 0 && !bpass && !inR && haveCol) { float e_[3] = {ex, ey, ez}, l_[3] = {cfx, cfy, cfz}; if (boxWireDraw(&world, e_, l_, gFov, (float)colWire1223)) resetState(); }   // №1223 служебно: каркас ящиков коллизии (flag colwire N — радиус, м)
     if (!CHEATS1104_OLD && gameCheatOn(CH_TRIPPY) && !bpass && !inR && !uiPaused() && !mvBriefing() && trippyBlend((unsigned)(fbp0 == (void *)0 ? BUF_W * SCR_H * fbBpp : 0), fb16)) resetState();   // №1104: код Trippy — размытие кадра
     if (!bpass && !inR && !uiPaused() && jitterBlend((unsigned)(fbp0 == (void *)0 ? BUF_W * SCR_H * fbBpp : 0), fb16, (float[3]){ex, ey, ez}, gFov)) resetState();   // эксперимент jitter.h: подмес прошлого кадра SMKF(3);
     if (meProf) { unsigned p3_ = sceKernelGetSystemTimeLow(), u_ = p1_ - p0_, d_ = p3_ - p2_, n_ = (unsigned)fxCount();   // правка 313: замер
@@ -3846,7 +4127,7 @@ bf_world_done:
 #define MSN_HUDSHOW_OLD 0   // сверка g07 круг 6 (P06-21, СВЕРКА_ВНЕДРЕНИЕ/g07-missions.md строка 50): было — ShowHUD("false") ставил флаг, который никто не читал, и HUD рисовался всегда; стало — пока флаг стоит, HUD не рисуется (L7 m8). 1 — как было
 #endif
       else if (!MSN_HUDSHOW_OLD && !uiPaused() && mvHudHidden()) {}
-      else if (!pano917Cap) { unsigned uu0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; uiCoin3D(haveCoins && props.coinType >= 0); uiDraw(); if (uiPaused()) mvDrawMissionSelect(); hudCoin3D(); if (smkOn) rfUiUs += sceKernelGetSystemTimeLow() - uu0_; }
+      else if (!pano917Cap) { unsigned uu0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; uiCoin3D(haveCoins && props.coinType >= 0); uiFrameNo = smkFrameAbs; uiDraw(); if (uiPaused()) mvDrawMissionSelect(); hudCoin3D(); if (smkOn) rfUiUs += sceKernelGetSystemTimeLow() - uu0_; }
       uiSubFade(1.f);
       UIPH(UIPH_SCREEN);
       if (!mvBriefing() && !uiPaused() && uiBriefExitBusy()) uiDrawBriefing();   // №512: карточка уезжает вправо поверх мира после Continue
@@ -3871,7 +4152,7 @@ bf_world_done:
                               smkT, dn, rim, rimo, cone, ca, tx, tz, x, z, h, uiPaused(), uiRadarDrawn(UI_R_PHONE), uiMarkerDrawn()); smkWrite(s);  { char s2[96]; snprintf(s2, sizeof s2, "RADARI t=%.1f harass=%d aicar=%d mission=%d\n", smkT, uiRadarDrawn(UI_R_HARASS), uiRadarDrawn(UI_R_AICAR), uiRadarDrawn(UI_R_MISSION)); smkWrite(s2); } }
     }
     UIPH(UIPH_TAIL);
-    if (!bpass) { transitHoldGate = 1; transitStep(shopViewOn() ? wallDt : dt); transitHoldGate = 0; if (!trUnder) transitDraw(); resetState(); }   // ирис над игрой и HUD, под служебным счётчиком; мир стоит (dt 0) — ирис ждёт
+    if (!bpass) { transitHoldGate = 1; transitStep(irisDt0Test1258 ? 0.f : shopViewOn() ? wallDt : dt); transitHoldGate = 0; if (!trUnder) transitDraw(); resetState(); }   // ирис над игрой и HUD, под служебным счётчиком; мир стоит (dt 0) — ирис ждёт
     UIPH(UIPH_TRANSIT);
     if (hud && (opt & O_HUD) && !pano917Cap) { sceGuScissor(0, 0, SCR_W, SCR_H); hudDraw(); resetState(); }
     UIPH(UIPH_HUDDBG);   // служебный счётчик (R+SELECT)
@@ -3900,6 +4181,7 @@ bf_world_done:
     BBP(BBP_GESYNC);
     carToonHullFlush();   // Надзор 23.10: страховка — очередь контура машин не уходит в следующий кадр, если после неё не было resetState (будка, гараж)
     geVbEnd();   // вершины кадра из кольца — в память до запуска списка
+    DCALL96();   // dcacheall96: перед закрытием списка кадра
     sceGuFinish();
     geListOpen = 0;   // №1186: список кадра закончен — вложенные списки (ирисы) допустимы
     unsigned t3 = sceKernelGetSystemTimeLow();
@@ -3912,7 +4194,7 @@ bf_world_done:
         char l_[220]; snprintf(l_, sizeof l_, "GESYNCSLOW ms=%.0f ph=ui fill=%uK last=%s:%d n=%d w=%d h=%d vt=0x%x frame_area_px=%u t=%.1f\n", sy_, (unsigned)geNow >> 10, uiLastDraw.fn ? uiLastDraw.fn : "-", uiLastDraw.line, uiLastDraw.n, uiLastDraw.w, uiLastDraw.h, (unsigned)uiLastDraw.vt, uiFrAreaPx, smkT);
         bbNote(l_); if (smkOn) smkWrite(l_); } }
     smkGeWaitMs = (t4 - t3) / 1000.f;   // ME-доля: сколько кадр ждёт видеочип после конца нашего списка (sceGuSync)
-    workMs = (t4 - t0) / 1000.f; cpuMs = (t3 - t0) / 1000.f; if (workMs > workMax) workMax = workMs;
+    workMs = (t4 - t0) / 1000.f; farLastWorkMs = workMs; cpuMs = (t3 - t0) / 1000.f; if (ddWorkMix >= 0.f) workMs = ddWorkMix; if (workMs > workMax) workMax = workMs;   // №1244: служебная подмена работы кадра
     acctFrame(workMs, cpuMs, smkGeWaitMs, drawnTris, draws, binds, dlCallsFrame);   // учёт: 7 сложений за кадр
     frameGovStep(cpuMs, wallDt > 0.f ? wallDt : 1.f / 30.f);   // B7
     // TEST25 (слово дирижёра/Роба: статистика в игре без сценария): раз в 10 с строка STAT10 в чёрный ящик — уровень, клетка глаза (20 м), этап миссии, кадры, среднее и худшее время работы,
@@ -3961,14 +4243,15 @@ bf_world_done:
         float ddRate_ = DD_FAST_OLD ? DD_DOWN : DD_DOWN * fminf(ddSteadyOld ? DD_DOWN_X : DD_STEADY_X, 1.f + fmaxf(0.f, ddEff_ - tgt_) / DD_DOWN_K);
         if (ddHold_) { }
         else if (ddEff_ > tgt_ + (ddSteadyOld ? .3f : DD_STEADY_DOWN)) ddScale -= ddRate_ * dt / base_;
-        else if (ddEff_ < tgt_ - (ddSteadyOld ? DD_HYST : DD_STEADY_UP)) ddScale += (ddSteadyOld ? DD_UP : DD_STEADY_RISE) * dt / base_;
+        else if (ddEff_ < tgt_ - (ddSteadyOld ? DD_HYST : DD_STEADY_UP)) { if (ddReg1244Off || stMissNow <= 0) ddScale += (ddSteadyOld ? DD_UP : DD_STEADY_RISE) * dt / base_; }   // №1244: рост дальности ждёт, пока видимые клетки догружены
         // мягкий пол (TEST22, слово Роба «и даль, и плавность»): регулятор держится не ниже ddFloorLong() (200 м у уровня с дальними версиями кусков), но если кадр сверх бюджета больше чем на DD_SOFT_OVER мс — может опуститься до прежних 150 м и вернуться к мягкому полу только когда дальность снова ≥ его (подъём — прежним правилом с запасом DD_STEADY_UP). DD_SOFT_FLOOR_OLD=1 — жёсткий пол 200 (TEST21)
         float soft_ = (longView && !DD_SOFT_FLOOR_OLD) ? ddFloorLong() : floor_;
         static int ddSoftLow;
         if (!DD_SOFT_FLOOR_OLD && longView) { if (ddEff_ > tgt_ + DD_SOFT_OVER) ddSoftLow = 1; else if (ddScale >= soft_ / base_) ddSoftLow = 0; }
         else ddSoftLow = 0;
         float lo_ = ddSoftLow ? floor_ : (soft_ > floor_ ? soft_ : floor_);
-        if (ddScale < lo_ / base_) ddScale = lo_ / base_; if (ddScale > 1.f) ddScale = 1.f; }
+        if (ddScale < lo_ / base_) ddScale = lo_ / base_; if (ddScale > 1.f) ddScale = 1.f;
+        if (smkOn) { static float ddLogT_; ddLogT_ += dt; if (ddLogT_ >= 1.f) { ddLogT_ = 0.f; char l_[150]; snprintf(l_, sizeof l_, "DDREG t=%.1f dd=%.0f scale=%.3f work=%.1f eff=%.1f tgt=%.1f floor=%.0f miss=%d set=%.0f mem=%.2f thr=%.0f ceil=%.0f ad=%.0f\n", smkT, drawDist, ddScale, workMs, ddEff_, tgt_, lo_, (int)stMissNow, ddCeilSet, memLadDdMul, cellThrashEvT ? (sceKernelGetSystemTimeLow() - cellThrashEvT) / 1e6f : 999.f, cellThrashCeil, sqrtf((cellThrashPx - cellThrashAx) * (cellThrashPx - cellThrashAx) + (cellThrashPz - cellThrashAz) * (cellThrashPz - cellThrashAz))); smkWrite(l_); } } }
     }
 
     curFb = (unsigned *)((unsigned)sceGeEdramGetAddr() + (unsigned)fbp0); BBP(BBP_VBLANK); smkFrameAbs++; if (diagOn) { diagFrameEnd();
@@ -3989,6 +4272,7 @@ bf_world_done:
       if (ml[0] && smkOn) smkWrite(ml); }   // ME-доля: триггер включения ME в пике
     if (smkOn) loFallWatch(dt);   // ag/loadorder
     smkCpuNow = cpuMs; smkSetState(mvBriefing() ? 2 : transitBusy() ? 3 : uiPaused() ? 5 : 0); if (bpass) benchAfter(workMs, cpuMs, missed); else smokeFrame(dt, workMs, missed, per, stMissNow);   // счётчики приёмки (viewer/smoke.h)
+    if (smkOn && bubShotN > 0 && uiBubRiseFr && smkFrameAbs >= uiBubRiseFr + (unsigned)bubShotSkip) { char n_[24]; snprintf(n_, sizeof n_, "bs_%05u", smkFrameAbs - 1); smokeShotNow(n_); bubShotN--; }   // №1247 (лист Роба): flag bubshots N [пропуск кадров после подъёма]
     fbp0 = swapBufG(-1); firstCount();   // правка 293: в городе смена только считается (swapGameLateN), без ожидания
     if (rfCapture) {
       unsigned renderUs = t4 - rfRenderStart; char log[360], name[24];

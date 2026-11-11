@@ -3,7 +3,7 @@
 cd "$(dirname "$0")/../.."
 OUT=build/aicar; mkdir -p "$OUT"; V=viewer
 CC="cc -std=c11 -O2 -Wall -Wno-unused-function -Wno-misleading-indentation -DSKIN_HOST -I $V"
-SRC="tests/aicar/sverka6_host.c $V/msncar.c $V/car.c $V/col.c $V/traffic.c $V/homer.c $V/skin.c"
+SRC="tests/aicar/sverka6_host.c $V/msncar.c $V/car.c $V/col.c $V/traffic.c $V/homer.c $V/skin.c $V/watchdog.c"
 LD="-lm -Wl,-U,_uiFlash"
 $CC -DMC_SVERKA_OLD=1 -DPOLICE_STAND27_OLD=1 $SRC $LD -o "$OUT/sverka6_red" 2> "$OUT/sverka6_build.txt" || { echo "FAIL: сборка (красный)"; grep -E "error" -A3 "$OUT/sverka6_build.txt" | head; exit 1; }
 "$OUT/sverka6_red" > "$OUT/sverka6_red.txt" 2>&1; nred=$(grep -c "^CHECK.*FAIL" "$OUT/sverka6_red.txt"); ntot=$(grep -c "^CHECK" "$OUT/sverka6_red.txt")

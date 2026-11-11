@@ -1,0 +1,24 @@
+# Лестница-96 (находка Моделей-96, гейт картинки L2 p09): goto + cam: машина и глаз сценария уходят на 280 м, Гомер стоит. Стрим грузит вокруг камеры игры, поэтому у глаза сценария пусто (CITYMEM loaded 1, на кадре стена).
+# Это приём сценария, не дальние клетки: с flag streameye 1
+flag footfsm 0
+flag farcell 0 (стрим вокруг глаза сценария) ближние клетки грузятся за 6 с. Красное: s22_gotofar_red.txt (без streameye).
+flag nosave
+scene BOOT
+flag streameye 1
+flag footfsm 0
+flag farcell 0
+flag golevel 2
+wait 40
+goto -502 -436 0
+wait 5
+cam -502 9.4 -436 0 -0.03 -1 60
+wait 4
+goto -233 -625 0
+wait 5
+cam -233 24.3 -625.2 -1 -0.03 0 60
+wait 4
+goto -398.8 -173 0
+wait 5
+cam -398.8 9.36 -173 0 -0.03 -1 60
+wait 8
+end

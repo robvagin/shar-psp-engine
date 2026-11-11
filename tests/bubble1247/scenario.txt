@@ -1,0 +1,21 @@
+# №1247: настоящий старт миссии (MISSION SELECT, этап 0) с играющим наездом; построчный журнал пузыря (BUBBLE1247) и порядок MSNCAM
+scene SW_1_0
+flag camdet 1
+flag camlog
+flag startcam 1
+flag bubtrace
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 0
+wait 2
+shot a
+wait 2
+shot b
+wait 2
+shot c
+wait 2
+shot d
+wait 6
+end

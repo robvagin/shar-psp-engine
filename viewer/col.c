@@ -35,6 +35,10 @@ int colFenceLawSv = !FENCELAW_SV_OLD;
 //    без выпуклого излома продлены на FENCE_EXT и вдоль не толкают (иначе машина цеплялась бы за стыки).
 //    Выталкиваем итерациями: каждый раз самый глубокий контакт, потом пересчёт всех.
 #include "col.h"
+#include "colacc.h"   // Коллизия-96: TRI_AT / CELL_SPAN (прямое чтение при COLRING_OLD=1)
+long colGroundRel;    // Коллизия-96: адрес возврата последнего colGround* относительно colGroundMatId (кто спрашивает; только для журнала дочитываний)
+static void *colWrapRa;
+int colQueryKind;      // Коллизия-96: вид последнего запроса (1 земля, 2 колесо-стена, 3 рёбра днища, 4 вытолкнуть, 5 проба, 6 заборы, 7 лучи, 8 листва); только для журнала
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -595,6 +599,75 @@ int colInitBake(ColWorld *w, const void *section, unsigned size, const void *bak
   return 0;
 }
 
+float colMinTriY(const ColWorld *w) {   // Коллизия-96: нижняя точка треугольников земли (groundcover, сторож); в кольце — из заголовка файла
+#if !COLRING_OLD
+  if (w->ring) return w->ring->minY;
+#endif
+  float m = 1e30f;
+  for (uint32_t i = 0; i < w->ntri; i++) { const ColTri *t = &w->tri[i]; if (t->a[1] < m) m = t->a[1]; if (t->b[1] < m) m = t->b[1]; if (t->c[1] < m) m = t->c[1]; }
+  return m;
+}
+int colCovered(const ColWorld *w, float x, float z) {
+#if !COLRING_OLD
+  if (w->ring && !COLRING_FARSKIP_OLD) {
+    ColRing *r = w->ring; float fx = (x - w->ox) * w->inv, fz = (z - w->oz) * w->inv;
+    if (!(fx >= 0.f && fz >= 0.f)) return 1;
+    int gx = (int)fx, gz = (int)fz; if (gx >= w->W || gz >= w->H) return 1;
+    uint32_t t = ((uint32_t)gz >> 4) * r->TW + ((uint32_t)gx >> 4);
+    return r->wantTile[t] || r->blob[t] != 0;
+  }
+#endif
+  (void)w; (void)x; (void)z; return 1;
+}
+#if !COLRING_OLD
+// Коллизия-96: инициализация мира из кольца. Повторяет хвост colInitBake (латка кустов BUSH_SOFT, JMP1, карманы, рельсы) на резидентных ящиках/капсулах/заборах;
+// треугольники и клетки читаются через кольцо. Разбор (steep, cellWall, заборы, горбы, листва) берётся ТОЛЬКО из запечённого colbake (ключ — mcHash в файле кольца): без него -9,
+// загрузчик обязан откатиться на прежний путь (полный COL1)
+int colInitRing(ColWorld *w, struct ColRing *r) {
+  memset(w, 0, sizeof *w); zcReset();
+  if (!r) return -1;
+  w->ring = r;
+  w->box = (const ColBox *)r->small; w->cyl = (const ColCyl *)(r->small + (size_t)r->nbox * 64); w->seg = (const ColSeg *)(r->small + (size_t)r->nbox * 64 + (size_t)r->ncyl * 48);
+  w->ox = r->ox; w->oz = r->oz; w->cell = r->cell; w->inv = 1.f / r->cell; w->W = (int)r->W; w->H = (int)r->H;
+  w->ntri = r->ntri; w->nbox = r->nbox; w->ncyl = r->ncyl; w->nseg = r->nseg; w->nref = r->nref;
+  uint32_t nprim = w->ntri + w->nbox + w->ncyl + w->nseg;
+  size_t sz = sizeof(ColScratch) + (size_t)nprim * 2 + w->nseg + (w->ntri + 7) / 8 + 16;
+  ColScratch *s = (ColScratch *)malloc(sz);
+  if (!s) return -8;
+  memset(s, 0, sz);
+  s->stamp = (uint16_t *)(s + 1); s->segFlags = (uint8_t *)(s->stamp + nprim); s->steep = s->segFlags + w->nseg; s->cur = 0;
+  w->scr = s;
+  int baked = r->bake && colBakeLoad(w, r->bake, r->lenBake, r->mch) == 0; cbUsed = baked;
+  if (!baked) { colFree(w); w->ring = 0; return -9; }
+  if (!BUSH_SOFT_OLD) {
+    for (uint32_t i = 0; i < w->nbox; i++) {
+      ColBox *B = (ColBox *)&w->box[i];
+      if (B->pad == 0.f && B->c[0] > 125.f && B->c[0] < 155.f && B->c[2] > 145.f && B->c[2] < 175.f && B->h[0] > 10.f) B->pad = 1.f;
+    }
+    for (uint32_t i = 0; i < w->ncyl; i++) {
+      ColCyl *C = (ColCyl *)&w->cyl[i];
+      if (C->pad[0] == 0.f && C->c[0] > 125.f && C->c[0] < 155.f && C->c[2] > 140.f && C->c[2] < 175.f && C->halfLen > 10.f && C->r > 1.5f) C->pad[0] = 1.f;
+    }
+  }
+  if (r->lenJmp >= 32 && r->jmp) {   // блок JMP1 лежит в файле кольца отдельно (границы — длина блока, как size в colInitBake)
+    const char *j = (const char *)r->jmp; size_t size = r->lenJmp; uint32_t v[6]; memcpy(v, j + 4, 24);
+    if (!memcmp(j, "JMP1", 4) && v[0] == 1 && (uint64_t)32 + (uint64_t)v[1] * 80 + ((uint64_t)v[2] + v[5]) * 96 + ((uint64_t)v[3] + v[4]) * 32 <= size) {
+      w->zone = (const ColZone *)(j + 32); w->nzone = v[1];
+      w->pad = (const ColPad *)(j + 32 + (size_t)v[1] * 80); w->npad = v[2];
+      w->wrench = (const ColWrench *)(j + 32 + (size_t)v[1] * 80 + (size_t)v[2] * 96); w->nwrench = v[3];
+      w->phone = w->wrench + v[3]; w->nphone = v[4];
+      w->death = (const ColPad *)(w->phone + v[4]); w->ndeath = v[5];
+      uint32_t npx; memcpy(&npx, j + 28, 4);
+      const char *px = (const char *)(w->death + v[5]);
+      if (npx && npx == v[4] && (uint64_t)(px - j) + (uint64_t)npx * sizeof(ColPhoneX) <= size) { w->phonex = (const ColPhoneX *)px; w->nphonex = npx; }
+    }
+  }
+  pocketInit(w);
+  railInit(w);
+  return 0;
+}
+#endif
+
 int colZoneContains(const ColZone *v, float x, float y, float z, float grow) {
   float d[3] = {x - v->c[0], y - v->c[1], z - v->c[2]};
   if (!v->shape) { float r = v->h[0] + grow; return d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= r * r; }
@@ -704,7 +777,13 @@ int colBouncePadAt(const ColWorld *w, float x, float y, float z, float grow) {
 // их можно положить в файл colbake.shr и при совпадении хеша входа (key — хеш сырого COL1, mcColHash) и хеша самой записи взять готовыми. Печёт тот же код (colBakeDump после живого colInit
 // в эмуляторе), гейт — colBakeVerify (живое против файла, побайтно). Не сошлось что-то — colInit считает как раньше. Выключатель: nil bake в colInitBake (движок: COLBAKE_OLD)
 typedef struct { char magic[4]; uint32_t rev, key, W, H, ntri, nbox, ncyl, nseg, nfol, nfolSeg, nHump, flags, out; } ColBakeHd;   // flags: 1 cellWall, 2 segNb, 4 humpAt+hump, 8 fol+folBox
-#define CB_REV 1u
+// 08.11 (Коллизия-96, находка: colbake.shr набора 96 не совпал с живым разбором col.c на 5 уровнях из 7 — ключ файла хеш сырого COL1, версии логики разбора в нём не было, и устаревший файл принимался):
+// ревизия 2 отвергает все файлы, запечённые до этой правки — движок считает разбор сам, пока выпуск не перепечёт colbake (tools/colbake_gate.sh сверяет набор). Поднимать при ЛЮБОЙ правке steep/cellWall/fenceFlags/humpFlags/folList.
+// COLBAKE_REV2_OLD=1 — прежняя ревизия 1 (принимает старые файлы)
+#ifndef COLBAKE_REV2_OLD
+#define COLBAKE_REV2_OLD 0
+#endif
+#define CB_REV (COLBAKE_REV2_OLD ? 1u : 2u)
 static size_t cbAl(size_t n) { return (n + 3) & ~(size_t)3; }
 static size_t cbPayload(const ColBakeHd *h) {
   return cbAl((h->ntri + 7) / 8) + ((h->flags & 1) ? cbAl((size_t)h->W * h->H) : 0) + cbAl(h->nseg) + ((h->flags & 2) ? 8u * h->nseg : 0) + ((h->flags & 4) ? 4u * h->ncyl + cbAl(h->nHump) : 0) +
@@ -790,27 +869,32 @@ static uint16_t nextStamp(ColScratch *s, uint32_t nprim) {
 }
 
 // ---------------------------------------------------------------------------------------------- земля
+int colGroundMatId(const ColWorld *w, float x, float z, float yTop, float yBottom, float *outY, float *outN3, int *outMat, uint32_t *outRef);
 int colGround(const ColWorld *w, float x, float z, float yTop, float yBottom, float *outY, float *outN3) {
+  colWrapRa = __builtin_return_address(0);
   return colGroundMat(w, x, z, yTop, yBottom, outY, outN3, 0);
 }
 
 int colGroundMat(const ColWorld *w, float x, float z, float yTop, float yBottom, float *outY, float *outN3, int *outMat) {
+  if (!colWrapRa) colWrapRa = __builtin_return_address(0);
   return colGroundMatId(w,x,z,yTop,yBottom,outY,outN3,outMat,0);
 }
 
 int colGroundMatId(const ColWorld *w, float x, float z, float yTop, float yBottom, float *outY, float *outN3, int *outMat, uint32_t *outRef) {
+  { void *ra_ = colWrapRa ? colWrapRa : __builtin_return_address(0); colWrapRa = 0; colGroundRel = (long)((char *)ra_ - (char *)&colGroundMatId); }
+  colQueryKind = 1;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   STAT(1);
   float fx = (x - w->ox) * w->inv, fz = (z - w->oz) * w->inv;
   if (!(fx >= 0.f && fz >= 0.f)) return 0;
   int gx = (int)fx, gz = (int)fz;
   if (gx >= w->W || gz >= w->H) return 0;
   uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx;
-  const uint32_t *r = w->refs + w->cellStart[c], *e = w->refs + w->cellStart[c + 1];
+  const uint32_t *r, *e; CELL_SPAN(w, gx, gz, c, r, e);
   float best = -3.0e38f, bn0 = 0, bn1 = 1, bn2 = 0; int found = 0, bmat = COL_MAT_HARD; uint32_t bref=~0u;
   for (; r < e; r++) {
     uint32_t t = *r >> 29, i = *r & 0x1fffffffu;
     if (t == COL_TRI) {
-      const ColTri *T = &w->tri[i];
+      const ColTri *T = TRI_AT(w, i);
       if (T->n[1] <= COL_WALK_NY) continue;
       float ax = T->a[0], az = T->a[2], bx = T->b[0], bz = T->b[2], cx = T->c[0], cz = T->c[2];
       // n.y > 0  =>  cross2(b-a, c-a) < 0: внутри все три функции рёбер <= 0 (с запасом TRI_EDGE_EPS * длина ребра)
@@ -1294,13 +1378,13 @@ static int zcAnyCand(const ColWorld *w, float x0, float x1, float z0, float z1, 
   for (int gz = gz0; gz <= gz1; gz++)
     for (int gx = gx0; gx <= gx1; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx; ZCNT(3, 1);
-      uint32_t kstart = w->cellStart[c];
-      if (S->cellWall) kstart += S->cellWall[c];
-      for (uint32_t k = kstart; k < w->cellStart[c + 1]; k++) { ZCNT(3, 1);
-        uint32_t t = w->refs[k] >> 29, i = w->refs[k] & 0x1fffffffu;
+      const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
+      if (S->cellWall) kb_ += S->cellWall[c];
+      for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) { ZCNT(3, 1);
+        uint32_t t = *rp_ >> 29, i = *rp_ & 0x1fffffffu;
         if (t == COL_TRI) {
           if (!(S->steep[i >> 3] & (1u << (i & 7)))) continue;
-          const ColTri *T = &w->tri[i];
+          const ColTri *T = TRI_AT(w, i);
           float mnx = fminf_(T->a[0], fminf_(T->b[0], T->c[0])), mxx = fmaxf_(T->a[0], fmaxf_(T->b[0], T->c[0]));
           float mnz = fminf_(T->a[2], fminf_(T->b[2], T->c[2])), mxz = fmaxf_(T->a[2], fmaxf_(T->b[2], T->c[2]));
           float mny = fminf_(T->a[1], fminf_(T->b[1], T->c[1])), mxy = fmaxf_(T->a[1], fmaxf_(T->b[1], T->c[1]));
@@ -1382,14 +1466,14 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
   for (int gz = gz0; gz <= gz1; gz++)
     for (int gx = gx0; gx <= gx1; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx; ZCNT(0, 1);
+      const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
 #if !COLPROBE_FAST_OLD
-      uint32_t kstart = w->cellStart[c];
-      if (S->cellWall) kstart += S->cellWall[c];
-      for (uint32_t k = kstart; k < w->cellStart[c + 1]; k++) { ZCNT(1, 1);
+      if (S->cellWall) kb_ += S->cellWall[c];
+      for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) { ZCNT(1, 1);
 #else
-      for (uint32_t k = w->cellStart[c]; k < w->cellStart[c + 1]; k++) {
+      for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) {
 #endif
-        uint32_t t = w->refs[k] >> 29, i = w->refs[k] & 0x1fffffffu;
+        uint32_t t = *rp_ >> 29, i = *rp_ & 0x1fffffffu;
 #if COLPROBE_FAST_OLD
         uint32_t gid = t == 0 ? i : t == 1 ? o1 + i : t == 2 ? o2 + i : o3 + i;
 #endif
@@ -1398,7 +1482,7 @@ static int gatherFull(const ColWorld *w, const CarBox *b, Q *q) {
 #if !COLPROBE_FAST_OLD
           uint32_t gid = i;
 #endif
-          const ColTri *T = &w->tri[i];
+          const ColTri *T = TRI_AT(w, i);
           if (S->stamp[gid] == st) continue;
           S->stamp[gid] = st;
           float mnx = fminf_(T->a[0], fminf_(T->b[0], T->c[0])), mxx = fmaxf_(T->a[0], fmaxf_(T->b[0], T->c[0]));
@@ -1718,6 +1802,7 @@ static int folIn(const ColWorld *w, uint32_t k, float x, float y, float z, float
          fabsf(px * B->az[0] + py * B->az[1] + pz * B->az[2]) <= B->h[2] + margin;
 }
 int colFoliageNear(const ColWorld *w, float x, float y, float z, float margin) {
+  colQueryKind = 8;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   if (!w || !w->scr || !w->scr->fol) return 0;
   for (uint32_t k = 0; k < w->scr->nfol; k++) if (folIn(w, k, x, y, z, margin)) return 1;
   return 0;
@@ -1823,16 +1908,17 @@ static void sphereTriPoint(const float*p,const ColTri*T,float*q){
 int colWheelPreOld = COL_WHEEL_PRE_OLD;
 unsigned long long colWheelPreSeen, colWheelPreSkip;   // счётчики гейта: сколько рассмотрено, сколько отсеяно
 int colWheelWallContacts(const ColWorld*w,const float p[3],float radius,ColSphereContact*out,int max){
+  colQueryKind = 2;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
  if(!w->scr||radius<=0||max<=0)return 0;ColScratch*S=w->scr;
  int x0=(int)floorf((p[0]-radius-w->ox)*w->inv),x1=(int)floorf((p[0]+radius-w->ox)*w->inv);
  int z0=(int)floorf((p[2]-radius-w->oz)*w->inv),z1=(int)floorf((p[2]+radius-w->oz)*w->inv);
  if(x0<0)x0=0;if(z0<0)z0=0;if(x1>=w->W)x1=w->W-1;if(z1>=w->H)z1=w->H-1;
  unsigned o1=w->ntri,o2=o1+w->nbox,o3=o2+w->ncyl;uint16_t st=nextStamp(S,o3+w->nseg);int count=0;
  for(int z=z0;z<=z1;z++)for(int x=x0;x<=x1;x++){
-  unsigned cell=z*w->W+x;for(unsigned k=w->cellStart[cell];k<w->cellStart[cell+1];k++){
-   unsigned ref=w->refs[k],t=ref>>29,i=ref&0x1fffffffu;if(t>COL_CYL)continue;unsigned gid=t==COL_TRI?i:t==COL_BOX?o1+i:o2+i;
+  unsigned cell=z*w->W+x;const uint32_t *kb_,*ke_;CELL_SPAN(w,x,z,cell,kb_,ke_);for(const uint32_t *rp_=kb_;rp_<ke_;rp_++){
+   unsigned ref=*rp_,t=ref>>29,i=ref&0x1fffffffu;if(t>COL_CYL)continue;unsigned gid=t==COL_TRI?i:t==COL_BOX?o1+i:o2+i;
    if(S->stamp[gid]==st)continue;S->stamp[gid]=st;float q[3],n[3],depth=0,delta[3];
-   if(t==COL_TRI){const ColTri*T=&w->tri[i];
+   if(t==COL_TRI){const ColTri*T=TRI_AT(w,i);
     // A sphere next to a ground edge can get a lateral closest-point normal
     // although the face is walkable; that edge must not become a wall and
     // push the car sideways on a ramp (G, cyl570: ny .469 -> -.206). A
@@ -1897,6 +1983,7 @@ int colWheelWallContacts(const ColWorld*w,const float p[3],float radius,ColSpher
  return count;
 }
 int colBoxEdgesUnderPlane(const ColWorld*w,const float o[3],const float u[3],const float f[3],const float l[3],float hl,float hw,float dmax,float maxWidth,ColSphereContact*out,int max){
+  colQueryKind = 3;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
  if(!w->scr||max<=0)return 0;ColScratch*S=w->scr;
  float ex=fabsf(f[0])*hl+fabsf(l[0])*hw+0.1f,ez=fabsf(f[2])*hl+fabsf(l[2])*hw+0.1f;
  int x0=(int)floorf((o[0]-ex-w->ox)*w->inv),x1=(int)floorf((o[0]+ex-w->ox)*w->inv);
@@ -1904,8 +1991,8 @@ int colBoxEdgesUnderPlane(const ColWorld*w,const float o[3],const float u[3],con
  if(x0<0)x0=0;if(z0<0)z0=0;if(x1>=w->W)x1=w->W-1;if(z1>=w->H)z1=w->H-1;
  unsigned o1=w->ntri,o2=o1+w->nbox,o3=o2+w->ncyl;uint16_t st=nextStamp(S,o3+w->nseg);int count=0;
  for(int z=z0;z<=z1;z++)for(int x=x0;x<=x1;x++){
-  unsigned cell=z*w->W+x;for(unsigned k=w->cellStart[cell];k<w->cellStart[cell+1];k++){
-   unsigned ref=w->refs[k];if((ref>>29)!=COL_BOX)continue;unsigned i=ref&0x1fffffffu,gid=o1+i;
+  unsigned cell=z*w->W+x;const uint32_t *kb_,*ke_;CELL_SPAN(w,x,z,cell,kb_,ke_);for(const uint32_t *rp_=kb_;rp_<ke_;rp_++){
+   unsigned ref=*rp_;if((ref>>29)!=COL_BOX)continue;unsigned i=ref&0x1fffffffu,gid=o1+i;
    if(S->stamp[gid]==st)continue;S->stamp[gid]=st;
    const ColBox*B=&w->box[i];if(B->pad==1.f||(colPassFol&&boxPhantom(B)))continue;
    const float*A[3]={B->ax,B->ay,B->az};int top=-1;float sg=1.f,best=COL_WALK_NY;
@@ -1942,6 +2029,7 @@ int colBoxEdgesUnderPlane(const ColWorld*w,const float o[3],const float u[3],con
 }
 
 int colPushCar(const ColWorld *w, CarBox *b, float *mtvX, float *mtvZ, float *nX, float *nZ) {
+  colQueryKind = 4;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   Q q; int ns = gather(w, b, &q);
   const Shape *sh = w->scr->shape;
   float x0 = b->x, z0 = b->z, bestD = 0, bnx = 0, bnz = 0;
@@ -1998,6 +2086,7 @@ int colPushCar(const ColWorld *w, CarBox *b, float *mtvX, float *mtvZ, float *nX
 }
 
 int colProbeCar(const ColWorld *w, CarBox *b) {
+  colQueryKind = 5;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   Q q; int ns = gather(w, b, &q);
   const Shape *sh = w->scr->shape;
   Rect R; rectOf(b, &R);
@@ -2021,14 +2110,17 @@ void colBoxBand(const CarBox *b, float *ylo, float *yhi) {   // слой куз�
 }
 
 int colCrossFence(const ColWorld *w, float x0, float z0, float x1, float z1, float *nX, float *nZ) {
+  colQueryKind = 6;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   return colCrossFenceY(w, x0, z0, x1, z1, -1e30f, 1e30f, nX, nZ);
 }
 
 static int crossFence(const ColWorld *w, float x0, float z0, float x1, float z1, float ylo, float yhi, const CarBox *bx, float *nX, float *nZ);
 int colCrossFenceY(const ColWorld *w, float x0, float z0, float x1, float z1, float ylo, float yhi, float *nX, float *nZ) {
+  colQueryKind = 6;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   return crossFence(w, x0, z0, x1, z1, ylo, yhi, 0, nX, nZ);
 }
 int colCrossFenceBox(const ColWorld *w, float x0, float z0, float x1, float z1, const CarBox *b, float *nX, float *nZ) {
+  colQueryKind = 6;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   return crossFence(w, x0, z0, x1, z1, -1e30f, 1e30f, b, nX, nZ);
 }
 static int crossFence(const ColWorld *w, float x0, float z0, float x1, float z1, float ylo, float yhi, const CarBox *bx, float *nX, float *nZ) {
@@ -2046,10 +2138,11 @@ static int crossFence(const ColWorld *w, float x0, float z0, float x1, float z1,
   for (int gz = gz0; gz <= gz1; gz++)
     for (int gx = gx0; gx <= gx1; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx;
-      uint32_t k = w->cellStart[c + 1];
-      while (k > w->cellStart[c] && (w->refs[k - 1] >> 29) == COL_SEG) k--;   // заборы — в конце списка клетки
-      for (; k < w->cellStart[c + 1]; k++) {
-        uint32_t i = w->refs[k] & 0x1fffffffu;
+      const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
+      const uint32_t *rp_ = ke_;
+      while (rp_ > kb_ && (rp_[-1] >> 29) == COL_SEG) rp_--;   // заборы — в конце списка клетки
+      for (; rp_ < ke_; rp_++) {
+        uint32_t i = *rp_ & 0x1fffffffu;
         if (S->stamp[o3 + i] == st) continue;
         S->stamp[o3 + i] = st;
         const ColSeg *G = &w->seg[i];
@@ -2199,6 +2292,7 @@ static float rayFenceBox(const ColSeg *G, const float o[3], const float d[3]) {
 #define COL_RAYS_EPS 1e-3f   // красный контроль tests/camera/camperf_host.c: -DCOL_RAYS_EPS=-0.5f (ящик слишком тесный — лучи теряют куски)
 #endif
 void colRaysFrac(const ColWorld *w, int n, const float (*a)[3], const float (*b)[3], float *out) {
+  colQueryKind = 7;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   for (int i = 0; i < n; i++) out[i] = 1.f;
   if (!w || !w->scr || n <= 0 || n > COL_RAYS_MAX) return;
   ColScratch *S = w->scr; float d[COL_RAYS_MAX][3], lo[COL_RAYS_MAX][3], hi[COL_RAYS_MAX][3], ulo[3], uhi[3];
@@ -2217,12 +2311,13 @@ void colRaysFrac(const ColWorld *w, int n, const float (*a)[3], const float (*b)
   for (int gz = gz0; gz <= gz1; gz++)
     for (int gx = gx0; gx <= gx1; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx;
-      for (uint32_t k = w->cellStart[c]; k < w->cellStart[c + 1]; k++) {
-        uint32_t t = w->refs[k] >> 29, i = w->refs[k] & 0x1fffffffu, gid = t == COL_TRI ? i : t == COL_BOX ? o1 + i : t == COL_CYL ? o2 + i : o3 + i;
+      const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
+      for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) {
+        uint32_t t = *rp_ >> 29, i = *rp_ & 0x1fffffffu, gid = t == COL_TRI ? i : t == COL_BOX ? o1 + i : t == COL_CYL ? o2 + i : o3 + i;
         if (S->stamp[gid] == st) continue;
         S->stamp[gid] = st;
         if (t == COL_TRI) {
-          const ColTri *T = &w->tri[i]; float tl[3], th[3];
+          const ColTri *T = TRI_AT(w, i); float tl[3], th[3];
           for (int q = 0; q < 3; q++) { tl[q] = fminf_(T->a[q], fminf_(T->b[q], T->c[q])); th[q] = fmaxf_(T->a[q], fmaxf_(T->b[q], T->c[q])); }
           if (tl[0] > uhi[0] || th[0] < ulo[0] || tl[1] > uhi[1] || th[1] < ulo[1] || tl[2] > uhi[2] || th[2] < ulo[2]) continue;
           for (int r = 0; r < n; r++) {
@@ -2238,6 +2333,7 @@ void colRaysFrac(const ColWorld *w, int n, const float (*a)[3], const float (*b)
     }
 }
 float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foliage) {
+  colQueryKind = 7;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   if (!w || !w->scr) return 1.f;
   ColScratch *S = w->scr;
   float d[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, best = 1.f;
@@ -2250,12 +2346,13 @@ float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foli
   for (int gz = gz0; gz <= gz1; gz++)
     for (int gx = gx0; gx <= gx1; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx;
-      for (uint32_t k = w->cellStart[c]; k < w->cellStart[c + 1]; k++) {
-        uint32_t t = w->refs[k] >> 29, i = w->refs[k] & 0x1fffffffu, gid = t == COL_TRI ? i : t == COL_BOX ? o1 + i : t == COL_CYL ? o2 + i : o3 + i;
+      const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
+      for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) {
+        uint32_t t = *rp_ >> 29, i = *rp_ & 0x1fffffffu, gid = t == COL_TRI ? i : t == COL_BOX ? o1 + i : t == COL_CYL ? o2 + i : o3 + i;
         if (S->stamp[gid] == st) continue;
         S->stamp[gid] = st;
         float h = 2.f;
-        if (t == COL_TRI) h = rayTri(&w->tri[i], a, d);
+        if (t == COL_TRI) h = rayTri(TRI_AT(w, i), a, d);
         else if (t == COL_BOX) { if (foliage || w->box[i].pad != 1.f) h = rayBox(&w->box[i], a, d); }
         else if (t == COL_CYL) { if (foliage || w->cyl[i].pad[0] != 1.f) h = rayCapsule(&w->cyl[i], a, d); }
         else h = colRayFenceBox ? rayFenceBox(&w->seg[i], a, d) : raySeg(&w->seg[i], a, d);   // круг 5 (P11-Д5)

@@ -182,7 +182,7 @@ static void cfgApply(void) {
     if (cfg.lineWidth != lwSet || cfg.eyeLines != eySet) { lwSet = cfg.lineWidth; eySet = cfg.eyeLines; skinToonLineParams(cfg.lineWidth, cfg.eyeLines); }
     if (pal) toneApplyAll(); }
   { static int ddSet = -1; if (cfg.drawDist < 0 || cfg.drawDist > 2) cfg.drawDist = 1;   // №795: Draw Distance — пол регулятора дальности (200 м — как было, без подмены)
-    if (cfg.drawDist != ddSet) { static const float dd_[3] = {150.f, 200.f, 250.f}; ddSet = cfg.drawDist; ddFloorOver = cfg.drawDist == 1 && DRAWDEF1042_OLD ? 0.f : dd_[cfg.drawDist]; } }   // №1042б: 200 тоже явный выбор (потолок города не ниже выбранного, FAR1042)
+    if (cfg.drawDist != ddSet) { static const float dd_[3] = {150.f, 200.f, 250.f}; ddSet = cfg.drawDist; ddCeilSet = dd_[cfg.drawDist]; ddFloorOver = (cfg.drawDist == 1 && DRAWDEF1042_OLD) || (!ddReg1244Off && cfg.drawDist != 1) ? 0.f : dd_[cfg.drawDist]; } }   // №1244: 250 и 150 - не пол (пол регулятора 150 м), 200 - как было   // №1042б: 200 тоже явный выбор (потолок города не ниже выбранного, FAR1042)
   if (cfg.curbTint < 0 || cfg.curbTint > 1) cfg.curbTint = 0; curbWant1064 = !curb1064Old && !cfg.curbTint;   // №1064: строка Curbs (Original — родная текстура бордюра, Tinted — как в TEST76)
   if (cfg.carShadow < 0 || cfg.carShadow > 1) cfg.carShadow = 0; carShadow1003On = carShadow1003Old || cfg.carShadow;   // №1003: тени машин — строка Car Shadows
   if (cfg.camHeight < 0 || cfg.camHeight > 4) cfg.camHeight = 2;   // №996: страница CAMERA — Height и Distance (0..4, 2 — как было)
@@ -253,6 +253,10 @@ static void cfgSave(void) {
 #define CHASEVIEW_SAVE_OLD 0   // 1 — вид камеры за машиной в запись не пишется (как было)
 #endif
 static SaveGame lvKeep;   // облако 05.10 (карьера): прогресс миссий всех уровней этой игры (ext записи; новая игра — пусто)
+#ifndef LVSAVENEXT1234_OLD
+#define LVSAVENEXT1234_OLD 0
+#endif
+static int lvSaveNext1234Old = LVSAVENEXT1234_OLD, lvSaveNext1234;   // lvSaveNext1234 — N+1, пока открыт вопрос «сохранить?» конца уровня N
 static void saveCapture(SaveGame *s) {
   svClear(s); MsnProgress p;
   svCapture(s, mvProgress(&p) ? &p : NULL, haveColl ? &coll : NULL, haveCoins ? &coins : NULL);
@@ -275,6 +279,15 @@ static void saveCapture(SaveGame *s) {
   if (!spOnceOld) {   // правка 334: разовые предметы — все уровни игры, текущий снят с уровня в памяти (spOnceOld — прежнее: не пишутся)
     memcpy(s->once, onceKeep, sizeof s->once);
     if (haveSP && gameLevel >= 1 && gameLevel < SV_LEVELS) svOnceCapture(&s->once[gameLevel], &sprops);
+  }
+  // Будка-93 (правка Роба 1234, переход конца уровня; эталон PS2 по исходнику: «Accept запоминает уровень+1 и всегда задаёт вопрос о записи»): запись, сделанная на вопросе после Level Complete,
+  // хранит СЛЕДУЮЩИЙ уровень в начале (поля как у переноса levelAdvance1), а не пройденный: RESUME / LOAD открывает его сразу, без загрузки пройденного уровня, повторного Level Complete, вопроса
+  // и второй загрузки (журнал LVSAVENEXT1234). Прогресс пройденного уровня уже в записи (svLvPut выше). LVSAVENEXT1234_OLD=1 / файл lvsavenext1234old / flag lvsavenext1234old 1 — как было
+  if (!lvSaveNext1234Old && lvSaveNext1234 > 0 && lvSaveNext1234 != gameLevel) {
+    int n = lvSaveNext1234; uint32_t lvM_ = 0; int lvG_ = !gameLvProgOld ? svLvGet(s, n, &lvM_, NULL) : 0;
+    s->level = s->msnLevel = (uint8_t)n; s->msnStory = 0xff; s->msnPhase = s->msnStage = 0; s->msnCompleted = lvG_ ? lvM_ : 0;
+    s->nworld = 0; memset(s->worldCoins, 0, sizeof s->worldCoins);   // не 0xffff, как у переноса в памяти: запись с nworld > SV_WORLDCOINS не проходит проверку (слот «повреждён»)
+    if (smkOn) { char l_[96]; snprintf(l_, sizeof l_, "LVSAVENEXT1234 level=%d->%d prior=%d t=%.1f\n", gameLevel, n, lvG_, smkT); smkWrite(l_); }
   }
 }
 // правка 421: маска открытых трасс бонус-игры (viewer/bonus_unlock.h) — из карточек игры в памяти или из записи. Каждая смена —
@@ -648,7 +661,7 @@ static void pauseSubInput(unsigned hit) {   // пауза стоит; △/○ �
 #ifndef CREDITS_SPEED_OLD
 #define CREDITS_SPEED_OLD 0
 #endif
-#define CREDITS_SPEED ((CREDITS_SPEED_OLD ? 35.f : 20.f) * 272.f / 480.f)
+#define CREDITS_SPEED flowCreditsSpeed(0)
 // №1104, код Play Credits Dialog / конец игры (против оригинала): в титрах Кэнг и Кодос говорят по 13 диалогам (31 реплика, дорожки KK_<диалог>_<n> в пакете fe_audio.sap, tools/credvo_export.py).
 // Диалог стартует, когда на экран выходит строка титров с его номером. Счёт строк: каждый кадр, если прокрутка − 80 (px Scrooby) ≥ (прошло строк) × шаг строки, счётчик +1 и это
 // номер строки (шаг строки у оригинала — высота шрифта × 1,15, у нас — шаг блоков титров; прокрутка px PSP = px Scrooby × 272/480). Номера строк — оригинала для PAL (+16 после строки 178: лишний блок
@@ -822,7 +835,7 @@ static void optionsRun(int mainSel, void **fbp) {
       int done = !credShot && ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
       if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }   // снимок окна: титры стоят, пока ppsspp_run.sh не снимет
       creditsVoFrame(credT * CREDITS_SPEED, ci.lh, NULL);   // №1104: реплики Кэнга и Кодос по строкам титров
-      if (uiScrBackInput(hit) || done) {
+      if (uiScrCreditsExit(hit) || done) {
         creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); creditsVoStop();
         sndMode(prevMode); sndMusic(SND_MUS_FRONTEND); scr = OPT_MAIN; hit = 0;
       }
@@ -888,7 +901,7 @@ static void creditsRun(void **fbp) {
     int done = ci.blocks && ci.end <= 0.f;   // низ последней строки ушёл за верх экрана
     if (!smkShot[0]) { credT += dt * creditsRate(pad.Buttons); if (credT < 0.f) credT = 0.f; }
     creditsVoFrame(credT * CREDITS_SPEED, ci.lh, NULL);   // №1104
-    if (uiScrBackInput(hit) || done) { creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); creditsVoStop(); break; }
+    if (uiScrCreditsExit(hit) || done) { creditsLog(done ? "end" : "back", credT * CREDITS_SPEED, &ci); creditsVoStop(); break; }
     sceGuStart(GU_DIRECT, list); resetState();
     sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
     { int was = ci.blocks; uiScrDrawCredits(OPT_CREDITS, credT * CREDITS_SPEED, &ci); if (!was) creditsLog("start", 0.f, &ci); }

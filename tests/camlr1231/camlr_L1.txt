@@ -1,0 +1,39 @@
+# №1231: пешком L+R вместе + стик = облёт камеры вокруг Гомера (влево-вправо) и наклон (вверх-вниз); Гомер стоит. L1 у спавна. CAMFLAG 1 — новое, 0 — как было (красный: L+R ничего не делает, стик бежит).
+# Журнал: BENCH1034 (положение Гомера), CAMLR1231 (курс камеры, наклон). Снимки: старт, облёт вправо, облёт влево, наклон вниз/вверх, через 0,25 и 1,2 с после отпускания.
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene C_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag benchlog 1
+flag camlog 1
+flag camlr1231 CAMFLAG
+scene C_walk
+foot 220 172 1.5708
+wait 3
+shot c0_start
+press l 16
+press r 16
+stick 1 0 2.0
+wait 2.2
+shot c1_orbit_right
+stick -1 0 4.0
+wait 4.2
+shot c2_orbit_left
+stick 0 1 1.6
+wait 1.8
+shot c3_stick_down
+stick 0 -1 3.2
+wait 3.4
+shot c4_stick_up
+stick 0 1 1.2
+wait 1.4
+shot c5_before_release
+wait 3.5
+shot c6_released_025
+wait 1.2
+shot c7_released_late
+end

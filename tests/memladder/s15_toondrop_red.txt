@@ -1,0 +1,300 @@
+# красный контроль s15: flag toondrop 0 (тот же EBOOT)
+# Механик этап 2, уровень 2: снимок на каждой стадии каждой миссии
+scene MECH2_L2
+flag golevel 2
+flag toondrop 0
+wait 20
+flag player 1
+flag bubshots 99
+flag msn
+wait 8
+flag msnsel 0
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+foot 141.3 -38.5 2.54 9.4
+wait 0.5
+wait 1.5
+shot m0s00
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m0s01
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+press cross 0.2
+wait 6
+press cross 0.2
+wait 5
+wait 1.5
+shot m0s02
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m0s03
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m0s04
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot -304.1 -404.0 2.98 9.6
+wait 0.5
+wait 1.5
+shot m0s05
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m0s06
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+flag msnsel 1
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+foot -343.2 -369.9 0.42 8.4
+wait 0.5
+wait 1.5
+shot m1s00
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s01
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+press cross 0.2
+wait 6
+press cross 0.2
+wait 5
+wait 1.5
+shot m1s02
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s03
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot -172.3 -17.1 2.08 8.7
+wait 0.5
+wait 1.5
+shot m1s04
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s05
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s06
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s07
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s08
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s09
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s10
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s11
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s12
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot 140.1 -96.9 0.61 8.7
+wait 0.5
+wait 1.5
+shot m1s13
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s14
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s15
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s16
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot -25.0 -449.1 -3.10 30.4
+wait 0.5
+wait 1.5
+shot m1s17
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s18
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m1s19
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+goto -355.5 -138.2 0.00
+wait 0.5
+wait 1.5
+shot m1s20
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+flag msnsel 2
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+foot -141.3 -510.1 1.35 30.3
+wait 0.5
+wait 1.5
+shot m2s00
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m2s01
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+press cross 0.2
+wait 6
+press cross 0.2
+wait 5
+wait 6
+shot m2s02
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m2s03
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m2s04
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+flag msnsel 3
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+foot 135.0 -316.2 -2.87 12.3
+wait 0.5
+wait 1.5
+shot m3s00
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m3s01
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+press cross 0.2
+wait 6
+press cross 0.2
+wait 5
+goto -359.2 -357.0 0.00
+wait 0.5
+wait 1.5
+shot m3s02
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot -342.9 -372.7 3.08 8.4
+wait 0.5
+wait 1.5
+shot m3s03
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m3s04
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m3s05
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+foot -416.8 -522.5 -0.36 22.5
+wait 0.5
+wait 1.5
+shot m3s06
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m3s07
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 6
+shot m3s08
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+wait 1.5
+shot m3s09
+flag z3dump 1
+flag msnpass 1
+wait 0.3
+flag msnsel 4
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+foot 42.2 32.4 0.08 8.6
+wait 0.5
+wait 1.5
+wait 2
+end

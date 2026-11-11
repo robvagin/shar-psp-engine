@@ -1,0 +1,21 @@
+# №1232: Гомер стоит на обочине L1, камера за спиной висит над полосой: машины трафика проезжают в 1–2 м от глаза. CAMFLAG 1 — новое, 0 — как было.
+# Журнал CAMTRF (глаз после защиты камеры, ближайшая машина); jitter.py считает дрожь глаза. Сцены T_a (глаз x≈111.7, полоса x=110.1) и T_b (глаз x≈114.8, полоса x=116.2).
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene T_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag camlog 1
+flag camtraf1232 CAMFLAG
+scene T_a
+foot 118.2 150 1.5708
+wait 45
+shot a_end
+scene T_b
+foot 121.3 150 1.5708
+wait 45
+shot b_end
+end

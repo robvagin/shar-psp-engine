@@ -1,4 +1,5 @@
 // Маркеры цели и значки заданий из msnart.shr (см. msnart.h, формат — tools/msnart_export.py).
+#include "dcache96.h"
 #include "gevb.h"
 #ifndef GEVB_MSNART_OLD
 #define GEVB_MSNART_OLD 0   // -DGEVB_MSNART_OLD=1 — значки/кольца миссий в список GE, как раньше
@@ -11,6 +12,7 @@
 #include <string.h>
 #include <malloc.h>
 #include <math.h>
+#include "zone3_api.h"   // П5 Зоны-95: картинки миссий — область «миссия»
 #include "msnart.h"
 #include "lvcheck.h"
 #include "glintshape941.h"   // №944: общий шейп блика (GLINT944_OLD)
@@ -68,6 +70,18 @@ static char file[320]; static MsaRow *rows; static unsigned nrows;
 #define MAXQ 64
 static struct { int row, level; unsigned char *b; } ent[MAXE];
 static unsigned char retried[256];
+// Кольцо-96 (Fable, п.14, находка longgame L4 с fragblk 0.6): картинка брифинга при отказе памяти получала ОДИН мгновенный повтор и тихо пропадала (msnartLostPics++), а карточка 8 с (BRIEF_PIC_MAX)
+// стояла на чёрном LOADING. Теперь картинка ждёт память по ступеням лестницы (msnartRoom на каждой попытке), повтор не чаще раза в секунду, до MSNART_PIC_TRIES попыток; отказ пишет
+// WATCHDOG msnart pic-no-mem / pic-give-up и сразу даёт карточке показаться без картинки (msnartPicGaveUp). MSNART_PICWAIT_OLD=1 / файл msnartpicwaitold — как было
+#ifndef MSNART_PICWAIT_OLD
+#define MSNART_PICWAIT_OLD 0
+#endif
+#ifndef MSNART_PIC_TRIES
+#define MSNART_PIC_TRIES 3
+#endif
+static unsigned char picTries[256], picGaveUp[256];
+int msnartPicWaitOld = MSNART_PICWAIT_OLD; int msnartFailMissgen;
+int msnartPicGaveUp(void) { for (int r = 0; r < nrows && r < (int)sizeof picGaveUp; r++) if (picGaveUp[r]) return 1; return 0; }
 unsigned msnartLostPics;   // сколько картинок брифинга так и не доехало (служебный счётчик для лога)
 static unsigned bytesUsed;
 // чтение записей — асинхронное (sceIoReadAsync): старт миссии не останавливает кадр чтением с карты памяти;
@@ -75,6 +89,7 @@ static unsigned bytesUsed;
 static SceUID afd = -1; static int qrow[MAXQ], qlev[MAXQ], nq, busyRow = -1, busyLev; static unsigned char *busyBuf;
 static int isPic(int r) { return strstr(rows[r].path, "/images/mis") != 0; }
 static char wantIcon[32];
+float msnartAvDelayS;   // №1247 (служебно): задержка значка задания, секунды
 void msnartShutdown(void);
 
 int msnartInit(const char *dir) {
@@ -143,11 +158,11 @@ static void waitBusy(void) {   // дождаться чтения в полёт�
   }
   SceInt64 r; sceIoWaitAsync(afd, &r); free(busyBuf); busyBuf = 0; busyRow = -1;
 }
-void msnartReset(void) { waitBusy(); nq = 0; memset(retried, 0, sizeof retried); for (int i = 0; i < MAXE; i++) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
+void msnartReset(void) { waitBusy(); nq = 0; memset(retried, 0, sizeof retried); memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
 void msnartShutdown(void) {   // смена уровня: записи, таблица и открытый файл msnart.shr — уровень N+1 откроет свой (l<N>/)
   msnartReset(); if (afd >= 0) sceIoClose(afd); afd = -1; free(rows); rows = 0; nrows = 0; bytesUsed = 0;
 }
-void msnartMissionStart(void) { for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
+void msnartMissionStart(void) { memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
 const char *msnartWantIcon(void) { return wantIcon; }   // №958б: диагностика
 unsigned msnartBytes(void) { return bytesUsed; }
 void msnartLoad(const char *p3d, int level) {
@@ -173,8 +188,27 @@ void msnartLoad(const char *p3d, int level) {
 #define MSNART_ROOM_OLD 0
 #endif
 int (*msnartRoom)(unsigned);
+// Build 94 (Фабль П3): запись предмета миссии (не картинка), которую не удалось прочитать (нет памяти, сбой чтения), раньше молча выпадала из очереди — предмет не появлялся.
+// Теперь: строка WATCHDOG, запись встаёт в конец очереди и пробуется снова через 1 с (до MSNART_TRIES94 раз). MSNARTRETRY94_OLD=1 / flag msnartretry94 0 / файл msnartretry94old — как было
+#ifndef MSNARTRETRY94_OLD
+#define MSNARTRETRY94_OLD 0
+#endif
+#define MSNART_TRIES94 60
+int msnartRetry94 = !MSNARTRETRY94_OLD;
+int msnartFailSim94;   // служебное (flag msnartfail N): N первых запусков чтения «нет памяти»
+void (*msnartWatch)(const char *note, const char *path, int tries);
+static unsigned char tries94[256]; static unsigned retryAt94;
+static int failRetry94(int r, int lev, const char *why) {   // 1 — запись поставлена на повтор
+  if (!msnartRetry94 || isPic(r) || r < 0 || r >= (int)sizeof tries94 || nq >= MAXQ) return 0;
+  if (tries94[r] >= MSNART_TRIES94) { if (tries94[r] == MSNART_TRIES94) { tries94[r]++; if (msnartWatch) msnartWatch("give-up", rows[r].path, MSNART_TRIES94); } return 0; }
+  if (++tries94[r] == 1 && msnartWatch) msnartWatch(why, rows[r].path, 1);   // одна строка на событие, не на каждый повтор
+  qrow[nq] = r; qlev[nq] = lev; nq++;
+  retryAt94 = sceKernelGetSystemTimeLow() + 1000000u; if (!retryAt94) retryAt94 = 1;
+  return 1;
+}
 void msnartPump(void) {
   if (afd < 0) return;
+  if (msnartAvDelayS > 0.f && wantIcon[0]) msnartSetObjIcon(wantIcon);   // №1247 (служебно): отложенный значок встаёт, когда срок вышел
   if (busyRow >= 0) {
     SceInt64 res = 0;
     if (sceIoPollAsync(afd, &res) == 1) {   // ещё читается
@@ -189,8 +223,11 @@ void msnartPump(void) {
     if (res == (SceInt64)rows[busyRow].size && slot >= 0) {
       sceKernelDcacheWritebackRange(busyBuf, rows[busyRow].size);   // текстуры GE читает из RAM
       ent[slot].b = busyBuf; ent[slot].row = busyRow; ent[slot].level = busyLev; bytesUsed += rows[busyRow].size;
+      if (busyRow < (int)sizeof tries94 && tries94[busyRow]) { if (msnartWatch) msnartWatch("recovered", rows[busyRow].path, tries94[busyRow]); tries94[busyRow] = 0; }
+      if (busyRow < (int)sizeof picTries) { if (picTries[busyRow] && msnartWatch) msnartWatch("pic-recovered", rows[busyRow].path, picTries[busyRow]); picTries[busyRow] = 0; picGaveUp[busyRow] = 0; }
     } else {
       free(busyBuf);
+      failRetry94(busyRow, busyLev, "read-fail");
       if (!MSNART_PIC_OLD && isPic(busyRow)) {   // картинка не дочиталась: один повтор в начало очереди, иначе в счётчик потерь
         if (busyRow < (int)sizeof retried && !retried[busyRow] && nq < MAXQ) { retried[busyRow] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = busyRow; qlev[0] = busyLev; nq++; }
         else msnartLostPics++;
@@ -201,14 +238,25 @@ void msnartPump(void) {
     if (wantIcon[0]) msnartSetObjIcon(wantIcon);                 // значок задания мог ждать эту запись
   }
   if (busyRow < 0 && nq) {
+    if (retryAt94) { if ((int)(sceKernelGetSystemTimeLow() - retryAt94) < 0) return; retryAt94 = 0; }   // Build 94: пауза 1 с между повторами
     int r = qrow[0], lev = qlev[0]; nq--; memmove(qrow, qrow + 1, sizeof(int) * nq); memmove(qlev, qlev + 1, sizeof(int) * nq);
     bbOp("art+", rows[r].path, 0);   // правка 103: самописец — что читается с карты
-    busyBuf = memalign(16, rows[r].size);
-    if (!busyBuf && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(rows[r].size)) busyBuf = memalign(16, rows[r].size);
-    if (!busyBuf && !MSNARTSTALL1156_OLD) { int dropped_ = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) { drop(i); dropped_++; }   // №1156: отказ памяти — кэш записей миссий долой и один повтор
-      if (dropped_) { bbOp("art~", rows[r].path, 0); busyBuf = memalign(16, rows[r].size); } }
-    if (!busyBuf) { if (!MSNART_PIC_OLD && isPic(r)) { if (r < (int)sizeof retried && !retried[r] && nq < MAXQ) { retried[r] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = r; qlev[0] = lev; nq++; } else msnartLostPics++; } return; }
-    if (sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET) < 0 || sceIoReadAsync(afd, busyBuf, rows[r].size) < 0) { free(busyBuf); busyBuf = 0; if (!MSNART_PIC_OLD && isPic(r)) msnartLostPics++; return; }
+    int sim94 = msnartFailSim94 > 0; if (sim94) msnartFailSim94--;
+    if (!sim94 && msnartFailMissgen > 0 && strstr(rows[r].path, "missgen")) { sim94 = 1; msnartFailMissgen--; }   // Кольцо-96, служебно (flag msnartfailmissgen N): N отказов памяти только у missgen.p3d — воспроизводит L4 fragblk: 0,65 МБ не находится, остальное грузится   // служебный отказ: все три попытки памяти этой записи мимо
+    busyBuf = sim94 ? 0 : zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16);
+    if (!busyBuf && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(rows[r].size) && !sim94) busyBuf = zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16);
+    // Кольцо-96 (корень чёрной карточки, longgame L4 fragblk 0.6): отказ памяти у missgen.p3d (0,65 МБ) сбрасывал ВСЕ записи миссии, в том числе только что дочитанный пакет картинки брифинга,
+    // каждую секунду (60 повторов): картинка не держалась, карточка 8 с ждала на чёрном LOADING. Картинки брифинга при этом не сбрасываются (MSNART_PICWAIT_OLD=1 / flag msnartpicwaitold 1 — как было)
+    if (!busyBuf && !MSNARTSTALL1156_OLD) { int dropped_ = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && (msnartPicWaitOld || !isPic(ent[i].row))) { drop(i); dropped_++; }   // №1156: отказ памяти — кэш записей миссий долой и один повтор
+      if (dropped_) { bbOp("art~", rows[r].path, 0); busyBuf = sim94 ? 0 : zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16); } }
+    if (!busyBuf && !msnartPicWaitOld && !MSNART_PIC_OLD && isPic(r) && r < (int)sizeof picTries) {   // Кольцо-96: картинка брифинга ждёт память, раз в секунду, до MSNART_PIC_TRIES раз
+      if (picTries[r] < MSNART_PIC_TRIES && nq < MAXQ) { if (++picTries[r] == 1 && msnartWatch) msnartWatch("pic-no-mem", rows[r].path, 1);
+        qrow[nq] = r; qlev[nq] = lev; nq++; retryAt94 = sceKernelGetSystemTimeLow() + 1000000u; if (!retryAt94) retryAt94 = 1; return; }
+      picGaveUp[r] = 1; msnartLostPics++; if (msnartWatch) msnartWatch("pic-give-up", rows[r].path, MSNART_PIC_TRIES); return;
+    }
+    if (!busyBuf) { if (failRetry94(r, lev, "no-mem")) return; if (!MSNART_PIC_OLD && isPic(r)) { if (r < (int)sizeof retried && !retried[r] && nq < MAXQ) { retried[r] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = r; qlev[0] = lev; nq++; } else msnartLostPics++; } return; }
+    DCPRE96(busyBuf, rows[r].size);
+    if (sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET) < 0 || sceIoReadAsync(afd, busyBuf, rows[r].size) < 0) { free(busyBuf); busyBuf = 0; if (failRetry94(r, lev, "io-fail")) return; if (!MSNART_PIC_OLD && isPic(r)) msnartLostPics++; return; }
     busyRow = r; busyLev = lev; busyT0 = sceKernelGetSystemTimeLow();
   }
 }
@@ -224,7 +272,15 @@ static const MsaImg *findImg(const char *name, const unsigned char **base) {
   }
   return 0;
 }
-int msnartImage(const char *name) { const unsigned char *b; return findImg(name, &b) != 0; }
+// №1247 (служебно, flag avdelay S): значок задания «дочитывается» через S секунд после первого запроса — медленная карта PSP в эмуляторе (стенд пузыря: до правки текст стартует с места пакета и прыгает)
+static char avDName[32]; static unsigned avDT0;
+static int avHeld(const char *name) {
+  if (msnartAvDelayS <= 0.f || !name || !*name) return 0;
+  if (strcmp(avDName, name)) { snprintf(avDName, sizeof avDName, "%s", name); avDT0 = sceKernelGetSystemTimeLow(); }
+  return (sceKernelGetSystemTimeLow() - avDT0) * 1e-6f < msnartAvDelayS;
+}
+int msnartImage(const char *name) { const unsigned char *b; return findImg(name, &b) != 0 && !avHeld(name); }
+int msnartReading(void) { return busyRow >= 0 || nq > 0 || (msnartAvDelayS > 0.f && wantIcon[0] && avHeld(wantIcon)); }   // №1247: 1 — запись с картинками ещё читается или стоит в очереди (значок может прийти)
 int msnartImageData(const char *name, const void **pix, int *tw, int *th, int *w, int *h) {
   const unsigned char *b; const MsaImg *m = findImg(name, &b);
   if (!m) return 0;
@@ -234,7 +290,7 @@ int msnartImageData(const char *name, const void **pix, int *tw, int *th, int *w
 void msnartSetObjIcon(const char *name) {
   if (name != wantIcon) { strncpy(wantIcon, name ? name : "", sizeof wantIcon - 1); wantIcon[sizeof wantIcon - 1] = 0; }
   const unsigned char *b; const MsaImg *m = findImg(name, &b);
-  if (!m) { uiSetObjIconImage(0, 0, 0, 0, 0); return; }
+  if (!m || avHeld(name)) { uiSetObjIconImage(0, 0, 0, 0, 0); return; }
   const MsaTex *t = (const MsaTex *)(b + ((const MsaHdr *)b)->offTex) + m->tex;
   uiSetObjIconImage(b + t->off, t->w, t->h, (int)m->w, (int)m->h);
   uiSetObjIconTop((int)m->pad - 1);   // свой верх значка из экспорта (tools/msnart_export.py icon_top); -1 — нет

@@ -165,6 +165,8 @@ typedef struct {
   float trim; int bus;
   Stream *st; const SabFile *f;
   int ch, loop, rate;                       // вход старта (audioPlay): в задание — на V_START
+  int waitFi; unsigned reqUs;               // Звук-96: ждёт готовности файла кэша (-1 — не ждёт, -2 — отменён), время запроса
+  unsigned dataOff;                         // Звук-96: смещение данных файла в DATA на момент запуска (банк по требованию; f->off — место в sfx.sab)
 } Voice;
 typedef char chk_mix[FRAMES == MIX_FRAMES && NVOICE == MIX_NVOICE && NSTREAM == MIX_NSTREAM && NSEG == MIX_NSEG && WIN == MIX_WIN ? 1 : -1];
 
@@ -200,6 +202,12 @@ static const CarStreamProfile *covs; static const CarStreamVariant *covf;
 static unsigned ncovs,ncovf; static int carStream=-1,carStreamOn;
 static const unsigned char *DATA;
 static SapTrack *T; static int ntrack; static AFile mfd;
+// Build 94 «Z0-лайт» (Опора-93, замер Fable-аудита 08.11): кольца музыки и таблица дорожек пересоздавались на каждом уровне и садились по новому адресу посреди освобождённой кучи;
+// теперь выделяются один раз и остаются (audioShutdown их не освобождает). Z0LITE_OLD=1 — как было (free при смене уровня)
+#ifndef Z0LITE_OLD
+#define Z0LITE_OLD 0
+#endif
+static unsigned char *ringKeep[NSTREAM]; static SapTrack *Tkeep; static unsigned TkeepCap;
 // Frontend NIS bank has stable storage: loading it never reallocates live T.
 #define EXTRA_TRACK_BASE 0x4000
 #define EXTRA_TRACK_MAX 48   // №1104: 12 реплик меню + 31 реплика титров (код Play Credits Dialog), было 16
@@ -227,6 +235,214 @@ static const SapTrack *trackRow(int t) {
 }
 static int haveMusic;
 static Voice voices[NVOICE + NSTREAM];
+
+// ============================================================ Звук-96 (Fable §3.4, 08.11): банк sfx.sab по требованию
+// Раньше весь sfx.sab уровня (2,1 МБ) лежал резидентом. Оригинал держит звуки кластерами (уровень, меню, миссия), которые подгружает заранее по контексту,
+// а не по запросу; позиционные звуки за пределом слышимости не стартуют. Здесь: таблицы банка и файлы «всегда» (машина уровня, Гомер, интерфейс, общие удары,
+// монеты) лежат в начале постоянного места, дальше кэш по файлам (LRU). Файлы кэша читает фоновая нить audio_sb (на Маке — шаг в audioHostMix); главная нить
+// и кадр с карты не читают. Файл заказывается заранее (audioWarm: гэг ближе 1,5 радиуса слышимости + 30 м, машина профиля при посадке и в трафике,
+// удары машин при старте уровня); если звук всё же запрошен раньше, голос ждёт готовности файла (в микшере V_START пропускается, пока файл не READY) и
+// стартует на следующем же буфере после чтения, звук не теряется. Нет места под файл — вытесняется самый давний не звучащий; если все звучат, останавливается
+// самый тихий не петлевой голос (как оригинал отбрасывает дальнее). Файл, на который смотрит живой или ждущий голос, не вытесняется. Смещение данных голоса
+// v->dataOff (в DATA), микшер и ME не меняются. SNDBANK96_OLD=1 / audioSbOld(1) / файл sndbankold — как до правки (весь банк резидентом)
+#ifndef SNDBANK96_OLD
+#define SNDBANK96_OLD 0
+#endif
+#define SB_MAXF 384u
+#define SB_MAXR 512u
+#define SB_SLOT_BYTES (768u << 10)    // постоянное место банка (таблицы + «всегда» + кэш); до правки 2112 КБ
+#define SB_GRACE_US 400000u           // файл, запущенный меньше 0,4 с назад, вытесняется только при нужде
+#define SB_WAIT_US 3000000u           // голос ждёт файл дольше 3 с — отменён (улика WATCHDOG snd)
+enum { SBS_NONE, SBS_LOAD, SBS_READY, SBS_ERR };
+static int sbOld = SNDBANK96_OLD, sbOn, sbBreak;
+static AFile sbf = AF_NONE;
+static volatile unsigned char sbSt[SB_MAXF];
+static unsigned sbRes[SB_MAXF], sbSz[SB_MAXF], sbUse[SB_MAXF], sbDst[SB_MAXF];
+static unsigned char sbPin[SB_MAXF];
+static volatile unsigned short sbQ[64]; static volatile unsigned sbQw, sbQr; static volatile int sbQuit;   // очередь чтения: главная кладёт, нить берёт
+static unsigned sbDataOff, sbAlways, sbCacheCap, sbNF, sbMaxLazy, sbStealT;
+static unsigned sbReqN, sbPlayN, sbMissN, sbFailN, sbEvictN, sbStealN, sbLoadMaxUs, sbLoadSumUs, sbLoadBytes, sbResBytes, sbErrN, sbWarmN;
+static volatile unsigned sbDlyMax, sbDlySum, sbDlyN, sbDlyLate;   // запрошен → звучит (мкс), считает микшер при старте голоса
+#ifdef AUDIO_HOST
+static unsigned sbHostClk;
+static unsigned sbNow(void) { return sbHostClk; }   // Мак: часы по буферам микшера, тест детерминирован
+#else
+static unsigned sbNow(void) { return nowUs(); }
+static SceUID sbTh = -1, sbSema = -1;
+#endif
+void audioSbOld(int on) { sbOld = on; }
+void audioSbSlotFree(void) { if (!H) { free(slot); slot = 0; slotCap = 0; } }   // служебно (тест на Маке): освободить постоянное место, чтобы следующий audioInit взял его заново
+void audioSbBreak(int on) { sbBreak = on; }   // красный контроль гейта: чтение «потеряно» (файл помечен готовым без данных), звук должен разойтись с эталоном
+static const char *const sbLazyName[] = {   // ресурсы «по месту/миссии»: осы, гэги, ролики, редкие удары; префикс имени
+  "wasp_", "hydrant_spray", "trapdoor", "rage_warning", "krustyglass", "character_zapped", "monkey_", "payphone", "phonebusy", "platform_", "trampoline",
+  "powerbox", "mission_ai", "ferrari", "suspension", "vending", "busted", "car_jump", "rocket", "level_", "car_hit_", "fire", "plantdoor",
+  "laser_miss", "dumpster_hit", "wrench_collect", "card_collect",
+  "generic_car_explode", "explode_", "large_car_crash", "medium_car_crash", "small_car_crash", 0 };
+static int sbLazyRes(int id) {
+  const char *n = R[id].name; char nm[25]; memcpy(nm, n, 24); nm[24] = 0;
+  for (int i = 0; sbLazyName[i]; i++) if (!strncmp(nm, sbLazyName[i], strlen(sbLazyName[i]))) return 1;
+  size_t l = strlen(nm); return l > 8 && !strcmp(nm + l - 8, "_overlay");
+}
+static unsigned sbAl(unsigned n) { return (n + 63u) & ~63u; }
+// Классификация по таблицам банка (bank уже содержит таблицы): какие файлы «всегда», какие по требованию. 0 — не годится, банк целиком как раньше
+static int sbPlan(void) {
+  if (H->nfile > SB_MAXF || H->nres > SB_MAXR || !H->nfile) return 0;
+  unsigned char lazy[SB_MAXR], carUse[SB_MAXR], car0Use[SB_MAXR]; memset(carUse, 0, sizeof carUse); memset(car0Use, 0, sizeof car0Use);
+  for (unsigned c = 0; c < H->ncar; c++) { const short *f = &car[c].engine;   // engine, idle, horn, damaged, doorOpen, doorClose, skid, dirtSkid
+    for (int q = 0; q < 8; q++) if (f[q] >= 0 && (unsigned)f[q] < H->nres) (c ? carUse : car0Use)[f[q]] = 1; }
+  for (unsigned i = 0; i < H->nres; i++) lazy[i] = sbLazyRes((int)i) || (carUse[i] && !car0Use[i]);
+  for (unsigned i = 0; i < H->nfile; i++) sbPin[i] = 0;
+  for (unsigned i = 0; i < H->nres; i++) if (!lazy[i])
+    for (unsigned k = 0; k < R[i].nVar; k++) { unsigned fi = VAR[R[i].firstVar + k]; if (fi < H->nfile) sbPin[fi] = 1; }
+  sbNF = H->nfile; sbAlways = 0; sbMaxLazy = 0;
+  for (unsigned i = 0; i < sbNF; i++) {
+    unsigned ns_ = F[i].nsamp > F[i].loopEnd ? F[i].nsamp : F[i].loopEnd, sz = sbAl(((ns_ + 27u) / 28u) * 16u * (F[i].ch ? F[i].ch : 1u));   // блок ADPCM: 28 отсчётов на 16 байт канала (nblk в таблице у части файлов неверен: L2/L5 cfirecar_overlay)
+    if ((uint64_t)F[i].off + sz > H->dataSize) sz = H->dataSize > F[i].off ? H->dataSize - F[i].off : 0;
+    sbSz[i] = sz; sbRes[i] = 0; sbSt[i] = SBS_NONE; sbUse[i] = 0;
+    if (sbPin[i]) { sbDst[i] = sbAlways; sbAlways += sbAl(sz); } else if (sz > sbMaxLazy) sbMaxLazy = sz;
+  }
+  return 1;
+}
+static int sbBusy(unsigned fi) {   // файл держит живой или ждущий голос
+  for (int k = 0; k < NVOICE; k++) if (voices[k].state != V_FREE && voices[k].f == &F[fi]) return 1;
+  return 0;
+}
+// место в кэше под n байт: свободная дыра, иначе вытеснить самый давний готовый и не занятый файл и повторить; soft — только молчавших дольше 0,4 с (заготовка не выбивает свежее)
+static int sbAlloc(unsigned n, unsigned *out, int soft) {
+  unsigned beg = sbAlways, end = sbAlways + sbCacheCap, now = sbNow();
+  for (unsigned tries = 0; tries < SB_MAXF; tries++) {
+    unsigned idx[SB_MAXF], m = 0;
+    for (unsigned i = 0; i < sbNF; i++) if (!sbPin[i] && sbSt[i] != SBS_NONE) { unsigned j = m++; while (j && sbRes[idx[j - 1]] > sbRes[i]) { idx[j] = idx[j - 1]; j--; } idx[j] = i; }
+    unsigned cur = beg;
+    for (unsigned q = 0; q < m; q++) { if (sbRes[idx[q]] >= cur + n) { *out = cur; return 1; } cur = sbRes[idx[q]] + sbAl(sbSz[idx[q]]); }
+    if (end >= cur + n) { *out = cur; return 1; }
+    int v = -1;   // самый давний из готовых и не звучащих; сначала молчавшие дольше 0,4 с, при нужде (не soft) любой
+    for (int pass = 0; pass < (soft ? 1 : 2) && v < 0; pass++)
+      for (unsigned q = 0; q < m; q++) { unsigned i = idx[q]; if (sbSt[i] != SBS_READY || (!pass && now - sbUse[i] < SB_GRACE_US) || sbBusy(i)) continue; if (v < 0 || (int)(sbUse[i] - sbUse[v]) < 0) v = (int)i; }
+    if (v < 0) return 0;
+    sbSt[v] = SBS_NONE; sbResBytes -= sbAl(sbSz[v]); sbEvictN++;
+  }
+  return 0;
+}
+static void sbKick(void) {
+#ifndef AUDIO_HOST
+  if (sbSema >= 0) sceKernelSignalSema(sbSema, 1);
+#endif
+}
+// заказать файл: готов или грузится — 1; места нет — 0 (вызывающий повторит)
+static int sbReserve(unsigned fi, int soft) {
+  if (!sbOn) return 1;
+  if (sbSt[fi] == SBS_READY || sbSt[fi] == SBS_LOAD) { if (!soft) sbUse[fi] = sbNow(); return 1; }
+  if (sbSt[fi] == SBS_ERR) return 0;
+  unsigned dst, sz = sbSz[fi];
+  if (((sbQw - sbQr) & 63u) >= 60u) return 0;
+  if (!sz || !sbAlloc(sbAl(sz), &dst, soft)) return 0;
+  sbRes[fi] = dst; sbResBytes += sbAl(sz); sbUse[fi] = sbNow(); sbSt[fi] = SBS_LOAD;
+  sbQ[sbQw & 63u] = (unsigned short)fi; BARRIER(); sbQw++; sbKick();
+  return 1;
+}
+// чтение одного файла кэша (фоновая нить; на Маке — из audioHostMix)
+static void sbIoLoad(unsigned fi) {
+  unsigned t0 = nowUs(), sz = sbSz[fi];
+  int ok = sbBreak ? 1 : (AF_OK(sbf) && afRead(sbf, sbDataOff + F[fi].off, (void *)(DATA + sbRes[fi]), (int)sz) == (int)sz);
+#ifndef AUDIO_HOST
+  if (ok && !sbBreak) sceKernelDcacheWritebackInvalidateRange((void *)(DATA + sbRes[fi]), sz);   // ME и поток смешивания читают данные мимо кэша главного
+#endif
+  unsigned dt = nowUs() - t0; sbLoadSumUs += dt; if (dt > sbLoadMaxUs) sbLoadMaxUs = dt; sbLoadBytes += sz; sbMissN++;
+  BARRIER(); sbSt[fi] = ok ? SBS_READY : SBS_ERR;
+}
+#ifdef AUDIO_HOST
+static int sbPumpHost(void) { if (sbQr == sbQw) return 0; sbIoLoad(sbQ[sbQr & 63u]); sbQr++; return 1; }
+#else
+static int sbThread(SceSize a, void *p) {
+  (void)a; (void)p;
+  while (!sbQuit) {
+    sceKernelWaitSema(sbSema, 1, NULL);
+    while (!sbQuit && sbQr != sbQw) { sbIoLoad(sbQ[sbQr & 63u]); sbQr++; }
+  }
+  return 0;
+}
+#endif
+static void sbWarmRes(int id, int soft) {
+  if (!sbOn || !H || id < 0 || id >= (int)H->nres) return;
+  const SabRes *r = &R[id];
+  for (unsigned k = 0; k < r->nVar; k++) { unsigned fi = VAR[r->firstVar + k]; if (fi < sbNF && sbSt[fi] == SBS_NONE && sbReserve(fi, soft)) sbWarmN++; else if (fi < sbNF && !soft) sbUse[fi] = sbNow(); }
+}
+static void sbWarmCar(const SabCar *c) {
+  if (!sbOn || !c) return;
+  const short *f = &c->engine; for (int q = 0; q < 8; q++) if (f[q] >= 0) sbWarmRes(f[q], 0);
+}
+// самый тихий не петлевой звучащий голос кэша останавливается (дальний отбрасывается, как в оригинале); не чаще раза в 20 мс
+static void sbSteal(unsigned now) {
+  if (now - sbStealT < 20000u) return;
+  int b = -1;
+  for (int k = 0; k < NVOICE; k++) { Voice *v = &voices[k];
+    if (v->state != V_PLAY || v->stopReq || v->loop || !v->f || sbPin[v->f - F]) continue;
+    if (b < 0 || v->vol < voices[b].vol) b = k; }
+  if (b >= 0) { voices[b].stopReq = 1; sbStealN++; sbStealT = now;
+#ifndef AUDIO_HOST
+    relNote("SNDB steal n=%u file=%d vol=%.2f (кэш звука занят звучащими, остановлен самый тихий)", sbStealN, (int)(voices[b].f - F), voices[b].vol);
+#endif
+  }
+}
+// главная нить раз в кадр: ждущие голоса без места получают место (вытеснение, остановка самого тихого), зависшие отменяются
+static void sbService(void) {
+  if (!sbOn) return;
+  unsigned now = sbNow();
+  for (unsigned i = 0; i < sbNF; i++) if (sbSt[i] == SBS_ERR) { sbErrN++; sbResBytes -= sbAl(sbSz[i]); sbSt[i] = SBS_NONE; }
+  for (int k = 0; k < NVOICE; k++) { Voice *v = &voices[k];
+    if (v->state != V_START || v->waitFi < 0) continue;
+    unsigned fi = (unsigned)v->waitFi, age = now - v->reqUs;
+    if (sbSt[fi] == SBS_NONE && !sbReserve(fi, 0) && age > 12000u) sbSteal(now);
+    if (age > SB_WAIT_US && sbSt[fi] != SBS_READY) { v->waitFi = -2; sbFailN++;   // файла нет и не будет: голос отменён
+#ifndef AUDIO_HOST
+      relNote("WATCHDOG snd wait timeout file=%u state=%d fail=%u", fi, (int)sbSt[fi], sbFailN);
+#endif
+    } }
+}
+// файлы «всегда» — с карты в начало DATA через окно кэша (оно свободно, пока уровень не играет): чтения группами по размеру окна
+static int sbLoadPinned(void) {
+  unsigned idx[SB_MAXF], n = 0; unsigned char *stg = (unsigned char *)DATA + sbAlways; unsigned cap = sbCacheCap;
+  for (unsigned i = 0; i < sbNF; i++) if (sbPin[i] && sbSz[i]) { unsigned j = n++; while (j && F[idx[j - 1]].off > F[i].off) { idx[j] = idx[j - 1]; j--; } idx[j] = i; }
+  for (unsigned a = 0; a < n;) {
+    unsigned start = F[idx[a]].off, b = a, end = start;
+    while (b < n && F[idx[b]].off + sbSz[idx[b]] - start <= cap) { end = F[idx[b]].off + sbSz[idx[b]]; b++; }
+    if (b == a || end < start) return 0;
+    if (afRead(sbf, sbDataOff + start, stg, (int)(end - start)) != (int)(end - start)) return 0;
+    for (unsigned q = a; q < b; q++) { unsigned i = idx[q]; memcpy((unsigned char *)DATA + sbDst[i], stg + (F[i].off - start), sbSz[i]); sbRes[i] = sbDst[i]; sbSt[i] = SBS_READY; }
+    a = b;
+  }
+  for (unsigned i = 0; i < sbNF; i++) if (sbPin[i] && !sbSz[i]) sbSt[i] = SBS_READY;
+  return 1;
+}
+int audioSbLine(char *out, int n) {   // строка SNDB журнала смоука: запрошено ↔ сыграно ↔ грузилось, отказы (тишина) отдельно
+  return snprintf(out, n, "on=%d req=%u play=%u miss=%u warm=%u fail=%u evict=%u steal=%u err=%u always_kb=%u cache_kb=%u res_kb=%u load_max_us=%u load_avg_us=%u dly_max_us=%u dly_avg_us=%u dly_n=%u",
+                  sbOn, sbReqN, sbPlayN, sbMissN, sbWarmN, sbFailN, sbEvictN, sbStealN, sbErrN, sbAlways >> 10, sbCacheCap >> 10, (sbAlways + sbResBytes) >> 10, sbLoadMaxUs,
+                  sbMissN ? sbLoadSumUs / sbMissN : 0u, sbDlyMax, sbDlyN ? sbDlySum / sbDlyN : 0u, sbDlyN);
+}
+void audioSbStatReset(void) { sbDlyMax = sbDlySum = sbDlyN = sbDlyLate = 0; }   // служебно (гейт): обнулить задержки
+void audioWarm(int id) { sbWarmRes(id, 0); }
+// старт миссии и подход к роликам: звуки, которые миссия и её ролики вызывают первыми (метки миссии, этапы, «пойман», пикапы уровня, удары машин, сирена и
+// чужие гудки не заказываются: машины миссии берутся при назначении профиля в audioWorldEngine)
+void audioWarmMission(void) {
+  static const char *const nm[] = {"mission_ai_vehicle", "mission_complete", "stage_complete", "car_stinger", "busted", "small_car_crash", "medium_car_crash", "large_car_crash", 0};
+  if (!sbOn) return;
+  for (int i = 0; nm[i]; i++) { int id = audioFind(nm[i]); if (id >= 0) sbWarmRes(id, 0); }
+  for (unsigned i = 0; i < H->nres; i++) if (!strncmp(R[i].name, "level_", 6)) sbWarmRes((int)i, 0);
+}                       // заказать звуки ресурса заранее (файлы пойдут в кэш фоном)
+int audioSbResident(int fi) { return !sbOn ? 1 : (fi >= 0 && (unsigned)fi < sbNF && sbSt[fi] == SBS_READY); }
+unsigned audioSbArena(void) { return sbOn ? (sbDataOff + sbAlways + sbCacheCap) : (H ? H->dataOff + H->dataSize : 0); }
+int audioTestVoiceFiles(int *fi, unsigned *dataOff, int max) {   // служебно (гейт): файлы звучащих голосов (ждущие не в счёт)
+  int m = 0;
+  for (int k = 0; k < NVOICE && m < max; k++) if (voices[k].state != V_FREE && voices[k].f && voices[k].waitFi == -1) { fi[m] = (int)(voices[k].f - F); dataOff[m] = voices[k].dataOff; m++; }
+  return m;
+}
+int audioTestWaiting(void) { int m = 0; for (int k = 0; k < NVOICE; k++) m += voices[k].state == V_START && voices[k].waitFi >= 0; return m; }
+const unsigned char *audioTestData(void) { return DATA; }
+int audioTestFileLoc(int fi, unsigned *off, unsigned *bytes) {   // служебно: место файла в sfx.sab (от начала данных) и его размер
+  if (!H || fi < 0 || fi >= (int)H->nfile) return 0;
+  unsigned n = F[fi].nsamp > F[fi].loopEnd ? F[fi].nsamp : F[fi].loopEnd; *off = F[fi].off; *bytes = ((n + 27u) / 28u) * 16u * (F[fi].ch ? F[fi].ch : 1u); return 1;
+}
 static Stream streams[NSTREAM];
 static float busVol[AUDIO_NBUS]; static float master = 1.f;
 static float userVol[AUDIO_NBUS] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};   // громкость игрока (меню Sound), поверх тюнера диска
@@ -434,8 +650,15 @@ static void mixPre(MixJob *j) {
 #endif
     int tl, tr; unsigned ts;
     if (v->state == V_START) {
+      if (k < NVOICE && v->waitFi != -1) {   // Звук-96: файл кэша ещё читается — голос ждёт; отменённый освобождает микшер
+        if (v->waitFi < 0) { v->state = V_FREE; continue; }
+        if (sbSt[v->waitFi] != SBS_READY) continue;
+        v->dataOff = sbRes[v->waitFi];
+        { unsigned dl = sbNow() - v->reqUs; sbDlySum += dl; sbDlyN++; if (dl > sbDlyMax) sbDlyMax = dl; if (dl > 50000u) sbDlyLate++; }
+        BARRIER(); v->waitFi = -1;
+      }
       const SabFile *f = v->f;
-      dspReset(d); d->stream = -1; d->ch = v->ch; d->rate = v->rate; d->loop = v->loop; d->dataOff = f->off;
+      dspReset(d); d->stream = -1; d->ch = v->ch; d->rate = v->rate; d->loop = v->loop; d->dataOff = v->dataOff;
       d->loopStart = f->loopStart; d->loopEnd = f->loopEnd; for (int c = 0; c < 4; c++) d->lhist[c] = f->hist[c];
       d->si = 0; d->end = v->loop ? f->loopEnd : f->nsamp;
       gains(v, d, 1, &tl, &tr, &ts); d->gl = tl; d->gr = tr; d->step = ts;   // start at full level: keep attacks
@@ -1063,6 +1286,7 @@ unsigned audioCaptured(void) { return capFrames; }
 #else
 void audioHostMix(short *out, int frames) {
   for (int k = 0; k + FRAMES <= frames; k += FRAMES) {
+    sbHostClk += (unsigned)(FRAMES * 1000000ull / 44100u); sbPumpHost(); sbService();   // Звук-96: часы по буферам, одно чтение файла кэша за буфер
     for (int s = 0; s < NSTREAM; s++) streamService(&streams[s]);
     unsigned t0 = nowUs();
     mixBuffer(out + k * 2);
@@ -1076,6 +1300,11 @@ int audioTestPlayFile(int fi) {
   if (!H || fi < 0 || fi >= (int)H->nfile) return 0;
   Voice *v = &voices[0];
   memset(v, 0, sizeof *v);
+  v->waitFi = -1; v->reqUs = sbNow();
+  if (!sbOn) v->dataOff = F[fi].off; else if (sbSt[fi] == SBS_READY) v->dataOff = sbRes[fi]; else { v->waitFi = fi; sbReserve((unsigned)fi, 0); }
+#ifdef AUDIO_HOST
+  while (sbPumpHost()) {}   // тест: бит в бит без начальной тишины — дождаться чтения
+#endif
   v->f = &F[fi]; v->ch = F[fi].ch; v->rate = F[fi].rate; v->loop = 0;
   v->vol = 1; v->pan = 0; v->pitch = 1; v->trim = 1; v->bus = AUDIO_BUS_SFX; v->gen++;
   BARRIER(); v->state = V_START;
@@ -1114,6 +1343,43 @@ void audioTestSimulateFdInvalidate(void) {
 static int fail(const char *m) { snprintf(err, sizeof err, "%s", m); return -1; }
 const char *audioError(void) { return err; }
 
+// Z0-init (Build 95): кольца музыки и таблица дорожек выделяются при старте игры ДО участка уровня (низ кучи), audioInit их только берёт
+void audioPrealloc(void) {
+  if (Z0LITE_OLD) return;
+  for (int s = 0; s < NSTREAM; s++) if (!ringKeep[s]) ringKeep[s] = amalloc(ringSize[s]);
+  if (!Tkeep) { TkeepCap = 96u << 10; Tkeep = amalloc(TkeepCap); if (!Tkeep) TkeepCap = 0; }
+}
+// Звук-96: банк по требованию. Таблицы банка — в начало постоянного места, файлы «всегда» — за ними, остаток — кэш. 1 — готово (файл sfx.sab остаётся открытым в sbf),
+// 0 — не годится (банк мал для места, неожиданный формат, ошибка чтения): вызывающий читает банк целиком, как раньше
+static int sbTryInit(AFile f, unsigned sz) {
+  sbOn = 0;
+  if (sbOld || slotOld || SNDBANK96_OLD) return 0;
+  if (!slot) { slotCap = SB_SLOT_BYTES; if (!(slot = bankAlloc(slotCap))) { slotCap = 0; return 0; } }
+  SabHdr hd;
+  if (sz < sizeof hd || afRead(f, 0, &hd, (int)sizeof hd) != (int)sizeof hd || memcmp(hd.magic, "SAB1", 4) || hd.ver != 1) return 0;
+  if ((hd.dataOff & 63u) || hd.dataOff > (slotCap >> 1) || (uint64_t)hd.dataOff + hd.dataSize > sz || !hd.nfile) return 0;
+  if (afRead(f, 0, slot, (int)hd.dataOff) != (int)hd.dataOff) return 0;
+  bank = slot; H = (const SabHdr *)bank;
+  if ((uint64_t)H->resOff + (uint64_t)H->nres * sizeof(SabRes) > H->dataOff || (uint64_t)H->fileOff + (uint64_t)H->nfile * sizeof(SabFile) > H->dataOff) { bank = 0; H = 0; return 0; }
+  R = (const SabRes *)(bank + H->resOff); VAR = (const unsigned short *)(bank + H->varOff);
+  F = (const SabFile *)(bank + H->fileOff); car = H->ncar ? (const SabCar *)(bank + H->carOff) : 0;
+  if (!sbPlan()) { bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; return 0; }
+  unsigned cmin = sbMaxLazy * 3u; if (cmin < (192u << 10)) cmin = 192u << 10;
+  if ((uint64_t)H->dataOff + sbAlways + cmin > slotCap) { bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; return 0; }
+  sbDataOff = H->dataOff; sbCacheCap = (slotCap - sbDataOff - sbAlways) & ~63u;
+  DATA = bank + H->dataOff; sbResBytes = 0; sbf = f;
+  sbOn = 1;   // ниже sbGet/sbLoadPinned работают в режиме по требованию
+  if (!sbLoadPinned()) { sbOn = 0; sbf = AF_NONE; bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0; return 0; }
+  sbQr = sbQw = 0; sbQuit = 0; sbDlyMax = sbDlySum = sbDlyN = sbDlyLate = 0; sbStealN = sbErrN = sbWarmN = 0; sbStealT = 0;
+#ifndef AUDIO_HOST
+  sbSema = sceKernelCreateSema("audio_sb", 0, 0, 64, NULL);
+  if (sbSema >= 0) sbTh = sceKernelCreateThread("audio_sb", sbThread, 0x1c, 0x2000, PSP_THREAD_ATTR_USER, NULL);
+  if (sbTh >= 0) sceKernelStartThread(sbTh, 0, NULL);
+  else { if (sbSema >= 0) sceKernelDeleteSema(sbSema); sbSema = -1; sbOn = 0; sbf = AF_NONE; bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0; return 0; }   // нити нет — банк целиком
+#endif
+  for (int q = 0; q < 3; q++) { int id = audioFind(q == 0 ? "small_car_crash" : q == 1 ? "medium_car_crash" : "large_car_crash"); if (id >= 0) sbWarmRes(id, 0); }   // удары машин — заранее
+  return 1;
+}
 int audioInit(const char *dir) {
   char p[256];
   for (int b = 0; b < AUDIO_NBUS; b++) busVol[b] = 1;
@@ -1122,6 +1388,13 @@ int audioInit(const char *dir) {
   AFile f = afOpen(p);
   if (!AF_OK(f)) return fail("sfx.sab not found");
   unsigned sz = afSize(f);
+  sbReqN = sbPlayN = sbMissN = sbFailN = sbEvictN = sbLoadMaxUs = sbLoadSumUs = sbLoadBytes = 0;
+  { char fp[256]; snprintf(fp, sizeof fp, "%ssndbankold", dir); AFile of = afOpen(fp); if (AF_OK(of)) { afClose(of); sbOld = 1; } }   // файл-выключатель рядом с sfx.sab: банк целиком, как до Звука-96
+  if (sbTryInit(f, sz)) {   // Звук-96: таблицы и «всегда» в памяти, остальное по требованию (файл остаётся открытым)
+#ifndef AUDIO_HOST
+    sceKernelDcacheWritebackInvalidateRange(bank, sbDataOff + sbAlways + sbCacheCap);   // правка 276 + окно загрузки: нет грязных строк под кэшем
+#endif
+  } else {
   if (!slotOld && (!slot || sz > slotCap)) {   // №1069: место под банк — один раз; банк больше места — место заново
     free(slot); slotCap = sz > SAB_SLOT_BYTES ? sz : SAB_SLOT_BYTES; if (!(slot = bankAlloc(slotCap))) slotCap = 0; }
   bank = !slotOld && slot ? slot : bankAlloc(sz);   // места нет (куча не дала) — банк из кучи, как прежде
@@ -1130,6 +1403,7 @@ int audioInit(const char *dir) {
 #ifndef AUDIO_HOST
   sceKernelDcacheWritebackRange(bank, sz);   // правка 276: банк — в память (с флаг-файлом meaudio ME читает его мимо кэша)
 #endif
+  }
   H = (const SabHdr *)bank;
   if (memcmp(H->magic, "SAB1", 4) || H->ver != 1) return fail("sfx.sab: wrong version");
   R = (const SabRes *)(bank + H->resOff); VAR = (const unsigned short *)(bank + H->varOff);
@@ -1167,11 +1441,12 @@ int audioInit(const char *dir) {
     unsigned char h[16];
     if (afRead(mfd, 0, h, 16) == 16 && !memcmp(h, "SAP1", 4)) {
       ntrack = *(int *)(h + 8);
-      T = amalloc(sizeof(SapTrack) * (ntrack ? ntrack : 1));
+      if (!Z0LITE_OLD) { unsigned need_ = (unsigned)sizeof(SapTrack) * (unsigned)(ntrack ? ntrack : 1); if (!Tkeep || TkeepCap < need_) { free(Tkeep); TkeepCap = need_ < (96u << 10) ? (96u << 10) : need_; Tkeep = amalloc(TkeepCap); if (!Tkeep) TkeepCap = 0; } T = Tkeep; }
+      else T = amalloc(sizeof(SapTrack) * (ntrack ? ntrack : 1));
       if (T && afRead(mfd, *(unsigned *)(h + 12), T, (int)sizeof(SapTrack) * ntrack) == (int)sizeof(SapTrack) * ntrack) {
         haveMusic = 1;
         for (int s = 0; s < NSTREAM; s++) {
-          streams[s].ring = amalloc(ringSize[s]); streams[s].mask = ringSize[s] - 1;
+          if (!Z0LITE_OLD && ringKeep[s]) streams[s].ring = ringKeep[s]; else { streams[s].ring = amalloc(ringSize[s]); if (!Z0LITE_OLD) ringKeep[s] = streams[s].ring; } streams[s].mask = ringSize[s] - 1;
           if (!streams[s].ring) haveMusic = 0;
         }
       }
@@ -1222,6 +1497,10 @@ int audioInit(const char *dir) {
 void audioShutdown(void) {
   quit = 1;
 #ifndef AUDIO_HOST
+  if (sbTh >= 0) { sbQuit = 1; sceKernelSignalSema(sbSema, 1); sceKernelWaitThreadEnd(sbTh, NULL); sceKernelDeleteThread(sbTh); sbTh = -1; }
+  if (sbSema >= 0) { sceKernelDeleteSema(sbSema); sbSema = -1; }
+#endif
+#ifndef AUDIO_HOST
   if (pwrTh >= 0) { sceKernelTerminateDeleteThread(pwrTh); pwrTh = -1; }
   if (mixTh >= 0) { sceKernelWaitThreadEnd(mixTh, NULL); sceKernelDeleteThread(mixTh); mixTh = -1; }
   if (ioTh >= 0) { sceKernelSignalSema(ioSema, 1); sceKernelWaitThreadEnd(ioTh, NULL); sceKernelDeleteThread(ioTh); ioTh = -1; }
@@ -1241,10 +1520,11 @@ void audioShutdown(void) {
   for(int i=0;i<AUDIO_WORLD_ENGINES;i++)worldSource[i]=worldProfile[i]=-1;
   // смена уровня (viewer/main.c levelUiSnd: у каждого уровня свой audio/ — музыка, звуки, машина): память звука — обратно в
   // кучу, audioInit читает пакет уровня заново (раньше память оставалась: звук не перезапускался)
-  for (int s = 0; s < NSTREAM; s++) free(streams[s].ring);
+  for (int s = 0; s < NSTREAM; s++) if (Z0LITE_OLD || streams[s].ring != ringKeep[s]) free(streams[s].ring);   // Z0-лайт: постоянные кольца остаются
   memset(streams, 0, sizeof streams);
-  free(T); T = 0; ntrack = 0;
+  if (Z0LITE_OLD || T != Tkeep) free(T); T = 0; ntrack = 0;
   if (AF_OK(lfd)) afClose(lfd); lfd = AF_NONE; langPath[0] = 0; langTracks = 0;   // №1111
+  if (AF_OK(sbf)) afClose(sbf); sbf = AF_NONE; sbOn = 0;   // Звук-96: файл банка для подгрузки по требованию
   if (bank != slot) free(bank);   // №1069: постоянное место банка остаётся на следующий уровень
   bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0;
 }
@@ -1292,11 +1572,16 @@ static Voice *byHandle(int h) {
 int audioPlay(int id, float vol, float pan, float pitch) { return audioPlayBus(id, vol, pan, pitch, -1); }
 static int playPoint(int id, float vol, float pan, float pitch, int bus, const MixPoint *point) {
   if (!H || id < 0 || id >= (int)H->nres || !R[id].nVar) return 0;
-  const SabRes *r = &R[id];
+  const SabRes *r = &R[id]; sbReqN++;
   for (int k = 0; k < NVOICE; k++) {
     Voice *v = &voices[k];
     if (v->state != V_FREE) continue;
-    const SabFile *f = &F[VAR[r->firstVar + (r->nVar > 1 ? (int)(frand() * r->nVar) % r->nVar : 0)]];
+    const unsigned fi = VAR[r->firstVar + (r->nVar > 1 ? (int)(frand() * r->nVar) % r->nVar : 0)];
+    const SabFile *f = &F[fi];
+    v->reqUs = sbNow(); sbPlayN++;
+    if (!sbOn) { v->waitFi = -1; v->dataOff = f->off; }   // банк целиком
+    else if (sbSt[fi] == SBS_READY) { v->waitFi = -1; v->dataOff = sbRes[fi]; sbUse[fi] = v->reqUs; }
+    else { v->waitFi = (int)fi; v->dataOff = 0; sbReserve(fi, 0); }   // файл читается фоном; места нет — sbService найдёт (вытеснит или остановит самый тихий)
     v->f = f; v->ch = f->ch; v->rate = f->rate; v->st = 0;
     v->loop = r->flags & 1; v->trim = r->trim; v->bus = bus >= 0 && bus < AUDIO_NBUS ? bus : r->bus < AUDIO_BUS_UI ? (int)r->bus : AUDIO_BUS_SFX;
     v->vol = vol; v->pan = pan; v->pitch = pitch * (r->pmin + (r->pmax - r->pmin) * frand());
@@ -1317,6 +1602,7 @@ void audioStop(int h) { Voice *v = byHandle(h); if (v) v->stopReq = 1; }
 int audioPlaying(int h) { Voice *v = byHandle(h); return v && !v->stopReq; }
 
 void audioListener(float x, float y, float z, float rx, float rz) {
+  sbService();   // Звук-96: раз в кадр главной нитью
   lx = x; ly = y; lz = z; float l = sqrtf(rx * rx + rz * rz); if (l > 1e-4f) { lrx = rx / l; lrz = rz / l; }
 }
 void audioSpatial(float x, float y, float z, float mn, float mx, float *vol, float *pan) {
@@ -1329,6 +1615,7 @@ int audioPlayAt(int id, float x, float y, float z, float mn, float mx) {
   return audioPlayAtGain(id,1.f,x,y,z,mn,mx);
 }
 int audioPlayAtGain(int id,float vol,float x,float y,float z,float mn,float mx) {
+  if (sbOn) { float dx = x - lx, dy = y - ly, dz = z - lz; if (dx * dx + dy * dy + dz * dz < (mx * 1.5f + 30.f) * (mx * 1.5f + 30.f)) sbWarmRes(id, 1); }   // Звук-96: гэг рядом — его звуки в кэш заранее
   float g, pan; audioSpatial(x, y, z, mn, mx, &g, &pan);
   if(g*vol<=.005f)return 0;
   MixPoint p=spatialPoint(x,y,z,mn,mx);return playPoint(id,vol,0.f,1.f,-1,&p);
@@ -1680,6 +1967,7 @@ int audioPlayerCar(const char *name) {   // -> номер профиля, кот
   if (!carSndOld && name && *name)
     for (unsigned i = 0; i < H->ncar; i++) if (!strncasecmp(profiles[i].name, name, sizeof profiles[i].name)) { k = (int)i; break; }
   if (k == carIdx && car) return k;
+  if (sbOn) sbWarmCar(&profiles[k]);   // Звук-96: звуки машины игрока заранее
   if(carStreamOn){audioStream(AUDIO_ST_CAR_OVERLAY,-1,0);carStream=-1;carStreamOn=0;}
   audioStop(E.eng); audioStop(E.idle); audioStop(E.fire); audioStop(E.skid); audioStop(E.horn); audioStop(E.ovl);   // другой клип мотора — заново
   E.eng = E.idle = E.fire = E.skid = E.horn = E.ovl = 0; E.gear = 0; E.pitch = 0;
@@ -1707,6 +1995,7 @@ void audioWorldEngine(int slot,int source,int profile,float x,float y,float z,fl
     audioStop(e->skid); // source changes must not leave the old tyre loop behind
     engineStep(e,NULL,0,1,0,0,0,0);memset(e,0,sizeof *e);
     worldSource[slot]=source;worldProfile[slot]=profile;
+    if (sbOn && source >= 0 && H && profile >= 0 && profile < (int)H->ncar) sbWarmCar((const SabCar *)(bank + H->carOff) + profile);   // Звук-96: машина трафика в радиусе — её звуки заранее
   }
   if(source<0 || !H || profile<0 || profile>=(int)H->ncar)return;
   enginePosition(e,spatialPoint(x,y,z,4.f,60.f));

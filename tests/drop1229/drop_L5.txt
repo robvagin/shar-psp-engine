@@ -1,0 +1,41 @@
+# №1229: L5, «Never Trust a Snake» (индекс 4, этап dump: 15 предметов, мусоровоз). Бот миссий в EBOOT доводит до этапа dump (~70 с), дальше выпадение и подбор — служебными flag dropsim N / dropget N
+# (те же поля rt.released / rt.done, что у настоящих). Журнал MSN dropmsg on|off. Красное: flag drop1229 0 — после подбора единственного выпавшего надпись висит (остальные 14 предметов ещё не собраны).
+# Зелёное: 1 — гаснет; выпал новый — снова.
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene D_GO5
+flag golevel 5
+wait 47
+flag stop
+flag player
+flag drop1229 DROPFLAG
+flag msn
+flag msnbot 1
+flag msnbotpass 40
+wait 3
+flag msnsel 4
+scene D_m5
+wait 30
+flag msngo
+wait 47
+flag msnbot 0
+shot d0_before_drop
+flag dropsim 0
+wait 1.6
+shot d1_dropped
+wait 0.4
+shot d1b_dropped
+flag dropget 0
+wait 1.0
+shot d2_after_pickup
+wait 0.3
+shot d2b_after_pickup
+wait 1.0
+flag dropsim 1
+wait 1.6
+shot d3_second_drop
+flag dropget 1
+wait 1.2
+shot d4_after_second_pickup
+end

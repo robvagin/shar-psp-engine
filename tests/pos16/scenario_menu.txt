@@ -1,0 +1,18 @@
+flag menu
+flag lvset 1
+scene FE_BOOT
+wait 4
+flag toon 1
+flag fehero1021 1
+wait 3
+shot a
+press right 0.2
+wait 5
+shot b
+press right 0.2
+wait 5
+shot c
+press right 0.2
+wait 5
+shot d
+end

@@ -1,0 +1,35 @@
+# Лестница-96 (срочно, видео Роба на Build 97): L6, будка, выбор машины, выход, пауза -> CONTINUE. Небо (куски владельца 2) и машина игрока должны быть на месте в первом же кадре после будки и после паузы.
+# Строки SKYDRAW (pieces/drawn/notres) и WATCHDOG mem / MEMLAD раз в секунду; shot после каждого шага.
+flag nosave
+scene BOOT
+flag golevel 6
+wait 45
+flag stop
+flag player
+wait 3
+flag msn
+wait 3
+scene S10_BOOTH_OPEN
+foot 91.5 141.2 0
+wait 3
+shot s10_before
+press triangle 0.2
+wait 10
+shot s10_booth
+press right 0.2
+wait 1
+press cross 0.2
+wait 6
+shot s10_exit1
+scene S10_AFTER
+wait 6
+shot s10_exit2
+scene S10_PAUSE
+press start 0.2
+wait 2
+shot s10_pause
+press start 0.2
+wait 4
+shot s10_resume
+wait 6
+end

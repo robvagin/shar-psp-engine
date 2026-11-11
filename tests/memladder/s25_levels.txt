@@ -1,0 +1,106 @@
+# Лестница-96 (блокер 102, течь кучи на выгрузке уровня, дирижёр 09.11): уровни подряд как в туре (TALK1186): golevel N, 40 с, разговор msnmainat + два нажатия X, 10 с. Метрика: LEVEL ev=load heap0 при повторной загрузке уровня не ниже первой −0,5 МБ.
+# Красное: s25_levels_off.txt (flag farcell 0) - сравнение; гейт check.py leak.
+flag nosave
+scene BOOT
+flag golevel 2
+wait 40
+flag msnmainat -2
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 3
+wait 40
+flag msnmainat -2
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 4
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 5
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 6
+wait 40
+flag msnmainat -101
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 7
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 4
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 1
+wait 40
+flag golevel 6
+wait 40
+flag msnmainat -101
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 7
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 5
+wait 40
+flag msnmainat -1
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+flag golevel 2
+wait 40
+flag msnmainat -2
+wait 1.5
+press cross 0.2
+wait 1
+press cross 0.2
+wait 1.5
+wait 8
+end

@@ -1,0 +1,104 @@
+flag saves
+flag cfgdefaults 1
+scene LG_BOOT
+wait 4
+scene LG_L1
+flag golevel 1
+wait 10
+flag player
+flag msn
+wait 3
+wait 3
+flag fragblk 0.6
+wait 1
+scene LG_drive0
+flag drive 150
+wait 154
+scene LG_house
+foot 228.90 181.60 0.0 3.8
+wait 2
+press up 0.5
+wait 0.4
+press triangle 0.2
+wait 8
+shot in_house
+flag zone3dangle 1
+foot 501.13 392.0 0 -19.5
+wait 1
+foot 502.73 398.0 0 -19.5
+wait 0.5
+press triangle 0.2
+wait 6
+shot out_house
+flag zone3danglefree 1
+scene LG_drive1
+flag drive 121
+wait 125
+scene LG_kwik
+foot 213.91 299.04 0.0 5.56
+wait 2
+press up 0.5
+wait 0.4
+press triangle 0.2
+wait 8
+shot in_kwik
+foot 499.43 300.0 0 -19.5
+wait 1
+foot 499.43 305.25 0 -19.5
+wait 0.5
+press triangle 0.2
+wait 6
+shot out_kwik
+scene LG_end
+flag stop
+flag player
+flag msn
+wait 4
+flag realend 2
+flag msnfinal
+wait 3
+shot card
+press cross 0.3
+wait 3
+press cross 0.3
+wait 3
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+flag msnpass
+wait 2
+wait 6
+shot lc
+press cross 0.3
+wait 4
+shot ask
+press down 0.3
+wait 1
+press cross 0.3
+waitfor LEVEL ev=load n=2 150
+wait 45
+shot next_after
+end

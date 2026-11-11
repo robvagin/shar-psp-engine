@@ -148,13 +148,40 @@ static int nearestLane(const Traffic *t, float x, float y, float z, float h, flo
 // RESET CAR по дорогам (день 11.10, свод ботов п. 5: возврат «в последнее безопасное место» ставил машину в карман — L7 (333,−26), K3 (219/222,−444) на L1/L4/L7):
 // ближняя ось полосы по ходу движения (курс в пределах 70 градусов от направления скорости, не дальше 80 м, на той же высоте ±3,5 м; нет — любая
 // высота), точка на 8 м впереди по полосе, курс вдоль неё. 0 — дорог нет или полосы рядом нет (вызывающий вернёт по-старому)
-int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]) {
+// №1248 (Роб, Build 97: «L7 G5-2 как в яме: заехал и не могу выехать»; allrisk Опоры: «карман» (−36,5; −0,15; −297,2), RESET CAR ставит в то же место): у Power Plant короткий съезд (дороги 26/27, 25 м) кончается тупиком в замкнутом
+// дворе: стены с трёх сторон, на оси полосы четыре куста-шара (при входе медленнее 7 м/с — как стена). RESET CAR брал полосу под машиной / по ходу и ставил на 8 м вперёд по ней — для тупика это конец полосы у стены, за кустами, лицом к стене.
+// Теперь для короткой дороги (до MC_DEADEND_LEN) с тупиковым концом (в этот перекрёсток не входит ни одна другая дорога) машина встаёт у выезда (конец полосы наружу, у перекрёстка, лицом по полосе наружу), а не в тупике.
+// RESET_DEADEND_OLD=1 — прежнее (карман остаётся)
+#ifndef RESET_DEADEND_OLD
+#define RESET_DEADEND_OLD 0
+#endif
+#define MC_DEADEND_LEN 60.f
+static int mcDeadJunc(const Traffic *t, int j, int r) {   // в перекрёсток j не входит и не выходит ни одной дороги, кроме r и её обратной
+  int rv = t->road[r].rev == 0xFFFF ? -1 : (int)t->road[r].rev;
+  for (uint32_t q = 0; q < t->hd->nRoad; q++) { if ((int)q == r || (int)q == rv) continue; if (t->road[q].startJ == j || t->road[q].endJ == j) return 0; }
+  return 1;
+}
+// -> 1, если (r, l, s) заменён: выезд из тупика (исходящая дорога, s у её конца)
+static int mcLeaveDeadEnd(const Traffic *t, int *r, int *l, float *s) {
+  const TrRoad *R = &t->road[*r]; if (R->length > MC_DEADEND_LEN) return 0;
+  int rv = R->rev == 0xFFFF ? -1 : (int)R->rev, deadEnd = mcDeadJunc(t, R->endJ, *r), deadStart = mcDeadJunc(t, R->startJ, *r);
+  if (deadEnd == deadStart) return 0;                      // не тупик (0/0) или изолированная дорога (1/1): прежнее
+  int out = deadEnd ? rv : *r;                             // исходящая: из тупика наружу — обратная (если полоса шла в тупик) или эта же (если шла из него)
+  if (out < 0 || out >= (int)t->hd->nRoad) return 0;
+  const TrRoad *O = &t->road[out]; if (mcDeadJunc(t, O->startJ, out) == 0 && mcDeadJunc(t, O->endJ, out) == 0) return 0;
+  *r = out; if (*l >= O->lanes) *l = 0; *s = fmaxf(0.f, O->length - 8.f); return 1;
+}
+int mcResetPointOff(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float off, float out[4]);
+int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]) { return mcResetPointOff(t, x, y, z, h, vx, vz, 0.f, out); }
+// off — сдвиг точки вдоль полосы относительно «+8 м вперёд» (−4 — на 4 м назад по полосе): кандидаты №1248ж, game.c gameReset выбирает первый годный
+int mcResetPointOff(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float off, float out[4]) {
   if (!t || !t->hd || !t->hd->nRoad) return 0;
   float dir = vx * vx + vz * vz > 4.f ? atan2f(vx, vz) : h; int r, l; float s, d2;
   // сперва полоса под машиной (до 4 м, любой курс — стоит на дороге, дальше по её направлению), потом по ходу (курс ±70°, до 40 м), потом любая до 80 м
   if (!nearestLane(t, x, y, z, dir, -1.f, 16.f, 0, &r, &l, &s, &d2) && !nearestLane(t, x, y, z, dir, 1.2217f, 40.f * 40.f, 0, &r, &l, &s, &d2) &&
       !nearestLane(t, x, y, z, dir, -1.f, 80.f * 80.f, 0, &r, &l, &s, &d2) && !nearestLane(t, x, -1e9f, z, dir, -1.f, 80.f * 80.f, 0, &r, &l, &s, &d2)) return 0;
-  float len = t->road[r].length, s1 = s + 8.f; if (s1 > len - 2.f) s1 = fmaxf(0.f, len - 2.f);
+  if (!RESET_DEADEND_OLD) mcLeaveDeadEnd(t, &r, &l, &s);   // №1248
+  float len = t->road[r].length, s1 = s + 8.f + off; if (s1 > len - 2.f) s1 = fmaxf(0.f, len - 2.f); if (s1 < 0.f) s1 = 0.f;
   float p[3], q[3]; lanePos(t, r, l, s1, p); lanePos(t, r, l, fminf(len, s1 + 3.f), q);
   if (q[0] == p[0] && q[2] == p[2]) lanePos(t, r, l, fmaxf(0.f, s1 - 3.f), q), out[3] = atan2f(p[0] - q[0], p[2] - q[2]); else out[3] = atan2f(q[0] - p[0], q[2] - p[2]);
   out[0] = p[0]; out[1] = p[1]; out[2] = p[2]; return 1;

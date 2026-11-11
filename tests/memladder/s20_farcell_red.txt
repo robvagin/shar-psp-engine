@@ -1,0 +1,27 @@
+# Лестница-96 + Модели-96 (дальние клетки в 101): очередь версий клеток. flag farfake 1
+flag farcell 0 - проба без данных: «дальняя» версия = та же полная из level.shr (размер тот же), но весь путь настоящий:
+# выбор версии по краю клетки (дальше 135 м дальняя, ближе 105 м полная), чтение в новый блок, обмен на кадре границы (make-before-break), бюджет по версии. Гомер идёт шагами по 50 м, каждый раз ждём.
+# Красное: s20_farcell_red.txt (flag farcell 0 - версий нет, обменов нет). Гейт check.py farcell.
+flag nosave
+scene BOOT
+flag farfake 1
+flag farcell 0
+flag golevel 1
+wait 40
+foot 270 172 1.57
+wait 7
+foot 320 172 1.57
+wait 7
+foot 370 172 1.57
+wait 7
+foot 420 172 1.57
+wait 7
+foot 370 172 -1.57
+wait 7
+foot 320 172 -1.57
+wait 7
+foot 270 172 -1.57
+wait 7
+foot 220 172 -1.57
+wait 7
+end

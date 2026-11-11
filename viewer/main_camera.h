@@ -288,12 +288,14 @@ static unsigned csubT[10], csubN, csubT0, csubRay0, csubNf0;
 #define CSM0() ((void)0)
 #define CSM(i) ((void)0)
 #define CSFLUSH() ((void)0)
+#define CSMX(i) ((void)0)
 #else
-static unsigned csuA[9], csuN, csuT;
+static unsigned csuA[12], csuN, csuT;   // 9 — комната (отражённый проход), 10 — небо после города, 11 — подмес мира (jitter): части post, диагностика «post 1,34 мс PSP» (Пропечка №1, 09.11)
+#define CSMX(i) CSM(i)
 #define CSM0() do { if (smkOn) csuT = sceKernelGetSystemTimeLow(); } while (0)
 #define CSM(i) do { if (smkOn) { unsigned n_ = sceKernelGetSystemTimeLow(); csuA[i] += n_ - csuT; csuT = n_; } } while (0)
-#define CSFLUSH() do { if (smkOn && ++csuN >= 30) { char l_[260]; snprintf(l_, sizeof l_, "CITYSUB t=%.1f sc=%s n=%u setup=%.3f cam=%.3f frame=%.3f view=%.3f sky0=%.3f cover=%.3f pre=%.3f dl=%.3f post=%.3f (мс/кадр)\n", smkT, smkScene, csuN, \
-      csuA[0] / 1000.0 / csuN, csuA[1] / 1000.0 / csuN, csuA[2] / 1000.0 / csuN, csuA[3] / 1000.0 / csuN, csuA[4] / 1000.0 / csuN, csuA[5] / 1000.0 / csuN, csuA[6] / 1000.0 / csuN, csuA[7] / 1000.0 / csuN, csuA[8] / 1000.0 / csuN); smkWrite(l_); memset(csuA, 0, sizeof csuA); csuN = 0; } } while (0)
+#define CSFLUSH() do { if (smkOn && ++csuN >= 30) { char l_[360]; snprintf(l_, sizeof l_, "CITYSUB t=%.1f sc=%s n=%u setup=%.3f cam=%.3f frame=%.3f view=%.3f sky0=%.3f cover=%.3f pre=%.3f dl=%.3f post=%.3f room=%.3f sky=%.3f jit=%.3f (мс/кадр; post = всё после города, room+sky+jit — его части)\n", smkT, smkScene, csuN, \
+      csuA[0] / 1000.0 / csuN, csuA[1] / 1000.0 / csuN, csuA[2] / 1000.0 / csuN, csuA[3] / 1000.0 / csuN, csuA[4] / 1000.0 / csuN, csuA[5] / 1000.0 / csuN, csuA[6] / 1000.0 / csuN, csuA[7] / 1000.0 / csuN, (csuA[8] + csuA[9] + csuA[10] + csuA[11]) / 1000.0 / csuN, csuA[9] / 1000.0 / csuN, csuA[10] / 1000.0 / csuN, csuA[11] / 1000.0 / csuN); smkWrite(l_); memset(csuA, 0, sizeof csuA); csuN = 0; } } while (0)
 #endif
 static void camSubReport(void) {
   if (!smkOn) return;

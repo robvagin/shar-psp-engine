@@ -1,0 +1,9 @@
+scene UF_5
+flag golevel 5
+wait 20
+flag player 1
+flag msn
+wait 8
+flag uifit
+wait 2
+end

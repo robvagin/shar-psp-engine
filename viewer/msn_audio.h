@@ -44,6 +44,7 @@ typedef struct MsnAudioBackend {
   int   logNow;                                        // 1 — строки сразу (бот); 0 — по одной за кадр (EBOOT: запись в файл)
   void  (*always_on)(void *u, int on);                 // круг 3 (g08, P09:1): этап «музыка всегда» включён/снят — фон улицы после выхода из машины не возвращается; NULL — ничего
   void  (*time_warn)(void *u);                         // сверка g08-sound (P09:20, P06 Д4): таймер пересёк 10 с вниз — реплика героя «Time» (музыки 10sec нет); NULL — ничего
+  void  (*warm)(void *u);                              // Звук-96: старт миссии — заказать её первые звуки в кэш заранее; NULL — ничего
 } MsnAudioBackend;
 
 typedef struct MsnAudio {

@@ -484,6 +484,7 @@ def car_model(conv, name, cache, texblob, vblob, pieces, tmp='trf_car', light=No
 
 
 # ------------------------------------------------------------------ пешеходы: общий блоб CHR1
+PEDIDX = os.environ.get('PEDIDX96_OLD') != '1' and not os.environ.get('CHAR_INDEXED_OLD')   # Модели-96: индексные пачки пешеходов (1 — как было)
 class Blob(ce.Blob):
     pass
 
@@ -519,7 +520,8 @@ def ped_blob(names):
             if tn not in used: used.append(tn)
             tex_index[tn] = used.index(tn)
         batches = ce.build_batches(groups, shaders, tex_index, None)
-        batches = [dict(bt, **ce.batch_vertices(bt)) for bt in batches]
+        pscale = ce.pos16_scale([s['pos'] for bt in batches for s in bt['strips']])   # Модели-96: позиции s16 с масштабом модели в заголовке (CHARPOS16_OLD=1 — f32)
+        batches = [dict(bt, **ce.batch_vertices(bt, pscale)) for bt in batches]
         nj = len(joints); sig = tuple(j['name'].lower() for j in joints)
         # клипы: один набор записей на порядок суставов
         if sig not in clip_sets:
@@ -537,15 +539,14 @@ def ped_blob(names):
             for cl in clips:
                 offTr = bl.add(bytes(16 * nj)); has_root = 0
                 for j, tr in enumerate(cl['tracks']):
-                    nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0
+                    nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0; flags = 0
+                    # (дорожки «= поза покоя» здесь не отбрасываем: набор клипов общий для моделей с одними именами суставов, а позы покоя у них разные)
                     if nr:
-                        fr = struct.pack(f'<{nr}H', *tr['rf']); fr += bytes(ce.align(len(fr), 4) - len(fr))
-                        orr = keys(fr + np.clip(np.round(tr['rq'] * 32767), -32767, 32767).astype('<i2').tobytes())
+                        mode, data = ce.ANIMPACK.pack_rot(tr['rf'], tr['rq']); orr = keys(data); flags |= mode
                     if nt:
-                        fr = struct.pack(f'<{nt}H', *tr['tf']); fr += bytes(ce.align(len(fr), 4) - len(fr))
-                        ot = keys(fr + tr['tv'].astype('<f4').tobytes())
+                        mode, data = ce.ANIMPACK.pack_trans(tr['tf'], tr['tv']); ot = keys(data); flags |= mode << 2
                         if j == 0: has_root = 2
-                    struct.pack_into('<HHII', bl.b, offTr + 16 * j, nr, nt, orr, ot)
+                    struct.pack_into('<HHIII', bl.b, offTr + 16 * j, nr, nt, orr, ot, flags)
                 dur = (cl['frames'] - 1) / cl['fps']
                 recs.append(ce.cname(cl['name'], 48) + struct.pack('<fffII', cl['frames'], cl['fps'], dur, (cl['loop'] & 1) | has_root, offTr) + bytes(12))
             clip_sets[sig] = (bl.add(b''.join(recs), 16), len(recs))
@@ -563,18 +564,25 @@ def ped_blob(names):
             w, h, oc, op = tex(src.get(tn, tn))
             rec = ce.cname(tn, 24) + struct.pack('<HHIIII', w, h, ce.GU_PSM_T8, oc, op, 1)
             bl.b[offT + ce.TEXR * i: offT + ce.TEXR * i + len(rec)] = rec
-        offB = bl.add(bytes(ce.BAT * len(batches)), 16); tv = 0
+        offB = bl.add(bytes(ce.BAT * len(batches)), 16); tv = 0; version = 1
         for i, bt in enumerate(batches):
-            ov = bl.add(bt['data'], 16); tv += bt['nverts']
+            # Модели-96: одинаковые вершины одной пачки лежат один раз + индексы u16 (CHR1 v2, как у игроков), без потерь: вершины те же байты
+            data, idx, stored = ce.indexed_vertices(bt['data'], bt['stride']) if PEDIDX else (bt['data'], None, bt['nverts'])
+            ov = bl.add(data, 16); tv += bt['nverts']
+            oi = bl.add(idx, 16) if idx is not None else 0
+            if oi: version = 2
             bones = bytes(bt['bones']) + bytes(8 - bt['nb'])
-            rec = struct.pack('<IIII', bt['vtype'], ce.GU_TRIANGLE_STRIP, bt['nverts'], ov) + struct.pack('<HH', bt['tex'], bt['nb']) + bones \
-                + struct.pack('<II', bt['stride'], 2 if bt['alpha'] else 0)
+            rec = struct.pack('<IIII', bt['vtype'] | (ce.GU_INDEX_16BIT if oi else 0), ce.GU_TRIANGLE_STRIP, bt['nverts'], ov) + struct.pack('<HH', bt['tex'], bt['nb']) + bones \
+                + struct.pack('<II', bt['stride'], (2 if bt['alpha'] else 0) | (4 if oi else 0)) + struct.pack('<III', oi, stored if oi else 0, 0)
             bl.b[offB + ce.BAT * i: offB + ce.BAT * i + len(rec)] = rec
         offBl = bl.add(bytes(8), 16)
+        offF = bl.add(bytes(4 * max(ncl, 1)), 16)   # Модели-96: таблица поправок стоп (tools/footbake.c), по модели: таблица клипов у пешеходов общая
         allp = np.concatenate([s['pos'] for bt in batches for s in bt['strips']])
         bbox = list(allp.min(0)) + list(allp.max(0))
-        struct.pack_into('<4s13I7f3I', bl.b, offH, b'CHR1', 1, 0, nj, len(batches), len(used), ncl, 0, offJ, offB, offT, offC, offBl, 0,
+        struct.pack_into('<4s13I7f3I', bl.b, offH, b'CHR1', version, 0, nj, len(batches), len(used), ncl, 0, offJ, offB, offT, offC, offBl, 0,
                          *bbox, 0., 0xFFFFFFFF, tv, 0)
+        struct.pack_into('<I', bl.b, offH + 100, offF)
+        if pscale: struct.pack_into('<f', bl.b, offH + 96, pscale)
         out.append((name, offH, float(bbox[4] - bbox[1])))
         print(f'  {name}: {nj} суставов, {len(batches)} партий GE, {tv} вершин, клипов {ncl}, рост {bbox[4] - bbox[1]:.2f} м')
     bl.at(64)
@@ -705,6 +713,7 @@ def main(level, out_path):
     data = head + al(body, 16)
     # смещения текстур: после заголовка каждой (16 Б) + CLUT 1024 Б — как в level.shr (читает traffic.c)
     dst = Path(out_path); dst.parent.mkdir(parents=True, exist_ok=True); dst.write_bytes(data)
+    ce.footbake(dst)   # Модели-96: поправка стоп пешеходов запечена в записи клипов (tools/footbake.c)
     print(f'{dst.name}: {len(data) / 1024:.0f} КБ — дороги {len(rrec) + len(prec) + len(jrec)} Б, машины {len(vblob) / 1024:.0f} КБ + '
           f'текстуры {len(trec) / 1024:.0f} КБ ({len(used)}), пешеходы {len(pblob) / 1024:.0f} КБ ({len(pinfo)} моделей), '
           f'пути {len(ptrec) / 1024:.0f} КБ')

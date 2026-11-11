@@ -36,6 +36,7 @@
 #ifndef SMOKE_H
 #define SMOKE_H
 #include "exit739.h"
+#include "audio.h"   // Звук-96: audioSbLine
 #include <pspkernel.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,8 +142,11 @@ static void smkFlush(void) {
   smkIoUs += sceKernelGetSystemTimeLow() - t;
 }
 static void (*smkSecHook)(void);   // 1Б: хук раз в секунду (строка CELLPOOL), ставит cpFlagRead
+// П4 (Публичный-93): «waitfor ТЕКСТ СЕК» - ждать строку журнала с подстрокой ТЕКСТ, записанную ПОСЛЕ команды; не дольше СЕК; таймаут - строка WAITFOR timeout, сценарий идёт дальше
+static char smkWfText[64]; static int smkWfOn, smkWfDone; static float smkWfLeft;
 static void smkWrite(const char *s) {
   if (!smkFile[0]) return;
+  if (smkWfOn && !smkWfDone && smkWfText[0] && strstr(s, smkWfText)) smkWfDone = 1;
   smkLines++;
   if (SMK_BUF_OLD) {
     unsigned t = sceKernelGetSystemTimeLow();
@@ -191,12 +195,25 @@ static void smkReset(void) {
   smkErr0 = smkReadErr; smkAlloc0 = smkAllocFail; smkHeapMin = 1e9f; smkSettleMax = 0.f; smkSettleTimeout = 0;
   smkGePeak = 0; smkGeSkip0 = smkGeSkip; smkMemFail0 = memFailsNow(); smkBlkMin = 1e9f; smkGeBad0 = smkGeBad;
 }
+// Балласт у края кучи (дирижёр 08.11): ballast должен изображать МЕНЬШУЮ память PSP, а не дыру посреди кучи; берётся самым первым выделением main (до smallPoolInit и z0Init), т.е. внизу.
+// BALLAST_MID_OLD=1 - как было (в smokeInit, посреди кучи, для сравнения со старыми прогонами)
+#ifndef BALLAST_MID_OLD
+#define BALLAST_MID_OLD 0
+#endif
+static void smokeBallastEarly(const char *base) {
+  if (BALLAST_MID_OLD || SHR_REL_SMK || smkBallast || !base) return;
+  char fn[256]; strncpy(fn, base, sizeof fn - 16); fn[sizeof fn - 16] = 0; char *sl = strrchr(fn, '/'); char *tail = sl ? sl + 1 : fn; strcpy(tail, "ballast");
+  SceUID bf = sceIoOpen(fn, PSP_O_RDONLY, 0); if (bf < 0) return;
+  char t[16] = {0}; sceIoRead(bf, t, sizeof t - 1); sceIoClose(bf); smkBallastMB = (unsigned)atoi(t);
+  if (smkBallastMB && smkBallastMB < 48) { smkBallast = malloc((size_t)smkBallastMB << 20); if (smkBallast) memset(smkBallast, 0x5a, (size_t)smkBallastMB << 20); else smkBallastMB = 0; }
+}
 // base — путь EBOOT (строка path из main.c). Зовётся всегда: оценка свободной кучи нужна и bench.txt
 static void smokeInit(const char *base) {
   if (SHR_REL_SMK) { smkHeapFree0 = heapFreeBytes(); smkHeapUsed0 = mallinfo().uordblks; smkReset(); smkSettle(); return; }   // релиз (viewer/release.h): ни ballast, ни smokelog, ни scenario.txt
   char fn[256]; strcpy(fn, base); char *sl = strrchr(fn, '/'); char *tail = sl ? sl + 1 : fn;
   strcpy(tail, "ballast"); SceUID bf = sceIoOpen(fn, PSP_O_RDONLY, 0);   // файл «ballast» с числом МБ: занять и заполнить
-  if (bf >= 0) { char t[16] = {0}; sceIoRead(bf, t, sizeof t - 1); sceIoClose(bf); smkBallastMB = (unsigned)atoi(t);
+  if (bf >= 0 && smkBallast) { sceIoClose(bf); }   // уже взят в smokeBallastEarly
+  else if (bf >= 0) { char t[16] = {0}; sceIoRead(bf, t, sizeof t - 1); sceIoClose(bf); smkBallastMB = (unsigned)atoi(t);
     if (smkBallastMB && smkBallastMB < 48) { smkBallast = malloc((size_t)smkBallastMB << 20); if (smkBallast) memset(smkBallast, 0x5a, (size_t)smkBallastMB << 20); else smkBallastMB = 0; } }
   smkHeapFree0 = heapFreeBytes(); smkHeapUsed0 = mallinfo().uordblks;
   strcpy(tail, "smokelog"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { sceIoClose(f); smkOn = 1; }
@@ -323,6 +340,10 @@ static int smokeNext(float dt, SmokeCmd *c) {
   if (smkTapT > 0.f && (smkTapT -= dt) <= 0.f) smkTap = 0;
   if (smkStickT > 0.f && (smkStickT -= dt) <= 0.f) smkStickOn = 0;
   if (smkWait > 0.f) { smkWait -= dt; return 0; }
+  if (smkWfOn) {   // waitfor: ждём строку или таймаут
+    if (smkWfDone) smkWfOn = 0;
+    else if ((smkWfLeft -= dt) <= 0.f) { smkWfOn = 0; char w_[120]; snprintf(w_, sizeof w_, "WAITFOR timeout %s t=%.1f\n", smkWfText, smkT); smkWrite(w_); }
+    else return 0; }
   if (smkShot[0]) {                                        // ждём подтверждения снимка
     char fn[256], nm[40]; strcpy(fn, smkFile); char *sl = strrchr(fn, '/'); snprintf(nm, sizeof nm, "shot_%s.ok", smkShot);
     strcpy(sl ? sl + 1 : fn, nm); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
@@ -342,6 +363,10 @@ static int smokeNext(float dt, SmokeCmd *c) {
     if (!strcmp(cmd, "tap")) { float sec = .15f; sscanf(ln, "%*s %23s %f", arg, &sec); smkTap |= smkBtn(arg); smkTapT = sec; continue; }   // №920: «press» отпускает все кнопки вместе, а прыжок при зажатом стике нужен отдельно
     if (!strcmp(cmd, "stick")) { float sx = 0, sy = 0, sec = .15f; sscanf(ln, "%*s %f %f %f", &sx, &sy, &sec); smkLx = (unsigned char)(128.f + 127.f * sx); smkLy = (unsigned char)(128.f + 127.f * sy); smkStickOn = 1; smkStickT = sec; continue; }   // №947
     if (!strcmp(cmd, "wait")) { sscanf(ln, "%*s %f", &smkWait); return 0; }
+    if (!strcmp(cmd, "waitfor")) {   // waitfor ТЕКСТ СЕК (текст может содержать пробелы; последнее слово - секунды)
+      const char *q = ln + 7; while (*q == ' ') q++; const char *e = ln + strlen(ln); while (e > q && e[-1] == ' ') e--; const char *sp = e; while (sp > q && sp[-1] != ' ') sp--;
+      float sec = (float)atof(sp); size_t tl = (size_t)((sp > q ? sp - 1 : q) - q); if (tl >= sizeof smkWfText) tl = sizeof smkWfText - 1; memcpy(smkWfText, q, tl); smkWfText[tl] = 0;
+      smkWfOn = smkWfText[0] != 0; smkWfDone = 0; smkWfLeft = sec > 0.f ? sec : 1.f; return 0; }
     if (!strcmp(cmd, "scene")) { smkStat(); smkReset(); smkSceneFlash = 3; sscanf(ln, "%*s %23s", smkScene); snprintf(s, sizeof s, "SCENE %s %.1f\n", smkScene, smkT); smkWrite(s); continue; }
     if (!strcmp(cmd, "shot")) { smkWrNow = 1; sscanf(ln, "%*s %23s", arg); char t[128]; snprintf(t, sizeof t, "SHOT %s %.1f pos %.2f %.2f %.2f %.4f\n", arg, smkT,
                                   smkPose[0], smkPose[1], smkPose[2], smkPose[3]); smkWrite(t);
@@ -580,6 +605,7 @@ static void smokeSecond(float fps, float work, float workMax, float cpu, long tr
   if (smkSecHook) smkSecHook();   // 1Б: строка CELLPOOL (viewer/cellpool.h)
   { char hb_[200]; struct mallinfo mi_ = mallinfo(); snprintf(hb_, sizeof hb_, "HEAPB t=%.1f scene=%s bytes=%u blk=%u used=%u arena=%u free=%u\n", smkT, smkScene, heapFreeBytes(), memMaxBlock ? memMaxBlock() : 0u, (unsigned)mi_.uordblks, (unsigned)mi_.arena, (unsigned)mi_.fordblks); smkWrite(hb_); }   // №930 служебно (приёмка кучи)
   { SndStats sv_; sndStats(&sv_); char sb_[120]; snprintf(sb_, sizeof sb_, "SNDV t=%.1f scene=%s voices=%d loops=%d dropped=%d under=%d\n", smkT, smkScene, sv_.voices, sv_.loops, sv_.dropped, sv_.underruns); smkWrite(sb_); }   // №1174: сколько голосов занято и сколько из них петли (утечка петли = loops растёт)
+  { char sbl_[200]; audioSbLine(sbl_, sizeof sbl_); char sbo_[260]; snprintf(sbo_, sizeof sbo_, "SNDB t=%.1f scene=%s %s\n", smkT, smkScene, sbl_); smkWrite(sbo_); }   // Звук-96: банк звука по требованию — запрошено/сыграно/подгружено/отказ (fail>0 = тишина, дыра)
   if (!PHSEC_OLD && smkPhN) {
     char p[1800]; double k = 1.0 / smkPhN;
     snprintf(p, sizeof p, "PHSEC t=%.1f scene=%s n=%u ph0=%.2f ph1=%.2f ph2=%.2f ph3=%.2f ph4=%.2f ph5=%.2f ph6=%.2f ph7=%.2f build=%.2f gesync=%.2f vbl=%.2f x_car=%.2f x_vis=%.2f x_homer=%.2f x_city=%.2f x_car3d=%.2f x_npc=%.2f x_trf=%.2f x_mcr=%.2f x_props=%.2f x_fx=%.2f x_ui=%.2f\n", smkT, smkScene, smkPhN,

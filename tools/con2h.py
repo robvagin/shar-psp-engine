@@ -138,6 +138,13 @@ def main():
     for i in range(0, len(iris), 10):
         L.append('  ' + ', '.join(f'"{n}"' for n in iris[i:i + 10]) + ',')
     L += ['};', '#define CAR_IRIS_CONS ((int)(sizeof carIrisCons / sizeof carIrisCons[0]))', '']
+    # Правка 1240 (Роб, PSP): открытые машины (нет верха над сиденьем водителя) — причёска Мардж за рулём остаётся стоймя (клип сидения ndr общий и
+    # кладёт её назад под закрытую кабину). Список — файл данных tools/open_cars.txt (его строит tools/open_cars.py по моделям диска, сверен глазами)
+    opn = [l.strip() for l in (Path(__file__).resolve().parent / 'open_cars.txt').read_text().splitlines() if l.strip() and not l.startswith('#')]
+    L += ['// правка 1240: машина без верха над сиденьем (tools/open_cars.txt; car.c carOpenFor)', 'static const char *const carOpenCons[] = {']
+    for i in range(0, len(opn), 10):
+        L.append('  ' + ', '.join(f'"{n}"' for n in opn[i:i + 10]) + ',')
+    L += ['};', '#define CAR_OPEN_CONS ((int)(sizeof carOpenCons / sizeof carOpenCons[0]))', '']
     # ИИ-водители миссий (29.09): .con в подпапках (missions/level01/m1race.con, easyrace/ai_5th.con, pursuit/hardcop.con …) —
     # полный набор физики машины миссии (AddStageVehicle, 4-й аргумент). Ключ — путь от scripts/cars без .con, строчные, '/'.
     # Команды, которых нет, — тем же правилом, что у машин (FIELDS); первая таблица этим не меняется

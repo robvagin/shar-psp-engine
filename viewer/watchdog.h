@@ -26,6 +26,7 @@ void wdFire(const char *kind, const char *actor, const char *info);
 void wdSetLog(void (*fn)(const char *line));
 void wdSetClock(float (*now)(void));   // время в строке t= (движок — smkT); без часов — собственные секунды по сумме dt
 void wdEnable(int on);
+void wdNote(const char *kind, const char *actor, const char *info);   // Build 96: сведение (WDNOTE), не нарушение: боты и туры не считают его дырой
 unsigned wdCount(const char *kind);
 unsigned wdTotal(void);
 void wdReset(void);

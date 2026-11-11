@@ -1171,7 +1171,7 @@ static void gvAdd(const float c[3], float ex, float ey, float ez, float scale, u
   int two_ = (GV_COST845_OLD || dl < GV_LOD_D) && !gvOne970;
   GvV *v = (GvV *)ggVbAlloc((gvNs(0) + (two_ ? gvNs(1) : 0u)) * sizeof(GvV));
   const float R[3] = {-dz / l, 0.f, dx / l}, U[3] = {-dy / dl * dx / l, l / dl, -dy / dl * dz / l};
-  float tm = (float)(sceKernelGetSystemTimeLow() % 60000000u) * 1e-6f + phase;
+  float tm = (float)(gtUs95() % 60000000u) * 1e-6f + phase;
   float kA, kB;
   if (GV_COST845_OLD) { kA = 1.f + .14f * sinf(6.2831853f * tm / 1.3f); kB = 1.f + .3f * sinf(6.2831853f * tm / .85f + 2.1f); }   // пульс двух звёзд не в фазе
   else { kA = 1.f + .14f * gvSinT(tm / 1.3f); kB = 1.f + .3f * gvSinT(tm / .85f + .3342254f); }   // 2,1 рад = 0,334 оборота
@@ -1246,7 +1246,7 @@ static void glintAdd(const float c[3], float ex, float ey, float ez, float scale
   if (wrgState <= 0 || glN + 2 > glCap) return;
   if (!glQ) glQ = (GlV *)ggVbAlloc(glCap * 6 * sizeof(GlV));   // вершины — одним куском на пачку: столько, сколько заказано
   float dx = c[0] - ex, dz = c[2] - ez, l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) l = 1e-3f;
-  float Rx = dz / l, Rz = -dx / l, tm = (float)(sceKernelGetSystemTimeLow() % 60000000u) * 1e-6f + phase;
+  float Rx = dz / l, Rz = -dx / l, tm = (float)(gtUs95() % 60000000u) * 1e-6f + phase;
   for (int s = 0; s < 2; s++) {
     float per = s ? .83f : 1.17f, ph = s ? 1.9f : 0.f, amp = s ? .5f : .2f, base = s ? .4f : 1.f, rot = s ? .66f : 0.f;   // малая — 2,09/5,22 большой, как у диска; повёрнута на 38°
     float sz = scale * base * (1.f - .5f * amp + amp * (.5f + .5f * sinf(6.2831853f * tm / per + ph)));
@@ -1428,7 +1428,7 @@ static void wrGlowDraw(float ex, float ey, float ez, int inR) {
   unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0;
   typedef struct { float u, v; unsigned c; float x, y, z; } WV;
   float e3[3] = {ex, ey, ez}; unsigned n = 0; WV *q = 0; unsigned bb0 = ggVbUsed;
-  float tm = (float)(sceKernelGetSystemTimeLow() & 0xFFFFFFu) * 1e-6f;
+  float tm = (float)(gtUs95() & 0xFFFFFFu) * 1e-6f;
   for (unsigned k = 0; k < world.nwrench && k < 32; k++) {
     int i = G.wrenchInst[k]; if (i < 0 || !sprops.run[i].alive || ((G.wrenchTaken >> k) & 1u)) continue;
     const ColWrench *W = &world.wrench[k]; float dx = W->p[0] - ex, dy = W->p[1] - ey, dz = W->p[2] - ez, d2 = dx * dx + dy * dy + dz * dz;
@@ -1511,6 +1511,7 @@ static void wsRetone(void) {
     memcpy((void *)wsA[a].pal, wsA[a].palRaw, 1024); palTone((void *)wsA[a].pal); sceKernelDcacheWritebackRange((void *)wsA[a].pal, 1024); }
 }
 static int wsOn(int a) { if (!wsA[a].state) wsLoad(a); return wsA[a].state > 0; }
+static void wsPreload(void) { for (int a = 0; a < WS_N; a++) if (!wsA[a].state) wsLoad(a); }   // Build 94 Z0-лайт: спрайты гаечных ключей, восклицания и будки читаются один раз при первой загрузке уровня, а не по первому показу посреди кучи
 static int wrSprOn(void) { if (WRENCH_SPRITE_OLD || !haveCol || !world.nwrench) return 0; return wsOn(WS_WRENCH); }
 static int wrSprInst(unsigned i) { for (unsigned k = 0; k < world.nwrench && k < 32; k++) if (G.wrenchInst[k] == (int)i) return 1; return 0; }
 static void wsAddPivOff(int a, const float c[3], float rot, float px, float py, float ox, float oy) {   // квадрат поворачивается на rot вокруг своей точки (px, py)
@@ -1626,7 +1627,7 @@ static int iconSprHook(const char *name, const float *c, const float *cr, const 
   if (a == WS_EXCL && !EXCL_PIVOT_OLD) { float p3[3] = {br[0], bt[1], br[2]};
     if (!EXCL_EASE_OLD) wsAddPivOff(a, p3, EXCL_TILT_K * (16.95f * 3.1415927f / 180.f) * cosf(6.2831853f * cf / 30.f), pv[0], pv[1], EXCL_NUDGE_X, EXCL_NUDGE_Y);
     else wsAddPiv(a, p3, EXCL_TILT_K * (tilt - EXCL_TILT_MID), pv[0], pv[1]); }
-  else if (a == WS_EXCL) { float tm = (float)(sceKernelGetSystemTimeLow() % 60000000u) * 1e-6f, p3[3] = {cr[0], c[1], cr[2]};
+  else if (a == WS_EXCL) { float tm = (float)(gtUs95() % 60000000u) * 1e-6f, p3[3] = {cr[0], c[1], cr[2]};
     wsAdd(a, p3, EXCL_SWAY_DEG * (3.1415927f / 180.f) * sinf(6.2831853f * tm / EXCL_SWAY_T)); }
   else wsAdd(a, c, 0.f);
   wsFlush(ex, ey, ez); wsIcons++; if (smkOn) wsIconUs += sceKernelGetSystemTimeLow() - t0;   // дымку не возвращаем: как msnartDraw (вызывающий сам ставит состояние)

@@ -151,7 +151,7 @@ typedef struct {
   float vy0; int wasAir;            // круг 2, P09:30: вертикальная скорость на прошлом кадре и был ли в воздухе (событие приземления)
   Car car;                                                    // твёрдое тело (carHitCar; после удара — carUpdate)
 } TrCar;
-typedef struct { int state, wreck; float stillT; Car car; int gone, off; float dmgSeen, dmgWin; int sel; } TrParked;   // sel — круг 5 (P03-19): место выбрано при загрузке зоны   // dmgSeen/dmgWin — P01-09 (сверка g02-traffic)   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
+typedef struct { int state, wreck; float stillT; Car car; int gone, off; float dmgSeen, dmgWin; int sel; int lazy; } TrParked;   // lazy — Коллизия-96: поза по данным, на землю ещё не ставилась (carInitDeferred); оседает при включении места   // sel — круг 5 (P03-19): место выбрано при загрузке зоны   // dmgSeen/dmgWin — P01-09 (сверка g02-traffic)   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
 enum { TRP_OFF, TRP_WALK, TRP_STAND, TRP_FLY, TRP_DOWN, TRP_GETUP, TRP_DODGE,
        TRP_PANIC, TRP_CRINGE, TRP_SIDE, TRP_FACE, TRP_TALK };   // сверка g02-traffic: паника (7.4), съёживание и прыжок вбок (7.5), стоп лицом к игроку (P02-37), разговор (7.8)   // TRP_DODGE — уклонился от машины (правка 180)
 typedef struct {
@@ -240,6 +240,10 @@ int trafficSolid(void *traffic, float *x, float *z, float y, float r, float *top
 // пинок Гомера (сфера x,y,z,r, направление dx,dz): пешеходы в сфере летят; число задетых
 // правка 355: неподвижная машина k (оставленная своя): машины трафика и стоянки, задевшие её, отталкиваются (k не сдвигается)
 int trafficHitStill(Traffic *t, const ColWorld *w, const Car *k);
+#ifndef OLDCARHIT1241_OLD
+#define OLDCARHIT1241_OLD 0   // правка 1241: игрок в чужой машине таранит оставленную свою как обычную стоящую (1 — проезд насквозь, как было)
+#endif
+int trafficHitPlayerStill(const ColWorld *w, Car *player, Car *own, int *awake, float *still, float dt);   // 1 — был удар; обе машины сдвинуты, толчок и урон по правилам стоящей машины трафика
 // сверка g11b-collect круг 7 (P04 W5): снаряд осы по отрезку a -> b (dir — единичное направление): -> доля пути до первого пешехода на ногах или машины трафика (больше 1 — нет); apply = 1 — удар:
 // пешеход летит 10 м/с под 45° по dir (пешеходы — бросок через pedFly), машина получает урон 0,1 (не выше 0,999: один удар не разбивает). Игрока и ос не касается
 float trafficBoltHit(Traffic *t, const float a[3], const float b[3], const float dir[3], int apply);

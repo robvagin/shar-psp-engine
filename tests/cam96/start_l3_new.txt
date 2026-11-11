@@ -1,0 +1,57 @@
+# 1246: старт миссии L3 sel1, наезд короткий; кадр каждые 0,5 с
+scene C96_L3n
+flag golevel 3
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 1
+wait 0.5
+shot c00
+wait 0.5
+shot c01
+wait 0.5
+shot c02
+wait 0.5
+shot c03
+wait 0.5
+shot c04
+wait 0.5
+shot c05
+wait 0.5
+shot c06
+wait 0.5
+shot c07
+wait 0.5
+shot c08
+wait 0.5
+shot c09
+wait 0.5
+shot c10
+wait 0.5
+shot c11
+wait 0.5
+shot c12
+wait 0.5
+shot c13
+wait 0.5
+shot c14
+wait 0.5
+shot c15
+wait 0.5
+shot c16
+wait 0.5
+shot c17
+wait 0.5
+shot c18
+wait 0.5
+shot c19
+wait 0.5
+shot c20
+wait 0.5
+shot c21
+wait 0.5
+shot c22
+wait 0.5
+shot c23
+end

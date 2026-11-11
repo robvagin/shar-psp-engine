@@ -58,6 +58,12 @@ static void drainEvents(Homer *H, int *hits, int *stomps, float t, float *tHit) 
   }
 }
 
+#if !COLRING_OLD
+#include <unistd.h>
+#include <fcntl.h>
+#include "colring.h"
+static int homerRingRead(void *u, unsigned off, void *dst, unsigned n) { return pread(*(int *)u, dst, n, off) == (ssize_t)n ? 0 : -1; }
+#endif
 int main(int argc, char **argv) {
   const char *lvl = argc > 1 ? argv[1] : "build/level.shr", *hom = argc > 2 ? argv[2] : "build/homer.shr";
   FILE *f = fopen(lvl, "rb"); if (!f) { printf("no %s\n", lvl); return 1; }
@@ -68,6 +74,15 @@ int main(int argc, char **argv) {
   fseek(f, 0, SEEK_END); unsigned fsize = (unsigned)ftell(f);
   unsigned end = fsize; if (pvsOff > colOff && pvsOff < end) end = pvsOff; if (propOff > colOff && propOff < end) end = propOff;
   unsigned char *cm = readAt(f, colOff, end - colOff);
+#if !COLRING_OLD
+  /* Коллизия-96: BW_COLRING=путь к colring.shr — мир из кольца (без тиков: недостающее дочитывается, кэш вне кольца тримится); та же проверка, что на целом COL1 */
+  if (cm && getenv("BW_COLRING")) {
+    static int rfd; rfd = open(getenv("BW_COLRING"), O_RDONLY); unsigned hh[64]; ColRing *R = 0; int err = 0;
+    if (rfd >= 0 && pread(rfd, hh, sizeof hh, 0) == sizeof hh) { ColRingIO io = { homerRingRead, &rfd, 0 }; R = colRingOpen(&io, malloc((size_t)(hh[35] + 24) * CRING_PAGEB), (hh[35] + 24) * CRING_PAGEB, &err); }
+    if (!R || colInitRing(&world, R)) { printf("colring failed %d\n", err); return 1; }
+    colRingEnsure(R, spx, spz);
+  } else
+#endif
   if (!cm || colInit(&world, cm, end - colOff)) { printf("COL1 failed\n"); return 1; }
   if (propOff) {
     unsigned char *ph = readAt(f, propOff, 64);

@@ -24,7 +24,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"; OUT="${OUT_DIR:-build/airwalls}"; mkdir -p "$OUT"
 LEVEL="${1:-build/level.shr}"
 build() { cc -std=c11 -O2 -Wall -Wno-unused-function -DSKIN_HOST ${EXTRA_CFLAGS:-} "$@" -I viewer tests/airwalls/host.c "${CAR_C:-viewer/car.c}" "${COL_C:-viewer/col.c}" \
-  viewer/props.c viewer/stateprops.c viewer/coins.c -lm -o "$OUT/crash_bin" || exit 2; }
+  viewer/props.c viewer/stateprops.c viewer/coins.c viewer/watchdog.c -lm -o "$OUT/crash_bin" || exit 2; }
 # место | бросок (порт: x y z курс° вперёд вниз сек) | курс скорости° | конец оригинала x z (порт)
 # место | бросок | курс скорости° | конец оригинала x z (порт) | pin: конец порта x z (пусто = сравнение с оригиналом, допуск 1,2; иначе расхождение с оригиналом: закрепляем текущее поведение порта, допуск 1,2)
 CASES="J11-9|172 5.333 404 180 22 1 1.6|180|172.44 388.04|

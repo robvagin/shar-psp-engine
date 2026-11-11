@@ -9,7 +9,7 @@
 # Зелёный — все проверки на настоящих данных. Журнал: build/gates/aicar/host_<время>.txt
 cd "$(dirname "$0")/../.."
 LV=${1:-build/level.shr}; TR=${2:-build/traffic.shr}; MS=${3:-build/missions/level01.msn}; MC=${4:-build/msncars-l1.shr}
-V=viewer; SRC="tests/aicar/host.c $V/msncar.c $V/car.c $V/col.c $V/traffic.c $V/homer.c $V/skin.c $V/mission/msn_file.c $V/mission/msn_ops.c"
+V=viewer; SRC="tests/aicar/host.c $V/msncar.c $V/car.c $V/col.c $V/traffic.c $V/homer.c $V/skin.c $V/mission/msn_file.c $V/mission/msn_ops.c $V/watchdog.c"
 CC="cc -std=c11 -O2 -Wall -Wno-unused-function -Wno-misleading-indentation -DSKIN_HOST -I $V"
 mkdir -p build/aicar build/gates/aicar; LOG=build/gates/aicar/host_$(date +%Y%m%d-%H%M%S).txt
 fail=0

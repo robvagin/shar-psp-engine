@@ -67,6 +67,8 @@ int gamePropKick(void *g, unsigned i, float dx, float dz);   // props.onKick (ki
 void gameTriangle(Game *g);                                 // △: выйти на малой скорости / сесть
 extern int gameResetRoadOld;                                  // 1 (-DRESET_ROAD_OLD=1): RESET CAR в последнее безопасное место, как до 11.10
 extern int (*gameResetRoad)(const Car *c, float out[4]);       // ближняя полоса по ходу, ставит game_msn.c
+extern int (*gameResetRoadAt)(const Car *c, float off, float out[4]);   // №1248ж: то же со сдвигом по полосе (м), кандидаты RESET
+float gameResetAhead(Game *g, float x, float y, float z, float h);   // №1248ж: свободный путь впереди (м, до 14), луч по склону; ботам и гейту RESET
 void gameReset(Game *g);                                    // RESET CAR: машина рядом на колёса, остов чинится, Гомер за рулём
 #define GAME_DEATH 1   // есть gameDeath (мир ботов зовёт её только тогда: откат правки гейтом Т1.4 собирается)
 int gameDeath(Game *g);   // правка 86: зона DEATH оригинала под игроком (машина или Гомер пешком) -> в её точку; номер зоны, -1 — нет

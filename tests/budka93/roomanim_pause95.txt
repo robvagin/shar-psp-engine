@@ -1,0 +1,30 @@
+# Build 95: анимация текстур комнаты на ИГРОВОМ времени (ROOMANIMGT95_OLD). Kwik L1: вход, 4 с анимации, пауза (START) 3 с, снятие паузы, 4 с анимации. GT 1 — зелёный, 0 — красный (flag roomanimgt95 0).
+# Читать строки "ROOMANIM stat ... lag=" (lag = smkT − время анимации): зелёный — после паузы lag вырос на ~3 с (пауза не считается), красный — lag постоянен (анимация шла на паузе).
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene G_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag roomanimgt95 GT
+flag roomanimlog 1
+scene G_door
+foot 213.97 301.70 0.0000 5.56
+wait 1.5
+press triangle 0.3
+wait 9
+foot 503.0 302.8 1.5708 -19.5
+wait 1
+scene G_before
+wait 4
+scene G_pause
+press start 0.2
+wait 3
+scene G_unpause
+press start 0.2
+wait 1
+scene G_after
+wait 4
+end

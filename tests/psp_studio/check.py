@@ -32,7 +32,7 @@ qa=r'''
  const bytes=Uint8Array.from(atob(S.frames[0].url.split(',')[1]),x=>x.charCodeAt(0));
  await upload(new File([bytes],'Кириллическая картинка.png',{type:'image/png'}));await wait(()=>$('name').textContent==='Кириллическая картинка.png');
  const count=S.frames.length;
- await upload(new File(['bad'],'сломанная.png',{type:'image/png'}));await wait(()=>$('status').classList.contains('error'));assert(S.frames.length===count,'broken file leaked frame');
+ await upload(new File(['bad'],'сломанная.png',{type:'image/png'}));await wait(()=>$('status').classList.contains('error'));assert(S.frames.length===count,'broken file kept the old frame');
  await upload(new File(['text'],'текст.txt',{type:'text/plain'}));assert($('status').classList.contains('error'),'wrong MIME');
  assert(document.documentElement.scrollWidth<=innerWidth,'page overflow');
  document.body.dataset.qa='PASS';document.title='QA PASS';

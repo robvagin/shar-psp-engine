@@ -1,0 +1,17 @@
+# Лестница-96 (срочно, видео Роба на Build 97): клетки неба (владелец 2) и машины игрока (владелец 1) не готовы после отказа памяти. flag ownerdrop N выгружает их и ставит state=3, как отказ loadCell при пересборке после будки.
+# Ожидается: новый код - сторож перечитывает за <= 2 с (WATCHDOG owner reload ... ok=1), SKYDRAW notres=0 после; на flag ownerold 1 (красный контроль, тот же EBOOT) небо не приходит (notres > 0 до конца).
+flag nosave
+scene BOOT
+flag golevel 6
+wait 45
+flag stop
+flag player
+wait 3
+scene S11_DROP
+flag ownerdrop 2
+flag ownerdrop 1
+wait 1.5
+shot s11_after1
+wait 6
+shot s11_after2
+end

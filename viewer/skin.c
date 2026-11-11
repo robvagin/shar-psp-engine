@@ -1,3 +1,4 @@
+#include "dcache96.h"
 #include "xsub.h"
 #define XSK(i, n) XS_ADD_SK(i, n)   // 41 пачек, 42 вершин контура, 43/45/48 загрузок костей в проходах контур/тело/тень, 44/46/47/49 вызовов; слова по проходам — прежний счётчик skinW (flag skinw)
 // skin.c: .chr loader, animation sampling/blending, bone palette, GE hardware-skinned drawing. See skin.h.
@@ -14,8 +15,14 @@
 #include <malloc.h>
 #include <pspkernel.h>
 #include <pspgu.h>
+#include "zone3_api.h"   // П5 Зоны-95
 #endif
 
+#ifdef SKIN_HOST
+#define SKZ_ALLOC(n) memalign(16, (n))
+#else
+#define SKZ_ALLOC(n) (skinHeapOnly ? memalign(16, (n)) : zone3AllocX(Z3A_MISSION, "toon", (n), 16))
+#endif
 _Static_assert(sizeof(SkinHeader) == 128 && sizeof(SkinJoint) == 128 && sizeof(SkinBatch) == 48 && sizeof(SkinTex) == 48 &&
                sizeof(SkinClip) == 80 && sizeof(SkinTrackRec) == 16 && sizeof(SkinBlinkKey) == 8, "CHR1 layout");
 
@@ -108,7 +115,20 @@ void skinSlotOpt(const SkinModel *mc) {
 static SkinModel *skinFromBuf(unsigned char *d, unsigned size);
 // №775: причина последнего отказа skinLoad (игрок уровня на PSP «только машина»): 1 не открылся, 2 нет памяти, 3 прочитано меньше (skinLoadGot — сколько),
 // 4 разбор (заголовок, границы, батчи). 0 — прочитан
-int skinLoadErr; unsigned skinLoadGot;
+// Build 94 «Z0-лайт» (Опора-93, замер Fable-аудита 08.11): модель игрока (player.shr 374-414 КБ) читалась в новый блок на каждом уровне и садилась по новому адресу посреди освобождённой кучи.
+// skinLoadKeep читает её в постоянное место (448 КБ, выделяется один раз; нужно больше - место заново), skinFree его не освобождает. Z0LITE_OLD=1 — как было
+// Модели-96: анимации упакованы (tools/animpack.py), самый большой игрок/костюм L1-L7 256 272 Б (был 416 720) — место Z0 272 КБ (запас 16 КБ) вместо 448. Z0SLOT96_OLD=1 — 448 КБ
+// Модели-96 круг 3: позиции вершин s16 (tools/char_export.py), самый большой игрок 247 056 Б — место Z0 264 КБ (запас 16 КБ; данные f32 с 256 272 Б тоже входят). Z0SLOT96_OLD=1 — 448 КБ
+#ifndef Z0SLOT96_OLD
+#define Z0SLOT96_OLD 0
+#endif
+#define Z0_SLOT_BYTES (Z0SLOT96_OLD ? (448u << 10) : (264u << 10))
+#ifndef Z0LITE_OLD
+#define Z0LITE_OLD 0
+#endif
+static unsigned char *skinKeepP; static unsigned skinKeepCap;
+#define SKFREE(p) do { if ((p) != skinKeepP) free(p); } while (0)
+int skinLoadErr; unsigned skinLoadGot; int skinHeapOnly;   // skinHeapOnly: П5 Зоны-95, 1 — модель в кучу, не в область «миссия»
 SkinModel *skinLoad(const char *path) {
   unsigned char *d = 0; unsigned size = 0; skinLoadErr = 0; skinLoadGot = 0;
 #ifdef SKIN_HOST
@@ -120,8 +140,9 @@ SkinModel *skinLoad(const char *path) {
 #else
   SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0); if (fd < 0) { skinLoadErr = 1; return 0; }
   size = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_END); sceIoLseek32(fd, 0, PSP_SEEK_SET);
-  d = memalign(64, size);
+  d = skinHeapOnly ? memalign(64, size) : zone3AllocX(Z3A_MISSION, "skin", size, 64);   // П5 Зоны-95: модель персонажа — область «миссия» (при выключенной зоне это memalign)
   if (!d) { skinLoadErr = 2; sceIoClose(fd); return 0; }
+  DCPRE96(d, size);
   int got = sceIoRead(fd, d, size);
   if (got != (int)size) { skinLoadErr = 3; skinLoadGot = (unsigned)got; sceIoClose(fd); free(d); return 0; }
   sceIoClose(fd);
@@ -129,25 +150,52 @@ SkinModel *skinLoad(const char *path) {
   SkinModel *m = skinFromBuf(d, size); if (!m) skinLoadErr = 4;
   return m;
 }
+// Z0-init (Build 95): место под модель игрока (Z0_SLOT_BYTES) - при старте игры, до участка уровня (низ кучи)
+void skinKeepPrealloc(void) {
+#ifndef SKIN_HOST
+  if (Z0LITE_OLD || skinKeepP) return;
+  skinKeepP = memalign(64, Z0_SLOT_BYTES); if (skinKeepP) skinKeepCap = Z0_SLOT_BYTES;
+#endif
+}
+SkinModel *skinLoadKeep(const char *path) {
+#ifdef SKIN_HOST
+  return skinLoad(path);
+#else
+  if (Z0LITE_OLD) return skinLoad(path);
+  skinLoadErr = 0; skinLoadGot = 0;
+  SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0); if (fd < 0) { skinLoadErr = 1; return 0; }
+  unsigned size = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_END); sceIoLseek32(fd, 0, PSP_SEEK_SET);
+  if (!skinKeepP || size > skinKeepCap) {   // место под модель игрока — один раз (448 КБ: у L1-L7 374-414 КБ); больше — заново
+    free(skinKeepP); skinKeepP = 0; skinKeepCap = 0;
+    unsigned cap = size > Z0_SLOT_BYTES ? size : Z0_SLOT_BYTES; skinKeepP = memalign(64, cap); if (skinKeepP) skinKeepCap = cap; }
+  if (!skinKeepP) { sceIoClose(fd); skinHeapOnly = 1; SkinModel *mh_ = skinLoad(path); skinHeapOnly = 0; return mh_; }   // нет постоянного места: в кучу, не в область «миссия» (Зоны-95)
+  DCPRE96(skinKeepP, size);   // Build 96: постоянный блок модели игрока читается заново на каждом уровне — грязные строки прежней модели прочь
+  int got = sceIoRead(fd, skinKeepP, size);
+  if (got != (int)size) { skinLoadErr = 3; skinLoadGot = (unsigned)got; sceIoClose(fd); return 0; }
+  sceIoClose(fd);
+  SkinModel *m = skinFromBuf(skinKeepP, size); if (!m) skinLoadErr = 4;
+  return m;
+#endif
+}
 // разбор и проверка прочитанного файла .chr (d — память под модель, при отказе освобождается)
 static SkinModel *skinFromBuf(unsigned char *d, unsigned size) {
   const SkinHeader *h = (const SkinHeader *)d;
   if (size < sizeof(SkinHeader) || memcmp(h->magic, "CHR1", 4) || (h->version != 1 && h->version != 2) || h->size != size || h->nJoints > SKIN_MAXJ ||
       !inside(h, h->offJoints, h->nJoints * 128) || !inside(h, h->offBatches, h->nBatches * 48) || !inside(h, h->offTex, h->nTex * 48) ||
-      !inside(h, h->offClips, h->nClips * 80) || !inside(h, h->offBlink, h->nBlink * 8)) { free(d); return 0; }
+      !inside(h, h->offClips, h->nClips * 80) || !inside(h, h->offBlink, h->nBlink * 8)) { SKFREE(d); return 0; }
 #ifdef CHAR_INDEXED_OLD
-  if(h->version!=1){free(d);return 0;}
+  if(h->version!=1){SKFREE(d);return 0;}
 #endif
-  SkinModel *m = malloc(sizeof *m); if (!m) { free(d); return 0; }
+  SkinModel *m = malloc(sizeof *m); if (!m) { SKFREE(d); return 0; }
   m->base = d; m->h = h;
   m->j = (const SkinJoint *)(d + h->offJoints); m->b = (const SkinBatch *)(d + h->offBatches);
   m->tex = (const SkinTex *)(d + h->offTex); m->c = (const SkinClip *)(d + h->offClips);
   m->blink = (const SkinBlinkKey *)(d + h->offBlink);
   for (unsigned i = 0; i < h->nBatches; i++) {       // everything the GE will read must be inside the file
     const SkinBatch *b = &m->b[i];
-    if (!skinBatchValid(m,b)) { free(d); free(m); return 0; }
+    if (!skinBatchValid(m,b)) { SKFREE(d); free(m); return 0; }
   }
-  for (unsigned i = 0; i < h->nClips; i++) if (!inside(h, m->c[i].offTracks, h->nJoints * 16)) { free(d); free(m); return 0; }
+  for (unsigned i = 0; i < h->nClips; i++) if (!inside(h, m->c[i].offTracks, h->nJoints * 16)) { SKFREE(d); free(m); return 0; }
   skinSlotOpt(m);   // №914
 #ifndef SKIN_HOST
   sceKernelDcacheWritebackRange(d, size);            // the GE reads vertices, CLUTs and texels from RAM
@@ -170,7 +218,8 @@ SkinPre *skinPreStart(const char *path) {
 #else
   p->fd = sceIoOpen(path, PSP_O_RDONLY, 0); if (p->fd < 0) { free(p); return 0; }
   p->size = (unsigned)sceIoLseek32(p->fd, 0, PSP_SEEK_END); sceIoLseek32(p->fd, 0, PSP_SEEK_SET);
-  p->d = memalign(64, p->size);
+  p->d = zone3AllocX(Z3A_MISSION, "skinpre", p->size, 64);
+  if (p->d) DCPRE96(p->d, p->size);
   if (!p->d || sceIoReadAsync(p->fd, p->d, p->size) < 0) { sceIoClose(p->fd); free(p->d); free(p); return 0; }
 #endif
   return p;
@@ -232,10 +281,20 @@ void skinPreCancel(SkinPre *p) {
   free(p->d); free(p);
 }
 
-static struct { const SkinModel *m; int clip; float lift; } footCache[96]; static int nFootCache;   // №510: skinFootLift
+static struct { const SkinModel *m; int clip; float lift; } footCache[256]; static int nFootCache; static unsigned footEvict;   // №510: skinFootLift
+void skinToonDrop(const unsigned char *base);
+#ifdef SKIN_HOST
+void skinToonDrop(const unsigned char *base) { (void)base; }   // хост-инструменты (mcp_bake, боты): контуров нет; PSP-тело ниже под #ifndef SKIN_HOST
+#endif
+// Модели-96: поправка стоп хранится по адресу модели; модели пешеходов лежат в одном массиве Traffic.peds и на новом уровне получают те же адреса — их забываем при загрузке (traffic.c)
+void skinFootForget(const SkinModel *m) {
+#ifdef FOOT_FORGET_OFF
+  (void)m; return;   // красный контроль tests/feet: без забывания кеш прежнего уровня остаётся
+#endif
+  for (int i = 0; i < nFootCache; ) if (footCache[i].m == m) footCache[i] = footCache[--nFootCache]; else i++; }
 void skinFree(SkinModel *m) {
-  if (m) { for (int i = 0; i < nFootCache; ) if (footCache[i].m == m) footCache[i] = footCache[--nFootCache]; else i++;   // адрес модели может достаться другой
-    free((void *)m->base); free(m); } }
+  if (m) { skinToonDrop(m->base); skinFootForget(m);   // адрес модели может достаться другой
+    if (m->base != skinKeepP) free((void *)m->base); free(m); } }
 
 int skinFindClip(const SkinModel *m, const char *name) {
   size_t n = strlen(name);
@@ -252,13 +311,6 @@ int skinFindJoint(const SkinModel *m, const char *name) {
 }
 
 // ---------------------------------------------------------------- sampling
-// key pair for frame f: fr[k] <= f < fr[k+1]; caller handles f outside [fr[0], fr[n-1]]
-static int findKey(const unsigned short *fr, int n, float f) {
-  int lo = 0, hi = n - 1;
-  while (hi - lo > 1) { int mid = (lo + hi) >> 1; if ((float)fr[mid] <= f) lo = mid; else hi = mid; }
-  return lo;
-}
-
 // shortest path; nlerp while the two rotations are close (dot > 0.95, < 36 deg), slerp beyond (a few Homer tracks
 // have keys up to 120 deg apart). Result normalised.
 static void qmix(float *o, const float *a, const float *b, float u) {
@@ -273,14 +325,43 @@ static void qmix(float *o, const float *a, const float *b, float u) {
 }
 
 #define Q16 (1.f / 32767.f)
+// Модели-96 (ANIMPACK96): формат ключей дорожки живёт в SkinTrackRec.pad (skin.h); старые файлы (pad = 0) читаются как раньше.
+static inline float halfToF(unsigned short h) {
+  unsigned s = (h & 0x8000u) << 16, e = (h >> 10) & 31u, m = h & 1023u, u;
+  if (!e) { if (!m) u = s; else { e = 1; while (!(m & 1024u)) { m <<= 1; e--; } m &= 1023u; u = s | ((e + 112u) << 23) | (m << 13); } }
+  else if (e == 31) u = s | 0x7f800000u | (m << 13);
+  else u = s | ((e + 112u) << 23) | (m << 13);
+  union { unsigned u; float f; } c; c.u = u; return c.f;
+}
+static void quatUnpack(unsigned w, float *q) {      // «три меньших»: 2 бита номера наибольшей компоненты + 3 x 10 бит со знаком
+  const float k = 0.70710678f / 511.f; int big = (int)(w >> 30), i, o = 0; float c[3], s2 = 0.f;
+  for (i = 0; i < 3; i++) { int v = (int)((w >> (10 * i)) & 1023u); if (v >= 512) v -= 1024; c[i] = v * k; s2 += c[i] * c[i]; }
+  for (i = 0; i < 4; i++) q[i] = i == big ? sqrtf(s2 < 1.f ? 1.f - s2 : 0.f) : c[o++];
+}
+// ключи дорожки: кадр k и данные; mode 0 — как было (кадры u16), 1 — кадры u16, 2 — кадры 0..n-1 без массива, 3 — кадры u8
+static inline float keyFrame(const unsigned char *p, int mode, int k) {
+  return mode == 2 ? (float)k : mode == 3 ? (float)p[k] : (float)((const unsigned short *)p)[k];
+}
+static inline unsigned frameBytes(int mode, int n) { return mode == 2 ? 0u : mode == 3 ? (unsigned)((n + 3) & ~3) : (unsigned)((2 * n + 3) & ~3); }
 static void rotAt(const unsigned char *base, const SkinTrackRec *tr, float f, float *q) {
-  int n = tr->nRot; const unsigned short *fr = (const unsigned short *)(base + tr->offRot);
-  const short *v = (const short *)(base + tr->offRot + ((2 * n + 3) & ~3));
+  int n = tr->nRot, mode = (int)(tr->pad & 3u); const unsigned char *fp = base + tr->offRot;
+  const unsigned char *vp = fp + frameBytes(mode, n);
   int k; float u;
-  if (n == 1 || f <= fr[0]) { k = 0; u = 0; }
-  else if (f >= fr[n - 1]) { k = n - 1; u = 0; }
-  else { k = findKey(fr, n, f); u = (f - fr[k]) / (float)(fr[k + 1] - fr[k]); }
-  const short *a = v + 4 * k;
+  if (n == 1 || f <= keyFrame(fp, mode, 0)) { k = 0; u = 0; }
+  else if (f >= keyFrame(fp, mode, n - 1)) { k = n - 1; u = 0; }
+  else if (mode == 2) { k = (int)f; u = f - (float)k; }
+  else {
+    int lo = 0, hi = n - 1;
+    while (hi - lo > 1) { int mid = (lo + hi) >> 1; if (keyFrame(fp, mode, mid) <= f) lo = mid; else hi = mid; }
+    k = lo; u = (f - keyFrame(fp, mode, k)) / (keyFrame(fp, mode, k + 1) - keyFrame(fp, mode, k));
+  }
+  if (mode) {
+    const unsigned *w = (const unsigned *)vp; float qa[4];
+    quatUnpack(w[k], qa);
+    if (u == 0.f) { memcpy(q, qa, 16); return; }
+    float qb[4]; quatUnpack(w[k + 1], qb); qmix(q, qa, qb, u); return;
+  }
+  const short *a = (const short *)vp + 4 * k;
   if (u == 0.f) {
     float x = a[0] * Q16, y = a[1] * Q16, z = a[2] * Q16, w = a[3] * Q16, r = 1.f / sqrtf(x * x + y * y + z * z + w * w);
     q[0] = x * r; q[1] = y * r; q[2] = z * r; q[3] = w * r; return;
@@ -289,15 +370,28 @@ static void rotAt(const unsigned char *base, const SkinTrackRec *tr, float f, fl
   qmix(q, qa, qb, u);
 }
 static void transAt(const unsigned char *base, const SkinTrackRec *tr, float f, float *t) {
-  int n = tr->nTrans; const unsigned short *fr = (const unsigned short *)(base + tr->offTrans);
-  const float *v = (const float *)(base + tr->offTrans + ((2 * n + 3) & ~3));
-  int k; float u;
-  if (n == 1 || f <= fr[0]) { k = 0; u = 0; }
-  else if (f >= fr[n - 1]) { k = n - 1; u = 0; }
-  else { k = findKey(fr, n, f); u = (f - fr[k]) / (float)(fr[k + 1] - fr[k]); }
-  const float *a = v + 3 * k;
-  if (u == 0.f) { t[0] = a[0]; t[1] = a[1]; t[2] = a[2]; return; }
-  t[0] = a[0] + (a[3] - a[0]) * u; t[1] = a[1] + (a[4] - a[1]) * u; t[2] = a[2] + (a[5] - a[2]) * u;
+  int n = tr->nTrans, mode = (int)((tr->pad >> 2) & 3u); const unsigned char *fp = base + tr->offTrans;
+  const unsigned char *vp = fp + frameBytes(mode, n);
+  int k; float u, a[3], b[3];
+  if (n == 1 || f <= keyFrame(fp, mode, 0)) { k = 0; u = 0; }
+  else if (f >= keyFrame(fp, mode, n - 1)) { k = n - 1; u = 0; }
+  else if (mode == 2) { k = (int)f; u = f - (float)k; }
+  else {
+    int lo = 0, hi = n - 1;
+    while (hi - lo > 1) { int mid = (lo + hi) >> 1; if (keyFrame(fp, mode, mid) <= f) lo = mid; else hi = mid; }
+    k = lo; u = (f - keyFrame(fp, mode, k)) / (keyFrame(fp, mode, k + 1) - keyFrame(fp, mode, k));
+  }
+  if (mode) {
+    const unsigned short *h = (const unsigned short *)vp + 3 * k;
+    a[0] = halfToF(h[0]); a[1] = halfToF(h[1]); a[2] = halfToF(h[2]);
+    if (u == 0.f) { t[0] = a[0]; t[1] = a[1]; t[2] = a[2]; return; }
+    b[0] = halfToF(h[3]); b[1] = halfToF(h[4]); b[2] = halfToF(h[5]);
+  } else {
+    const float *v = (const float *)vp + 3 * k;
+    if (u == 0.f) { t[0] = v[0]; t[1] = v[1]; t[2] = v[2]; return; }
+    for (int i = 0; i < 3; i++) { a[i] = v[i]; b[i] = v[3 + i]; }
+  }
+  t[0] = a[0] + (b[0] - a[0]) * u; t[1] = a[1] + (b[1] - a[1]) * u; t[2] = a[2] + (b[2] - a[2]) * u;
 }
 
 static float clipFrame(const SkinClip *c, float t) {
@@ -354,7 +448,7 @@ static void mul34(ScePspFMatrix4 *o, const ScePspFMatrix4 *a, const float *b /* 
 void skinPalette(const SkinModel *m, const SkinXf *xf, ScePspFMatrix4 *pal, ScePspFMatrix4 *world) {
   ScePspFMatrix4 wtmp[SKIN_MAXJ];
   ScePspFMatrix4 *W = world ? world : wtmp;
-  int nj = (int)m->h->nJoints;
+  int nj = (int)m->h->nJoints; const float S_ = skinPosGE(m->h);
   for (int j = 0; j < nj; j++) {
     const SkinJoint *jt = &m->j[j]; const float *q = xf[j].q;
     float x = q[0], y = q[1], z = q[2], w = q[3];
@@ -369,6 +463,7 @@ void skinPalette(const SkinModel *m, const SkinXf *xf, ScePspFMatrix4 *pal, SceP
       o[15] = 1.f;
     } else mul34(&W[j], &W[jt->parent], L);
     mul34(&pal[j], &W[j], jt->inv);
+    if (S_ != 0.f) { float *o = (float *)&pal[j]; for (int c = 0; c < 3; c++) { o[4 * c] *= S_; o[4 * c + 1] *= S_; o[4 * c + 2] *= S_; } }   // Модели-96: позиции вершин s16: GE берёт целое / 32768, метры = целое × posScale — столбцы кости множатся на posScale × 32768; нормаль s16 в файле поделена на то же число
   }
 }
 
@@ -444,6 +539,15 @@ void skinJawOpen(SkinXf *xf, int j, float rad) {
   q[0] = x * c + y * s; q[1] = y * c - x * s; q[2] = z * c + w * s; q[3] = w * c - z * s;
 }
 
+int skinFindJoints(const SkinModel *m, const char *prefix, int *out, int max) {
+  int n = 0, L = (int)strlen(prefix);
+  for (unsigned j = 0; j < m->h->nJoints && n < max; j++) if (!strncmp(m->j[j].name, prefix, (size_t)L)) out[n++] = (int)j;
+  return n;
+}
+void skinRestJoints(const SkinModel *m, SkinXf *xf, const int *js, int n) {
+  for (int i = 0; i < n; i++) { int j = js[i]; if (j < 0 || j >= (int)m->h->nJoints) continue; memcpy(xf[j].q, m->j[j].q, 16); memcpy(xf[j].t, m->j[j].t, 12); }
+}
+
 void skinUpdate(SkinPlayer *p, float dt) { skinTick(p, dt); skinPose(p); }
 
 // сверка g04-homer P15-02: ход рта говорящего по оригиналу. Угол идёт с постоянной скоростью до границы (нижняя −18° у всех, верхняя своя), на каждом развороте границы заново
@@ -512,10 +616,99 @@ static int footJoint(const char *n) {
 static int skinSoleOld = SKIN_SOLE_OLD;
 static float skinSole(const SkinModel *m) { if (skinSoleOld || !m || !m->h) return 0.f; float s = m->h->bbox[1]; return (fabsf(s) >= .03f && fabsf(s) < .8f) ? s : 0.f; }
 void skinSetSoleOld(int on) { skinSoleOld = on; nFootCache = 0; }
+// Модели-96 (Роб, L4: «у olady3 и joger1 ноги проваливаются в асфальт»; перебор всех моделей: у 48 из 72 клипов ходьбы/бега/стойки пешеходов L4 стопа уходила на 1–5 см
+// под землю, у части висела): поправка по суставам (выше) целилась в сустав стопы, а не в подошву — подошва (вершины) в клипе стоит иначе, чем в позе привязки.
+// Теперь: самая низкая СКИНОВАННАЯ вершина модели по циклу клипа (по кадрам исходной анимации) ложится на землю — ровно «посадка по нижней точке ступни в цикле». У клипов ходьбы/бега/стойки
+// берутся только вершины в нижних 45 см позы привязки (стопы и голени — быстрее в 5 раз), у остальных клипов все. Считается один раз на пару (модель, клип), кеш 256.
+// SKIN_FOOTVTX_OLD=1 / «flag footvtxold 1» — прежняя поправка по суставам
+#ifndef SKIN_FOOTVTX_OLD
+#define SKIN_FOOTVTX_OLD 1   // 104: ступни пешеходов как в 99 (Роб, тур 102)
+#endif
+#ifndef FOOTBUD
+#define FOOTBUD 200000u
+#endif
+static int skinFootVtxOld = SKIN_FOOTVTX_OLD;
+void skinSetFootVtxOld(int on) { skinFootVtxOld = on; nFootCache = 0; }
+// смещение позиции в вершине GE (веса u8, uv, цвет, нормаль s8/s16, позиция float/s16 — как vfmtOffsets, но есть и в хост-сборке); -1 — формат не тот
+static int footPosOff(unsigned vt, unsigned stride) {
+  static const int sz[4] = {0, 1, 2, 4}, csz[8] = {0, 0, 0, 0, 2, 2, 2, 4};
+  int wf = (vt >> 9) & 3, nw = wf ? (int)((vt >> 14) & 7) + 1 : 0, tf = vt & 3, cf = (vt >> 2) & 7, nf = (vt >> 5) & 3, pf = (vt >> 7) & 3;
+  if ((nf != 1 && nf != 2) || (pf != 3 && pf != 2) || (vt & (7u << 18))) return -1;
+  int o = 0, al = 1;
+  if (wf) { o += nw * sz[wf]; if (sz[wf] > al) al = sz[wf]; }
+  if (tf) { o = (o + sz[tf] - 1) & ~(sz[tf] - 1); o += 2 * sz[tf]; if (sz[tf] > al) al = sz[tf]; }
+  if (cf) { o = (o + csz[cf] - 1) & ~(csz[cf] - 1); o += csz[cf]; if (csz[cf] > al) al = csz[cf]; }
+  o = (o + sz[nf] - 1) & ~(sz[nf] - 1); if (sz[nf] > al) al = sz[nf]; o += 3 * sz[nf];
+  o = (o + sz[pf] - 1) & ~(sz[pf] - 1); int po = o; o += 3 * sz[pf]; if (sz[pf] > al) al = sz[pf];
+  o = (o + al - 1) & ~(al - 1);
+  return (unsigned)o == stride ? po : -1;
+}
+static float skinLowestVert(const SkinModel *m, const ScePspFMatrix4 *pal, float restCut) {
+  float lo = 1e9f; const float S = skinPosScale(m->h);
+  for (unsigned i = 0; i < m->h->nBatches; i++) {
+    const SkinBatch *b = &m->b[i]; const int po = footPosOff(b->vtype, b->stride); if (po < 0) continue;
+    const int s16 = ((b->vtype >> 7) & 3) == 2; const unsigned sv = skinBatchStoredVerts(b), nb = b->nb;
+    for (unsigned v = 0; v < sv; v++) {
+      const unsigned char *q = m->base + b->offVerts + (size_t)v * b->stride; float p[3], ry;
+      if (s16) { short c[3]; memcpy(c, q + po, 6); p[0] = c[0] * (1.f / 32768.f); p[1] = c[1] * (1.f / 32768.f); p[2] = c[2] * (1.f / 32768.f); ry = c[1] * S; }   // GE: s16 / 32768, палитра уже растянута (skinPalette)
+      else { memcpy(p, q + po, 12); ry = p[1]; }
+      if (ry > restCut) continue;
+      float Y = 0.f;
+      for (unsigned w = 0; w < nb; w++) { const float *M = (const float *)&pal[b->bones[w]]; Y += (q[w] * (1.f / 128.f)) * (M[1] * p[0] + M[5] * p[1] + M[9] * p[2] + M[13]); }
+      if (Y < lo) lo = Y;
+    }
+  }
+  return lo;
+}
+// Модели-96 (Роб, «в 101 разовой просадки быть не должно»): поправка стоп на пару (модель, клип) запечена экспортом в таблицу модели: заголовок CHR1 pad[1] — смещение таблицы (nClips float,
+// место резервирует экспорт), pad[2] — метка SKIN_FOOT_MAGIC, когда числа записаны (tools/footbake.c считает ровно этой же функцией skinFootLiftCompute на Маке). Таблица у каждой МОДЕЛИ,
+// не у записи клипа: у пешеходов с одним скелетом таблица клипов общая, а подошвы у моделей разные. В игре только чтение — ни обхода вершин, ни кеша по адресу модели.
+// Файл без метки (старые данные) — счёт на месте, как в 100.
+// SKIN_FOOTBAKE_OLD=1 / «flag footbakeold 1» — запечённое число не читать, считать на месте
+#ifndef SKIN_FOOTBAKE_OLD
+#define SKIN_FOOTBAKE_OLD 1   // 104: ступни пешеходов как в 99 (Роб, тур 102)
+#endif
+#define SKIN_FOOT_MAGIC 0x54464C46u   /* 'FLFT' */
+static int skinFootBakeOld = SKIN_FOOTBAKE_OLD;
+void skinSetFootBakeOld(int on) { skinFootBakeOld = on; }
+unsigned skinFootBakedHits, skinFootComputed;   // служебно: сколько раз взято запечённое / посчитано на месте
+static float footCompute(const SkinModel *m, int clip);
+float skinFootLiftCompute(const SkinModel *m, int clip) {   // без кеша и без запечённого — для tools/footbake.c
+  if (SKIN_FOOTLIFT_OLD || !m) return 0.f;
+  if (clip < 0 || clip >= (int)m->h->nClips || m->c[clip].length <= 0.f) return -skinSole(m);
+  return footCompute(m, clip);
+}
 float skinFootLift(const SkinModel *m, int clip) {
   if (SKIN_FOOTLIFT_OLD || !m) return 0.f;
   if (clip < 0 || clip >= (int)m->h->nClips || m->c[clip].length <= 0.f) return -skinSole(m);
+  if (!skinFootBakeOld && !skinFootVtxOld && m->h->pad[2] == SKIN_FOOT_MAGIC) {
+    const unsigned o = m->h->pad[1];
+    if (!(o & 3) && o >= sizeof(SkinHeader) && (unsigned)clip < m->h->nClips && o + 4u * m->h->nClips <= m->h->size) { float v; memcpy(&v, m->base + o + 4u * (unsigned)clip, 4); skinFootBakedHits++; return v; } }
   for (int i = 0; i < nFootCache; i++) if (footCache[i].m == m && footCache[i].clip == clip) return footCache[i].lift;
+  skinFootComputed++;
+  return footCompute(m, clip);
+}
+static float footCompute(const SkinModel *m, int clip) {
+  if (!skinFootVtxOld) {
+    SkinXf xf[SKIN_MAXJ]; ScePspFMatrix4 pal[SKIN_MAXJ] __attribute__((aligned(16))), wd[SKIN_MAXJ] __attribute__((aligned(16)));
+    const float cut = strstr(m->c[clip].name, "loco") ? m->h->bbox[1] + .45f : 1e9f; float low = 1e9f;
+    unsigned nvt = 0; for (unsigned i = 0; i < m->h->nBatches; i++) nvt += skinBatchStoredVerts(&m->b[i]);
+    // Отсчёты — кадры исходной анимации и по две точки между ними (поворот ноги между ключами идёт по дуге: на бегу подошва ниже всего бывает между кадрами, на 1–2 см;
+    // равномерная сетка пропускала и быстрый удар о землю). Бюджет ~200 тыс. скинований вершин на пару (модель, клип): прохожий (≈500 вершин) — все отсчёты, большая модель
+    // миссии — каждый N-й (не меньше 24); начало и конец клипа берутся всегда
+    const float lastF = m->c[clip].frames - 1.f > 1.f ? m->c[clip].frames - 1.f : 1.f; const int nn = (int)(lastF * 3.f + .5f) + 1;
+    int bud = (int)(FOOTBUD / (nvt ? nvt : 1u) * (cut < 1e8f ? 4u : 1u)); if (bud < 24) bud = 24; int step = 1; while ((nn + step - 1) / step > bud) step++;
+    for (int k = 0;; k += step) {
+      float fr = k >= nn - 1 ? lastF : (float)k * (1.f / 3.f); skinSample(m, clip, fr / (m->c[clip].fps > 1e-3f ? m->c[clip].fps : 30.f), xf); skinPalette(m, xf, pal, wd);
+      float l = skinLowestVert(m, pal, cut); if (l < low) low = l;
+      if (k >= nn - 1) break;
+    }
+    if (low < 1e8f && fabsf(low) <= 1.f) {
+      float lift = -low;
+      int k_ = nFootCache < 256 ? nFootCache++ : (int)(footEvict++ & 255);
+      footCache[k_].m = m; footCache[k_].clip = clip; footCache[k_].lift = lift; return lift;
+    }
+  }
   float rest = 1e9f, low = 1e9f;
   for (unsigned j = 0; j < m->h->nJoints; j++) { if (!footJoint(m->j[j].name)) continue;
     const float *v = m->j[j].inv; float y = -(v[3] * v[9] + v[4] * v[10] + v[5] * v[11]);   // начало сустава в позе привязки: −Rᵀ·p, строка y (столбец 1 матрицы GE)
@@ -527,7 +720,7 @@ float skinFootLift(const SkinModel *m, int clip) {
   float lift = (rest < 1e8f && low < 1e8f) ? rest - low : 0.f;
   if (fabsf(lift) < .03f || fabsf(lift) > 1.f) lift = 0.f;
   lift -= skinSole(m);   // №762: подошва позы привязки — на землю
-  if (nFootCache < 96) { footCache[nFootCache].m = m; footCache[nFootCache].clip = clip; footCache[nFootCache].lift = lift; nFootCache++; }
+  { int k_ = nFootCache < 256 ? nFootCache++ : (int)(footEvict++ & 255); footCache[k_].m = m; footCache[k_].clip = clip; footCache[k_].lift = lift; }
   return lift;
 }
 
@@ -709,18 +902,47 @@ static int toonLevel(const ScePspFMatrix4 *w, float *dist) {   // ступень
 #endif
 static inline unsigned toonStored(const SkinBatch *b) { return SKIN_TOON_V2_OLD ? b->nverts : skinBatchStoredVerts(b); }
 static struct { const unsigned char *base; unsigned size, verts; unsigned char *hull[SKIN_TOON_KN]; unsigned bytes[SKIN_TOON_KN]; unsigned short tried; signed char *sn; unsigned snBytes; unsigned char seams; } toonC[SKIN_TOON_N];   // №901: sn — общие нормали вытяжки (4 байта на вершину)
-static int vfmtOffsets(unsigned vt, unsigned stride, int *nOff, int *pOff) {   // смещения нормали (8 бит) и позиции (float) в вершине GE
+static int vfmtOffsets(unsigned vt, unsigned stride, int *nOff, int *pOff) {   // смещения нормали (8 бит) и позиции (float или s16, Модели-96) в вершине GE
   static const int wsz[4] = {0, 1, 2, 4}, tsz[4] = {0, 1, 2, 4}, csz[8] = {0, 0, 0, 0, 2, 2, 2, 4}, nsz[4] = {0, 1, 2, 4}, psz[4] = {0, 1, 2, 4};
   int wf = (vt >> 9) & 3, nw = wf ? (int)((vt >> 14) & 7) + 1 : 0, tf = vt & 3, cf = (vt >> 2) & 7, nf = (vt >> 5) & 3, pf = (vt >> 7) & 3;
-  if (nf != 1 || pf != 3 || (vt & (7u << 18))) return 0;   // нужны нормаль 8 бит и позиция float, без морфа
+  if ((nf != 1 && nf != 2) || (pf != 3 && pf != 2) || (vt & (7u << 18))) return 0;   // нужны нормаль 8 бит / s16 и позиция float / s16, без морфа
   int o = 0, al = 1;
   if (wf) { o += nw * wsz[wf]; if (wsz[wf] > al) al = wsz[wf]; }
   if (tf) { o = (o + tsz[tf] - 1) & ~(tsz[tf] - 1); o += 2 * tsz[tf]; if (tsz[tf] > al) al = tsz[tf]; }
   if (cf) { o = (o + csz[cf] - 1) & ~(csz[cf] - 1); o += csz[cf]; if (csz[cf] > al) al = csz[cf]; }
-  *nOff = o; o += 3 * nsz[nf];
-  o = (o + 3) & ~3; *pOff = o; o += 3 * psz[pf]; if (4 > al) al = 4;
+  o = (o + nsz[nf] - 1) & ~(nsz[nf] - 1); if (nsz[nf] > al) al = nsz[nf]; *nOff = o; o += 3 * nsz[nf];   // нормаль s16 выровнена по 2
+  o = (o + psz[pf] - 1) & ~(psz[pf] - 1); *pOff = o; o += 3 * psz[pf]; if (psz[pf] > al) al = psz[pf];   // выравнивание позиции — по её размеру (float 4, s16 2)
   o = (o + al - 1) & ~(al - 1);
   return (unsigned)o == stride;
+}
+// Модели-96: направление нормали вершины (длина не важна — читатели её нормируют): s8 или s16
+static inline void vnrmRd(float *n, const unsigned char *src, unsigned vt) {
+  if (((vt >> 5) & 3) == 2) { short q[3]; memcpy(q, src, 6); n[0] = q[0]; n[1] = q[1]; n[2] = q[2]; }
+  else { const signed char *c = (const signed char *)src; n[0] = c[0]; n[1] = c[1]; n[2] = c[2]; }
+}
+// Модели-96: позиция вершины в метрах / запись обратно. s16 — целое × масштаб модели (skinPosScale), float — как лежит
+static inline void vposRd(float *p, const unsigned char *src, unsigned vt, float S) {
+  if (((vt >> 7) & 3) == 2) { short q[3]; memcpy(q, src, 6); p[0] = q[0] * S; p[1] = q[1] * S; p[2] = q[2] * S; } else memcpy(p, src, 12);
+}
+static inline void vposWr(unsigned char *dst, const float *p, unsigned vt, float S) {
+  if (((vt >> 7) & 3) == 2) {
+    short q[3]; float r = 1.f / S;
+    for (int k = 0; k < 3; k++) { float v = p[k] * r; v = v < -32767.f ? -32767.f : (v > 32767.f ? 32767.f : v); q[k] = (short)(int)(v + (v < 0.f ? -.5f : .5f)); }
+    memcpy(dst, q, 6);
+  } else memcpy(dst, p, 12);
+}
+// Лестница-96 (находка по журналам Инспектора, этап 2): кэш оболочек (24 модели) жил до смены уровня, а модели миссии уходят с миссией: брошенные записи держали 1,4 МБ области «миссия»
+// (пролив в кучу, WATCHDOG mem who=toon ... spill), а после 24 моделей новым персонажам оболочки не доставались вовсе (нет контура). Теперь запись уходит вместе с моделью (skinFree).
+// TOONDROP_OLD=1 / flag toondrop 0 - как было
+#ifndef TOONDROP_OLD
+#define TOONDROP_OLD 0
+#endif
+int skinToonDropOn = !TOONDROP_OLD;
+void skinToonDrop(const unsigned char *base) {
+  if (!skinToonDropOn || !base) return;
+  for (int i = 0; i < SKIN_TOON_N; i++) if (toonC[i].base == base) {
+    for (int k = 0; k < SKIN_TOON_KN; k++) { free(toonC[i].hull[k]); skinToonBytesNow -= toonC[i].hull[k] ? toonC[i].bytes[k] : 0; }
+    skinToonBytesNow -= toonC[i].sn ? toonC[i].snBytes : 0; free(toonC[i].sn); memset(&toonC[i], 0, sizeof toonC[i]); }
 }
 void skinToonFlush(void) { for (int i = 0; i < SKIN_TOON_N; i++) { for (int k = 0; k < SKIN_TOON_KN; k++) free(toonC[i].hull[k]); free(toonC[i].sn); memset(&toonC[i], 0, sizeof toonC[i]); } skinToonBytesNow = 0; }
 // №901 (Роб 23.10: «Контур: очень важно доработать»; гомер на бегу — у поднятой ноги обводки нет, на стыках рубашка/штаны и у ботинок линия рвётся): оболочка раздувалась
@@ -733,7 +955,8 @@ void skinToonFlush(void) { for (int i = 0; i < SKIN_TOON_N; i++) { for (int k = 
 #endif
 #define TOON_SMOOTH_K 1.6f
 static int toonKey(float v) { return (int)floorf(v * 2000.f + .5f); }   // позиция с точностью 0,5 мм
-static signed char *toonSmooth(const SkinModel *m, unsigned *outBytes) {   // 4 байта на хранимую вершину пачки (по порядку пачек): nx, ny, nz (×127), k ((k-1)/(K-1)×127); 0 — нет памяти
+static signed char *toonSmooth(const SkinModel *m, unsigned *outBytes) {
+  const float S_ = skinPosScale(m->h);   // 4 байта на хранимую вершину пачки (по порядку пачек): nx, ny, nz (×127), k ((k-1)/(K-1)×127); 0 — нет памяти
   unsigned total = 0; for (unsigned i = 0; i < m->h->nBatches; i++) total += toonStored(&m->b[i]);
   if (!total) return 0;
   unsigned cap = 16; while (cap < total * 2u) cap <<= 1;
@@ -747,9 +970,9 @@ static signed char *toonSmooth(const SkinModel *m, unsigned *outBytes) {   // 4 
     for (unsigned v = 0; v < sv; v++, vi++) {
       grp[vi] = -1;
       if (!ok) continue;
-      const unsigned char *q = m->base + b->offVerts + v * b->stride; const signed char *nn = (const signed char *)(q + no);
-      float nx = nn[0], ny = nn[1], nz = nn[2], l = sqrtf(nx * nx + ny * ny + nz * nz); if (l < 1e-3f) continue;   // нулевая нормаль — не раздуваем (как прежде)
-      un[vi * 3] = nx / l; un[vi * 3 + 1] = ny / l; un[vi * 3 + 2] = nz / l; memcpy(ps + vi * 3, q + po, 12);
+      const unsigned char *q = m->base + b->offVerts + v * b->stride; float nv_[3]; vnrmRd(nv_, q + no, b->vtype);
+      float nx = nv_[0], ny = nv_[1], nz = nv_[2], l = sqrtf(nx * nx + ny * ny + nz * nz); if (l < 1e-3f) continue;   // нулевая нормаль — не раздуваем (как прежде)
+      un[vi * 3] = nx / l; un[vi * 3 + 1] = ny / l; un[vi * 3 + 2] = nz / l; vposRd(ps + vi * 3, q + po, b->vtype, S_);
       int kx = toonKey(ps[vi * 3]), ky = toonKey(ps[vi * 3 + 1]), kz = toonKey(ps[vi * 3 + 2]);
       unsigned h = ((unsigned)kx * 73856093u) ^ ((unsigned)ky * 19349663u) ^ ((unsigned)kz * 83492791u); h ^= h >> 15; h &= cap - 1u;
       for (;; h = (h + 1u) & (cap - 1u)) {
@@ -798,6 +1021,7 @@ static int toonSwatchRGB(const SkinModel *m, int t, unsigned u16, unsigned v16, 
 }
 static int toonSlate(const int *c) { int mx = c[0] > c[1] ? (c[0] > c[2] ? c[0] : c[2]) : (c[1] > c[2] ? c[1] : c[2]), mn = c[0] < c[1] ? (c[0] < c[2] ? c[0] : c[2]) : (c[1] < c[2] ? c[1] : c[2]); return mx >= 45 && mx <= 120 && mx - mn <= 36; }   // тёмный сланец: не чёрный (глаза), не цветной
 static int toonSeams(SkinModel *m) {   // число исправленных вершин
+  const float S_ = skinPosScale(m->h);
   int fixed = 0; unsigned char *base = (unsigned char *)m->base;
   for (unsigned bi = 0; bi < m->h->nBatches; bi++) {
     const SkinBatch *b = &m->b[bi]; int no, po; unsigned sv = toonStored(b);
@@ -810,15 +1034,15 @@ static int toonSeams(SkinModel *m) {   // число исправленных в
       if (key[v] != 1) continue;
       unsigned grp_ = 0; float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f}; unsigned short uvv[2]; memcpy(uvv, vb + v * b->stride + to, 4);
       for (unsigned w = 0; w < sv; w++) if (key[w] == 1) { unsigned short uw[2]; memcpy(uw, vb + w * b->stride + to, 4); if (uw[0] != uvv[0] || uw[1] != uvv[1]) continue;
-        float p[3]; memcpy(p, vb + w * b->stride + po, 12); grp_++; for (int k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; } }
+        float p[3]; vposRd(p, vb + w * b->stride + po, b->vtype, S_); grp_++; for (int k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; } }
       float e0 = hi[0] - lo[0], e1 = hi[1] - lo[1], e2 = hi[2] - lo[2], mn_ = fminf(e0, fminf(e1, e2)), mx_ = fmaxf(e0, fmaxf(e1, e2));
       if (grp_ > 60 || mn_ >= TOON_SEAM_THIN || mx_ < .08f) continue;   // широкий кусок цвета — это одежда/обувь, не строчка
       if (hi[1] > m->h->bbox[1] + .72f * (m->h->bbox[4] - m->h->bbox[1])) continue;   // верхняя четверть роста — лицо: рот, брови, подбородок оставляем
       if (TOON_SEAM_RING901_OLD) {   // как TEST54: клетка у каждой вершины своя — ближайшего соседа другого цвета в 5 см, чёрное рядом (в 5 см) — не трогаем; группа пересчитывается после каждой вершины
-        float pv[3]; memcpy(pv, vb + v * b->stride + po, 12); float best_ = 1e9f, blk_ = 1e9f; int bw_ = -1;
-        for (unsigned w = 0; w < sv; w++) if (key[w] == 3) { float pw[3]; memcpy(pw, vb + w * b->stride + po, 12); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz; if (d2 < blk_) blk_ = d2; }
+        float pv[3]; vposRd(pv, vb + v * b->stride + po, b->vtype, S_); float best_ = 1e9f, blk_ = 1e9f; int bw_ = -1;
+        for (unsigned w = 0; w < sv; w++) if (key[w] == 3) { float pw[3]; vposRd(pw, vb + w * b->stride + po, b->vtype, S_); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz; if (d2 < blk_) blk_ = d2; }
         if (blk_ < .05f * .05f) continue;
-        for (unsigned w = 0; w < sv; w++) if (key[w] == 2) { float pw[3]; memcpy(pw, vb + w * b->stride + po, 12); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz; if (d2 < best_) { best_ = d2; bw_ = (int)w; } }
+        for (unsigned w = 0; w < sv; w++) if (key[w] == 2) { float pw[3]; vposRd(pw, vb + w * b->stride + po, b->vtype, S_); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz; if (d2 < best_) { best_ = d2; bw_ = (int)w; } }
         if (bw_ < 0 || best_ > .05f * .05f) continue;
         memcpy(vb + v * b->stride + to, vb + (unsigned)bw_ * b->stride + to, 4); fixed++; continue;
       }
@@ -826,8 +1050,8 @@ static int toonSeams(SkinModel *m) {   // число исправленных в
       // выполняться, и по две вершины на кольцо (Гомер: 2 из 12 в каждой из двух пачек) оставались тёмными; треугольник между исправленной и тёмной вершиной тянет текстурную координату через соседние клетки атласа — бледные точки (белая/жёлтая клетка) у щиколотки на бегу
       float best = 1e9f; int bw = -1, dark_ = 0;
       for (unsigned v2 = v; v2 < sv; v2++) { if (key[v2] != 1) continue; unsigned short u2[2]; memcpy(u2, vb + v2 * b->stride + to, 4); if (u2[0] != uvv[0] || u2[1] != uvv[1]) continue;
-        float pv[3]; memcpy(pv, vb + v2 * b->stride + po, 12);
-        for (unsigned w = 0; w < sv; w++) if (key[w] >= 2) { float pw[3]; memcpy(pw, vb + w * b->stride + po, 12); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz;
+        float pv[3]; vposRd(pv, vb + v2 * b->stride + po, b->vtype, S_);
+        for (unsigned w = 0; w < sv; w++) if (key[w] >= 2) { float pw[3]; vposRd(pw, vb + w * b->stride + po, b->vtype, S_); float dx = pw[0] - pv[0], dy = pw[1] - pv[1], dz = pw[2] - pv[2], d2 = dx * dx + dy * dy + dz * dz;
           if (key[w] == 3) { if (d2 < .05f * .05f) dark_ = 1; } else if (d2 < best) { best = d2; bw = (int)w; } } }
       if (dark_ || bw < 0 || best > .05f * .05f) continue;   // рядом чёрное (рот, глаз, бровь) — черта лица; соседа другого цвета нет ближе 5 см — не трогаем
       for (unsigned v2 = v; v2 < sv; v2++) { if (key[v2] != 1) continue; unsigned short u2[2]; memcpy(u2, vb + v2 * b->stride + to, 4); if (u2[0] != uvv[0] || u2[1] != uvv[1]) continue;
@@ -840,6 +1064,7 @@ static int toonSeams(SkinModel *m) {   // число исправленных в
 }
 static unsigned char *toonHull(const SkinModel *m, int lv) {
   skinToonHullCalls++;
+  const float S_ = skinPosScale(m->h);
   int fr = -1;
   for (int i = 0; i < SKIN_TOON_N; i++) {
     if (toonC[i].base == m->base && toonC[i].size == m->h->size && toonC[i].verts == m->h->totalVerts) {
@@ -852,7 +1077,7 @@ static unsigned char *toonHull(const SkinModel *m, int lv) {
     if (!EYE_SIL827_OLD && (m->b[i].flags & 3) == 1) bytes2 += sz_; }   // №827: копия глаз толщиной тела — для внешнего силуэта
   toonC[fr].base = m->base; toonC[fr].size = m->h->size; toonC[fr].verts = m->h->totalVerts; toonC[fr].tried |= (unsigned short)(1u << lv);   // и при отказе: не пробовать каждый кадр
   if (!bytes || skinToonBytesNow + bytes + bytes2 > SKIN_TOON_BYTES) return 0;
-  unsigned char *h = memalign(16, bytes + bytes2); if (!h) return 0;
+  unsigned char *h = SKZ_ALLOC(bytes + bytes2); if (!h) return 0;   // П5 Зоны-95: контур модели живёт с моделью — область «миссия» (Гомер — куча)
   if (!TOON_SEAM901_OLD && !toonC[fr].seams) { toonC[fr].seams = 1; skinToonSeamFixed += (unsigned)toonSeams((SkinModel *)m); }   // №901: строчки образцов — один раз на модель
   if (!TOON_SMOOTH901_OLD && !toonC[fr].sn) { unsigned sb_ = 0; toonC[fr].sn = toonSmooth(m, &sb_); toonC[fr].snBytes = toonC[fr].sn ? sb_ : 0; skinToonBytesNow += toonC[fr].snBytes; }   // №901: общие нормали вытяжки — один раз на модель
   const signed char *sn_ = TOON_SMOOTH901_OLD ? 0 : toonC[fr].sn;
@@ -865,12 +1090,12 @@ static unsigned char *toonHull(const SkinModel *m, int lv) {
     memcpy(h + o, m->base + b->offVerts, n);
     if (vfmtOffsets(b->vtype, b->stride, &no, &po))
       for (unsigned v = 0; v < sv; v++) {
-        unsigned char *q = h + o + v * b->stride; const signed char *nn = (const signed char *)(q + no); float p[3];
-        float nx = nn[0] / 127.f, ny = nn[1] / 127.f, nz = nn[2] / 127.f, l = sqrtf(nx * nx + ny * ny + nz * nz), kk_ = 1.f;
+        unsigned char *q = h + o + v * b->stride; float nv_[3], p[3]; vnrmRd(nv_, q + no, b->vtype);
+        float nx = nv_[0] / 127.f, ny = nv_[1] / 127.f, nz = nv_[2] / 127.f, l = sqrtf(nx * nx + ny * ny + nz * nz), kk_ = 1.f;
         if (l < 1e-3f) continue;
         if (sn_) { const signed char *s_ = sn_ + (size_t)(sv0_ + v) * 4u; float sx = s_[0] / 127.f, sy = s_[1] / 127.f, sz = s_[2] / 127.f, sl = sqrtf(sx * sx + sy * sy + sz * sz);   // №901: общее направление группы вершин одной позиции
           if (sl > 1e-3f) { nx = sx; ny = sy; nz = sz; l = sl; kk_ = 1.f + s_[3] / 127.f * (TOON_SMOOTH_K - 1.f); } }
-        memcpy(p, q + po, 12); float w_ = ((b->flags & 1) && !pass ? SKIN_TOON_EYE_W : toonWk(lv)) * kk_; p[0] += nx / l * w_; p[1] += ny / l * w_; p[2] += nz / l * w_; memcpy(q + po, p, 12);
+        vposRd(p, q + po, b->vtype, S_); float w_ = ((b->flags & 1) && !pass ? SKIN_TOON_EYE_W : toonWk(lv)) * kk_; p[0] += nx / l * w_; p[1] += ny / l * w_; p[2] += nz / l * w_; vposWr(q + po, p, b->vtype, S_);
       }
     o += (n + 15) & ~15u;
   }
@@ -880,6 +1105,8 @@ static unsigned char *toonHull(const SkinModel *m, int lv) {
 }
 #else
 void skinToonFlush(void) {}
+int skinToonDropOn = 0;
+void skinToonDrop(const unsigned char *base) { (void)base; }
 #endif
 #ifndef SKIN_HOST
 // рампа ступени тени: 32 x 8 texel 8888 (строки одинаковы, V не используется); U < 0,575 (N·L < 0,15) — тень (ABGR: чуть холоднее и темнее), выше — свет (белый)

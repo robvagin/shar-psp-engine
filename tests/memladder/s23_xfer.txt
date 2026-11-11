@@ -1,0 +1,37 @@
+# Лестница-96 (дирижёр 09.11: перенос в игре открывает регион точки, ближний круг полный, видимых незагруженных 0, дальние клетки включены): L2 (p09 -399 -173), L6, L5.
+# foot через настоящий перенос (flag footfsm 1: transitClose + msnTeleport, как старт миссии/будка/возрождение), Гомер идёт сам, регион точки берёт zoneGatesFrame (строка ZONE jump). Окно 12 с после FOOT.
+# Красное: s23_xfer_red.txt (flag footfsm 0: прыжок голой телепортацией, без кольца под экраном).
+flag nosave
+scene BOOT
+flag golevel 2
+wait 40
+flag footfsm 1
+foot 135.5 -314.5 0
+wait 14
+foot -398.8 -173 0
+wait 14
+foot 135.5 -314.5 0
+wait 14
+foot -398.8 -173 0
+wait 14
+flag golevel 6
+wait 40
+foot 58.9 -23.5 0
+wait 14
+foot -414 -46 0
+wait 14
+foot 58.9 -23.5 0
+wait 14
+foot -414 -46 0
+wait 14
+flag golevel 5
+wait 40
+foot -157.4 -493.8 1
+wait 14
+foot -288.3 -177.3 1
+wait 14
+foot -157.4 -493.8 1
+wait 14
+foot -288.3 -177.3 1
+wait 14
+end

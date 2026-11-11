@@ -127,6 +127,7 @@ void msnAudioMissionStart(MsnAudio *a, const char *id, int bonus) {
   a->started = a->alwaysOn = a->tensec = a->out = a->startPend = 0; a->code[0] = 0;
   a->stateCode[0] = a->stateValue[0] = a->currentEvent[0] = 0;
   if (!id) return;
+  if (a->b && a->b->warm) a->b->warm(a->b->u);   // Звук-96: первые звуки миссии заказаны до её старта
 #ifndef MUSIC_RACE_OLD
   /* Street races also carry MSN_MF_BONUS; select their authored code first. */
   if (id[0] == 's' && id[1] == 'r' && id[2] >= '1' && id[2] <= '3' && !id[3])

@@ -40,6 +40,9 @@ void wdStep(float dt) {
     if (slot[i].fn(slot[i].user, dt, info, sizeof info)) wdFire(slot[i].kind, slot[i].actor, info);
   }
 }
+void wdNote(const char *kind, const char *actor, const char *info) {   // Build 96: сведение, не нарушение: строка WDNOTE (не WATCHDOG), счётчики сторожа не растут
+  if (logFn) { char l[300]; snprintf(l, sizeof l, "WDNOTE %s actor=%s t=%.2f %s", kind, actor ? actor : "?", clockFn ? clockFn() : selfT, info ? info : ""); logFn(l); }
+}
 unsigned wdCount(const char *kind) { WdSlot *s = find(kind, 0); return s ? s->n : 0; }
 unsigned wdTotal(void) { return total; }
 void wdReset(void) { for (int i = 0; i < WD_KINDS; i++) slot[i].n = 0; total = 0; }

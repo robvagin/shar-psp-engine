@@ -1,0 +1,28 @@
+# L7 m2, стадия buycar: продавец зомби-машины (zmale1_loc) и ведущий гонки sr3 (sr3_ralph_sd) — два места; old
+scene L7SELL_old
+flag golevel 7
+wait 20
+flag player 1
+flag seller96 0
+flag msn
+wait 8
+flag msnsel 1
+wait 4
+flag msnpass 1
+wait 3
+flag msnpass 1
+wait 4
+shot s0
+foot 344.5 16.5 0 6.7
+wait 3
+press triangle 0.3
+wait 3
+shot s1
+press triangle 0.3
+wait 2
+foot -18.6 590.8 0 1.8
+wait 3
+press triangle 0.3
+wait 4
+shot s2
+end

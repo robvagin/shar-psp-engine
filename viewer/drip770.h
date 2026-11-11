@@ -9,6 +9,9 @@
 #endif
 #define DRIP_R 1.5f        // м: квады капель вокруг места струи (струя и всплеск у её подножия)
 #define DRIP_MAX 32
+#ifndef DRIP_LAZYGY_OLD
+#define DRIP_LAZYGY_OLD 0   // 1 — земля под всеми струями на первом кадре (до Коллизии-96)
+#endif
 #define DRIP_A 70.f        // альфа столба у трубы (из 255)
 #define DRIP_A_LOW 22.f    // у пола
 #define DRIP_POOL_A 50.f
@@ -55,13 +58,14 @@ static float dripCs[17][2]; static int dripCsOk;
 static void dripDraw(float ex, float ey, float ez, int inR) {
   if (!dripOn || !dripN || inR) return;
   if (!dripCsOk) { for (int j = 0; j <= 16; j++) { float a_ = 6.2831853f * j / 16.f; dripCs[j][0] = cosf(a_); dripCs[j][1] = sinf(a_); } dripCsOk = 1; }
-  if (!dripGround && haveCol) { dripGround = 1; for (unsigned k = 0; k < dripN; k++) { float y_, n_[3]; dripC[k].gy = colGround(&world, dripC[k].x, dripC[k].z, dripC[k].top - .2f, dripC[k].top - 40.f, &y_, n_) ? y_ : dripC[k].top - 15.f; } }
+  if (DRIP_LAZYGY_OLD && !dripGround && haveCol) { dripGround = 1; for (unsigned k = 0; k < dripN; k++) { float y_, n_[3]; dripC[k].gy = colGround(&world, dripC[k].x, dripC[k].z, dripC[k].top - .2f, dripC[k].top - 40.f, &y_, n_) ? y_ : dripC[k].top - 15.f; } }
   typedef struct { unsigned c; float x, y, z; } DV;
   const int ac = !acid1131Old;
-  const float tAcid = (float)(sceKernelGetSystemTimeLow() & 0xFFFFFFu) * 1e-6f;   // с (оборот 16,7 с — по циклу 2,5 с не виден)
+  const float tAcid = (float)(gtUs95() & 0xFFFFFFu) * 1e-6f;   // с (оборот 16,7 с — по циклу 2,5 с не виден)
   unsigned b0 = ggVbUsed, nv = 0; DV *q = (DV *)ggVbAlloc(dripN * (6 + 6 + 6 * ACID_DROPS + 2 * 16 * 3) * sizeof(DV)); if (!q) return;
   for (unsigned k = 0; k < dripN; k++) {
     float dx = dripC[k].x - ex, dz = dripC[k].z - ez, d = sqrtf(dx * dx + dz * dz); if (d > DRIP_D) continue;
+    if (!DRIP_LAZYGY_OLD && dripC[k].gy < -1e29f) { if (!haveCol) continue; float y_, n_[3]; dripC[k].gy = colGround(&world, dripC[k].x, dripC[k].z, dripC[k].top - .2f, dripC[k].top - 40.f, &y_, n_) ? y_ : dripC[k].top - 15.f; }   // Коллизия-96: землю под струёй — когда она в дальности (было: все струи уровня на первом кадре, за 600 м от старта — дочитывание кольца вдали)
     float fade = d > DRIP_D - 15.f ? (DRIP_D - d) / 15.f : 1.f, r = dripC[k].r, rx = d > .01f ? -dz / d * r : r, rz = d > .01f ? dx / d * r : 0.f;   // поперёк взгляда
     if (d < r + .5f) fade *= (d - r * .5f) / (r * .5f + .5f) > 0.f ? (d - r * .5f) / (r * .5f + .5f) : 0.f;   // камера внутри столба — гаснет (как конус у глаза)
     if (fade <= 0.f) continue;

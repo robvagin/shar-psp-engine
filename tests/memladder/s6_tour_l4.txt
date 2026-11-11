@@ -1,0 +1,57 @@
+# Лестница-96 (Fable шаг 9), гейт s6: тур L4 с зонами на куче как у PSP (ballast 5): езда, пешком у дома, дверь, езда с другого места, меню.
+# Считается WATCHDOG mem who=auto за тур (ожидается <= 2; сегодня на PSP 16).
+flag nosave
+scene BOOT
+flag golevel 4
+wait 55
+flag msnhud 1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 8
+flag drive 25
+wait 27
+flag stop
+wait 1
+scene S6_ROUTE2
+flag repair
+wait 2
+goto 214.9 172.3 -3.0
+wait 3
+flag drive 25
+wait 27
+flag stop
+wait 1
+scene S6_ROUTE3
+flag repair
+wait 2
+goto 220 172 1.5708
+wait 3
+flag drive 25
+wait 27
+flag stop
+wait 1
+flag uimsndone 127
+wait 2
+press start
+wait 1
+press down
+wait 0.4
+press cross
+wait 2.5
+press triangle
+wait 1
+press start
+wait 2
+scene S6_ROUTE4
+flag repair
+wait 2
+goto 214.9 172.3 -3.0
+wait 3
+flag drive 25
+wait 27
+flag stop
+wait 1
+end

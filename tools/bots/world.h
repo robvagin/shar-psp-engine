@@ -45,6 +45,7 @@ typedef struct {
 typedef struct { BotWorld w; PropState *pst; Coin *coin; void *spmem, *collmem, *trmem, *aomem; size_t npst, ncoin, nspmem, ncollmem, ntrmem, naomem;
   float **spjm, **colljm; unsigned nspjm, ncolljm; } BotSnap;   // 04.11: jm0 обломков (№923) — отдельные выделения внутри sp.mem, снимок хранит свои копии
 
+extern int bwPropsSolid;   // 1 — пропы твёрдые для Гомера пешком, как в игре (по умолчанию 0)
 int bwData(const char *level, const char *homer, const char *msn);   // один раз: уровень (COL1, PRP2, CAR1), Гомер, пакет миссий (NULL — без); 0 = ок
 const char *bwCarName(void);   // машина уровня из CAR1 v2 (famil_v, honor_v, …); без неё — famil_v
 int bwCarSource(void);         // carParamsFromCar1: 1 — машина из CAR1 v2, 0 — CAR1 v1, < 0 — битая (famil_v)

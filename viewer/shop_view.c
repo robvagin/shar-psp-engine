@@ -73,6 +73,19 @@ int shopViewPhase(void) { return phase; }
 void shopViewSetLog(void (*log)(const char *)) { logFn = log; }
 void shopViewPlant(int off) { plantOff = off; }
 
+// Будка-93 (правка Роба 1233, T08): лавка при нехватке памяти молча не открывалась (failed=1, ни ступеней, ни слова игроку). Теперь: одна попытка, ступени лестницы (shopViewHeal, ставит main: mem1060Pre),
+// вторая попытка, и если снова нет, игроку сообщение (shopViewFailNote: «STORE UNAVAILABLE»), а не тишина. shopViewFailTest N — служебное (flag shopfail N): следующие N открытий пакета отказывают.
+// SHOPHEAL1233_OLD=1 в main (shopViewHeal = NULL, shopViewFailNote = NULL) — как было
+int (*shopViewHeal)(unsigned need);
+void (*shopViewFailNote)(const char *what);
+int shopViewFailTest;
+int (*shopViewOpenFn)(const char *fn);   // Build 95 П2: открытие пакета лавки ведёт машина переходов (ldrRun, main_collect.h): 0 — открыт; NULL — прежний путь (ступень shopViewHeal)
+static int packOpen(const char *fn) {
+  if (shopViewOpenFn) return shopViewOpenFn(fn);
+  int rc = shopViewFailTest > 0 ? (shopViewFailTest--, uiScrClose(), -3) : uiScrOpen(fn);
+  if (rc != 0 && shopViewHeal) { logf_("heal %s", fn); shopViewHeal(1u << 20); rc = shopViewFailTest > 0 ? (shopViewFailTest--, uiScrClose(), -3) : uiScrOpen(fn); }
+  return rc;
+}
 int shopViewTick(Shop *s, const char *dir, float dt) {
   if (deniedT > 0.f) deniedT -= dt;   // правка 306
   if (!s || !s->open) {                 // лавку закрыли не мы (миссия, выход в меню): экран снимается сразу
@@ -85,7 +98,7 @@ int shopViewTick(Shop *s, const char *dir, float dt) {
     snprintf(dirPath, sizeof dirPath, "%s", dir ? dir : "");
     char fn[320]; snprintf(fn, sizeof fn, "%sshop.shr", dirPath);
     phase = SHOPV_IN; t = 0.f; statsOn = 0; pending = -1;
-    if (uiScrOpen(fn) != 0) { failed = 1; logf_("nopack %s", fn); return SHOPV_EV_NONE; }
+    if (packOpen(fn) != 0) { failed = 1; logf_("nopack %s", fn); if (shopViewFailNote) shopViewFailNote("STORE UNAVAILABLE"); return SHOPV_EV_NONE; }
     { int cnt_ = shopSellerCount(s, s->at); if (cnt_ > 0 && s->sel >= cnt_) s->sel = 0; }   // сверка g09a-hud: список продавца стал короче (купленное ушло)
     if (loadCar(s, shopSellerItem(s, s->at, s->sel)) != 0) { uiScrClose(); failed = 1; logf_("noscene sel=%d", s->sel); return SHOPV_EV_NONE; }
     on = 1; sounds();

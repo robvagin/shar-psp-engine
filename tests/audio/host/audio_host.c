@@ -146,6 +146,85 @@ static void dump(const char *pack, const char *out) {
          audioTestSeamCount());
 }
 
+
+// ---- Звук-96: гейт «банк по требованию». sbtest <pack> [break]
+//  1) эталон: банк целиком (audioSbOld), каждый файл в одиночку, хеш смешанного вывода и снимок данных
+//  2) режим по требованию, кэш мал: те же файлы в случайном порядке три круга (вытеснения), хеш каждого = эталон
+//  3) нагрузка: до 24 голосов сразу случайных ресурсов с вытеснениями; у каждого живого голоса его данные в памяти и байт в байт равны эталону
+//  4) память: банк в режиме по требованию заметно меньше целиком; ни одного отказа (fail=0)
+//  «break»: загрузка файлов отключена (audioSbBreak) — тест обязан стать красным (код возврата 1), иначе гейт слепой
+static unsigned long long fnv(unsigned long long h, const void *p, size_t n) { const unsigned char *q = p; while (n--) { h ^= *q++; h *= 1099511628211ull; } return h; }
+static unsigned long long renderFile(int fi, int ch) {
+  unsigned long long h = 1469598103934665603ull; AudioStats st; int ns, rate; unsigned nsamp; (void)ns; (void)rate; (void)nsamp;
+  if (!audioTestPlayFile(fi)) return 0;
+  for (int g = 0; g < 4000; g++) { mix(); h = fnv(h, buf, sizeof buf); audioStats(&st); if (!st.voices) break; }
+  (void)ch; return h;
+}
+static int sbtest(const char *dir, int brk) {
+  int bad = 0; char line[256];
+  audioShutdown(); audioSbSlotFree(); audioSbBreak(0); audioSbOld(1);
+  if (audioInit(dir) < 0) { fprintf(stderr, "init old: %s\n", audioError()); return 1; }
+  int nf = audioTestFileCount(); unsigned arenaOld = audioSbArena();
+  unsigned long long *ref = calloc(nf, sizeof *ref);
+  unsigned dsz = 0; for (int i = 0; i < nf; i++) { unsigned o, b; audioTestFileLoc(i, &o, &b); if (o + b > dsz) dsz = o + b; }
+  unsigned char *snap = malloc(dsz); memcpy(snap, audioTestData(), dsz);
+  audioTestForceUnity(1);
+  for (int i = 0; i < nf; i++) { int ch, rate; unsigned ns; audioTestFileInfo(i, &ch, &rate, &ns); ref[i] = renderFile(i, ch); }
+  audioShutdown(); audioSbSlotFree();
+  audioSbOld(0); audioSbBreak(0);
+  if (audioInit(dir) < 0) { fprintf(stderr, "init new: %s\n", audioError()); return 1; }
+  audioSbLine(line, sizeof line); printf("SNDB init %s\n", line);
+  if (!strstr(line, "on=1")) { printf("FAIL: режим по требованию не включился\n"); return 1; }
+  unsigned arenaNew = audioSbArena();
+  printf("банк в памяти: целиком %u КБ, по требованию %u КБ, экономия %.2f МБ\n", arenaOld >> 10, arenaNew >> 10, (arenaOld - arenaNew) / 1048576.0);
+  if (arenaNew + (900u << 10) > arenaOld) { printf("FAIL: экономия меньше 0,9 МБ\n"); bad++; }
+  audioTestForceUnity(1);
+  if (brk) audioSbBreak(1);
+  unsigned rng = 12345; int mism = 0;
+  for (int round = 0; round < 3; round++) {
+    int *ord = malloc(nf * sizeof *ord); for (int i = 0; i < nf; i++) ord[i] = i;
+    for (int i = nf - 1; i > 0; i--) { rng = rng * 1664525u + 1013904223u; int j = (rng >> 8) % (i + 1); int t = ord[i]; ord[i] = ord[j]; ord[j] = t; }
+    for (int k = 0; k < nf; k++) { int fi = ord[k], ch, rate; unsigned ns; audioTestFileInfo(fi, &ch, &rate, &ns);
+      unsigned long long h = renderFile(fi, ch); if (h != ref[fi]) { mism++; if (mism < 5) printf("  расхождение: файл %d круг %d\n", fi, round); } }
+    free(ord);
+  }
+  printf("один файл за раз: расхождений с эталоном %d\n", mism); if (mism) bad++;
+  // 3) нагрузка: много голосов одновременно
+  audioTestForceUnity(0); int nr = audioSoundCount(); int hs[64], nh = 0, memBad = 0, steps = 0, unmet = 0, avoidable = 0; unsigned cacheKb = 0; { const char *q = strstr(line, "cache_kb="); if (q) cacheKb = (unsigned)atoi(q + 9); }
+  for (int step = 0; step < 4000; step++) {
+    rng = rng * 1664525u + 1013904223u; int id = (rng >> 8) % nr;
+    if (nh < 24 && ((rng >> 4) & 3)) {
+      int fi0[32]; unsigned dof0[32]; int m0 = audioTestVoiceFiles(fi0, dof0, 32); unsigned live = 0, seen[32]; int ns0 = 0;   // сколько байт кэша держат живые голоса
+      for (int k = 0; k < m0; k++) { int dup = 0; for (int q = 0; q < ns0; q++) dup |= seen[q] == (unsigned)fi0[k]; if (dup) continue; seen[ns0++] = fi0[k]; unsigned o, b; audioTestFileLoc(fi0[k], &o, &b); live += (b + 63u) & ~63u; }
+      int h = audioPlay(id, 0.5f, 0, 1); if (h) hs[nh++] = h; else if (m0 < 24) { unmet++; if (live + (70u << 10) <= cacheKb * 1024u * 6 / 10) avoidable++; } }
+    if (nh && ((rng >> 12) & 7) == 0) { int q = (rng >> 16) % nh; audioStop(hs[q]); hs[q] = hs[--nh]; }
+    mix(); steps++;
+    int fi[32]; unsigned dof[32]; int m = audioTestVoiceFiles(fi, dof, 32);
+    for (int k = 0; k < m; k++) { unsigned o, b; audioTestFileLoc(fi[k], &o, &b);
+      if (!audioSbResident(fi[k]) || memcmp(audioTestData() + dof[k], snap + o, b)) { memBad++; if (memBad < 5) printf("  данные голоса не на месте: файл %d шаг %d\n", fi[k], step); } }
+  }
+  printf("нагрузка: %d шагов, голосов с неверными данными %d, отказов от перегруза %d (из них можно было избежать %d)\n", steps, memBad, unmet, avoidable); if (memBad) bad++;
+  // 3б) обычная игра: звуки по одному с паузой (кэш не насыщен): задержка запрошен→звучит не больше двух буферов, ничего не потеряно
+  for (int q = 0; q < nh; q++) audioStop(hs[q]); nh = 0; for (int q = 0; q < 40; q++) mix();
+  audioSbStatReset(); int lat = 0;
+  for (int step = 0; step < 600; step++) {
+    rng = rng * 1664525u + 1013904223u; int id = (rng >> 8) % nr;
+    if (audioTestResLoops(id)) continue;
+    audioPlay(id, 0.5f, 0, 1); for (int q = 0; q < 6; q++) mix();
+  }
+  { char l2[300]; audioSbLine(l2, sizeof l2); const char *q = strstr(l2, "dly_max_us="); lat = q ? atoi(q + 11) : 0; printf("обычная игра: наибольшая задержка запрошен→звучит %d мкс (%d буфера)\n", lat, (lat + 11609) / 11610); }
+  if (lat > 2 * 11610 + 100 && !brk) { printf("FAIL: задержка старта в обычной игре больше двух буферов\n"); bad++; }
+  audioSbLine(line, sizeof line); printf("SNDB end %s\n", line);
+
+  { unsigned fail = 0, dly = 0; const char *q = strstr(line, " fail="); if (q) fail = (unsigned)atoi(q + 6); q = strstr(line, "dly_max_us="); if (q) dly = (unsigned)atoi(q + 11);
+    printf("отказов (звук не сыгран) %u, наибольшая задержка запрошен→звучит %u мкс\n", fail, dly);
+    if (fail && !brk) { printf("FAIL: звук не сыгран из-за кэша (%u)\n", fail); bad++; }
+    if (dly > 200000u && !brk) { printf("FAIL: задержка старта в насыщении больше 200 мс\n"); bad++; } }
+  if (!strstr(line, "evict=") || !strncmp(strstr(line, "evict=") + 6, "0 ", 2)) { printf("FAIL: вытеснений не было, проверка кэша слепая\n"); bad++; }
+  printf(bad ? "SNDBANK96 RED (%d)\n" : "SNDBANK96 GREEN\n", bad);
+  free(ref); free(snap); return bad ? 1 : 0;
+}
+
 static void wavHeader(FILE *f, unsigned frames) {
   unsigned bytes = frames * 4, v;
   fwrite("RIFF", 1, 4, f); v = 36 + bytes; fwrite(&v, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
@@ -204,6 +283,8 @@ int main(int argc, char **argv) {
   if (!strcmp(argv[1], "dump") && argc > 3) dump(dir, argv[3]);
   else if (!strcmp(argv[1], "demo") && argc > 3) demo(argv[3]);
   else if (!strcmp(argv[1], "bench")) bench();
+  else if (!strcmp(argv[1], "sbinfo")) { char l[256]; audioSbLine(l, sizeof l); printf("%s arena_kb=%u\n", l, audioSbArena() >> 10); }
+  else if (!strcmp(argv[1], "sbtest")) return sbtest(dir, argc > 3 && !strcmp(argv[3], "break"));
   else { fprintf(stderr, "bad args\n"); return 2; }
   return 0;
 }

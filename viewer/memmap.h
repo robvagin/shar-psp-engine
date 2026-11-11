@@ -15,7 +15,9 @@
 #ifndef MM_BASE
 #define MM_BASE 0x08800000u      // начало пользовательской памяти PSP
 #endif
+#ifndef MM_LOG2N
 #define MM_LOG2N 11
+#endif
 typedef struct { uint32_t a, b; } MmE;   // a: (адрес-БАЗА)>>4 + 1 (22 бита) | размер/16 младшие 10 бит << 22; b: (ra-БАЗА)>>2 (23 бита) | размер/16 старшие 9 бит << 23; a == 0 пусто, 0xFFFFFFFF удалено
 static MmE mmTab[MM_N]; static unsigned mmLive, mmOver, mmClamp, mmAdds, mmDels;
 static inline unsigned mmHash(uint32_t pi) { return (pi * 2654435761u) >> (32 - MM_LOG2N); }

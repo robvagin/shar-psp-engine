@@ -73,6 +73,12 @@ int uiSfxService(const char *f, float a) {
     uiAnimOff(f[10] == 'o' ? UI_ANIM_OLDHNR : 0); uiTrace(UI_TRACE_HNR); return 1;   // ...old — прежний код кольца (красный контроль)
   }
   if (!strcmp(f, "uipop")) { uiTrace(UI_TRACE_POP); uiForceShow((int)a, 1.5f); return 1; }   // тег a всплывает на 1.5 с
+  if (!strcmp(f, "bubble1247old")) { extern int mvBubble1247Old; mvBubble1247Old = (int)a != 0; uiBubble1247Set(!mvBubble1247Old); if (logFn) logFn(mvBubble1247Old ? "BUBBLE1247 old=1\n" : "BUBBLE1247 old=0\n"); return 1; }   // №1247: красный контроль (до загрузки уровня: флаг сценария не ждёт миссии)
+  if (!strcmp(f, "avdelay")) { extern float msnartAvDelayS; msnartAvDelayS = a; return 1; }   // №1247: значок задания приходит через a секунд после запроса (медленная карта)
+  if (!strcmp(f, "bubble1262old")) { uiBubble1262Set(!((int)a != 0)); return 1; }   // №1262: 1 — бабл без выезда, как №1251 (красный контроль)
+  if (!strcmp(f, "bubble1251old")) { uiBubble1251Set(!((int)a != 0)); return 1; }   // №1251: 1 — кружок и рамка вместе, как №1247 (красный контроль)
+  if (!strcmp(f, "pix8")) { uiPix8((int)a); return 1; }   // №1251 (служебно, сверка шрифта бабла с PSP): flag pix8 0 — сообщения шрифтом пакета, 1 — пиксельным 8×8
+  if (!strcmp(f, "bubtrace")) { uiTrace(UI_TRACE_POP); return 1; }   // №1247: служебно — построчный журнал пузыря задания (BUBBLE1247)
   if (!strcmp(f, "brtrace")) { uiTrace(UI_TRACE_POP); return 1; }   // №994: служебно — трасса кадров карточки миссии (BRIEFANIM/BRIEFDRAW)
   if (!strcmp(f, "uipop0")) { uiAnimOff(UI_ANIM_NOPOP); return 1; }
   if (!strcmp(f, "uipopmsg") || !strcmp(f, "uipopmsgh")) { uiTrace(UI_TRACE_POP); uiMessage(a > 5.5f ? "GO TO THE KWIK-E-MART AND BUY SOME COLA FOR MARGE" : a > 4.5f ? "GATE: NEW OBJECTIVE B" : a > 3.5f ? "VEHICLE DESTROYED! FIND A WRENCH, THEN GET BACK IN THE CAR AND DRIVE TO THE KWIK-E-MART" : a > 2.5f ? "GO TO THE KWIK-E-MART AND BUY SOME COLA FOR MARGE" : a > 1.5f ? "TELEPHONE BOOTH UNAVAILABLE" : a > 0.f ? "GATE: NEW OBJECTIVE B" : "GATE: NEW OBJECTIVE A", a > 3.5f ? (UI_SFX_POPSLOT_OLD ? 0 : UI_OBJICON_EXTERNAL) : -1, f[8] == 'h' ? 40.f : 1.5f); return 1; }   // №640/646: тексты для кадров пузыря; a > 3,5 — с аватаркой задания (в игре значок всегда из msnicons, в кольце; малый слот пакета — только прежний тест, UI_SFX_POPSLOT_OLD=1)

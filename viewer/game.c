@@ -131,9 +131,69 @@ void gameTriangle(Game *g) {   // △ — выйти / сесть, в том ч�
 #endif
 int gameResetRoadOld = RESET_ROAD_OLD;
 int (*gameResetRoad)(const Car *c, float out[4]);   // game_msn.c: ближняя полоса по ходу (mcResetPoint); NULL — дорог нет
+int (*gameResetRoadAt)(const Car *c, float off, float out[4]);
+// №1248д (Кольцо-96; allrisk Опоры: «RESET возвращает в ловушку» L7 F12-9 (−110; 486), дирижёр: «RESET должен выносить из места, где машина застряла у стены»): ящик b745 закрывает проезд под зданием, четыре дороги трафика (20, 21, 24, 25)
+// идут сквозь него. Точка RESET (8 м вперёд по полосе, z 478) лежала ВНУТРИ ящика, carPlace выталкивал машину на его грань (z 486,6) лицом к стене: v = 0, игрок снова упирается, бот переставлялся в то же место.
+// Теперь после постановки: впереди ближе 6 м (путь по склону, звенья 2 м луча на 1 м над землёй; обрыв — конец пути) стена, а позади свободно (≥ 12 м) — машина встаёт на 6 м назад лицом наружу (курс +180°). Впереди и позади стена (двор, тупик) — как было. RESET_WALLFACE_OLD=1 — прежнее
+#ifndef RESET_WALLFACE_OLD
+#define RESET_WALLFACE_OLD 0
+#endif
+#define RESET_WALL_AHEAD 6.f
+#define RESET_CAND_RAY 14.f    // свободно впереди измеряется до 14 м
+float gameResetAhead(Game *g, float x, float y, float z, float h);
+static int deathOld;   // ниже (DEATH_OLD)
+#define RESET_WALL_BACK 6.f
+static void resetFaceAwayFromWall(Game *g) {
+  float fx = sinf(car.h), fz = cosf(car.h);
+  if (gameResetAhead(g, car.x, car.y, car.z, car.h) >= RESET_WALL_AHEAD) return;
+  float bh = car.h + 3.14159265f; if (bh > 3.14159265f) bh -= 6.2831853f;
+  if (gameResetAhead(g, car.x, car.y, car.z, bh) < RESET_WALL_AHEAD + RESET_WALL_BACK) return;
+  carPlace(&car, &world, car.x - fx * RESET_WALL_BACK, car.y + .5f, car.z - fz * RESET_WALL_BACK, bh); car.safeT = car.t; car.nsafe = 0;
+}
+// №1248ж (дирижёр, семейство канона п.2: RESET не ставит в тупик, к стене, в невидимый объём, в воду/обрыв): точка RESET («+8 м по полосе») проверяется: кузов не выталкивается из твёрдого (сдвиг carPlace < 0,8 м), под ней есть опора, она не в зоне DEATH.
+// Не годится (впереди ближе 6 м, нет опоры в ±3,5 м от высоты дороги, зона DEATH) — кандидаты назад по полосе (−4, −8 … −40 м), потом вперёд (+4 … +24); берётся первый с путём впереди ≥ 8 м, иначе лучший годный; никто не годится — прежняя точка. RESET_CAND_OLD=1 — только прежняя
+#ifndef RESET_CAND_OLD
+#define RESET_CAND_OLD 0
+#endif
+#define RESET_CAND_NEED 6.f    // номинальная точка годится, если впереди не ближе 6 м (стена ближе — кандидаты назад/вперёд)
+#define RESET_CAND_GOOD 8.f    // кандидат берётся сразу, если впереди свободно 8 м
+// свободный путь впереди (м, до RESET_CAND_RAY): луч на 1 м над землёй по звеньям в 2 м — на подъёме луч идёт по склону, а не упирается в него; обрыв (нет опоры в ±1,5 м) — конец пути
+float gameResetAhead(Game *g, float x, float y, float z, float h) {
+  float fx = sinf(h), fz = cosf(h), px = x, py = y, pz = z, d = 0.f;
+  while (d < RESET_CAND_RAY) {
+    float nx = x + fx * (d + 2.f), nz = z + fz * (d + 2.f), gy, ny = py;
+    if (!colGround(&world, nx, nz, py + 1.5f, py - 1.5f, &gy, 0)) return d;   // нет опоры в пределах хода (обрыв, конец карты) — дальше пути нет
+    ny = gy;
+    float a[3] = {px, py + 1.f, pz}, b[3] = {nx, ny + 1.f, nz}, fr = colRayFrac(&world, a, b, 0);
+    if (fr < 1.f) return d + 2.f * fr;
+    px = nx; py = ny; pz = nz; d += 2.f;
+  }
+  return RESET_CAND_RAY;
+}
+static int resetCandOk(Game *g, const float p[4], float *ahead) {
+  Car t = car; carPlace(&t, &world, p[0], p[1] + .5f, p[2], p[3]);
+  if (hypotf(t.x - p[0], t.z - p[2]) > .8f) return 0;
+  float gy; if (!colGround(&world, t.x, t.z, p[1] + 3.5f, p[1] - 3.5f, &gy, 0)) return 0;   // опора под точкой дороги (не обрыв и не «земля» на 10 м ниже: конец карты)
+  if (world.ndeath && colDeathAtEx(&world, t.x, t.y + .5f, t.z, .5f, deathOld) >= 0) return 0;
+  *ahead = gameResetAhead(g, t.x, t.y, t.z, p[3]); (void)g; return 1;
+}
+static int resetRoadPoint(Game *g, float rp[4]) {
+  if (!gameResetRoad || !gameResetRoad(&car, rp)) return 0;
+  if (RESET_CAND_OLD || !gameResetRoadAt) return 1;
+  float ah = 0; int ok0 = resetCandOk(g, rp, &ah); if (ok0 && ah >= RESET_CAND_NEED) return 1;
+  float first[4], best[4], q[4]; int haveBest = 0; memcpy(first, rp, sizeof first); float bestAh = -1.f;
+  static const float offs[] = {-4.f, -8.f, -12.f, -16.f, -20.f, -24.f, -28.f, -32.f, -36.f, -40.f, 4.f, 8.f, 12.f, 16.f, 20.f, 24.f};
+  for (unsigned k = 0; k < sizeof offs / sizeof offs[0]; k++) {
+    if (!gameResetRoadAt(&car, offs[k], q)) continue; float a2 = 0; if (!resetCandOk(g, q, &a2)) continue;
+    if (a2 >= RESET_CAND_GOOD) { memcpy(rp, q, sizeof q); return 1; }
+    if (a2 > bestAh) { bestAh = a2; memcpy(best, q, sizeof best); haveBest = 1; }
+  }
+  if (!ok0 && haveBest) memcpy(rp, best, sizeof best); else if (ok0 && haveBest && bestAh >= RESET_CAND_NEED) memcpy(rp, best, sizeof best); else memcpy(rp, first, sizeof first);
+  return 1;
+}
 void gameReset(Game *g) {   // RESET CAR (пауза) / START без ui.shr
   float rp[4];
-  if (!gameResetRoadOld && gameResetRoad && gameResetRoad(&car, rp)) { carPlace(&car, &world, rp[0], rp[1] + .5f, rp[2], rp[3]); car.safeT = car.t; car.nsafe = 0; }   // RESET CAR по дорогам (свод ботов п. 5)
+  if (!gameResetRoadOld && resetRoadPoint(g, rp)) { carPlace(&car, &world, rp[0], rp[1] + .5f, rp[2], rp[3]); car.safeT = car.t; car.nsafe = 0; if (!RESET_WALLFACE_OLD) resetFaceAwayFromWall(g); }   // RESET CAR по дорогам (свод ботов п. 5)
   else carResetNearby(&car, &world);
   // RESET CAR остов не чинит (29.09, пункт 4): в оригинале разбитую машину чинят гаечный ключ или телефонная будка — так
   // говорит сообщение библии «VEHICLE DESTROYED! FIND A WRENCH, OR GO TO A PHONEBOOTH, TO REPAIR YOUR VEHICLE»; до ключей

@@ -266,6 +266,7 @@ extern int mcAiSubstepOld;   // 1 — подшаги ИИ-машин всегд�
 int mcPlanFor(const MsnCars *m, const McEnv *e, McCar *c, const float g[3], float (*out)[3], int cap);   // №1185: план маршрута как у водителя (копия McCar)
 int mcPlan(const Traffic *tr, float x, float y, float z, float h, const float g[3], int shortcuts, float out[][3], int cap, int *offroad);
 int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]);   // RESET CAR по дорогам: точка и курс на оси ближней полосы по ходу; 0 — нет
+int mcResetPointOff(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float off, float out[4]);   // №1248ж: то же со сдвигом по полосе (м; < 0 — назад)
 float mcLaneDist(const Traffic *tr, float x, float z);   // до оси ближней полосы (любой дороги), м; 1e9 — дорог нет
 // дороги, чью ось перекрывает коллизия уровня (путь ИИ — в объезд): проверить все сразу при загрузке уровня (иначе — по требованию
 // в первом пути через дорогу: на PSP до 70 мс за кадр). -> сколько перекрыто

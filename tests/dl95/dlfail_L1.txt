@@ -1,0 +1,22 @@
+# Build 95: лист GE клетки города не собрался из-за памяти (dlBuildM, longgame L4 Публичного: 5776 Б ×7). flag dlfail N — N первых выделений листа «нет памяти»; flag dlretry95 0/1 — как было / пауза повтора 1 с + строка WATCHDOG mem who=dl.
+# DLRETRY: 0 — красный (попытка каждый кадр на каждую клетку, молча), 1 — зелёный (не чаще раза в секунду на клетку, одна строка wait на клетку). Клетки при отказе рисуются прямо (невидимки нет): снимки dl_a, dl_b.
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene D_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag dlretry95 DLRETRY
+flag dlfail 100000
+scene D_move
+foot 120 40 0.0000 1.5
+wait 12
+shot dl_a
+foot -60 -120 0.0000 1.5
+wait 12
+shot dl_b
+flag dlfail 0
+wait 6
+end

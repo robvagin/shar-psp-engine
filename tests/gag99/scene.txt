@@ -1,0 +1,32 @@
+# 99 (Инспектор L3, Обсерватория): вход в Обсерваторию (дверь 1 на L3 по g944door), пак гэгов комнаты в «месте». Блоб комнаты 1,83 МБ + панорама 0,13 + гэги 1,07 = 3,03 МБ при «месте» 3,07 МБ (запас 40 КБ).
+
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L3_load
+flag golevel 3
+wait 45
+flag msn
+wait 3
+flag g944doors
+flag g944list
+wait 2
+scene OBS_A
+flag g944door 1 5
+wait 2
+press up 0.6
+wait 0.3
+press triangle 0.2
+wait 14
+shot obs_a
+scene OBS_B
+flag doorout
+wait 10
+flag g944door 0 5
+wait 2
+press up 0.6
+wait 0.3
+press triangle 0.2
+wait 14
+shot obs_b
+end

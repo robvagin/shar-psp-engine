@@ -1,0 +1,32 @@
+flag menu
+flag lvset 1
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=1 300
+wait 8
+scene W_FOOT_NEAR
+goto 144.0 92.0 1.5708
+wait 2
+foot 142.6 92.8 0
+wait 1.5
+scene W_CTRL_ENTER
+press triangle 0.2
+wait 3
+scene W_CTRL_EXIT
+press triangle 0.2
+wait 4
+scene W_BOOMSET
+flag testboom
+wait 1.2
+scene W_TRY_BURNING
+press triangle 0.2
+wait 1.5
+scene W_WAIT_BOOM
+wait 4
+scene W_TRY_BOOMED
+press triangle 0.2
+wait 2
+scene W_TRY_BOOMED2
+press triangle 0.2
+wait 2
+end

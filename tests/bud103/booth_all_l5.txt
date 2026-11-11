@@ -1,0 +1,206 @@
+flag menu
+flag lvset 5
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=5 300
+wait 10
+flag player
+flag msn
+wait 3
+scene PK0
+flag phonein 0
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK1
+flag phonein 1
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK2
+flag phonein 2
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK3
+flag phonein 3
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK4
+flag phonein 4
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK5
+flag phonein 5
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK6
+flag phonein 6
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK7
+flag phonein 7
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK8
+flag phonein 8
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK9
+flag phonein 9
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK10
+flag phonein 10
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK11
+flag phonein 11
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK12
+flag phonein 12
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK13
+flag phonein 13
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK14
+flag phonein 14
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK15
+flag phonein 15
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK16
+flag phonein 16
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK17
+flag phonein 17
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK18
+flag phonein 18
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK19
+flag phonein 19
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK20
+flag phonein 20
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK21
+flag phonein 21
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK22
+flag phonein 22
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK23
+flag phonein 23
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK24
+flag phonein 24
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK25
+flag phonein 25
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK26
+flag phonein 26
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+scene PK27
+flag phonein 27
+wait 1.0
+press triangle 0.2
+wait 2.5
+press cross 0.2
+wait 1.0
+end

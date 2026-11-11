@@ -1,0 +1,30 @@
+# Лестница-96 (просьба дирижёра 08.11), гейт s9: персонаж миссии (who=npc, модель ~200 КБ + 64 КБ = 264 КБ) на L4 при служебном форсе дальности 250 м (pano917cap), ballast 5, куча раздроблена (fragblk 0.2 - наибольший кусок меньше модели).
+# Просьба реальная (flag ladnpc 264 КБ), раз в секунду, как повтор загрузчика модели. Красный контроль на том же EBOOT: s9_ladnpc_red.txt (flag ladnpcold 1 - ступени 2-3 как до правки). Зелёное: кусок >= 264 КБ не позже 2 с после первой просьбы.
+flag nosave
+scene BOOT
+flag golevel 4
+wait 55
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 6
+flag pano917cap 1 250
+wait 16
+scene S9_NPC
+flag fragblk 0.2
+wait 1
+flag ladnpc 264
+wait 1
+flag ladnpc 264
+wait 1
+flag ladnpc 264
+wait 1
+flag ladnpc 264
+wait 1
+flag ladnpc 264
+wait 1
+flag ladnpc 264
+wait 6
+end

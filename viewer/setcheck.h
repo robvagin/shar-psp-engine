@@ -123,8 +123,24 @@ static void setCheckRun(void) {
 static void setMissingText(char *out, size_t cap, int n, const char *first) {
   snprintf(out, cap, "Level %d files are missing (%s). Run the builder again.", n, first);
 }
+// №1237 (дирижёр, видео тестера: модель NPC не ложится): куча игры = вся память пользователя минус 3 МБ (PSP_HEAP_SIZE_KB). Без «Use Extra Memory» (ARK: Off / Default) разделу отдано ~24 МБ,
+// куча на старте ~18 МБ, и город, модели и ролики не помещаются — «пустые места». С Auto / MAX — ~44 МБ. Ниже MEMCHK1237_MIN_MB — честный экран, ✕ «играть всё равно»; служебный режим — только строка MEMCHK.
+// MEMCHK1237_OLD=1 / файл memchk1237old — без проверки. Для теста: flag memchksim — «замер» 18 МБ (эмулятор всегда с полной памятью), вместе с flag setcheckui — экран и ✕ сценария
+#ifndef MEMCHK1237_OLD
+#define MEMCHK1237_OLD 0
+#endif
+#define MEMCHK1237_MIN_MB 32
+static int memChk1237 = !MEMCHK1237_OLD;
+static void memBootCheck(void) {
+  if (smkOn && smokeWantsFlag(path, "memchk1237old")) memChk1237 = 0;   // красный контроль сценария
+  if (!memChk1237) return;
+  float mb = heapFreeBytes() / 1048576.f; int sim = smkOn && smokeWantsFlag(path, "memchksim"); if (sim) mb = 18.f;
+  int low = mb < (float)MEMCHK1237_MIN_MB; char l[96]; snprintf(l, sizeof l, "MEMCHK heap=%.1f min=%d low=%d%s", mb, MEMCHK1237_MIN_MB, low, sim ? " sim=1" : ""); setNote(l);
+  if (low && !setQuiet()) setModal("Turn on Use Extra Memory (Auto or MAX) in ARK settings.", "Press X to play anyway.");
+}
 static void setBootCheck(void) {   // при старте, до меню (служебный режим уже известен)
   setUi = smkOn && smokeWantsFlag(path, "setcheckui");
+  memBootCheck();
   if (!SETREV_OLD) setRevCheck();
   if (SETCHECK_OLD) return;
   setCheckRun();

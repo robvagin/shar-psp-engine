@@ -21,8 +21,10 @@
 #include "marker_lod.h"
 #include "glintshape941.h"   // №1012: тот же векторный шейп блика ✦ — метка выделенного пункта меню
 #include "bootmsx.h"    // шрифт msx 8×8 (pspsdk libpspdebug, tools/bootmsx.sh)
+#include "zone3_api.h"   // П5 Зоны-95
 #include "zoneslot.h"   // TEST91 1А шаг 1: постоянные места под пакеты ui.shr и газету load.shr
 #include "uidiag.h"   // №1186: проверка вызовов рисования интерфейса (после include pspgu)
+#include "flowrules.h"   // титры: выход только ✕ (flowCreditsExit)
 
 typedef struct {
   char magic[4]; unsigned version;
@@ -281,6 +283,8 @@ static int msgNew, cdNew;                                    // новый те�
 static char msgLast[160];                                    // текст задания, который гаснет (msgText уже очищен)
 static unsigned animOff;                                     // UI_ANIM_* — отрицательные контроли гейтов
 static unsigned traceBits; static void (*uiLogFn)(const char *);
+unsigned uiFrameNo, uiBubRiseFr;   // №1247 (гейт): кадр подъёма пузыря цели
+static int dbg1247Tx, dbg1247Bs, dbg1247Ic, dbg1247R;   // №1247 (гейт): чем считался перенос последнего пузыря
 static void (*popHook)(int ev, int on);
 static struct { int on; float s, a, cx, cy, sy; } xf;   // sy: масштаб по y, 0 — как s (строка задания растёт только по высоте, №516)            // масштаб от точки (cx,cy) и прозрачность текущего элемента
 static float tutK = 1.f;   // №516: масштаб подсказки Барта из центра экрана (uiTutorialScale, ui_anim.h 2г)
@@ -377,7 +381,7 @@ static void uiLogf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #include <stdarg.h>
 static void uiLogf(const char *fmt, ...) {
   if (!uiLogFn) return;
-  char s[160]; va_list a; va_start(a, fmt); vsnprintf(s, sizeof s, fmt, a); va_end(a); uiLogFn(s);
+  char s[224]; va_list a; va_start(a, fmt); vsnprintf(s, sizeof s, fmt, a); va_end(a); uiLogFn(s);
 }
 // служебно (сценарий/гейт TEST60 №942; шаг часов режется до 0,1 с, как у живых, «uiclkadv 0.3» = подвисший кадр): flag uiclk 1 — часы интерфейса стоят, flag uiclkadv Д — сдвинуть на Д секунд; кадры появления пузыря снимаются по возрасту, а не по скорости эмулятора. В игре не вызывается
 static int uiClkHold; static float uiClkPend;
@@ -467,9 +471,16 @@ static const unsigned char *pakAtIn(const struct UiSegs *sg, const unsigned char
 #define ZONE_NEWS_OLD 1
 #endif
 static ZSlot zsUi = {0, ZONE_UI_OLD ? 0u : 1152u << 10, 0, 0, 0}, zsNews = {0, ZONE_NEWS_OLD ? 0u : 1152u << 10, 0, 0, 0};   // ui.shr 1 086 592 Б, load.shr 1 100 032 Б (набор TEST88) + запас; выделяются при первом чтении
+// Z0-init (Build 95, Опора-93): оба слота (ui.shr и газета load.shr) выделяются при старте игры, внизу кучи, и остаются; слот газеты включён (cap 1152 КБ): иначе пакет газеты ложился в освобождённый участок уровня на переходе
+// (выгрузка -> газета -> загрузка) и дробил его, блок уровня не находился цельным (LVA miss)
+void uiZonePrealloc(void) {
+  if (!zsNews.cap) zsNews.cap = 1152u << 10;
+  if (zsUi.cap && !zsUi.base && !zsUi.tried) { zsUi.tried = 1; zsUi.base = (unsigned char *)zsMemalign(64, zsUi.cap); zsUi.used = zsUi.live = 0; }
+  if (zsNews.cap && !zsNews.base && !zsNews.tried) { zsNews.tried = 1; zsNews.base = (unsigned char *)zsMemalign(64, zsNews.cap); zsNews.used = zsNews.live = 0; }
+}
 void uiZoneSet(int ui, int news) { if (ui >= 0) zsUi.cap = ui ? 1152u << 10 : 0; if (news >= 0) zsNews.cap = news ? 1152u << 10 : 0; }   // -1 — не менять; файлы-выключатели читает main (до первого пакета)
 static int pakKind;   // чьё чтение сейчас: 0 — куча, 1 — ui.shr, 2 — газета
-static void *pakMem(unsigned n) { void *p = pakKind == 1 ? zsAlloc(&zsUi, n) : pakKind == 2 ? zsAlloc(&zsNews, n) : 0; return p ? p : memalign(64, n); }
+static void *pakMem(unsigned n) { void *p = pakKind == 1 ? zsAlloc(&zsUi, n) : pakKind == 2 ? zsAlloc(&zsNews, n) : 0; return p ? p : zone3AllocX(Z3A_PLACE, "pak", n, 64); }   // П5 Зоны-95: пакеты меню, паузы, будки, лавки и то, что не вместилось в слот ui/газеты — область «место» (область тесна — куча с записью spill)
 static void pakFree1(void *p) { if (!p) return; if (zsFree(&zsUi, p) || zsFree(&zsNews, p)) return; free(p); }
 static void pakFreeAll(unsigned char *base, struct UiSegs *sg) {
   if (!sg) { pakFree1(base); return; }
@@ -665,6 +676,7 @@ void uiScrShow(int s, int tag, int on) {
   scrPak.tagMask[s] |= 1u;                                  // ALWAYS
 }
 static void drawScreen(int sidx, int selected);
+static int credHideBack;   // uiScrDrawCredits: проход рамки без подсказки Back (CREDITSX_OLD=1 — с подсказкой)
 void uiScrTint(int screen, int tag, unsigned abgr) {
   if ((unsigned)screen < UI_SCREEN_MAX && (unsigned)tag < 32) scrTint[screen][tag] = abgr;
 }
@@ -744,6 +756,11 @@ void uiScrSpin(float t, float a) { spinT = t; spinA = a < 0.f ? 0.f : a > 1.f ? 
 int uiScrScreens(void) { return scrPak.H ? (int)scrPak.H->nscreen : 0; }
 int uiScrBackInput(unsigned hit) {   // экран без строк (VIEW CREDITS): △ / ○ — назад со звуком back, как у меню
   if (!(hit & (PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE))) return 0;
+  pauseEv(UI_EV_BACK, 1); return 1;
+}
+int uiScrCreditsExit(unsigned hit) {   // титры (View Credits и конец игры): только ✕ — со звуком back; △ / ○ не закрывают (как на PS2), CREDITSX_OLD=1 — △ / ○
+  _Static_assert(FLOW_PAD_TRIANGLE == PSP_CTRL_TRIANGLE && FLOW_PAD_CIRCLE == PSP_CTRL_CIRCLE && FLOW_PAD_CROSS == PSP_CTRL_CROSS, "flowrules pad bits");
+  if (!flowCreditsExit(hit)) return 0;
   pauseEv(UI_EV_BACK, 1); return 1;
 }
 // ---- Сверка g09a-hud, меню (M1:3, 4, 5, 6, Д1, Д3, Д8; M3:6). Числа — поведение оригинала, код свой. Каждый выключатель: =1 — прежнее.
@@ -1035,6 +1052,12 @@ void uiBubble992Set(int old) { uiBubble992Old = old; }
 #define UI_TL1004_FADE  0.08f   // с: проявление текста на месте
 int uiTextLate1004Old = TEXTLATE1004_OLD;
 int uiBubble1040 = !BUBBLE1040_OLD;   // №1040 (ui_anim.h)
+int uiBubble1247 = !BUBBLE1247_OLD;   // №1247 (ui_anim.h)
+int uiBubble1251 = !BUBBLE1251_OLD;   // №1251 (ui_anim.h)
+void uiBubble1251Set(int on) { uiBubble1251 = on != 0; }
+int uiBubble1262 = !BUBBLE1262_OLD;   // №1262 (ui_anim.h)
+void uiBubble1262Set(int on) { uiBubble1262 = on != 0; }
+void uiBubble1247Set(int on) { uiBubble1247 = on != 0; }
 int uiDrawLog1040;   // служебно: журнал цены кадра интерфейса во время появления без трассы POP (она сама тратит время)
 void uiDrawLog1040Set(int on) { uiDrawLog1040 = on; }
 void uiBubble1040Set(int on) { if (uiBubble1040 != (on != 0)) { uiBubble1040 = on != 0; layGen++; } }
@@ -1042,6 +1065,12 @@ void uiTextLate1004Set(int old) { uiTextLate1004Old = old; }
 static int bubSlideNow;                                       // №942: сдвиг вправо текста пузыря в начале проявления (px)
 // №942: содержимое пузыря задания (текст, аватар, значок) — всё, кроме самой капсулы (широкая картинка)
 static int bubContent(const UiItem *it) { return it->type == T_TEXT || it->type == T_SLOT || (it->type == T_IMG && it->w * 2 < it->h * 3); }
+#ifndef DROP1229_OLD
+#define DROP1229_OLD 0
+#endif
+#define UI_DROP1229_K .9f    // №1229: размер надписи «Item Dropped!» −10 %
+#define UI_DROP1229_DY 10    // и подъём на 10 px (экран 480×272)
+int uiDrop1229 = !DROP1229_OLD;
 static int gDy;                                              // сдвиг по y текущего элемента (стопка оверлеев миссии)
 #define OBJ_SHOW_S 3.5f   // с: задание с рамкой и текстом внизу слева, потом свёрнуто (запись PS2 2:13 -> 2:16)
 #define OBJ_FLY_S .35f    // с: значок уезжает вверх
@@ -1821,7 +1850,7 @@ int uiScrDrawCredits(int screen, float scroll, UiCredits *info) {
     blocks++;
   }
   bflush();
-  tagMask[screen] = 1u << UI_T_STREETRACE; drawScreen(screen, -1);
+  credHideBack = !CREDITSX_OLD; tagMask[screen] = 1u << UI_T_STREETRACE; drawScreen(screen, -1); credHideBack = 0;
   tagMask[screen] = keep; scrMode = 0; pakSet(&mainPak);
   if (info) { info->blocks = blocks; info->lines = lines; info->first = first; info->top = top; info->bottom = bot;
               info->x0 = lx0; info->x1 = lx1; info->end = y; info->lh = lh0; }
@@ -2344,6 +2373,14 @@ static void ovBoxAdd(int k, int x, int y, int w, int h) {   // рамка ове
 // ---- Текст в рамке: перенос по ширине рамки-картинки того же тега, в которой он стоит (Hud.pag: Message / MissionObjective
 // в рамке задания), отступ справа и снизу = отступу текста от верха рамки (толщина рамки одна со всех сторон); строк —
 // сколько помещается по высоте. Не влезает — меньший шрифт пакета той же рамки; и так не влезает — uiTextFit сообщает.
+// Описание миссии на карточке брифинга (MissionLoad): в данных выпуска у 3 (L1) - 6 (L6, L7) описаний три строки, гейт fit считал допустимыми две (строки до мелкой детали рамки),
+// хотя на карточке третья строка помещается над кнопкой Continue (снимок tests/cam96/card3_L1.txt). Теперь число строк — до ближайшей детали ниже (кнопка Continue), как у текстов без рамки.
+// CARDINFO96_OLD=1 — как было (две)
+#ifndef CARDINFO96_OLD
+#define CARDINFO96_OLD 0
+#endif
+static int cardInfo96 = !CARDINFO96_OLD;
+void uiCardInfo96Set(int on) { if (cardInfo96 != (on != 0)) { cardInfo96 = on != 0; layGen++; } }   // layGen — ключ кэша раскладки/рамок
 static int fitWScan(const UiItem *t, int sidx, int *maxLines);
 // Кэш fitW (Правка 500): ответ зависит только от экрана, тега, места и ширины текста, отступов и грани, а ищет рамку линейным обходом всех элементов экрана —
 // на каждый перенесённый текст каждого кадра. Ключ по СОДЕРЖИМОМУ (в drawTextItem передают копии элемента на стеке, адрес не годится), сброс по layGen
@@ -2396,6 +2433,7 @@ static int fitW(const UiItem *t, int sidx, int *maxLines) {
       static int adv1037_; if ((traceBits & UI_TRACE_POP) && !adv1037_++) { char b_[300]; int o_ = 0; for (int c_ = 32; c_ < 127 && o_ < 280; c_++) o_ += snprintf(b_ + o_, sizeof b_ - o_, "%d,", f->g[c_].flags ? f->g[c_].adv : -1); uiLogf("UIADV1037 %s\n", b_); }   // №1037 служебно: шаги знаков шрифта пузыря (код 32..126)
       if (strlen(fitS) < sizeof wcs[0].s) { int k = wcN; wcN = (wcN + 1) & 3; wcs[k].f = f; wcs[k].maxTW = maxTW; wcs[k].wf = wf; wcs[k].w37 = uiWrap1037; wcs[k].nl = nl; wcs[k].mw = mw; snprintf(wcs[k].s, sizeof wcs[k].s, "%s", fitS); wcs[k].ok = 1; }
     }
+    dbg1247Tx = t->x; dbg1247Bs = bubShift; dbg1247Ic = fieldv[UI_F_OBJICON]; dbg1247R = R;
     int tw = mw + (nl == 1 ? BUB_LAW_SHORT : 0); if (tw > maxTW) tw = maxTW; if (tw < BUB_MINTEXT) tw = BUB_MINTEXT;
     if (!BUB_ONE_OLD) tw = maxTW;   // рамка всегда одной ширины
     lawRight = t->x + tw + BUB_LAW_PAD + R; lastGW = lawRight - (objBubX + objBubW); lastGH = 0;   // правый край рамки: после текста — поле и правое скругление
@@ -2437,7 +2475,8 @@ static int fitW(const UiItem *t, int sidx, int *maxLines) {
 }
 static int fitWScan(const UiItem *t, int sidx, int *maxLines) {
   const UiScreen *sc = &screens[sidx]; int best = -1, bw = 0, bh = 0;
-  for (unsigned i = 0; i < sc->count; i++) {
+  int cardInfo = cardInfo96 && sidx == UI_SCREEN_MISSIONLOAD && t->field == UI_F_MSN_INFO;   // 1246+ (Пропечка-96): описание карточки считается до кнопки Continue, не до мелкой детали рамки
+  for (unsigned i = 0; i < sc->count && !cardInfo; i++) {
     const UiItem *b = &items[sc->first + i];
     if (b->type != T_IMG || b->tag != t->tag || b == t || itemVarOff(b)) continue;
     if (b->w * 2 < t->w) continue;   // правка 122: значок на углу рамки (окно сообщения: ErrorIcon над началом текста) — не рамка текста
@@ -2449,6 +2488,7 @@ static int fitWScan(const UiItem *t, int sidx, int *maxLines) {
     for (unsigned i = 0; i < sc->count; i++) {
       const UiItem *b = &items[sc->first + i];
       if (b == t || b->y <= t->y || b->type == T_RECT || b->x >= t->x + t->w || b->x + b->w <= t->x) continue;
+      if (cardInfo && b->w * 10 < t->w) continue;   // узкая деталь рамки у края (угол планшета, значок кнопки) строку не отнимает: её уже обходит выгрузка (ui_export briefing_layout)
       if (b->y < bottom) bottom = b->y;
     }
     const UiFont *f = itemFont(t, sidx);
@@ -2536,6 +2576,42 @@ static int radarRimIdx(const UiScreen *sc) {   // рамка-кольцо — п
   static const UiScreen *c; static int r = -1; if (c == sc) return r;
   c = sc; r = -1; for (unsigned i = 0; i < sc->count; i++) if (items[sc->first + i].tag == UI_T_RADAR) r = (int)i; return r;
 }
+// Карточка брифинга (MissionLoad): подписи кнопок (△ Cancel Mission на карточке гонки на ставку, ✕ Continue, переводы длиннее английских) не должны касаться рамки или
+// вылезать за неё (кадры Механика 09.11, L4 «Race 4: Wager Race»: «CANCEL MISSION» упиралась в правую рамку). Правило: группа значок + слово по каждой метке целиком
+// внутри синей основы карточки с отступом BRIEFFIT_MARGIN px; не влезает — группа целиком сдвигается к середине карточки. Раскладка пакета не трогается.
+// BRIEFFIT_OLD=1 — как было
+#ifndef BRIEFFIT_OLD
+#define BRIEFFIT_OLD 0
+#endif
+#define BRIEFFIT_MARGIN 10
+static int briefFitDx[32];
+#ifndef CARDGAP_OLD
+#define CARDGAP_OLD 0
+#endif
+#define CARDGAP_PX 3
+static void briefFit(const UiScreen *sc) {
+  memset(briefFitDx, 0, sizeof briefFitDx);
+  int bl = 0, br = 0;
+  for (unsigned i = 0; i < sc->count; i++) { const UiItem *b = &items[sc->first + i]; if (b->type == T_RECT && b->tag == UI_T_ALWAYS && b->w < 470 && b->h >= 100 && b->w > br - bl) { bl = b->x; br = b->x + b->w; } }
+  if (br - bl < 120) return;
+  static const int tags[2] = { UI_T_SKIP, UI_T_PRESS_START };
+  for (int g = 0; g < 2; g++) {
+    int x0 = 9999, x1 = -9999;
+    for (unsigned i = 0; i < sc->count; i++) {
+      const UiItem *it = &items[sc->first + i]; if (it->tag != tags[g]) continue;
+      int l = it->x, r = it->x + it->w;
+      if (it->type == T_TEXT && it->font < H->nfont) { const char *t = str(it->first); int w = lineWidth(&fonts[it->font], t, (int)strlen(t));
+        l = it->x + (it->halign == 0 ? 0 : it->halign == 2 ? it->w - w : (it->w - w) / 2); r = l + w; }
+      else if (it->type != T_IMG) continue;
+      if (l < x0) x0 = l; if (r > x1) x1 = r;
+    }
+    if (x1 <= x0) continue;
+    int dx = 0; if (BRIEFFIT_OLD) dx = 0; else if (x1 > br - BRIEFFIT_MARGIN) dx = br - BRIEFFIT_MARGIN - x1; else if (x0 < bl + BRIEFFIT_MARGIN) dx = bl + BRIEFFIT_MARGIN - x0;
+    briefFitDx[tags[g]] = dx;   // BRIEFFIT_OLD: только журнал, сдвига нет
+    static int logged[2][3]; if (logged[g][0] != x0 || logged[g][1] != x1 || logged[g][2] != dx) { logged[g][0] = x0; logged[g][1] = x1; logged[g][2] = dx;
+      uiLogf("BRIEFFIT tag=%d x0=%d x1=%d card=%d..%d dx=%d margin_l=%d margin_r=%d\n", tags[g], x0, x1, bl, br, dx, x0 + dx - bl, br - (x1 + dx)); }
+  }
+}
 static void drawScreen(int sidx, int selected) {
   if (!H || (unsigned)sidx >= H->nscreen || typoShot >= 2) return;
   if (scrMode || (sidx != UI_SCREEN_HUD && sidx != UI_SCREEN_LETTERBOX && sidx != UI_SCREEN_TUTORIAL && sidx != UI_SCREEN_MESSAGE)) hudAway1091++;   // №1091
@@ -2546,6 +2622,7 @@ static void drawScreen(int sidx, int selected) {
   unsigned hid = !scrMode && (unsigned)sidx < UI_SCREEN_MAX ? menuHid[sidx] : 0;   // правка 137 (не пакет экранов загрузки)
   if (sidx == UI_SCREEN_MAIN && mainFlight && !scrMode) mask &= ~(1u << UI_T_MAIN_ROW | 1u << UI_T_LEVEL_NAME);
   curScreen = sidx;
+  if (sidx == UI_SCREEN_MISSIONLOAD && !scrMode) briefFit(sc); else memset(briefFitDx, 0, sizeof briefFitDx);
   memset(&st, 0, sizeof st);
   beginUi();
   bn = 0; btex = -1;
@@ -2563,7 +2640,15 @@ static void drawScreen(int sidx, int selected) {
   int hud = sidx == UI_SCREEN_HUD && !scrMode;
   int failureY = 272, failureLeft = 0, failureRight = 0;
   int failureDy = !scrMode && sidx == UI_SCREEN_MISSIONOVER ? failureMenuDy(sc, &failureY, &failureLeft, &failureRight) : 0;
-  int actionDy = 0;
+  int actionDy = 0, cardGapDy = 0;
+  // №1261б (Опора-93, кадры L7 bm1): «COLLECTOR CARD!» крупной гранью (баннер) своей высотой заходила на название карточки под ней («TIME TRAVEL TOASTER»): в данных строки лежат с зазором 35 ед.,
+  // а грань заголовка у порта крупнее. Название опускается ровно настолько, чтобы его верх был не выше низа заголовка + CARDGAP_PX. CARDGAP_OLD=1 — как было
+  if (hud && !CARDGAP_OLD) {
+    const UiItem *gt = 0, *nm = 0;
+    for (unsigned j = 0; j < sc->count; j++) { const UiItem *a = &items[sc->first + j]; if (a->type != T_TEXT || a->tag != UI_T_CARD_TEXT) continue;
+      if (a->field == UI_F_CARD_TITLE) nm = a; else if (a->field == UI_F_NONE && a->font < H->nfont && !strcmp(str(a->first), "COLLECTOR CARD!")) gt = a; }
+    if (gt && nm) { int lh = fonts[gt->font].h.lh > gt->h ? fonts[gt->font].h.lh : gt->h, bottom = gt->y + lh + CARDGAP_PX; if (bottom > nm->y) cardGapDy = bottom - nm->y; }
+  }
   if (hud && !UI_OBJTOP_OLD) {
     float padding = 2.f; int actionTop = 10000;
     for (unsigned j = 0; j < sc->count; j++) {
@@ -2609,7 +2694,7 @@ static void drawScreen(int sidx, int selected) {
     msgNew = cdNew = 0;
     for (int t = 0; t < 32; t++) {
       unsigned b = 1u << t;
-      if (rise & b) { tagOnT[t] = uiClk; if (t == UI_T_OBJECTIVE) { bubAge = 0.f; objFlyT = 0.f; } hudLeave &= ~b; if (popHook) popHook(t, 1); }
+      if (rise & b) { tagOnT[t] = uiClk; if (t == UI_T_OBJECTIVE) { bubAge = 0.f; objFlyT = 0.f; uiBubRiseFr = uiFrameNo + 1; if (traceBits & UI_TRACE_POP) uiLogf("BUBBLE1247 rise fr=%u\n", uiFrameNo); } hudLeave &= ~b; if (popHook) popHook(t, 1); }
       if (fall & b) { tagOffT[t] = uiClk; if (popKind(t) >= 0 && !(animOff & UI_ANIM_NOPOP)) hudLeave |= b; if (popHook) popHook(t, 0); }
     }
     hudPrev = mask;
@@ -2697,6 +2782,7 @@ static void drawScreen(int sidx, int selected) {
     if (itemVarOff(it)) continue;   // №528: другой вариант пузыря задания
     unsigned tb = 1u << (it->tag & 31);
     if (!(mask & tb) && !(leaveDraw & tb)) continue;
+    if (credHideBack && it->tag == UI_T_STREETRACE && (it->type == T_TEXT || (i > 0 && items[sc->first + i - 1].type == T_TEXT && items[sc->first + i - 1].tag == UI_T_STREETRACE))) continue;   // титры: подсказки Back (подпись и значок △, последние два предмета экрана) на PS2 нет; пакет без неё не затронут
     xf.on = 0; xf.sy = 0.f; bubSlideNow = 0;
     if (pAnim) { xf.on = 1; xf.s = pS; xf.a = pA; xf.cx = 240.f; xf.cy = 120.f; }   // №631 (центр: по кадрам PS2 плита растёт из середины по x и около 0,44 высоты по y): рамка и пункты паузы растут из центра
     // №631: у PS2 отдельной плашки на весь экран нет, мир темнеет на 7 % (pauseDimA выше); плашка пака (75 % чёрного на весь экран) при включённой анимации не рисуется
@@ -2742,6 +2828,17 @@ static void drawScreen(int sidx, int selected) {
       if (it->tag == UI_T_RADAR && (a_ < 1.f || !on)) { static unsigned lg1091; unsigned n1091 = sceKernelGetSystemTimeLow(); if ((unsigned)(n1091 - lg1091) > 100000u) { lg1091 = n1091; uiLogf("R1091 radar fade on=%d a=%.2f s=%.2f rr=%.0f\n", on, a_, s_, rrange); } }   // №1091 служебно: радар не в полной видимости (должно быть только у входа в HUD)
       // №610: текст пузыря (строка задания, окно сообщения) не рисуем, пока рамка растёт: он раскладывался узко и перестраивался. BUBBLE_TEXT_LATE_OLD=1 — прежнее
       if (BUBBLE_UNIFORM_OLD && !BUBBLE_TEXT_LATE_OLD && on && it->type == T_TEXT && (popKind(it->tag) == UI_POP_PILL || popKind(it->tag) == UI_POP_BOX) && (s_ != 1.f || a_ < 1.f)) continue;
+      if (uiBubble1251 && uiBubble1247 && !uiBubble992Old && !BUBBLE_UNIFORM_OLD && it->tag == UI_T_OBJECTIVE && on && fieldv[UI_F_OBJICON] >= 0 && !itemVarOff(it)) {   // №1251: кружок, потом рамка из-за кружка, текст на месте
+        float age = popAgeOf(it->tag, 1);
+        if (it->type == T_SLOT || (it->type == T_IMG && it->w * 2 < it->h * 3)) {   // кружок с аватаром: проявляется из прозрачного
+          float c = age / UI_BUB1251_CIRC; if (c <= 0.f) continue; if (c > 1.f) c = 1.f;
+          if (c < 1.f) { xf.on = 1; xf.s = 1.f; xf.a = c; xf.cx = xf.cy = 0.f; }
+        } else {
+          float u = (age - UI_BUB1251_DELAY) / UI_BUB1251_DUR; if (u <= 0.f) continue; if (u > 1.f) u = 1.f;   // №1251 v3 (Роб): только проявление из прозрачного; размер и место рамки и текста постоянны, ни выезда, ни обрезки, ни масштаба
+          float ua1262 = u; if (uiBubble1262 && it->type == T_TEXT) { ua1262 = (u - UI_BUB1262_TEXT_U0) / (1.f - UI_BUB1262_TEXT_U0); if (ua1262 <= 0.f) continue; }   // №1262: текст не ложится на кружок, пока рамка выезжает из-под него
+          if (u < 1.f) { xf.on = 1; xf.s = 1.f; xf.a = ua1262; xf.cx = xf.cy = 0.f; if (uiBubble1262) { float e1262 = 1.f - (1.f - u) * (1.f - u); bubSlideNow = -(int)((float)UI_BUB1262_SLIDE * (1.f - e1262) + .5f); } }   // №1262: выезд слева направо на своё место, ease-out
+        }
+      } else
       if (uiBubble992Old && !BUBBLE_TEXT942_OLD && !BUBBLE_UNIFORM_OLD && popKind(it->tag) == UI_POP_PILL && on && bubContent(it)) {   // №942 (и №992: только в режиме TEST70, новое — содержимое едет с рамкой по ветке ниже): текст и аватар не растут с рамкой: после раскрытия рамки проявляются на месте, конечной раскладкой
         float c = (popAgeOf(it->tag, 1) - UI_BUB_CONTENT_DELAY) / UI_BUB_CONTENT_FADE;
         if (c <= 0.f) continue;                                    // рамка → потом содержимое
@@ -2769,10 +2866,19 @@ static void drawScreen(int sidx, int selected) {
     gDy = ok_ >= 0 ? ovDy[ok_] : 0;
     gDx = (hud && bubShift && it->tag == UI_T_OBJECTIVE && !itemVarOff(it)) ? -bubShift : 0;   // №710
     gDx += bubSlideNow;   // №942
+    gDx += briefFitDx[it->tag & 31];   // карточка брифинга: подпись кнопки внутри рамки (briefFit)
     if (hud && bubGH && !BUBBLE_EVEN_OLD && it->tag == UI_T_OBJECTIVE && (it->type == T_SLOT || (it->type == T_IMG && it->w * 2 < it->h * 3))) gDy -= bubGH / 2;   // №646: значок/аватар остаётся по центру выросшей рамки (рамка растёт вверх от низа)
     if (failureDy && it->type == T_TEXT && it->field == UI_F_NONE && it->y >= failureY && it->x < failureRight && it->x + it->w > failureLeft)
       gDy += failureDy;
+    if (cardGapDy && it->type == T_TEXT && it->tag == UI_T_CARD_TEXT && it->field == UI_F_CARD_TITLE) gDy += cardGapDy;   // №1261б
     if (hud && it->tag == UI_T_ACTION) gDy += actionDy;   // №387: △ и любая подпись едут вместе
+    // №1229 (Роб, TEST93 L5 «Never Trust a Snake»: «ITEM DROPPED мешает играть — немножко меньше и капельку выше»): надпись на 10 % мельче (−1 ступень шрифта pix8 тут не бывает, масштаб
+    // вокруг своего центра) и на 10 px выше на экране 480×272; раскладку не трогаем. DROP1229_OLD=1 / файл drop1229old / flag drop1229 0 — как было
+    if (hud && it->tag == UI_T_ITEM_DROPPED && uiDrop1229) {
+      gDy -= UI_DROP1229_DY;
+      if (!xf.on) { const float *p_ = pv[it->tag & 31]; xf.on = 1; xf.s = 1.f; xf.a = 1.f; xf.cx = (p_[0] + p_[2]) * .5f; xf.cy = (p_[1] + p_[3]) * .5f + gDy; }
+      xf.s *= UI_DROP1229_K;
+    }
     if (xf.on && popKind(it->tag) == UI_POP_SLIDE) {   // счёт монет: группа сдвинута вверх за край на (1 - выезд) своей нижней кромки
       gDy -= (int)((1.f - xf.a) * (pv[it->tag & 31][3] + 2.f) + .5f); xf.a = xf.a < .5f ? xf.a * 2.f : 1.f;
     }
@@ -3023,6 +3129,8 @@ static void drawScreen(int sidx, int selected) {
     if (hud && (traceBits & UI_TRACE_POP) && it->tag == UI_T_OBJECTIVE && lastSpr[2] > lastSpr[0] && (bubContent(it) || it->type == T_IMG))   // №942 (гейт): что и где нарисовано по кадрам появления; f — капсула, t — текст, a — аватар/значок
       uiLogf("UIBUB942 age=%.3f part=%c x0=%.1f y0=%.1f x1=%.1f y1=%.1f a=%.2f wrapw=%d nl=%d\n", popAgeOf(UI_T_OBJECTIVE, 1), it->type == T_TEXT ? 't' : bubContent(it) ? 'a' : 'f',
              lastSpr[0], lastSpr[1], lastSpr[2], lastSpr[3], xf.on ? xf.a : 1.f, dbgWrapW, dbgNl);
+    if (hud && (traceBits & UI_TRACE_POP) && it->tag == UI_T_OBJECTIVE && lastSpr[2] > lastSpr[0] && (bubContent(it) || it->type == T_IMG))   // №1247 (гейт): по строке на нарисованную часть каждого кадра: строки и ширина переноса, ширина рамки
+      uiLogf("BUBBLE1247 fr=%u age=%.3f tx=%d bs=%d ic=%d R=%d x0=%.1f y0=%.1f h=%.1f pix8=%d part=%c lines=%d wrapw=%d width=%.1f s=%.3f a=%.2f\n", uiFrameNo, bubAge, dbg1247Tx, dbg1247Bs, dbg1247Ic, dbg1247R, lastSpr[0], lastSpr[1], lastSpr[3] - lastSpr[1], it->type == T_TEXT ? pix8Want(it, curScreen) : -1, it->type == T_TEXT ? 't' : bubContent(it) ? 'a' : 'f', it->type == T_TEXT ? dbgNl : 0, it->type == T_TEXT ? dbgWrapW : 0, lastSpr[2] - lastSpr[0], xf.on ? xf.s : 1.f, xf.on ? xf.a : 1.f);
     if (hud && (traceBits & UI_TRACE_AVATAR) && it->tag == UI_T_OBJECTIVE && it->type == T_IMG && lastSpr[2] > lastSpr[0])
       uiLogf("UIBUBBLE t=%.3f x=%.2f y=%.2f w=%.2f h=%.2f\n", uiClk, lastSpr[0], lastSpr[1], lastSpr[2] - lastSpr[0], lastSpr[3] - lastSpr[1]);   // пузырь задания, как ушёл в GE
     if (hud && (traceBits & UI_TRACE_AVATAR) && it->type == T_TEXT && it->field == UI_F_OBJECTIVE && lastSpr[2] > lastSpr[0])   // правка 48: текст задания, как ушёл в GE
@@ -3118,7 +3226,7 @@ int uiDrawMessageBox(const char *text) {
   snprintf(mboxText, sizeof mboxText, "%s", text);
   mboxK = mboxA = 1.f;
   if (!BUBBLE_UNIFORM_OLD) {   // №639: как пузырь задания (№638): 0,25 → 1 за 8 шагов по 1/50 с, прозрачность 0,3 → 1 за 0,06 с; центр — центр самой большой плашки экрана
-    float t = (now - mboxT0) * 1e-6f; mboxK = uiBubScale(t); mboxA = (t < 0.06f && !uiBubble1040) ? 0.3f + 0.7f * t / 0.06f : 1.f;
+    float t = (now - mboxT0) * 1e-6f; mboxK = uiBubble1251 ? 1.f : uiBubScale(t); mboxA = (t < 0.06f && !uiBubble1040) ? 0.3f + 0.7f * t / 0.06f : 1.f; if (uiBubble1247 && t < UI_BUB1247_FADE) mboxA = (t < 0.f ? 0.f : t) / UI_BUB1247_FADE;
     const UiScreen *sc = &screens[UI_SCREEN_MESSAGE]; int ba = 0; mboxCx = 240.f; mboxCy = 136.f;
     for (unsigned i = 0; i < sc->count; i++) { const UiItem *b = &items[sc->first + i];
       if ((b->type == T_RECT || b->type == T_IMG) && b->w * b->h > ba) { ba = b->w * b->h; mboxCx = b->x + b->w * .5f; mboxCy = b->y + b->h * .5f; } }

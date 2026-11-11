@@ -176,10 +176,12 @@ void mvBriefOld(int on);                     // отрицательный ко�
 Shop *mvShop(void);                          // лавка продавцов уровня (viewer/shop.h) для экрана покупки (shop_view.c); NULL — миссий нет
 // Правка Роба 40 — камеры из данных миссий:
 // камера старта фазы (viewer/game_msn.h gameMsnStartCam): 1 — заявка (имя фазы SelectMission и камеры), одна на фазу
+void mvServiceFinal(void);   // служебное: последняя сюжетная миссия уровня
+void mvServicePrior(int keep);   // служебное: все сюжетные кроме keep пройдены
 int mvStartCam(const char **phase, const char **cam);
 // №1047 (Роб: «сначала чёрные полоски, наезд, и ПОТОМ пузырь с текстом»): цель этапа (пузырь) не показывается, пока идёт наезд и полосы на экране; mvCamBusy ставит main_loop.h
 // (1 — наезд играет или полосы ещё не ушли), mvBubblePump — каждый кадр: отложенную цель показать, когда полос нет. Без наезда — как раньше
-extern int (*mvCamBusy)(void); void mvBubblePump(void);
+extern int (*mvCamBusy)(void); void mvBubblePump(void); extern int mvBubble1247Old;   // №1247: 1 — пузырь не ждёт аватар
 // камера разговора (viewer/convcam.h): 1 — идёт разговор, план реплики из данных (SetConversationCam, SetCamBestSide) или
 // по правилу порта: глаз, взгляд, вертикальный FOV. prevEye — глаз камеры до разговора (сторона без SetCamBestSide);
 // blocked(от, до) — луч упирается в коллизию (план за стеной не берётся: другой план того же говорящего, иначе прежний,
@@ -200,7 +202,11 @@ void mvTalkCamPlant(int how);            // служебное, отрицате
                                          // 3 — ближняя плоскость города (без convNear)
 // служебное (сценарий смоука): msngo — игрок к текущей цели как «goto» (посадка — к двери машины; комнаты — нет);
 // far > 0 — отрицательный контроль: встать на far м дальше от цели (цель обязана НЕ засчитаться)
+extern int (*mvMemLadder)(const char *who, unsigned need, int top);   // №1235: лестница памяти для моделей персонажей миссии (ставит main_frontend.h; top — персонаж миссии)
+extern int npcRetry96;   // Build 96: повтор модели персонажа не чаще раза в секунду, лестница по области «миссия», одна строка WATCHDOG на событие (NPCRETRY96_OLD=1 / flag npcretry96 0 / файл npcretry96old - как было)
+extern int npcLad1235, npcFailSim1235;   // №1235: 1 — модель персонажа через лестницу, повтор при нехватке памяти, замена загруженным персонажем (NPCLAD1235_OLD=1 / flag npclad1235 0 / файл npclad1235old — как было)
 void mvServiceGo(float far);
+void mvDropSim(int op, int idx);   // служебное (№1229, flag dropsim / dropget): op 0 — предмет idx «выпал» (как MSN_EV_DROP), op 1 — «подобран»
 int  mvServiceBot(void);   // flag msnbot: 1 — этап ждёт △ пешком, 2 — этап машинный, а Гомер пешком (0 — ничего)
 int  mvStageKey(void);   // служебное: ключ текущего этапа (миссия, фаза, этап), -1 — миссия не идёт
 int  mvServicePass(const char *why);   // служебное (06.11): засчитать текущий этап, как выполненная цель (flag msnpass, помощник msnbotpass)

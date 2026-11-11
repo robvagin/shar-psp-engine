@@ -1,0 +1,20 @@
+# Лестница-96 (канон п.14, вопрос дирижёра по туру 99): круг клеток старта читается у Гомера, а не у машины - второго чтения нет (CELLRING released ~ 0).
+# Старты уровней подряд на ballast 5: L2, L3, L6, L1 (Гомер далеко от машины: 277/474/409/487 м), L4, L5, L7 (рядом). Считаются CELLRING released и XITION level ms.
+# Красный контроль: s17_ringhero_red.txt (flag ringhero 0, тот же EBOOT) - круг у машины, released = 207/182.
+flag nosave
+scene BOOT
+flag golevel 2
+wait 40
+flag golevel 3
+wait 40
+flag golevel 6
+wait 40
+flag golevel 1
+wait 40
+flag golevel 4
+wait 40
+flag golevel 5
+wait 40
+flag golevel 7
+wait 40
+end

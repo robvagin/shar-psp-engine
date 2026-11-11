@@ -23,7 +23,7 @@ static void hlodLoad(int level) {
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) { hlodFail("open", f); return; }
   int sz = (int)sceIoLseek(f, 0, PSP_SEEK_END); sceIoLseek(f, 0, PSP_SEEK_SET);
   if (sz < 32 || sz > (1 << 20)) { sceIoClose(f); hlodFail("size", sz); return; }
-  unsigned char *m = (unsigned char *)memalign(64, (size_t)sz);
+  unsigned char *m = (unsigned char *)(LVA_WIDE_OLD ? memalign(64, (size_t)sz) : lvaAllocWide((unsigned)sz));   // Build 96 шаг 6: в хвост блока уровня
   if (!m || sceIoRead(f, m, (SceSize)sz) != sz || memcmp(m, "HLD1", 4)) { sceIoClose(f); free(m); hlodFail("read/magic", sz); return; }
   sceIoClose(f);
   unsigned n = *(unsigned *)(m + 4);

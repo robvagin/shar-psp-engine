@@ -143,7 +143,7 @@ typedef struct {
 // section — начало SPR1 (выровнено на 16). 0 = ок, <0 = ошибка формата/памяти
 extern int spNear1000;   // №1000: 1 — далёкие качающиеся деревья спят (stateprops.c)
 int spInit(StateProps *sp, const void *section, unsigned size);
-int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);
+int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);   // detachedKeys: бит 1 - ключи, бит 2 - вершины не лежат в section (их размер в section не занят)
 void spFree(StateProps *sp);
 extern unsigned spHitStat[3];   // №1159: [0] просмотрено в spHitCar, [1] дошло до carContact, [2] из них с объёмом (до дорогой части); счётчики для теста
 int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]);   // круг 7: центр объёма в мире с учётом следования за суставом (тест)

@@ -1,0 +1,30 @@
+# Лестница-96 (срочно, видео Роба на Build 97): будка L6 (91,140) в тесной куче -> пересборка уровня (levelUnload/levelLoad под газетой, клетки неба и машины игрока грузятся заново) -> небо и машина на месте.
+# Тесная куча: flag boothstarve (потребитель забирает освобождённое) + fragblk перед будкой. Красный контроль: s12_booth_rebuild_l6_red.txt (flag ownerold 1, тот же EBOOT).
+flag nosave
+scene BOOT
+flag golevel 6
+wait 45
+flag stop
+flag player
+wait 3
+flag msn
+wait 3
+flag mem1060 1
+flag mem1060fe 1
+flag mem1060log 1
+scene S12_BOOTH
+flag phonego 0
+wait 3
+flag boothstarve 1.0
+wait 1.5
+press triangle 0.2
+wait 14
+shot s12_booth
+press cross 0.2
+wait 20
+shot s12_after
+flag boothstarve 1000
+wait 10
+shot s12_end
+wait 6
+end

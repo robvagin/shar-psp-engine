@@ -9,6 +9,7 @@
 #include <string.h>
 #include <math.h>
 #include "world.h"
+#include "colacc.h"
 #include "watchdog.h"
 static BotWorld W; static BotSnap S0; static uint32_t rs = 1;
 static uint32_t xr(void) { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; }
@@ -23,7 +24,7 @@ int main(int argc, char **argv) {
   int done = 0, cviol = 0, viol = 0, waiting = 0, rings = 0, safes = 0; unsigned fires = 0;
   for (int t = 0; t < trials * 40 && done < trials; t++) {
     if (!cw->ntri) break;
-    const ColTri *T = &cw->tri[xr() % cw->ntri]; if (T->n[1] < .7f) continue;
+    const ColTri *T = TRI_AT(cw, xr() % cw->ntri);   /* Коллизия-96: через доступ мира (кольцо) */ if (T->n[1] < .7f) continue;
     float px = (T->a[0] + T->b[0] + T->c[0]) / 3.f, pz = (T->a[2] + T->b[2] + T->c[2]) / 3.f, py = (T->a[1] + T->b[1] + T->c[1]) / 3.f;
     float d = D[xr() % 5], a = (xr() % 6283) / 1000.f, qx = px + d * sinf(a), qz = pz + d * cosf(a), y0 = py + .5f, g;
     if (colGround(cw, qx, qz, y0 + 2.f, y0 - 100.f, &g, 0)) continue;   // с опорой — не проба

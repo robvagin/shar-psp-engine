@@ -1,0 +1,9 @@
+# Лестница-96, шаг 1: печать MEMFAILHIST run при отказов > 16. «flag memfailfake 30» - 30 выдуманных отказов: 25 от одного ra, 2 от другого, 3 снова от первого.
+# Ожидается: серия run=25 у первого ra, MEMFAILRUN best=25 в smoke.txt и в ящике (blackbox.txt). На MEMFAILRUN_OLD=1 - ни колонки run, ни MEMFAILRUN.
+flag nosave
+scene BOOT
+flag golevel 4
+wait 45
+flag memfailfake 30
+wait 40
+end

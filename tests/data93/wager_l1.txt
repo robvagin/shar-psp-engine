@@ -1,0 +1,15 @@
+# L1 gr1 (Race 4: Wager Race): взнос списывается при X на карточке брифинга, этап coins закрывается сам, дальше этап гонки
+scene WAGER_L1
+flag golevel 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag coins 300
+wait 1
+flag msnsel 11
+wait 5
+press cross 0.2
+wait 8
+shot paid
+end

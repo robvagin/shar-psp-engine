@@ -5,5 +5,5 @@ wait 50
 flag uimsndone 127
 wait 1
 flag msnselfuzz 13 30
-wait 90
+wait 400
 end

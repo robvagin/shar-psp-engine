@@ -1,0 +1,10 @@
+# Предсборка листов клеток (Пропечка №1): езда L1 40 с автопилотом, как в туре (F_MEHAND_L1_*). Журнал DLBUILD: near_us/pre_us по секундам, PHSEC: x_city.
+scene F_PREB_L1
+flag camdet 1
+flag stop
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+shot preb_l1
+end

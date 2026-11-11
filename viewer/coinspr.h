@@ -49,7 +49,7 @@ static unsigned coinPh1020(unsigned i) { unsigned s = i * 0x9e3779b1u + 0x123456
 static int coinSprAdd(const Coin *c, float a, float ex, float ez, unsigned idx) {   // 1 — монета ушла в пачку
   if (!csState) csLoad();
   if (csState < 0 || coinSprCnt >= COIN_SPR_MAX) return 0;
-  if (!coinSprCnt) csFrame = (sceKernelGetSystemTimeLow() / (unsigned)(1e6f / csH.fps)) % csH.frames;
+  if (!coinSprCnt) csFrame = (gtUs95() / (unsigned)(1e6f / csH.fps)) % csH.frames;
   float dx = c->x - ex, dz = c->z - ez, l = sqrtf(dx * dx + dz * dz); if (l < .05f) return 0;
   float Rx = -dz / l * csRSign, Rz = dx / l * csRSign, hs = csH.half * a, C[3] = {c->x, c->y + csH.cy * a, c->z};   // R — вправо по экрану
   unsigned ph_ = fxCoin1020 ? coinPh1020(idx) : 0u; coinPhMask1020 |= 1u << ph_;
@@ -88,7 +88,7 @@ static int coinSprHud(float cx, float cy, float hh, float al) {
   if (!csState) csLoad();
   if (csState < 0 || hh < 2.f) return 0;
   float k = hh / .62f, hs = csH.half * k, ccy = cy - (csH.cy - .31f) * k;
-  unsigned fr = (sceKernelGetSystemTimeLow() / (unsigned)(1e6f / csH.fps)) % csH.frames;
+  unsigned fr = (gtUs95() / (unsigned)(1e6f / csH.fps)) % csH.frames;
   int lv = hs * 2.f <= 40.f ? 1 : 0; unsigned px = lv ? csH.px / 2u : csH.px, w = lv ? csH.w / 2u : csH.w, h = lv ? csH.h / 2u : csH.h;
   float u0 = (float)((fr % csH.cols) * px), v0 = (float)((fr / csH.cols) * px);
   typedef struct { float u, v; unsigned c; float x, y, z; } HV;

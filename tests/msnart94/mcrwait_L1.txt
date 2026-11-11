@@ -1,0 +1,28 @@
+# Build 94: машина миссии «ждёт память» (flag mcrfail N — N отказов блока подряд; flag mcrwait94 0/1 — повтор каждый кадр / не чаще раза в секунду).
+# MCRWAIT 0 — красный: строки "MCR sim-fail" идут сотнями (каждый кадр), MCRWAIT 1 — зелёный: не чаще раза в секунду на машину, строки WATCHDOG mem who=car wait/ready.
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene W_GO1
+flag golevel 1
+wait 45
+flag stop
+flag player
+flag mcrwait94 MCRWAIT
+flag msn
+flag msnbot 1
+flag msnbotpass 6
+flag mcrfail 100000
+scene W_1_0
+flag msnsel 0
+wait 9
+scene W_1_1
+flag msnsel 1
+wait 9
+scene W_1_2
+flag msnsel 2
+wait 9
+flag mcrfail 0
+wait 6
+shot w_end
+end

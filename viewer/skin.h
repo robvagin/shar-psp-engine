@@ -72,6 +72,7 @@
 #ifndef SKIN_H
 #define SKIN_H
 
+#include <string.h>
 #if defined(SKIN_HOST) || defined(AUDIO_HOST) // audio now sees car/traffic types too; host needs no pspsdk
 typedef struct { float x, y, z, w; } ScePspFVector4;
 typedef struct { ScePspFVector4 x, y, z, w; } ScePspFMatrix4;
@@ -95,8 +96,12 @@ typedef struct {                     // 128 bytes
   float bbox[6];                     // bind pose, model space
   float blinkFps;
   unsigned blinkBatch;               // batch whose texture the blink animation replaces (0xffffffff = none)
-  unsigned totalVerts, totalKeys, pad[8];
+  unsigned totalVerts, totalKeys, pad[8];   // pad[0]: float — масштаб s16-позиций вершин (Модели-96), 0 = позиции float; pad[1]/pad[2]: таблица поправок стоп (смещение, метка FLFT — skinFootLift), pad[7]: метка skinSlotOpt
 } SkinHeader;
+// Модели-96: если batch.vtype несёт GU_VERTEX_16BIT, позиция = s16 x posScale (метры на единицу, система покоя модели). GE читает s16 как целое / 32768, поэтому палитра костей
+// (skinPalette) множит столбцы матрицы на posScale * 32768 (skinPosGE); нормаль GE тоже растягивается в это число раз — в файле нормаль s16 уже поделена на него (tools/char_export.py)
+static inline float skinPosScale(const SkinHeader *h) { float f; memcpy(&f, &h->pad[0], sizeof f); return f; }
+static inline float skinPosGE(const SkinHeader *h) { return skinPosScale(h) * 32768.f; }
 typedef struct {                     // 128 bytes
   char name[32]; int parent; unsigned flags;
   float q[4], t[3], s[3];            // rest local transform (quaternion x,y,z,w; translation; scale)
@@ -130,10 +135,22 @@ typedef struct {                     // 80 bytes
 } SkinClip;
 typedef struct {                     // 16 bytes; n = 0 -> rest value
   unsigned short nRot, nTrans;
-  unsigned offRot;                   // u16 frame[nRot] (padded to 4 B), then s16 q[nRot][4] (x,y,z,w * 32767)
-  unsigned offTrans;                 // u16 frame[nTrans] (padded to 4 B), then f32 t[nTrans][3]
-  unsigned pad;
+  unsigned offRot;                   // pad bits 0-1: 0 = u16 frame[nRot] (padded to 4 B), then s16 q[nRot][4] (x,y,z,w * 32767)
+                                     //   1 = u16 frames, then u32 q[n] ("три меньших": bits 30-31 index of the largest component, 3 x 10 bit signed * sqrt(.5)/511)
+                                     //   2 = no frames (0..n-1), u32 q[n]; 3 = u8 frames (padded to 4 B), u32 q[n]   [ANIMPACK96, tools/animpack.py]
+  unsigned offTrans;                 // pad bits 2-3: 0 = u16 frame[nTrans] (padded to 4 B), then f32 t[nTrans][3]; 1 = u16 frames, f16 t[n][3];
+                                     //   2 = no frames (0..n-1), f16; 3 = u8 frames, f16
+  unsigned pad;                      // 0 in files before ANIMPACK96 (all modes 0)
 } SkinTrackRec;
+// bytes of the key arrays of a track (for file-bounds checks)
+static inline unsigned skinTrackRotBytes(const SkinTrackRec *tr) {
+  unsigned n = tr->nRot, m = tr->pad & 3u, fb = m == 2 ? 0u : m == 3 ? ((n + 3u) & ~3u) : ((n * 2 + 3u) & ~3u);
+  return fb + n * (m ? 4u : 8u);
+}
+static inline unsigned skinTrackTransBytes(const SkinTrackRec *tr) {
+  unsigned n = tr->nTrans, m = (tr->pad >> 2) & 3u, fb = m == 2 ? 0u : m == 3 ? ((n + 3u) & ~3u) : ((n * 2 + 3u) & ~3u);
+  return fb + n * (m ? 6u : 12u);
+}
 typedef struct { unsigned short frame, tex; unsigned pad; } SkinBlinkKey;
 
 typedef struct SkinModel {
@@ -159,6 +176,9 @@ typedef struct {
 
 int skinBatchValid(const SkinModel *m, const SkinBatch *b);
 SkinModel *skinLoad(const char *path);
+extern int skinHeapOnly;   // П5 Зоны-95: 1 — модель в кучу, не в область «миссия» (Гомер живёт через выгрузку уровня и пересборку будки: блок 387 КБ в области считался утечкой)
+static inline SkinModel *skinLoadH(const char *path) { skinHeapOnly = 1; SkinModel *m = skinLoad(path); skinHeapOnly = 0; return m; }
+SkinModel *skinLoadKeep(const char *path);   // Z0-лайт: модель игрока в постоянное место (skin.c)
 void skinSlotOpt(const SkinModel *m);   // №914: переставить слоты костей пачек для общих слотов (skin.c)
 void skinSetSlotOpt(int on); extern unsigned skinSlotModels, skinSlotBefore, skinSlotAfter;
 extern int skinLoadErr; extern unsigned skinLoadGot;   // №775: причина последнего отказа skinLoad (skin.c)
@@ -200,6 +220,8 @@ void skinRootMotion(const SkinModel *m, int clip, float t, float out[3]);
 // (замер tools/char_export: 0° во всех), рот открывает поворот его локальной оси +Z (проверено рендером головы Мардж, Гомера,
 // Апу: +Z — челюсть вниз). Повернуть локальную позу сустава на rad вокруг +Z (после выборки клипа, до палитры)
 void skinJawOpen(SkinXf *xf, int joint, float rad);
+int skinFindJoints(const SkinModel *m, const char *prefix, int *out, int max);   // Модели-96, правка 1240: номера суставов, имя которых начинается с prefix (причёска Мардж hair_*)
+void skinRestJoints(const SkinModel *m, SkinXf *xf, const int *js, int n);        // вернуть эти суставы в позу покоя модели
 
 void skinInit(SkinPlayer *p, const SkinModel *m);
 void skinPlay(SkinPlayer *p, int clip, int loop, float fade);   // same clip again = no restart
@@ -209,6 +231,11 @@ void skinPose(SkinPlayer *p);                                 // sample + blend 
 float skinClipSpeed(const SkinModel *m, int clip);            // root-motion ground speed, m/s (walk 0.87, run 3.4)
 
 float skinFootLift(const SkinModel *m, int clip);
+void skinFootForget(const SkinModel *m);   // Модели-96: забыть кешированные поправки стоп этой модели (адрес переиспользуется)
+void skinSetFootVtxOld(int on);
+float skinFootLiftCompute(const SkinModel *m, int clip);   // без кеша и без запечённого числа (tools/footbake.c)
+void skinSetFootBakeOld(int on);
+extern unsigned skinFootBakedHits, skinFootComputed;          // Модели-96: 1 — поправка стоп по суставам, как было («flag footvtxold 1»)
 void skinSetSoleOld(int on);   // №762: 1 — подошва позы привязки не вычитается (как было; «flag soleold 1»)   // №510: поправка высоты стоп клипа к позе привязки, м (прибавить к y при расстановке персонажа, не игрока)
 void skinPlace(ScePspFMatrix4 *w, float x, float y, float z, float heading);
 // то же с наклоном тела pitch вокруг оси X модели в точке (0, pivotY, 0): +pitch — голова (+Y) к курсу (+Z); ось остаётся на

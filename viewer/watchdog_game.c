@@ -51,7 +51,7 @@ static float worldFloor(const ColWorld *w) {
 #endif
   wdgFloorPasses++;
   float m = 1e9f;
-  for (uint32_t i = 0; i < w->ntri; i++) { const ColTri *t = &w->tri[i]; if (t->a[1] < m) m = t->a[1]; if (t->b[1] < m) m = t->b[1]; if (t->c[1] < m) m = t->c[1]; }
+  { float ty = colMinTriY(w); if (ty < m) m = ty; }   // Коллизия-96: в кольце — из заголовка файла, без полного прохода
   for (uint32_t i = 0; i < w->nbox; i++) { float y = w->box[i].c[1] - w->box[i].h[1]; if (y < m) m = y; }
   if (m > 1e8f) m = -1e4f;
   W.fw = w; W.floorY = m;

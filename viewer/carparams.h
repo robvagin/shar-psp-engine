@@ -169,6 +169,14 @@ static const char *const carIrisCons[] = {
 };
 #define CAR_IRIS_CONS ((int)(sizeof carIrisCons / sizeof carIrisCons[0]))
 
+// правка 1240: машина без верха над сиденьем (tools/open_cars.txt; car.c carOpenFor)
+static const char *const carOpenCons[] = {
+  "apu_v", "atv_v", "bart_v", "burns_v", "ccella", "ccellb", "ccellc", "ccelld", "cdonut", "coffin",
+  "dune_v", "famil_v", "fone_v", "gramp_v", "gramr_v", "hbike_v", "homer_v", "honor_v", "hype_v", "knigh_v",
+  "lisa_v", "oblit_v", "redbrick", "scorp_v", "ship", "smith_v", "snake_v", "willi_v", "witchcar", "zombi_v",
+};
+#define CAR_OPEN_CONS ((int)(sizeof carOpenCons / sizeof carOpenCons[0]))
+
 // ИИ-водители машин миссий (AddStageVehicle(имя, локатор, ИИ, "<путь>.con", водитель)): путь от scripts/cars
 // без .con, строчные, "/" — carParamsForAi("Missions\\level01\\M1race.con", &p) в car.h. Поля — как у carCons
 static const CarCon carConsAi[] = {

@@ -1,0 +1,14 @@
+# Лестница-96 (№4а, тур 100): видимая клетка не в очереди (L1 K9-6, герой стоит, 2 клетки state=0, lqn=0, 5 с подряд BB miss 16-29/с) - сторож VISSTUCK ставит её первой через 1,5 с.
+# Корень отсева на эмуляторе не воспроизводится, поэтому имитация: flag cellstuck 1 (stream() не берёт каждую третью клетку, прыжковый круг выключен). Прыжок далеко и назад, ждём.
+# Красное: s18_standmiss_red.txt (flag visstuck 0) - дыры не закрываются. Гейт: tests/memladder/check.py visstuck.
+flag nosave
+scene BOOT
+flag golevel 1
+wait 40
+flag visstuck 0
+flag cellstuck 1
+foot 344 -362 1.5
+wait 25
+foot 295.5 166 3.14
+wait 25
+end

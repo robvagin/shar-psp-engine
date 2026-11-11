@@ -259,7 +259,7 @@ void collectSetProgress(Collect *c, int level, unsigned cards, uint32_t wasps, u
   for (unsigned i = 0; i < c->nwasp; i++) { s->waspSt[i] = (wasps >> i & 1) ? 2 : 0; hide(c, c->wasp[i].inst); }
   for (unsigned g = 0; g < c->ngag; g++) {
     s->gagFound[g] = (uint8_t)(gags >> g & 1); s->gagCoin[g] = s->gagFound[g];
-    if (s->gagFound[g] && c->gag[g].persist && c->gag[g].cycle == COLL_SINGLE) {   // сыгранный single остаётся на последнем кадре
+    if (s->gagFound[g] && c->gag[g].persist && c->gag[g].cycle == COLL_SINGLE && !collectGagReset96) {   // сыгранный single остаётся на последнем кадре (Build 96: нет — гэг строится заново при входе, см. collectGagReset96)
       s->gagSt[g] = 2; if (c->gag[g].inst >= 0) spEnter(&c->sp, (unsigned)c->gag[g].inst, 2);
     }
   }
@@ -767,6 +767,14 @@ void collectHomerHit(Collect *c, const HomerEvent *e) {
 #endif
 #define GAG_ENTRY_MOVE 1.f
 static float gagEntX, gagEntZ;
+// Build 96 (Роб, правка 1226 и 08.11: автомат Squishee в Kwik «сразу включён сам»): в оригинале гэги комнаты строятся заново при КАЖДОМ входе в комнату и снимаются при выходе (менеджер интерьеров снимает гэги при выходе
+// и строит заново при входе), так что на входе любой гэг стоит в начальном кадре (автомат цел, брызг нет), а запомненным остаётся только «найден» (монеты за повтор не даются). Порт же держал сыгранный single-гэг с флагом persist
+// на последнем кадре между входами и при загрузке прогресса (Squishee: разбитый автомат и розовые брызги с входа в комнату). Теперь на входе в комнату сбрасываются ВСЕ гэги комнаты (в том числе persist), а при загрузке прогресса
+// сыгранные гэги не остаются на последнем кадре; «найден» и монеты не меняются. GAG_RESET96_OLD=1 / flag gagreset96 0 / файл gagreset96old — как было
+#ifndef GAG_RESET96_OLD
+#define GAG_RESET96_OLD 0
+#endif
+int collectGagReset96 = !GAG_RESET96_OLD;
 static int gagHere(const Collect *c, unsigned g, const CollPlayer *p) {
   const CollGag *G = &c->gag[g];
   if (G->room != p->room) return 0;
@@ -781,6 +789,7 @@ static int gagFree(const Collect *c, unsigned g) {   // можно запуст�
   if (!GAG_MISSION_OLD && s->inMission && (c->gag[g].fmv[0] || c->gag[g].pad)) return 0;   // P16 Д7: ролик и проверка (карточки, фильм) — только в свободной езде
   if (s->gagSt[g] == 1) return 0;
   if (s->gagSt[g] == 2 && c->gag[g].cycle == COLL_SINGLE) return 0;
+  if (c->gagBlock[g]) return 0;   // COLLSPLIT: гэг не появляется на глазах и не отзывается, пока не готов (канон п.11)
   return 1;
 }
 
@@ -853,7 +862,7 @@ static void gagsStep(Collect *c, const CollPlayer *p, Coins *coins, const ColWor
     }
     for (unsigned g = 0; g < c->ngag; g++) {
       const CollGag *G = &c->gag[g];
-      if (G->room != p->room || G->persist) continue;
+      if (G->room != p->room || (G->persist && !collectGagReset96)) continue;
       s->gagSt[g] = 0; s->gagT[g] = 0.f;
       if (G->inst >= 0) spEnter(&c->sp, (unsigned)G->inst, 0);
     }
@@ -864,6 +873,10 @@ static void gagsStep(Collect *c, const CollPlayer *p, Coins *coins, const ColWor
   int act = p->action ? actionGag(c, p) : -1;
   for (unsigned g = 0; g < c->ngag; g++) {
     const CollGag *G = &c->gag[g];
+    if (collectGagReset96 && G->room < 0 && p->room < 0 && s->gagSt[g] != 0) {   // Build 96: уличный гэг в оригинале снимается, когда игрок дальше 150 м (порог выгрузки по умолчанию, скрипты уровней его не меняют), и при возврате ближе 100 м строится заново — в начальном кадре
+      float ex_ = p->x - G->x, ey_ = p->y - G->y, ez_ = p->z - G->z;
+      if (ex_ * ex_ + ey_ * ey_ + ez_ * ez_ > 150.f * 150.f) { s->gagSt[g] = 0; s->gagT[g] = 0.f; s->gagIn[g] = 0; if (G->inst >= 0) spEnter(&c->sp, (unsigned)G->inst, 0); }
+    }
     if (!GAG_INTRO_OLD && G->intro > 0.f && G->inst >= 0 && s->gagSt[g] == 0 && !c->sp.run[G->inst].loopOn) spLoop(&c->sp, (unsigned)G->inst, 0.f, G->intro);   // круг 7: ждущий гэг крутит вступление
     if (s->gagSt[g] == 1) {   // играет: конец по длительности данных (сцена SPR1 сама уходит в «сыграл»/«ждёт»)
       s->gagT[g] += dt;

@@ -97,6 +97,7 @@ void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt);
 // Several actors: advance the shared objects once, then submit each actor's own sweep.
 void propsAdvance(Props *p, const ColWorld *world, float dt);
 void propsHitCar(Props *p, const ColWorld *world, Car *car, const CarBox *previous);
+extern int glassSolid1224;   // №1224: 1 — целое стекло-проп (обломок 19) твёрдое для Гомера пешком, разбитое — проход (GLASS1224_OLD=1 / файл glass1224old / flag glass1224 0 — как было)
 extern int bench1034;   // №1034: 1 — скамейки, баки, большие ящики твёрдые для Гомера пешком и держат сверху (BENCH1034_OLD=1 / flag bench1034 0 — как было)
 int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float stepH, float bodyH, float *top, float *onx, float *onz);   // правка 290: пропы твёрдые для Гомера
 // Обычные пропы возвращаются только далеко и вне вида (исходное И текущее место), после 5 с

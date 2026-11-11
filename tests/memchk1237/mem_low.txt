@@ -1,0 +1,12 @@
+# №1237: «куча мала» (как без Use Extra Memory в ARK): flag memchksim подменяет замер на 18 МБ; flag setcheckui — экран как у игрока, ✕ нажимает сам тест (smkTap).
+# Зелёное: MEMCHK heap=18.0 min=32 low=1, SHOT setui1 (экран «Turn on Use Extra Memory (Auto or MAX) in ARK settings.»), SETCHECK continue, игра идёт.
+# Красное: тот же сценарий + flag memchk1237old — экрана нет (MEMCHK не пишется). Без memchksim (полная куча 44 МБ): MEMCHK low=0, экрана нет.
+flag setcheckui 1
+flag memchksim 1
+MEMOLD
+flag menu
+wait 1.5
+press cross
+wait 6
+shot m_after
+end

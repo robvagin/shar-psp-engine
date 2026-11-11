@@ -1,0 +1,9 @@
+# Build 96: старт L4 ставит героя в доме (локатор комнаты y −20) в мире города: вид roomplace (WDNOTE) вместо hold сторожа. RP 0 — красный (flag roomplace96 0: WATCHDOG spawn hold), 1 — зелёный (WDNOTE roomplace).
+scene F_L4
+flag cfgdefaults 1
+flag roomplace96 RP
+wait 3
+scene F_GO4
+flag golevel 4
+wait 45
+end

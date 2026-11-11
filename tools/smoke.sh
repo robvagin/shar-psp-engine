@@ -54,14 +54,14 @@ while IFS='|' read -r f p; do
   s="$SRC/$f"
   if [ ! -f "$s" ]; then
     case "$f" in
-      l[0-9]/*|movies/fmv*|bonus/*|far_plain|mcpr.shr|lmap.shr|colbake.shr|pv2s.shr|horizon.shr) s="$ROOT/$p"; [ -f "$s" ] || continue ;;   # horizon.shr (Горизонт) — по желанию: нет файла — горизонт тихо выкл   # правка 420: трассы бонус-игры — по желанию (нет — MINI GAME серый)
+      l[0-9]/*|movies/fmv*|bonus/*|far_plain|farcells.shr|mcpr.shr|lmap.shr|colbake.shr|pv2s.shr|pvb.shr|horizon.shr) s="$ROOT/$p"; [ -f "$s" ] || continue ;;   # horizon.shr (Горизонт) — по желанию: нет файла — горизонт тихо выкл   # правка 420: трассы бонус-игры — по желанию (нет — MINI GAME серый)
       *) s="$ROOT/$p"; [ -f "$s" ] || { echo "smoke: нет $SRC/$f"; exit 1; } ;;   # 30.09: иначе с места сборки (level01.msn — build/missions/)
     esac
   fi
   mkdir -p "$RUN/$(dirname "$f")" || exit 1
   cp -c "$s" "$RUN/$f" 2>/dev/null || cp "$s" "$RUN/$f" || exit 1
 done < <("$ROOT/tools/ship_files.sh" --pairs)
-for q in stripbench.bin level_toon.shr toonlines.shr pv2s.shr l1/pv2s.shr l2/pv2s.shr l3/pv2s.shr l4/pv2s.shr l5/pv2s.shr l6/pv2s.shr l7/pv2s.shr horizon.shr l1/horizon.shr l2/horizon.shr l3/horizon.shr l4/horizon.shr l5/horizon.shr l6/horizon.shr l7/horizon.shr hlod.shr l1/hlod.shr l2/hlod.shr l3/hlod.shr l4/hlod.shr l5/hlod.shr l6/hlod.shr l7/hlod.shr; do [ -f "$SRC/$q" ] && { mkdir -p "$RUN/$(dirname "$q")"; cp "$SRC/$q" "$RUN/$q"; }; done   # TEST24: PVS по курсу (tools/pvs2.py --section) — по желанию, как far_plain: есть в наборе — кладём
+for q in stripbench.bin level_toon.shr toonlines.shr pv2s.shr pvb.shr l2/pvb.shr l3/pvb.shr l4/pvb.shr l5/pvb.shr l6/pvb.shr l7/pvb.shr l1/pv2s.shr l2/pv2s.shr l3/pv2s.shr l4/pv2s.shr l5/pv2s.shr l6/pv2s.shr l7/pv2s.shr horizon.shr l1/horizon.shr l2/horizon.shr l3/horizon.shr l4/horizon.shr l5/horizon.shr l6/horizon.shr l7/horizon.shr hlod.shr l1/hlod.shr l2/hlod.shr l3/hlod.shr l4/hlod.shr l5/hlod.shr l6/hlod.shr l7/hlod.shr; do [ -f "$SRC/$q" ] && { mkdir -p "$RUN/$(dirname "$q")"; cp "$SRC/$q" "$RUN/$q"; }; done   # TEST24: PVS по курсу (tools/pvs2.py --section) — по желанию, как far_plain: есть в наборе — кладём
 if [ -n "$NEG" ]; then   # полный сценарий + отрицательные контроли одним запуском
   { grep -v '^end' "$ROOT/tools/smoke_scenario.txt"; cat "$SCN"; } > "$OUT/scenario_full.txt"; SCN="$OUT/scenario_full.txt"
 fi

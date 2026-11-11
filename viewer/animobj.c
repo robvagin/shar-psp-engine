@@ -6,6 +6,13 @@
 #ifndef ANIM_COL_POSE_OLD
 #define ANIM_COL_POSE_OLD 0
 #endif
+// №1223 (Кольцо-96): у объекта из нескольких кластеров SPR1 (кран L6: стрела и крюк; прожекторы L3/L6) каждый кластер получал свой случайный сдвиг анимации
+// (SPPHASE, stateprops.c: «оригинал даёт каждому стейтпропу случайный сдвиг 0..10 с»), а ящики коллизии идут по позе первого кластера: крюк рисовался на полпериода
+// в стороне от своей платформы коллизии (до 17 м), то есть платформа без рисунка. Сдвиг у оригинала один на объект (один контроллер клипа на весь составной рисунок):
+// кластеры берут время и кадр у первого. AO_CLUSTER_SYNC_OLD=1 — как было (красный контроль tests/airbox1223/aodraw.sh)
+#ifndef AO_CLUSTER_SYNC_OLD
+#define AO_CLUSTER_SYNC_OLD 0
+#endif
 
 _Static_assert(sizeof(AoObj) == 80, "AoObj 80 B (tools/animobj_export.py)");
 _Static_assert(sizeof(AoVol) == 72, "AoVol 72 B (tools/animobj_export.py)");
@@ -299,6 +306,10 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
       for (unsigned i = o->firstInst; i < (unsigned)o->firstInst + o->nInst; i++) {
         SpRun *s = &sp->run[i]; if (s->poseF != r->f) { s->poseF = r->f; s->poseValid = 0; }
       }
+    if (!AO_CLUSTER_SYNC_OLD && o->action == AO_NONE && o->nInst > 1 && o->nfr > 1) {   // №1223: все кластеры объекта идут одним временем
+      const SpRun *f0 = &sp->run[o->firstInst];
+      for (unsigned i = o->firstInst + 1; i < (unsigned)o->firstInst + o->nInst; i++) { SpRun *s = &sp->run[i]; if (s->t != f0->t || s->poseF != f0->poseF) { s->t = f0->t; s->poseF = f0->poseF; s->poseValid = 0; } }
+    }
     if (o->nVol && w) {
       const SpRun *s = &sp->run[o->firstInst];
       float dx = s->x - px, dz = s->z - pz;

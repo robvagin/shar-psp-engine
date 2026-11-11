@@ -1,0 +1,32 @@
+# Шаг 11 плана Fable (память после загрузки L4): L4 сразу после загрузки, игрок на улице (вышел из дома дверью, как игрок), без комнаты.
+# F_L4FREE_A: настройки по умолчанию (cfgdefaults), на этой улице потолок дальности по зонам 150 м; F_L4FREE_B: то же после flag far150 0; F_L4FREE_C: дальность принудительно 250 м (pano917cap). Строки PH6MEM (free, blk, room, drawDist) раз в секунду: tests/tour96/check_l4free.py.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+shot l4free_l1
+scene F_L4FREE_GO
+press circle 0.3
+wait 0.5
+press circle 0.3
+wait 0.5
+flag golevel 4
+wait 40
+wait 3
+scene F_L4FREE_A
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 14
+shot l4free_a
+scene F_L4FREE_B
+flag far150 0
+wait 14
+shot l4free_b
+scene F_L4FREE_C
+flag pano917cap 1 250   # дальность ровно 250 м (служебный кадр №917б: регуляторы дальность не трогают), радиусы загрузки клеток идут от неё
+wait 16
+shot l4free_c
+end

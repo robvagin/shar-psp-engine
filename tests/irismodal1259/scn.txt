@@ -1,0 +1,100 @@
+# Будка-93 (1259), сценарий Инспектора (Опора-93): L5 m1 getin, △ закрывает ирис seat, в тот же кадр миссия провалена (Failed to follow vehicle). Зелёное: экран провала не под ирисом (IRISMODAL1259), ирис не висит, снимки не чёрные.
+# Красное: flag irismodal1259 0 + irisstuck1258 0 - ирис висит закрытым, снимки чёрные.
+scene MECH2_L5
+flag golevel 5
+__FLAGS__
+wait 20
+flag player 1
+flag bubshots 99
+flag msn
+wait 8
+flag msnsel 0
+wait 5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 6
+flag msnbot 1
+flag msnbotpass 5
+wait 3.5
+shot r00
+wait 3.5
+shot r01
+wait 3.5
+shot r02
+wait 3.5
+shot r03
+wait 3.5
+shot r04
+wait 3.5
+shot r05
+wait 3.5
+shot r06
+wait 3.5
+shot r07
+wait 3.5
+shot r08
+wait 3.5
+shot r09
+wait 3.5
+shot r10
+wait 3.5
+shot r11
+wait 3.5
+shot r12
+wait 3.5
+shot r13
+wait 3.5
+shot r14
+wait 3.5
+shot r15
+wait 3.5
+shot r16
+wait 3.5
+shot r17
+wait 3.5
+shot r18
+wait 3.5
+shot r19
+wait 3.5
+shot r20
+wait 3.5
+shot r21
+wait 3.5
+shot r22
+wait 3.5
+shot r23
+wait 3.5
+shot r24
+wait 3.5
+shot r25
+wait 3.5
+shot r26
+wait 3.5
+shot r27
+wait 3.5
+shot r28
+wait 3.5
+shot r29
+wait 3.5
+shot r30
+wait 3.5
+shot r31
+wait 3.5
+shot r32
+wait 3.5
+shot r33
+wait 3.5
+shot r34
+wait 3.5
+shot r35
+wait 3.5
+shot r36
+wait 3.5
+shot r37
+wait 3.5
+shot r38
+wait 3.5
+shot r39
+flag msnbot 0
+end

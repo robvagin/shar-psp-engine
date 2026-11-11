@@ -102,6 +102,7 @@ typedef struct {
   float restPose[7];       // поза покоя (x, y, z, q), с которой начался пропуск
   int parkN, parkTick;     // ПРОТОТИП «Разбор x_car3d»: кадров подряд пустая машина на ручнике не сдвинулась (≤ CAR_PARK_EPS); номер кадра в пачке пропуска
   float parkPose[7];       // поза в конце последнего посчитанного кадра покоя (x, y, z, q)
+  float scrapeT;           // Коллизия-96: сколько ещё с после скользящего удара о стену трение стены повышено (CAR_SCRAPE_*)
   float fenceT;            // №487: сколько ещё с после касания забора с лица вперёд боковая жёсткость шин ослаблена (CAR_FENCE_LAT)
   float hitSpeed;           // самый сильный удар за кадр (стена или земля), м/с
   // самый сильный удар о стену мира за кадр (только наблюдение, для переписи стен tools/cartest/walls.c): скорость
@@ -202,6 +203,7 @@ int carParamsFor(const char *name, CarParams *p);
 extern float carRollGain;   // файл rollps2 рядом с EBOOT: коэффициент крена (0 — как без файла, добавка к плечу крена, м); carRollGainParse — разбор содержимого
 #define CAR_ROLLPS2_GAIN 0.22f   // м: добавка к плечу бокового крена (файл rollps2 без числа)
 static inline float carRollGainParse(const char *s) { float k = 0.f; char *e = 0; if (s && *s) { k = (float)strtod(s, &e); if (e == s) k = 0.f; } return (k > 0.f && k <= 1.f) ? k : CAR_ROLLPS2_GAIN; }   // пустой/неверный файл — значение по PS2
+int carOpenFor(const char *name);   // правка 1240: 1 — машина без верха над сиденьем водителя (carparams.h carOpenCons из tools/open_cars.txt): причёска Мардж за рулём стоймя
 // правка 333: 1 — у машины в .con SetIrisTransition(1) (carparams.h carIrisCons): посадка и выход ирисом оригинала, без клипов двери
 int carIrisFor(const char *name);
 void carDefaults(CarParams *p);   // famil_v
@@ -234,6 +236,7 @@ void carPlace(Car *c, const ColWorld *w, float x, float y, float z, float h);
 void carResetNearby(Car *c, const ColWorld *w);
 // инициализация: параметры (или NULL = famil_v) + carPlace; эта же точка — запасной «дом» для возврата
 void carInit(Car *c, const CarParams *p, const ColWorld *w, float x, float y, float z, float h);
+void carInitDeferred(Car *c, const CarParams *p, float x, float y, float z, float h);   // Коллизия-96: поза по данным, без опроса земли (стоящие машины трафика до включения места)
 // шаг кадра: dt любой (режется на подшаги p.sub, не больше 0.1 с за вызов)
 // Правка Роба 199 (03.10, «недоработана анимация, что они взрываются»). Оригинал (близнец boom.py, PS2, 50 к/с): после
 // смертельного удара машина больше не едет и горит (огонь, чёрный дым), Гомера выбрасывает через ~0,75 с (правка 147), а взрыв —
@@ -270,6 +273,7 @@ typedef struct { int revert, tries, bn, wn; float bdepth; unsigned char btype[8]
 extern CarDbg1050 carDbg1050; extern int carDbgOn1050;
 void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt);
 // №1104 (коды оригинала, viewer/cheats.h): ставит main_loop.h каждый кадр. Действуют только на машину игрока (huskDrive / svPlayer)
+extern int carDmgMercy96;   // пощада один раз (DMGMERCY_OLD)
 extern int carCheatNoDrag, carCheatAccel, carCheatInvincible, carCheatOneTap, carCheatHornJump;   // нет сопротивления / тяга ×2 / нет урона / касание разбивает чужую машину
 void carHornLeap(Car *c, float amount);   // №1104, код Car Jump on Horn: пока машина на земле и гудок зажат — скорость += (вперёд + 2 вверх) × 5 × нажатие
 extern unsigned carNanFixes;   // правка 252: сколько раз машину с NaN/inf вернули на надёжное место (чёрный ящик, поле fpe)

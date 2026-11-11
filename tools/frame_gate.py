@@ -67,12 +67,17 @@ def main():
         # 19.10 (TEST37): после END пишутся строки кадра выхода (RFAST, DCITY, HOMER, EXIT739) — длиннее 400 знаков, END выпадал из окна хвоста; теперь — строка END в журнале
         newend = os.path.exists(os.path.join(N, 'smoke.txt')) and any(l.startswith('END') for l in open(os.path.join(N, 'smoke.txt'), errors='replace'))
         nc = sum(r['city'] for r in newr); npp = sum(r['props'] for r in newr)
-        fps = []
+        fps = []; prev_t = None
         for ln in open(os.path.join(R, 'smoke.txt'), errors='replace'):
             if ln.startswith('END'): break   # 17.10: после END — кадр выхода (сброс журнала на карту, ~340 мс), не игра; строка RFAST после END его считала (TEST31 integ: fps 22,3 на последней секунде) — как integ 52848db0
-            if ln.startswith('RFAST') and re.search(r'sc=FG_(street|static)', ln):
-                m = re.search(r'fps=([\d.]+)', ln)
-                if m: fps.append(float(m.group(1)))
+            if not ln.startswith('RFAST'): continue
+            tm = re.search(r' t=([\d.]+)', ln); t = float(tm.group(1)) if tm else None
+            # 09.11 (TEST102): неполное окно — строка RFAST через 0,3 с после предыдущей (смена сцены) печатала кадры окна как «в секунду»: 9 кадров за 0,3 с = fps=9.0 при work_ms 8; окна короче 0,9 с не мерят частоту
+            short = t is not None and prev_t is not None and t - prev_t < 0.9
+            if t is not None: prev_t = t
+            if short or not re.search(r'sc=FG_(street|static)', ln): continue
+            m = re.search(r'fps=([\d.]+)', ln)
+            if m: fps.append(float(m.group(1)))
         fmin = min(fps) if fps else 0
         pm = pg = 0   # доля кусков drawPieceM, ушедших в drawGeo (строки BIGCUT, считают Стены; tests/lib/drawn.sh): >= 95 %
         for ln in open(os.path.join(R, 'smoke.txt'), errors='replace'):

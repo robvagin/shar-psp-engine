@@ -174,7 +174,12 @@ static void cgStep2(float ex, float ez) {
   if (c->cgs == 0) {
     int nx = (int)ceilf((c->bb[3] - c->bb[0]) / CG_VX) + 1, ny = (int)ceilf((c->bb[4] - c->bb[1]) / CG_VX) + 1, nz = (int)ceilf((c->bb[5] - c->bb[2]) / CG_VX) + 1;
     if (nx > CG_MAXN || ny > CG_MAXN || nz > CG_MAXN || nx < 1 || ny < 1 || nz < 1) { c->cgs = 2; c->cg = 0; cgPendDrop(); return; }
-    size_t bytes = ((size_t)nx * ny * nz + 7) >> 3; { unsigned char n_[3] = {(unsigned char)nx, (unsigned char)ny, (unsigned char)nz}; bytes += cgCoarseBytes(n_); } unsigned char *g = calloc(bytes, 1);   // CAMPERF: + грубая сетка блоков if (!g) { c->cgs = 2; return; }
+    size_t bytes = ((size_t)nx * ny * nz + 7) >> 3; { unsigned char n_[3] = {(unsigned char)nx, (unsigned char)ny, (unsigned char)nz}; bytes += cgCoarseBytes(n_); } unsigned char *g = calloc(bytes, 1);   // CAMPERF: + грубая сетка блоков
+#ifndef CG_ALLOC_OLD
+#define CG_ALLOC_OLD 0   // 1 — как было: проверка calloc стояла внутри комментария предыдущей правки (мёртвый код), при отказе выделения c->cg = NULL, cgMark писал в NULL + смещение: вылет после выхода из DMV на балласте 10 (TEST93)
+#endif
+    if (!g && !CG_ALLOC_OLD) { static unsigned cgAllocFail; cgAllocFail++; if (smkOn && cgAllocFail <= 3) { char l_[96]; snprintf(l_, sizeof l_, "CGALLOC fail n=%u bytes=%u\n", cgAllocFail, (unsigned)bytes); smkWrite(l_); }
+      cgIdle = 1; return; }   // памяти нет: клетка остаётся без сетки (cgs 0), повтор при следующей загрузке клетки или через 64 кадра; в луче не участвует (cgs != 2)
     c->cgn[0] = (unsigned char)nx; c->cgn[1] = (unsigned char)ny; c->cgn[2] = (unsigned char)nz; c->cgbytes = (unsigned)bytes; c->cgk = c->first; c->cgi = 0; c->cg = g; c->cgs = 1;
   }
   if (cgProf) cgPf[1] += sceKernelGetSystemTimeLow() - tB_;

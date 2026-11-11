@@ -1,0 +1,28 @@
+# Пропечка №1 (09.11): что такое «post» 1,34 мс PSP внутри x_city (подмес мира jitter.h: CopyImage + TexSync после неба — ожидание GE?). Железо: пара сцен в одном месте, 10 с каждая,
+# читать CITYSUB (post, room, sky, jit) и PHSEC (x_city, build) обеих сцен. Ждём: JIT1 — post ≈1,3, JIT0 — post ≈0; разница в build = цена подмеса.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_ABPOST_GO
+flag golevel 4
+wait 40
+scene F_ABPOST_JIT1
+foot 499.0 397.6 0 -20
+wait 1
+foot 502.4 398.0 0 -20
+wait 0.6
+press triangle 0.2
+wait 12
+flag jitter 1
+wait 10
+shot abpost_jit1
+scene F_ABPOST_JIT0
+flag jitter 0
+wait 10
+shot abpost_jit0
+scene F_ABPOST_JIT1B
+flag jitter 1
+wait 10
+shot abpost_jit1b
+end

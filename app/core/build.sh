@@ -45,7 +45,11 @@ fi
 # 4. уровни, ролики, звук, интерфейс: tools/ship.sh; прогресс — по номеру правила данных («@rule i/N имя», SHIP_PROGRESS=1)
 export SHIP_LEVELS="2 3 4 5 6 7" SHIP_PROGRESS=1
 say 4 "Building the levels" 12
-tools/ship.sh 2>&1 | while IFS= read -r l; do
+# Build 93 hotfix (D1, чистая сборка 07.11): движок здесь собирается SHAR_RELEASE без KEEP_SMOKE, сценарий смоука он не читает,
+# поэтому у человека с PPSSPPSDL.app на Маке ship.sh гонял смоук, тот всегда «не дошёл», и сборка вставала в самом конце, ничего не положив в build/.
+# Смоук — проверка для нас, не для игрока: здесь он выключен. BUILD_SMOKE_OLD=1 — как было
+SHIP_ARGS=(); [ "${BUILD_SMOKE_OLD:-0}" = 1 ] || SHIP_ARGS=(--no-smoke)
+tools/ship.sh ${SHIP_ARGS[@]+"${SHIP_ARGS[@]}"} 2>&1 | while IFS= read -r l; do
   case "$l" in
     "@rule "*) r=${l#@rule }; i=${r%%/*}; r=${r#*/}; n=${r%% *}; name=${r#* }
       p=$((14 + i * 80 / n)); case "$name" in l[2-4]/*) t="Building levels 2 to 4";; l[5-7]/*) t="Building levels 5 to 7";; movies/*|*.rmv|*.pmf) t="Converting the movies";; *) t="Building level 1";; esac

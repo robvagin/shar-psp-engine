@@ -11,9 +11,12 @@ void msnartShutdown(void);                        // закрыть msnart.shr �
 void msnartLoad(const char *p3dPath, int level);  // LoadP3DFile("art\...\x.p3d"): подгрузить запись, если есть
 const char *msnartWantIcon(void);                     // №958б: имя значка задания, которого ждёт угол (диагностика)
 void msnartMissionStart(void);                    // новая миссия: записи прошлой выгружаются (уровня — остаются)
+extern int msnartRetry94, msnartFailSim94;               // Build 94: повтор чтения записи предмета через 1 с; служебный отказ памяти N раз
+extern void (*msnartWatch)(const char *note, const char *path, int tries);   // строка WATCHDOG от движка
 extern int (*msnartRoom)(unsigned);              // №637: освободить далёкие клетки под запись; 1 — цельный кусок нужного размера есть
 void msnartPump(void);                            // раз в кадр: асинхронное чтение очереди записей (sceIoReadAsync)
 int  msnartIconPixOk(void);                      // №993: диагностика — пиксели в углу те, что просит миссия
+int  msnartReading(void);                         // №1247: 1 — чтение записей идёт или в очереди
 int  msnartImage(const char *name);               // 1 = есть значок задания (SetHUDIcon, msnicons) с этим именем
 void msnartSetObjIcon(const char *name);          // значок в рамку задания HUD (ui.c: UI_OBJICON_EXTERNAL); NULL — нет
 int  msnartImageData(const char *name, const void **pix, int *tw, int *th, int *w, int *h);   // 1 = картинка (брифинг) загружена
@@ -26,6 +29,9 @@ extern int msnartGlowBias;
 void msnartDrawRot(const char *name, const float *pos, float heading, float ex, float ey, float ez, float t);
 void msnartDrawCull(const char *name, const float *pos, float ex, float ey, float ez, float t, float dist);   // меши дальше dist не рисуются (пропы гонки)   // то же, повёрнутое по курсу (стрелки на дороге)
 int  msnartHas(const char *name);                 // 1 — составной объект name загружен (04.10: пятно маркера цели <рисунок>_shadow)
+int  msnartPicGaveUp(void);                       // Кольцо-96: картинка брифинга отказана по памяти после всех попыток: карточка показывается без неё сразу
+extern int msnartFailMissgen;                     // служебно: N отказов памяти у missgen.p3d
+extern int msnartPicWaitOld;                      // 1 — как до правки (мгновенный повтор, 8 с чёрного)
 extern unsigned msnartLostPics;                   // №512: картинок брифинга, не доехавших с карты (после одного повтора)
 unsigned msnartBytes(void);                       // сколько сейчас занято записями (служебный счётчик)
 // правка 103 (01.10): меш / квад рисуется, только если msnartGeRoom(байт) = 1 (место в списке GE; NULL — без проверки), иначе

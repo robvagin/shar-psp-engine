@@ -1,0 +1,25 @@
+# Build 96 (1254): взрыв машины игрока: дым при урон 0.9, потом 1.0 — взрыв 3 с, остов, штраф монет, HUD и дым снимками. Служебный flag testdmg.
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L1_start
+wait 10
+wait 2
+flag coinadd 100
+wait 1
+shot b0_before
+flag testdmg 0.9
+wait 2
+shot b1_smoke
+flag testdmg 1
+wait 0.5
+shot b2_boom05
+wait 1
+shot b3_boom15
+wait 2
+shot b4_boom35
+wait 3
+shot b5_husk
+wait 3
+shot b6_after
+end

@@ -1,9 +1,12 @@
+# №435 s1 + аудит Fable §7 п.1: наибольший свободный кусок <= 0,2 МБ (flag fragblk 0.2) вместо доли свободного; без лестницы (flag memladder 0) меню не открывается из кусков или даёт MEMFAILSZ.
 flag nosave
 scene BOOT
 flag golevel 4
 wait 50
 flag uimsndone 127
 wait 5
+flag fragblk 0.2
+wait 1
 flag boothstarve 0.05
 wait 1
 press start

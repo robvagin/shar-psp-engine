@@ -1,0 +1,16 @@
+# Карточка брифинга: подписи кнопок внутри рамки (гонка на ставку L4: △ Cancel Mission)
+scene MECH2_L4
+flag golevel 4
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 10
+wait 5
+press cross 0.2
+wait 6
+shot brief_a
+press cross 0.2
+wait 6
+shot brief_b
+end

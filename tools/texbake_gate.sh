@@ -9,7 +9,7 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; SET="$1"; shift; NEG=0; [ "${1:-}" = -n ] && { NEG=1; shift; }; LV="${*:-1 2 3 4 5 6 7}"; SCN="$(mktemp -d)"; FAIL=0
 one() { # level flags filedata tag -> строка TEXBAKE
   printf 'flag level %s\nscene g%s\nwait 14\nend\n' "$1" "$1" > "$SCN/s$1${4:-}.txt"
-  SHIP_LEVELS="2 3 4 5 6 7" SMOKE_EXTRA="texbake.shr l2/texbake.shr l3/texbake.shr l4/texbake.shr l5/texbake.shr l6/texbake.shr l7/texbake.shr" SMOKE_HEADLESS=1 SMOKE_FILEDATA="meaudio=3 $3" SMOKE_FLAGS="$2" SMOKE_SCN="$SCN/s$1${4:-}.txt" SMOKE_MAXT="${SMOKE_MAXT:-600}" "$ROOT/tools/smoke.sh" "$SET" >"$SCN/run$1${4:-}.log" 2>&1
+  SHIP_LEVELS="2 3 4 5 6 7" SMOKE_EXTRA="texbake.shr l2/texbake.shr l3/texbake.shr l4/texbake.shr l5/texbake.shr l6/texbake.shr l7/texbake.shr $(for f in flat912.bin marks912.bin notoon.txt zones1007.bin zones1007p.bin; do for d in "" l2/ l3/ l4/ l5/ l6/ l7/; do [ -f "$SET/$d$f" ] && printf "%s " "$d$f"; done; done)" SMOKE_HEADLESS=1 SMOKE_FILEDATA="meaudio=3 $3" SMOKE_FLAGS="$2" SMOKE_SCN="$SCN/s$1${4:-}.txt" SMOKE_MAXT="${SMOKE_MAXT:-600}" "$ROOT/tools/smoke.sh" "$SET" >"$SCN/run$1${4:-}.log" 2>&1
   d=$(sed -n 's/^отчёт: \(.*\)\/summary.txt.*/\1/p' "$SCN/run$1${4:-}.log" | tail -1); case "$d" in /*) ;; *) d="$ROOT/$d" ;; esac; grep -a '^TEXBAKE ' "$d/smoke.txt" | head -1
 }
 fld() { echo "$1" | sed -n "s/.* $2=\([^ ]*\).*/\1/p"; }

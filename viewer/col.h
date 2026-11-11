@@ -52,6 +52,12 @@ typedef struct { float loc[3], ax[3], ay[3], az[3], car[3], carH; uint32_t flags
 #define COLPROBE_FAST_OLD 0   // 1 — без быстрого отсева непроходимых треугольников и заборов в gather (прежнее поведение)
 #endif
 
+// Коллизия-96: COL1 кольцом (viewer/colring.c, tools/col_ring_build.py). 1 — прежнее поведение, модуль не используется; 0 — треугольники и ссылки клеток
+// берутся из кольца за фокусом, недостающее дочитывается синхронно (запрос никогда не отвечает «пусто»). Включать после гейтов (docs/handoff/КОЛЛИЗИЯ_КОЛЬЦО_ПЛАН_2026-11-08.md)
+#ifndef COLRING_OLD
+#define COLRING_OLD 1
+#endif
+struct ColRing;
 typedef struct ColScratch ColScratch;
 
 typedef struct {
@@ -66,6 +72,7 @@ typedef struct {
   const ColWrench *phone; uint32_t nphone;                        // JMP1 reserved[1]: телефонные будки (правка 62), формат ключа
   const ColPad *death; uint32_t ndeath;                           // JMP1 reserved[2]: зоны DEATH (правка 86): объём, apex — точка возврата
   const ColPhoneX *phonex; uint32_t nphonex;                      // JMP1 reserved[3]: будки+ (правка 166), nphonex == nphone или 0
+  struct ColRing *ring;       // Коллизия-96: не NULL — треугольники и клетки из кольца (tri/cellStart/refs тогда NULL); только при COLRING_OLD=0
   uint32_t npocket; uint32_t pocketSeg[32]; float pocketSide[32]; // №590 (общее правило K3-3): звенья забора покрышек у зоны DEATH R6D01 и сторона «за забором»: -1/+1 по нормали звена
 } ColWorld;
 
@@ -105,6 +112,19 @@ extern int colGatherCacheOld;   // №984: 1 — без кэша «пусто» 
 extern int colRampRail1050;   // №1050 (Б): у бортов большого трамплина L5 нет торцов (flag ramprail1050 0 — как было)
 extern int colRamp1050;   // №1050: 1 — торец тонкой стенки не гасит машину в ноль, а отводит вбок (RAMP1050_OLD=1 / flag ramp1050 0 — как было)
 int colInit(ColWorld *w, const void *section, unsigned size);
+#if !COLRING_OLD
+int colInitRing(ColWorld *w, struct ColRing *r);   // вместо colInit: разбор из запечённого colbake (обязателен, иначе -9); JMP1 из резидентного блока кольца
+#endif
+// Нижняя точка треугольников земли (groundcover, watchdog): в кольце — из заголовка файла, иначе полный проход
+float colMinTriY(const ColWorld *w);
+// Коллизия-96: лежит ли точка (x, z) в плане кольца (быстро отвечает без обращения к карте). Далёкие игровые объекты (персонажи миссий, стрелки к целям), которым земля нужна только для высоты,
+// вне плана землю не спрашивают и держат высоту по маршруту, а при возвращении в план проверяют опору честно (канон п.11). Миры без кольца: всегда 1. COLRING_FARSKIP_OLD=1 — спрашивать всегда
+#ifndef COLRING_FARSKIP_OLD
+#define COLRING_FARSKIP_OLD 0
+#endif
+int colCovered(const ColWorld *w, float x, float z);
+extern long colGroundRel;   // Коллизия-96: кто спрашивал землю (адрес возврата минус colGroundMatId)
+extern int colQueryKind;   // Коллизия-96: вид последнего запроса к миру (журнал кольца)
 // №bake-3Б: colInit с запечённым разбором (colbake.shr); bake == 0 / не сошёлся хеш — как colInit. key — хеш сырого COL1 (движок: mcColHash)
 int colInitBake(ColWorld *w, const void *section, unsigned size, const void *bake, unsigned bakeSize, unsigned key);
 unsigned colBakeSizeMax(const ColWorld *w);                                          // верхняя граница размера записи (буфер под colBakeDump)

@@ -170,6 +170,7 @@ void uiSetObjIconTop(int top);   // Роб 17.10: верх значка в уг�
 // Брифинг миссии (Scrooby MissionLoad.scr, экран UI_SCREEN_MISSIONLOAD): название и описание (Latin-1, строки библии),
 // картинка задания SetPresentationBitmap (RGBA 8888, как uiSetObjIconImage; NULL — пусто). uiDrawBriefing — вместо uiDraw
 void uiSetBriefing(const char *title, const char *info, const void *pix, int tw, int th, int w, int h);
+void uiCardInfo96Set(int on);   // 0 — описание карточки миссии: две строки допустимых (прежнее), 1 — до кнопки Continue (три)
 void uiSetWager(int on);   // карточка гонки на ставку: картинка задания левее, справа строки ставки (UI_T_GAMBLE, поля UI_F_WAGER_*)
 void uiBriefingBonus(int on);   // 1 — карточка бонусной миссии (бордовая, как PS2 23:56)
 void uiDrawBriefing(void);
@@ -390,6 +391,7 @@ int  uiScrMenuInput(int screen, int *sel, unsigned buttonsJustPressed);
 void uiScrRowText(int screen, int row, const char *s);   // текст строки row экрана screen второго пакета (NULL — из пакета)
 const char *uiScrRowShown(int screen, int row);   // что нарисовано в строке меню row экрана screen (с подменами из кода; гейт сохранений)
 int  uiScrScreens(void);                           // экранов во втором пакете (0 — не открыт)
+int  uiScrCreditsExit(unsigned hit);               // титры: только ✕ (△ / ○ не закрывают), 1 — выход со звуком back
 int  uiScrBackInput(unsigned hit);                 // экран без строк: △ / ○ — 1 (звук back)
 // VIEW CREDITS (ViewCredits.scr): фон, титры (блоки CREDITS_NN, сдвиг вверх на scroll px), рамка-телевизор и Back поверх;
 // 1 — титры ещё на экране, 0 — все ушли за верх. info (может быть NULL) — для гейта: что нарисовано
@@ -412,8 +414,12 @@ void uiScrMenuFlags(int flags);   // 413: флаги пункта CGuiMenu ор�
 void uiPix8(int on);            // правка 126: 1 (по умолчанию) — сообщения и уведомления пиксельным шрифтом 8×8 (msx); 0 — шрифтами пакета
 void uiBatchOld(int on);      // служебное (наряд 11.10): 1 — раскладка текста без кэша, как до UI_BATCH
 void uiDrawLog1040Set(int on);
+void uiBubble1262Set(int on);   // №1262: «flag bubble1262old», файл bubble1262old
+void uiBubble1251Set(int on);   // №1251: «flag bubble1251old», файл bubble1251old
+void uiBubble1247Set(int on);   // №1247: «flag bubble1247old», файл bubble1247old
 void uiBubble1040Set(int on);   // №1040: «flag bubble1040 0|1», файл bubble1040old
 void uiWrap1037Set(int on);   // №1037: «flag wrap1037 0|1», файл wrap1037old
+extern int uiDrop1229;   // №1229: 1 — «Item Dropped!» на 10 % мельче и на 10 px выше, живёт, пока есть выпавший неподобранный предмет (DROP1229_OLD=1 / flag drop1229 0 — как было)
 void uiObjWidowOld(int on);   // служебное: текст задания с висячим словом в последней строке, как до правки 215
 void uiObjTextOld(int on);      // служебное: 1 — текст задания без значка с места значка (прежний код; отрицательный контроль правки 48)
 void uiAvatarOld(int on);       // служебное: 1 — аватар прежнего размера (рамка первого слота; отрицательный контроль)
@@ -421,6 +427,7 @@ void uiTypoShot(int mode);      // правка 312 (твик-панель ти�
 enum { UI_ANIM_NOPULSE = 1, UI_ANIM_NOPOP = 2, UI_ANIM_OLDHNR = 4, UI_ANIM_NOACTFADE = 8 };   // выключить пульс / всплывание / прежнее кольцо / проявление подписи △ (272)
 void uiSetLog(void (*log)(const char *));
 void uiTrace(unsigned bits);
+extern unsigned uiFrameNo, uiBubRiseFr;   // №1247 (гейт): номер кадра движка, главный цикл ставит перед uiDraw; строки BUBBLE1247 в журнале
 void uiAnimOff(unsigned bits);
 void uiForceShow(int tag, float seconds);   // тег HUD виден seconds с (поверх игры); 0 — снять
 void uiClkTest(int mode, float v);             // служебно (сценарий): 1 — часы HUD стоят, 2 — сдвиг на v с, 0 — идут

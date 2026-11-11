@@ -1,0 +1,23 @@
+# Правка Роба 1241 (tests/oldcarhit/emu.sh): игрок угнал машину NPC, своя осталась стоять; оставленная ставится в 6 м перед игроком, газ 3 с.
+# Зелёный: строки OLDCARDIST d остаются >= 2 м (упёрся); красный (flag oldcarhitold): d < 1 м (проехал насквозь)
+wait 3
+scene jack
+goto 188 279.9 1.5708
+wait 2
+press triangle
+wait 2.5
+flag jackplace
+wait 1.2
+press triangle
+wait 3
+foot 188.0 279.6 1.5708
+wait 1
+press triangle
+wait 4
+shot seated
+flag oldcarram
+wait 0.5
+press cross 4
+wait 4.5
+shot ram
+end

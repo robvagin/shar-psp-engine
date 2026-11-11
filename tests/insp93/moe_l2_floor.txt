@@ -1,0 +1,15 @@
+# L2 перед Моу: у машины (-171.8,7.2,-20.9) бот Механика не может поставить героя на землю (grounded=0, WATCHDOG nofloor). Проверка в игре: стоит ли герой.
+scene MOE_L2
+flag golevel 2
+wait 20
+flag player 1
+wait 6
+foot -170.0 -19.7 0 7.2
+wait 4
+shot a0
+wait 4
+foot -173.7 -22.1 0 7.2
+wait 4
+shot a1
+wait 6
+end

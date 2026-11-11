@@ -1,0 +1,51 @@
+# №1261: наши кадры на тех же местах, что у PS2 (build/ps2_glow_1261): дверь дома, вход Kwik-E-Mart, будка. Ось z порта = -z PS2.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GLOW
+flag camdet 1
+flag stop
+goto 234.60 162.30 -0.263
+wait 4
+shot house_21m_a
+wait 0.4
+shot house_21m_b
+wait 0.4
+shot house_21m_c
+goto 233.40 166.90 -0.266
+wait 4
+shot house_17m_a
+wait 0.4
+shot house_17m_b
+wait 0.4
+shot house_17m_c
+goto 232.40 170.70 -0.268
+wait 4
+shot house_13m_a
+wait 0.4
+shot house_13m_b
+wait 0.4
+shot house_13m_c
+goto 225.90 275.40 -0.426
+wait 4
+shot kwik_29m_a
+wait 0.4
+shot kwik_29m_b
+wait 0.4
+shot kwik_29m_c
+goto 220.40 279.20 -0.278
+wait 4
+shot kwik_23m_a
+wait 0.4
+shot kwik_23m_b
+wait 0.4
+shot kwik_23m_c
+goto 230.40 157.50 2.112
+wait 4
+shot booth_8m_a
+wait 0.4
+shot booth_8m_b
+wait 0.4
+shot booth_8m_c
+end

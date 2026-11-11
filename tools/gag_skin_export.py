@@ -104,7 +104,7 @@ def export(path):
             batches = [dict(ce.batch_vertices(b), tex=b['tex'], eyes=False, alpha=b['alpha'],
                             strips=b['strips']) for b in batches]
             with tempfile.TemporaryDirectory() as td:
-                out = Path(td) / 'scene.chr'; ce.write_chr(out, jj, batches, textures, cc, None, 0xffffffff)
+                out = Path(td) / 'scene.chr'; ce.write_chr(out, jj, batches, textures, cc, None, 0xffffffff, pack_rot=False)   # Модели-96: сцены гэгов большие, вращения без потерь
                 blob = bytearray(out.read_bytes())
             # A gag's root translation belongs to its animation, unlike locomotion.
             struct.pack_into('<I', blob, 52, 0xffffffff)

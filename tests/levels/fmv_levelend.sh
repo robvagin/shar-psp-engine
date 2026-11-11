@@ -4,6 +4,7 @@
 # Сначала КРАСНЫЙ: копия набора с обрезанным movies/fmv3.smv (первые 64 КБ: ролик битый) — сверка «ролик сыгран» обязана упасть
 # (движок не падает, цель засчитывается); потом ЗЕЛЁНЫЙ. Сценарий — tests/levels/fmv_levelend.txt.
 #   tests/levels/fmv_levelend.sh [DIR]   DIR — EBOOT + данные (по умолчанию build/ship_stage); первая строка итог, код 0 = OK
+# 08.11: набор из символьных ссылок (movies/ целой папкой) превращает «обрезать копию» в порчу оригинала; копия получает свою папку movies и свой файл fmv3.smv, перед обрезкой ссылка снимается.
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 SRC="${1:-$ROOT/build/ship_stage}"; case "$SRC" in /*) ;; *) SRC="$PWD/$SRC" ;; esac
@@ -34,7 +35,7 @@ print('PASS' if not bad else 'FAIL (%d)' % len(bad)); sys.exit(0 if not bad else
 PY
 }
 res=""; ok=1
-P="$T/badmovie"; mkdir -p "$P"; cp -c -R "$SRC/." "$P/" && head -c 65536 "$SRC/movies/fmv3.smv" > "$P/movies/fmv3.smv.cut" && mv "$P/movies/fmv3.smv.cut" "$P/movies/fmv3.smv"
+P="$T/badmovie"; mkdir -p "$P"; cp -c -R "$SRC/." "$P/" && { [ ! -L "$P/movies" ] || { t=$(readlink "$P/movies"); rm "$P/movies"; mkdir "$P/movies"; for f in "$t"/*; do ln -s "$f" "$P/movies/$(basename "$f")"; done; }; } && rm -f "$P/movies/fmv3.smv" 2>/dev/null; [ -f "$P/movies/fmv3.smv" ] || cp "$SRC/movies/fmv3.smv" "$P/movies/fmv3.smv" && head -c 65536 "$SRC/movies/fmv3.smv" > "$P/movies/fmv3.smv.cut" && mv "$P/movies/fmv3.smv.cut" "$P/movies/fmv3.smv"
 D=$(run tests/levels/fmv_levelend.txt "$P"); check "$D" > "$T/red.txt" 2>&1
 if [ $? = 0 ]; then ok=0; res="$res; КРАСНЫЙ НЕ ПОЙМАН: битый ролик"; else res="$res; красный (битый ролик): $(grep -m1 'ПРОВАЛ' "$T/red.txt" | sed 's/^ *ПРОВАЛ: //' | cut -c1-110)"; fi
 G=$(run tests/levels/fmv_levelend.txt "$SRC"); check "$G" > "$T/green.txt" 2>&1

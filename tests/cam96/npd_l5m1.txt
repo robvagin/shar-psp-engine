@@ -1,0 +1,20 @@
+# npd (риг без кожи): L5 m1sd — гость «npd» на hidden_moe, разговор apu/npd «redeem»; доходим до точки, смотрим: идёт ли этап дальше, нет ли ожидания модели
+scene NPD_L5
+flag golevel 5
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 0
+wait 6
+shot a0
+foot -287.5 -176.75 0 6.9
+wait 3
+shot a1
+wait 6
+shot a2
+wait 6
+shot a3
+wait 10
+shot a4
+end

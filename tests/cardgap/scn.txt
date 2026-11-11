@@ -1,0 +1,14 @@
+# №1261б: баннер «COLLECTOR CARD!» + название карточки: строки не перекрываются (кадры cardA/cardB, красный: flag cardgapold нет — сборка -DCARDGAP_OLD=1)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_CARD
+flag camdet 1
+wait 2
+flag cardhud 51
+wait 0.6
+shot cardA
+wait 1
+shot cardB
+end

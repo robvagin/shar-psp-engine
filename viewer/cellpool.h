@@ -14,6 +14,9 @@
 #pragma once
 // ВЫКЛЮЧЕН по умолчанию (итог 1Б, TEST90). Прежний замер эмулятора, тур 36 сцен с балластом 3 МБ (пул кусков 256 КБ без плит): на L1 свободной кучи
 // на 3 МБ меньше (4,4 против 7,0 МБ), цельный кусок не больше — дробят не клетки, а записи миссий art. Новый замер — docs/handoff/ОТЧЁТ_1Б_ПУЛ_КЛЕТОК_2026-11-04.md.
+#ifndef CP_MEM
+#define CP_MEM(al, sz) memalign((al), (sz))   // откуда берутся плиты, куски хвостов и клетки вне классов; движок (main_state.h) ставит область «город» зоны 2 (П5 Зоны-95)
+#endif
 #ifndef CELLPOOL_ON
 #define CELLPOOL_ON 0   // выключен: замер 1Б (цепочка уровней в эмуляторе) — пул клеток без зон кучу ухудшает; включить: файл `cellpoolon` или -DCELLPOOL_ON=1
 #endif
@@ -51,7 +54,7 @@ static void cpSetTable(char t) {
 }
 static unsigned cpSlabBytes(unsigned cell) { unsigned b = 256u << 10; while (b / cell < 4u) b += 256u << 10; if (b / cell > 32u) b = 32u * cell; return b; }   // плита: ≥ 4 ячеек, ≤ 32 (маска 32 бита), кратна 64 Б
 static void *cpAlloc(size_t sz) {
-  if (cpOld || sz > CP_DIRECT) { cpDirect++; return memalign(16, sz ? sz : 16); }
+  if (cpOld || sz > CP_DIRECT) { cpDirect++; return CP_MEM(16, sz ? sz : 16); }
   unsigned need = (((unsigned)sz + 63u) & ~63u) + 64u;
   CP_LOCK();
   void *r = 0;
@@ -64,7 +67,7 @@ static void *cpAlloc(size_t sz) {
   if (!r) {
     int k = -1; for (int i = 0; i < cpN; i++) if (!cpCh[i].base) { k = i; break; }
     if (k < 0 && cpN < CP_MAXCH) k = cpN++;
-    unsigned char *b = k >= 0 ? memalign(64, CP_CHUNK) : 0;
+    unsigned char *b = k >= 0 ? CP_MEM(64, CP_CHUNK) : 0;
     if (b) { cpCh[k].base = b; cpChunksMade++;
       CpHdr *h = (CpHdr *)b;
       if (CP_CHUNK - need >= 128u) { CpHdr *n = (CpHdr *)(b + need); n->size = CP_CHUNK - need; n->used = 0; h->size = need; } else h->size = CP_CHUNK;
@@ -72,14 +75,14 @@ static void *cpAlloc(size_t sz) {
     else cpChunkFail++;
   }
   CP_UNLOCK();
-  if (!r) { cpDirect++; return memalign(16, sz ? sz : 16); }
+  if (!r) { cpDirect++; return CP_MEM(16, sz ? sz : 16); }
   cpAllocs++; return r;
 }
 // клетка: ячейка по размеру; sz — размер данных клетки
 static void *cpAllocCell(size_t sz) {
   int cls = -1;
   if (!cpOld && !cpCellsOff) for (int i = 0; i < cpNCls; i++) if ((size_t)cpClsKB[i] * 1024u >= sz) { cls = i; break; }
-  if (cls < 0) { cpCellDirect++; return memalign(16, sz ? sz : 16); }
+  if (cls < 0) { cpCellDirect++; return CP_MEM(16, sz ? sz : 16); }
   unsigned cell = cpClsKB[cls] * 1024u;
   CP_LOCK();
   void *r = 0; CpSlab *best = 0;
@@ -87,7 +90,7 @@ static void *cpAllocCell(size_t sz) {
   if (!best) {
     int k = -1; for (int i = 0; i < cpSlN; i++) if (!cpSl[i].base) { k = i; break; }
     if (k < 0 && cpSlN < CP_MAXSLAB) k = cpSlN++;
-    unsigned bytes = cpSlabBytes(cell); unsigned char *b = k >= 0 ? memalign(64, bytes) : 0;
+    unsigned bytes = cpSlabBytes(cell); unsigned char *b = k >= 0 ? CP_MEM(64, bytes) : 0;
     if (b) { CpSlab *s = &cpSl[k]; s->base = b; s->cls = (unsigned char)cls; s->cell = cell; s->n = bytes / cell; s->nfree = s->n; s->freeMask = s->n >= 32 ? 0xFFFFFFFFu : (1u << s->n) - 1u; s->bytes = bytes;
       cpSlabsMade++; cpSlabHeld += bytes; if (cpSlabHeld > cpCellPeakHeld) cpCellPeakHeld = cpSlabHeld; best = s; }
     else cpSlabFail++;
@@ -95,7 +98,7 @@ static void *cpAllocCell(size_t sz) {
   if (best) { unsigned m = best->freeMask; int bit = 0; while (!((m >> bit) & 1u)) bit++;
     best->freeMask &= ~(1u << bit); best->nfree--; r = best->base + (size_t)bit * best->cell; cpCellsLive++; cpCellReq += (unsigned)sz; }
   CP_UNLOCK();
-  if (!r) { cpCellDirect++; return memalign(16, sz ? sz : 16); }   // плиту не дали: прежний путь, клетка нужного размера
+  if (!r) { cpCellDirect++; return CP_MEM(16, sz ? sz : 16); }   // плиту не дали: прежний путь, клетка нужного размера
   cpCellAllocs++; return r;
 }
 static void cpFree(void *p) {

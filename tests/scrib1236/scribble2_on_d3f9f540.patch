@@ -1,0 +1,175 @@
+diff --git a/viewer/CMakeLists.txt b/viewer/CMakeLists.txt
+index 2ee2c6e3..68da3c23 100644
+--- a/viewer/CMakeLists.txt
++++ b/viewer/CMakeLists.txt
+@@ -93,6 +93,11 @@ endforeach()
+ # 0xFF (viewer/memwatch.c), как неинициализированная память настоящей PSP; прогон пути F10 в проверяльщике (tests/crash_f10/hw.sh
+ # с EBOOT этой сборки) 03.10 чистый. В выпуске выключено
+ option(MEM_SCRIBBLE "fill malloc/free blocks with 0xFF (diagnostic build)" OFF)
++# Fable шаг 14 (клинья 1236): cmake -DMEM_SCRIBBLE2=ON — узоры ALLOC/FREE, карантин освобождённых блоков, защитный хвост (viewer/memwatch.c). Только эмулятор
++option(MEM_SCRIBBLE2 "scribble patterns, free quarantine and overrun guard (diagnostic build, 1236)" OFF)
++if(MEM_SCRIBBLE2)
++  target_compile_definitions(sharview PRIVATE MEM_SCRIBBLE2=1)
++endif()
+ option(LEAK696_TRACE "per-caller live allocation table, dumped after level unload (diagnostic build, task 696)" OFF)
+ if(LEAK696_TRACE)
+   target_compile_definitions(sharview PRIVATE LEAK696_TRACE=1)
+diff --git a/viewer/main_loop.h b/viewer/main_loop.h
+index c20bf186..c82cde78 100644
+--- a/viewer/main_loop.h
++++ b/viewer/main_loop.h
+@@ -2979,6 +2979,9 @@ int main(int argc, char **argv) {
+     stFx = cfx; stFz = cfz;   // взгляд этого кадра — для порядка клеток после большого прыжка (main_stream.h jumpRush)
+     unsigned scT0 = sceKernelGetSystemTimeLow();
+     pending = inR ? 0 : stream(ex, ey, ez);
++#if MEM_SCRIBBLE2
++    if (smkOn) { extern void scribFlush(void (*)(const char *)); scribFlush(smkWrite); }
++#endif
+     if (smkOn) { static unsigned p6t_, p6n_, p6g_, p6s_, p6m_; unsigned p6c_ = sceKernelGetSystemTimeLow(); p6n_++; p6g_ += p6b_ - p6a_; p6s_ += p6c_ - p6b_; if (p6c_ - p6b_ > p6m_) p6m_ = p6c_ - p6b_;   // аудит FPS: ворота и stream() в мкс за секунду
+       if (!p6t_) p6t_ = p6c_;
+       if (p6c_ - p6t_ >= 1000000u) { char l_[120]; snprintf(l_, sizeof l_, "PH6SPLIT t=%.1f frames=%u gates_us=%u stream_us=%u stream_max_us=%u\n", smkT, p6n_, p6g_ / (p6n_ ? p6n_ : 1), p6s_ / (p6n_ ? p6n_ : 1), p6m_); smkWrite(l_);
+diff --git a/viewer/memwatch.c b/viewer/memwatch.c
+index c71f4c93..7b2fbc73 100644
+--- a/viewer/memwatch.c
++++ b/viewer/memwatch.c
+@@ -281,6 +281,132 @@ void __wrap__free_r(struct _reent *r, void *p) { __real__free_r(r, p); }
+ // выделения, которые newlib делает САМ внутри _calloc_r/_realloc_r/_memalign_r (через _malloc_r): мимо пула (memalign режет чанк по заголовку, указатель пула испортил бы слоты) и мимо учёта
+ // (блок учтёт внешняя обёртка по итоговому указателю; иначе двойная запись и «призраки» в таблице MEMLIVE). Размеры функций - psp-nm -S (0xF0, 0x5CC, 0x1AC) с запасом
+ static inline int inLibcR(unsigned ra) { return (ra - (unsigned)(uintptr_t)__real__calloc_r) < 0x100u || (ra - (unsigned)(uintptr_t)__real__realloc_r) < 0x600u || (ra - (unsigned)(uintptr_t)__real__memalign_r) < 0x1B0u; }
++
++#if MEM_SCRIBBLE2
++// Fable, шаг 14 (клинья 1236, видео тестера 0:06–0:08 и 0:50–0:54): служебная сборка MEM_SCRIBBLE2. Выделенное заливается узором ALLOC (в вершинах — голубой цвет, большой разброс координат),
++// освобождённое — узором FREE (пурпурный). Чтение уже освобождённого или неинициализированного видеочипом даст на кадре крупные голубые/пурпурные клинья, а не тихую порчу.
++// Освобождённые блоки до 64 КБ держатся в карантине (<= SC_QCAP байт, FIFO): при выходе из карантина узор проверяется — запись в освобождённое видна сразу строкой SCRIB uaf-write
++// (адрес, смещение, кто выделил, кто освободил). За краем каждого выделения — защитный хвост 16 байт: при free проверяется, строка SCRIB overrun. Только для эмулятора, в выпуск не входит.
++#include <string.h>
++#include <stdio.h>
++#include <psprtc.h>
++#include <pspkernel.h>
++#define SC_RZ 16u
++#define SC_TAB (1u << 17)
++#define SC_QN 512u
++#define SC_QCAP (1536u << 10)
++#define SC_BIG (64u << 10)
++typedef struct { void *p; unsigned n, ra; } ScE;
++static ScE scTab[SC_TAB]; static unsigned scLive, scOver, scAllocs, scFrees, scGuardBad, scUaf, scQBytes, scQDrop, scBigFree;
++typedef struct { void *p; unsigned bytes, aRa, fRa; } ScQ;
++static ScQ scQ[SC_QN]; static unsigned scQh, scQt;   // голова — самый старый
++static char scMsg[32][160]; static unsigned scMsgN, scMsgLost;
++static void (*scribOut)(const char *);
++void scribSetOut(void (*o)(const char *)) { scribOut = o; }
++static void scLog(const char *fmt, unsigned a, unsigned b, unsigned c, unsigned d, unsigned e) {
++  unsigned s_ = sceKernelCpuSuspendIntr();
++  if (scMsgN < 32) { snprintf(scMsg[scMsgN], sizeof scMsg[0], fmt, a, b, c, d, e); scMsgN++; } else scMsgLost++;
++  sceKernelCpuResumeIntr(s_); }
++void scribFlush(void (*out)(const char *)) {   // вызывается из кадра: накопленные строки в журнал
++  char t[32][160]; unsigned n; unsigned s_ = sceKernelCpuSuspendIntr(); n = scMsgN; memcpy(t, scMsg, (size_t)n * sizeof t[0]); scMsgN = 0; sceKernelCpuResumeIntr(s_);
++  for (unsigned i = 0; i < n; i++) out(t[i]);
++  static unsigned lastT; unsigned now = sceKernelGetSystemTimeLow();
++  if (now - lastT > 2000000u) { lastT = now; char l[200]; snprintf(l, sizeof l, "SCRIB stat live=%u allocs=%u frees=%u quarantine=%uKB guardbad=%u uaf=%u tabover=%u lost=%u bigfree=%u\n", scLive, scAllocs, scFrees, scQBytes >> 10, scGuardBad, scUaf, scOver, scMsgLost, scBigFree); out(l); } }
++static inline unsigned scWord(unsigned i, int kind) {   // слово i блока: 4 слова = одна вершина (u,v | цвет | x,y | z)
++  unsigned v = i >> 2;
++  switch (i & 3u) {
++    case 0: return 0x00400040u;
++    case 1: return kind ? 0xFFFF00FFu : 0xFFFFFF00u;   // FREE: ABGR пурпурный; ALLOC: голубой
++    case 2: return (((v * 1237u + 0x1000u) & 0xFFFFu) << 16) | ((v * 733u + 0x400u) & 0xFFFFu);
++    default: return (v * 911u) & 0xFFFFu; } }
++static void scFill(void *p, unsigned bytes, int kind) { unsigned *w = (unsigned *)p; unsigned nw = bytes >> 2; for (unsigned i = 0; i < nw; i++) w[i] = scWord(i, kind); }
++static int scCheck(const void *p, unsigned bytes, int kind) { const unsigned *w = (const unsigned *)p; unsigned nw = bytes >> 2; for (unsigned i = 0; i < nw; i++) if (w[i] != scWord(i, kind)) return (int)(i << 2); return -1; }
++static inline unsigned scH(void *p) { return (((unsigned)(uintptr_t)p >> 4) * 2654435761u) >> 15; }
++static int scAdd(void *p, unsigned n, unsigned ra) {
++  unsigned s_ = sceKernelCpuSuspendIntr(); int ok = 0; int first = -1;
++  for (unsigned k = 0; k < 64; k++) { unsigned i = (scH(p) + k) & (SC_TAB - 1);
++    if (scTab[i].p == p) { scTab[i].n = n; scTab[i].ra = ra; ok = 1; break; }   // тот же адрес уже в таблице (блок освободили мимо нашего free, зона и т.п.): запись обновляется, дубля нет
++    if (first < 0 && (!scTab[i].p || scTab[i].p == (void *)1)) first = (int)i;
++    if (!scTab[i].p) break; }
++  if (!ok && first >= 0) { scTab[first].p = p; scTab[first].n = n; scTab[first].ra = ra; scLive++; ok = 1; }
++  if (!ok) scOver++;
++  sceKernelCpuResumeIntr(s_); return ok; }
++static int scTake(void *p, unsigned *n, unsigned *ra) {   // 1 — блок отслеживался, запись снята
++  unsigned s_ = sceKernelCpuSuspendIntr(); int ok = 0;
++  for (unsigned k = 0; k < 64; k++) { unsigned i = (scH(p) + k) & (SC_TAB - 1); if (scTab[i].p == p) { *n = scTab[i].n; *ra = scTab[i].ra; scTab[i].p = (void *)1; scLive--; ok = 1; break; } if (!scTab[i].p) break; }
++  sceKernelCpuResumeIntr(s_); return ok; }
++static inline unsigned scUsable(const void *p) { return SPIN(p) ? spSizeOf(p) : (unsigned)malloc_usable_size((void *)p); }
++// выделение: n — запрошено движком; p получен на n+SC_RZ. Узор ALLOC на n, хвост-страж за краем
++static void *scNew(void *p, unsigned n, unsigned ra, int zero) {
++  if (!p) return p;
++  if (!zero) scFill(p, n & ~3u, 0);
++  { unsigned char *g = (unsigned char *)p + n; for (unsigned i = 0; i < SC_RZ; i++) g[i] = (unsigned char)(0xA5u ^ i); }
++  scAdd(p, n, ra); scAllocs++; return p; }
++static void wf_real(struct _reent *r, void *p);
++static void scEvict(struct _reent *r) {   // самый старый из карантина: проверка узора, затем настоящее освобождение
++  ScQ e; unsigned s_ = sceKernelCpuSuspendIntr();
++  if (scQh == scQt) { sceKernelCpuResumeIntr(s_); return; }
++  e = scQ[scQh % SC_QN]; scQh++; scQBytes -= e.bytes; sceKernelCpuResumeIntr(s_);
++  int bad = scCheck(e.p, e.bytes, 1);
++  if (bad >= 0) { scUaf++; scLog("SCRIB uaf-write p=%08x off=%u bytes=%u alloc_ra=%08x free_ra=%08x\n", (unsigned)(uintptr_t)e.p, (unsigned)bad, e.bytes, e.aRa, e.fRa); }
++  wf_real(r, e.p); }
++static void scFree(struct _reent *r, void *p, unsigned ra) {   // p отслеживался (scTake уже снял запись)
++  (void)p; (void)r; (void)ra; }
++static void *wm(struct _reent *r, size_t n, unsigned ra) {
++  if (inLibcR(ra)) { void *p = __real__malloc_r(r, n); if (!p && n) miss(n, ra); return p; }
++  size_t rq = n + SC_RZ; void *p = 0;
++#if !SMALLPOOL_OLD
++  if (n && rq <= SP_GEN) { void *q = spAlloc(rq); if (q) { MMAS_R(q, spSizeOf(q), ra); return scNew(q, (unsigned)n, ra, 0); } }
++#endif
++  if (!n) { p = __real__malloc_r(r, n); if (!p) miss(n, ra); if (p) MMA_R(p, ra); return p; }
++  p = __real__malloc_r(r, rq); if (!p) miss(n, ra); if (p) MMA_R(p, ra); return scNew(p, (unsigned)n, ra, 0); }
++static void *wc(struct _reent *r, size_t a, size_t b, unsigned ra) {
++  size_t n = a * b; if (!a || !b) { void *p = __real__calloc_r(r, a, b); if (p) MMA_R(p, ra); return p; }
++  size_t rq = n + SC_RZ; void *p = 0;
++#if !SMALLPOOL_OLD
++  if (rq <= SP_GEN) { void *q = spAlloc(rq); if (q) { memset(q, 0, n); MMAS_R(q, spSizeOf(q), ra); return scNew(q, (unsigned)n, ra, 1); } }
++#endif
++  p = __real__calloc_r(r, 1, rq); if (!p) miss(n, ra); if (p) MMA_R(p, ra); return scNew(p, (unsigned)n, ra, 1); }
++static void *wa(struct _reent *r, size_t al, size_t n, unsigned ra) {
++  size_t rq = n + SC_RZ; void *p = 0;
++#if !SMALLPOOL_OLD
++  if (al <= SP_MAXB && !(al & (al - 1)) && n && rq <= SP_MAXB) { void *q = spAlloc(rq < al ? al : rq); if (q) { MMAS_R(q, spSizeOf(q), ra); return scNew(q, (unsigned)n, ra, 0); } }
++#endif
++  if (!n) { p = __real__memalign_r(r, al, n); if (!p) miss(n, ra); if (p) MMA_R(p, ra); return p; }
++  p = __real__memalign_r(r, al, rq); if (!p) miss(n, ra); if (p) MMA_R(p, ra); return scNew(p, (unsigned)n, ra, 0); }
++static void wf_real(struct _reent *r, void *p) {
++  if (p && zone3FreeX && zone3FreeX(p)) return;
++#if !SMALLPOOL_OLD
++  if (p && SPIN(p)) { MMDS(p, spSizeOf(p)); spFree(p); return; }
++#endif
++  if (p) MMD(p); __real__free_r(r, p); }
++static void wf(struct _reent *r, void *p) {
++  if (!p) return;
++  unsigned n, aRa;
++  if (zone3FreeX && zone3FreeX(p)) { scTake(p, &n, &aRa); return; }   // блок отдаёт зона: запись в нашей таблице всё равно снимается (иначе устаревшая запись даёт ложный overrun при повторном использовании адреса)
++  if (!scTake(p, &n, &aRa)) { wf_real(r, p); return; }   // не из нашего учёта (до обёртки, libc): без заливки
++  scFrees++;
++  { const unsigned char *g = (const unsigned char *)p + n; unsigned bad = 0; for (unsigned i = 0; i < SC_RZ; i++) if (g[i] != (unsigned char)(0xA5u ^ i)) bad |= 1u << i;
++    if (bad) { scGuardBad++; unsigned g0, g1; memcpy(&g0, g, 4); memcpy(&g1, g + 4, 4); scLog("SCRIB overrun p=%08x n=%u guardmask=%08x alloc_ra=%08x free_ra=%08x\n", (unsigned)(uintptr_t)p, n, bad, aRa, (unsigned)__builtin_return_address(0));
++      scLog("SCRIB overrun-detail guard0=%08x guard1=%08x usable=%u spin=%u\n", g0, g1, (unsigned)malloc_usable_size(p), (unsigned)SPIN(p), 0); } }
++  unsigned us = scUsable(p); scFill(p, us & ~3u, 1);
++  if (us > SC_BIG) { scBigFree++; wf_real(r, p); return; }
++  while (scQBytes + us > SC_QCAP || scQt - scQh >= SC_QN) { scEvict(r); if (scQt == scQh) break; }
++  { unsigned s_ = sceKernelCpuSuspendIntr(); scQ[scQt % SC_QN].p = p; scQ[scQt % SC_QN].bytes = us & ~3u; scQ[scQt % SC_QN].aRa = aRa; scQ[scQt % SC_QN].fRa = (unsigned)__builtin_return_address(0); scQt++; scQBytes += us & ~3u; sceKernelCpuResumeIntr(s_); } }
++static void *wr(struct _reent *r, void *q, size_t n, unsigned ra) {
++  if (!q) return wm(r, n, ra);
++  unsigned on = 0, ora = 0; unsigned s_ = sceKernelCpuSuspendIntr(); int tracked = 0;
++  for (unsigned k = 0; k < 64; k++) { unsigned i = (scH(q) + k) & (SC_TAB - 1); if (scTab[i].p == q) { on = scTab[i].n; ora = scTab[i].ra; tracked = 1; break; } if (!scTab[i].p) break; }
++  sceKernelCpuResumeIntr(s_); (void)ora;
++  if (!tracked) {   // чужой блок (до обёртки/libc): прежний путь без изменений
++#if !SMALLPOOL_OLD
++    if (SPIN(q)) { unsigned os = spSizeOf(q); if (!n) { MMDS(q, os); spFree(q); return 0; } if (n <= os) return q; void *np = wm(r, n, ra); if (!np) return 0; memcpy(np, q, os); MMDS(q, os); spFree(q); return np; }
++#endif
++    size_t qs_ = (memmapOnRt() && q) ? malloc_usable_size(q) : 0; void *p = __real__realloc_r(r, q, n); if (!p && n) miss(n, ra); if (q && (p || !n)) MMDS(q, qs_); if (p) MMA_R(p, ra); return p; }
++  if (!n) { wf(r, q); return 0; }
++  void *np = wm(r, n, ra); if (!np) return 0;
++  memcpy(np, q, on < n ? on : (unsigned)n); wf(r, q); return np; }
++#else
+ static void *wm(struct _reent *r, size_t n, unsigned ra) {
+   if (inLibcR(ra)) { void *p = __real__malloc_r(r, n); if (!p && n) miss(n, ra); return p; }
+ #if !SMALLPOOL_OLD
+@@ -314,6 +440,7 @@ static void *wr(struct _reent *r, void *q, size_t n, unsigned ra) {
+   if (!q && n && n <= SP_GEN) return wm(r, n, ra);
+ #endif
+   size_t qs_ = (memmapOnRt() && q) ? malloc_usable_size(q) : 0; void *p = __real__realloc_r(r, q, n); if (!p && n) miss(n, ra); if (q && (p || !n)) MMDS(q, qs_); if (p) MMA_R(p, ra); return p; }
++#endif
+ void *__wrap__malloc_r(struct _reent *r, size_t n) { return wm(r, n, (unsigned)__builtin_return_address(0)); }
+ void *__wrap__calloc_r(struct _reent *r, size_t a, size_t b) { return wc(r, a, b, (unsigned)__builtin_return_address(0)); }
+ void *__wrap__realloc_r(struct _reent *r, void *q, size_t n) { return wr(r, q, n, (unsigned)__builtin_return_address(0)); }

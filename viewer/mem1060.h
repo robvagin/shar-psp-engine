@@ -16,6 +16,12 @@ static int mem1060Rebuild = !MEM1060_REBUILD_OLD;   // mem1060 и mem1060Pre —
 static int mem1060Back;   // 1 — клетки города выгружены сценой: после будки вернуть под газетой
 static int mem1060Scenes, mem1060Rebuilds;
 // служебно (flag mem1060log N): строка MEM1060 stat — загруженных клеток, свободно, наибольший блок (гейт tests/mem1060: «всё освобождённое на месте, утечки нет»)
+// Будка-93 / правка Роба 1225 и 1227 («после будки игра грузит карту заново и делает наезд камеры; будка грузила ДВА раза»): ступень «сцена» (газета, всё в кучу) смысла не имеет, когда клеток города в куче
+// уже нет (их выгрузили ступени до неё) и наибольший блок меньше куска пакета: она бы лишь показала второй экран перед пересборкой. Тогда сразу пересборка, один экран, один проход; после успешной пересборки
+// город свежий вокруг игрока, возвращать нечего (второй экран «back» на выходе тоже не нужен). Камера старта миссии после будки не играет (BOOTH_CAMHOLD1225_FRAMES кадров вне будки): игрок стоит там, где стоял
+// (сверка исходником: после выхода из будки вид — за машиной у будки, без облёта). BOOTH1225_OLD=1 / файл booth1225old рядом с EBOOT / flag booth1225old 1 — как было (сцена, потом пересборка, возврат, наезд)
+// (BOOTH1225_OLD, booth1225Old, camHold1225 — в main_stream.h: нужны раньше)
+static int boothCells1225(void) { int cells = 0; for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner && cl[i].state == 2) cells++; return cells; }
 static void mem1060Stat(int tag) {
   int cells = 0; for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner && cl[i].state == 2) cells++;
   char s_[160]; snprintf(s_, sizeof s_, "MEM1060 stat tag=%d cells=%d free=%.2f blk=%.2f scenes=%d rebuilds=%d t=%.1f\n", tag, cells, heapFreeBytes() / 1048576.f, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, mem1060Scenes, mem1060Rebuilds, smkT);
@@ -146,8 +152,9 @@ static int boothScene1060(const char *sd, void **fbp) {
 
 // ступень 4 (пересборка кучи): уровень выгружается и грузится обратно, игрок и машина — на прежнем месте. Возвращает результат phoneViewOpen.
 // Миссия: сохранение держит уровень, этап и пройденные миссии; внутриэтапное (таймеры, объекты, водители) не сериализуется — этап начинается заново, как после RESUME. Строка BOOTH1060 msn — до и после
-static int boothRebuild1060(const char *sd, void **fbp) {
-  unsigned f0 = heapFreeBytes(), b0 = memMaxBlock ? memMaxBlock() : 0, t0 = sceKernelGetSystemTimeLow(); mem1060Rebuilds++;
+// Build 96 («чистая перезагрузка», идея Роба): снимок состояния -> выгрузка уровня целиком -> загрузка -> восстановление из снимка, один экран, игрок там же, без наезда камеры старта. Ядро бывшей пересборки будки (boothRebuild1060 зовёт его же);
+// ступень 5 машины переходов (transit_fsm.h) перед SIMPLIFY для входа в комнату вне миссии (main_rooms.h roomReload96). Выключатель CLEANRELOAD96_OLD=1 / файл cleanreload96old / flag cleanreload96 0 — ступени нет (SIMPLIFY как был); пересборка будки от него не зависит
+static void levelCleanReload96(void **fbp, unsigned t0) {
   float hx = homer.x, hy = homer.y, hz = homer.z, hh = homer.h, cx = car.x, cy = car.y, cz = car.z, ch = car.h;
   SaveGame carry; saveCapture(&carry);   // прогресс, монеты, карточки, разовые предметы — всё, что пишет сохранение
   char pb[160]; svProgressText(&carry, pb, sizeof pb);
@@ -166,20 +173,29 @@ static int boothRebuild1060(const char *sd, void **fbp) {
     else { sndMaster(1.f); mem1060TransLog("rebuild-cord", 1); } }
   levelLoad(fbp);
   svPending = carry; svResumeOn = 1;
-  menuStartGame(fbp, t0, 1);                   // комнаты и камеры уровня, круг клеток вокруг старта, экран загрузки закрыт внутри
-  ldScr1060 = UI_LOAD_LEVEL; mem1060FeOpen = 0;
+  if (!booth1225Old) { menuRingAt1225[0] = hx; menuRingAt1225[1] = hy; menuRingAt1225[2] = hz; menuRingAt1225On = 1; }   // Будка-93 (1225): город читается там, где игрок и будка
+  roomSyncOff96 = 1; menuStartGame(fbp, t0, 1); roomSyncOff96 = 0;   // комнаты и камеры уровня, круг клеток вокруг старта, экран загрузки закрыт внутри (Build 96: без повторного входа в комнату старта)
+  ldScr1060 = UI_LOAD_LEVEL; mem1060FeOpen = 0; menuRingAt1225On = 0;
+  if (!booth1225Old && inRoom()) { roomLeave(); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1225 room-leave t=%.1f\n", smkT); smkWrite(s_); } }   // старт миссии мог поставить игрока в комнату (дом): он у будки, в городе
   homerPlace(&homer, &world, hx, hy, hz, hh); carPlace(&car, &world, cx, cy, cz, ch); chase.init = 0;
+  if (smkOn) { char s_[200]; snprintf(s_, sizeof s_, "CLEANRELOAD96 ms=%u homer=%.2f,%.2f,%.2f->%.2f,%.2f,%.2f dxz=%.2f t=%.1f\n", (sceKernelGetSystemTimeLow() - t0) / 1000u, hx, hy, hz, homer.x, homer.y, homer.z, sqrtf((homer.x - hx) * (homer.x - hx) + (homer.z - hz) * (homer.z - hz)), smkT); smkWrite(s_); }
   { SaveGame now; saveCapture(&now); char pa[160]; svProgressText(&now, pa, sizeof pa);
     char s_[400]; snprintf(s_, sizeof s_, "BOOTH1060 msn same=%d before=[%s] after=[%s] t=%.1f\n", !strcmp(pb, pa), pb, pa, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
+}
+static int boothRebuild1060(const char *sd, void **fbp) {
+  unsigned f0 = heapFreeBytes(), b0 = memMaxBlock ? memMaxBlock() : 0, t0 = sceKernelGetSystemTimeLow(); mem1060Rebuilds++;
+  levelCleanReload96(fbp, t0);
   stBoothHold1051 = 1;
   phoneViewSetProgress(svLvReached(&lvKeep)); phoneViewSetCar(mvForcedCar(), car.destroyed ? 1.f : car.damage);   // как перед открытием в main_loop.h
   int po = phoneViewOpen(mvShop(), sd);
   mem1060Log("rebuild", f0, b0, (int)((sceKernelGetSystemTimeLow() - t0) / 1000u), po == 0);
+  if (!booth1225Old) camHold1225 = BOOTH_CAMHOLD1225_FRAMES;   // Будка-93 (1225): наезда камеры старта на выходе нет
   return po;
 }
 
 // после будки (или если открыть не вышло): освобождённое вернуть — клетки вокруг игрока читаются под газетой, дальше стрим
 static void mem1060Return(void **fbp) {
+  if (!booth1225Old && camHold1225 > 0) camHold1225 = BOOTH_CAMHOLD1225_FRAMES;   // вышел из будки — отсчёт с начала
   if (!mem1060Back) return;
   mem1060Back = 0; stBoothHold1051 = 0;
   if (mem1060WarmUsed) { phoneViewWarmOld(1); mem1060WarmUsed = 0; }   // пакет про запас, взятый переходом, — обратно в кучу до чтения клеток

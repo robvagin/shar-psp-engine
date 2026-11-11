@@ -9,9 +9,10 @@
 #include "ui.h"
 #include "sound.h"
 #include "audio.h"
+#include "flowrules.h"
 
-// PORT_RULE, copied from main.c VIEW CREDITS; original scrolling speed is not in Scrooby data
-#define ENDING_CREDITS_SPEED (35.f * 272.f / 480.f)
+// Same speed as Options -> View Credits (original screen is inherited; PS2 recording: 20 px/s on 480). ENDCRED_SPEED_OLD=1 gives the old 35
+#define ENDING_CREDITS_SPEED flowCreditsSpeed(1)
 
 int endingRun(const char *file, void *geList, void (*reset)(void), void *(*swap)(void),
               unsigned (*frame)(float, int), void (*log)(const char *), void **fbp) {
@@ -29,7 +30,7 @@ int endingRun(const char *file, void *geList, void (*reset)(void), void *(*swap)
   for (;;) {
     unsigned now=sceKernelGetSystemTimeLow(); float dt=(now-last)*1e-6f; last=now; if(dt>.05f)dt=.05f;
     sceCtrlPeekBufferPositive(&pad,1); unsigned buttons=pad.Buttons | (frame ? frame(dt,0) : 0), hit=buttons & ~prev; prev=buttons;
-    if (uiScrBackInput(hit)) { reason=1; break; }  // same Back action as the existing VIEW CREDITS
+    if (uiScrCreditsExit(hit)) { reason=1; break; }  // same exit as VIEW CREDITS: cross only (PS2)
     if (once && !alive) break;
     sceGuStart(GU_DIRECT,geList); reset();
     sceGuScissor(0,0,480,272); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT|GU_DEPTH_BUFFER_BIT);

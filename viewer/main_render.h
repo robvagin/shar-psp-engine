@@ -1,3 +1,4 @@
+#include "dcache96.h"
 #include "xsub.h"
 // ---------- карта высот и стены ----------
 #include "bisect.h"
@@ -14,8 +15,8 @@ static int ground(float x, float z, float y, float step, float *out) {
   return found;
 }
 extern int roadArrowOld;   // viewer/msn_view.c, №606
-static int mvGroundHook(float x, float z, float yHi, float yLo, float *out) { float n[3]; return haveCol && colGround(&world, x, z, yHi, yLo, out, n); }   // №606: высота коллизии под стрелкой маршрута
-static int mvGroundNHook(float x, float z, float yHi, float yLo, float *y, float *n3) { return haveCol && colGround(&world, x, z, yHi, yLo, y, n3); }   // №1025: высота и нормаль под стрелкой
+static int mvGroundHook(float x, float z, float yHi, float yLo, float *out) { float n[3]; return haveCol && colCovered(&world, x, z) && colGround(&world, x, z, yHi, yLo, out, n); }   // №606: высота коллизии под стрелкой маршрута
+static int mvGroundNHook(float x, float z, float yHi, float yLo, float *y, float *n3) { return haveCol && colCovered(&world, x, z) && colGround(&world, x, z, yHi, yLo, y, n3); }   // №1025: высота и нормаль под стрелкой
 // стена в клетке перекрывает высоты кузова машины?
 static int wallAt(float x, float z, float y) {
   int gx = (int)((x - hox) / hcell), gz = (int)((z - hoz) / hcell);
@@ -1948,6 +1949,27 @@ static McrModel mcr[MCR_MAX]; static unsigned char *mcrDir; static unsigned mcrN
 static unsigned mcrTexBase; static int mcrTexOk; static McGeo mcrGeo[MCR_CAT];
 static unsigned mcrLoads, mcrLoadBytes; static float mcrLoadMs;   // служебное (смоук: строка MCR)
 static void mcrPreDropAll(void);
+#ifndef MCRLAD1238_OLD
+#define MCRLAD1238_OLD 0
+#endif
+#define MCR_BAD_TRIES 3
+static int mcrLad1238 = !MCRLAD1238_OLD, mcrFailSim1238; static unsigned char mcrBadN1238[MCR_CAT];
+// Build 94 (Фабль П3): машина миссии, которой не хватило памяти (или чтение дало отказ), «ждёт память»: метка с временем, повтор не чаще раза в секунду (раньше — каждый кадр,
+// и каждый кадр лестница памяти). Одна строка WATCHDOG на начало ожидания и одна на конец. MCRWAIT94_OLD=1 / flag mcrwait94 0 / файл mcrwait94old — как было
+#ifndef MCRWAIT94_OLD
+#define MCRWAIT94_OLD 0
+#endif
+static int mcrWait94On = !MCRWAIT94_OLD; static unsigned mcrWaitT94[MCR_CAT]; static unsigned char mcrWaitN94[MCR_CAT];
+static void mcrWaitLog94(const char *nm, const char *what, int n) {
+  char s[140]; snprintf(s, sizeof s, "WATCHDOG mem who=car size=0 step=0 %s n=%d %.15s free=%.2f t=%.1f\n", what, n, nm, heapFreeBytes() / 1048576.f, smkT);
+  if (smkOn) smkWrite(s);
+  bbNote(s);
+}
+static void mcrWaitMark94(int e, const char *nm) {   // отказ: ждать секунду
+  if (!mcrWait94On || e < 0 || e >= MCR_CAT) return;
+  if (!mcrWaitN94[e]++) mcrWaitLog94(nm, "wait", 1);
+  mcrWaitT94[e] = sceKernelGetSystemTimeLow() + 1000000u; if (!mcrWaitT94[e]) mcrWaitT94[e] = 1;
+}
 static unsigned char mcrBad[MCR_CAT];   // блок модели не прочитался (битый / обрезанный пакет): больше не пробовать до смены уровня
 static void mcrDirLoad(void) {   // каталог пакета уровня: имена, TrModel (кузов, колёса), где блок модели
   mcrPreDropAll(); free(mcrDir); mcrDir = 0; mcrN = 0; mcSetGeo(0, 0); memset(mcrBad, 0, sizeof mcrBad);
@@ -2029,6 +2051,7 @@ static const McrModel *mcrGet(const char *name) {   // модель машины
   if (!mcrDir || !mcrTexOk) return 0;
   int e = -1; for (unsigned i = 0; i < mcrN; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) { e = (int)i; break; }
   if (e < 0 || mcrBad[e]) return 0;   // блок уже не читался (битый пакет) — не пробовать каждый кадр
+  if (mcrWait94On && mcrWaitT94[e] && (int)(sceKernelGetSystemTimeLow() - mcrWaitT94[e]) < 0) return 0;   // Build 94: «ждёт память», повтор не раньше чем через секунду
   McrPre *pq = MCR_ASYNC_OLD ? 0 : mcrPreFind(e);
   if (pq && mcrPreDecide(mcrPreReady(pq), pq->age, mcrForceLoad) == MCRPRE_DEFER) { pq->age++; mcrDeferred = 1; return 0; }   // читается в фоне — машина на следующем кадре
   if (!pq && !MCR_STAGGER_OLD && mcrStaggerOn && mcrLoadedF && !mcrForceLoad) { mcrDeferred = 1; return 0; }   // одна новая модель за кадр
@@ -2040,11 +2063,18 @@ static const McrModel *mcrGet(const char *name) {   // модель машины
   { char nm[16]; memcpy(nm, d, 15); nm[15] = 0; bbOp("car+", nm, (BB_SYNC_ASYNC_OLD || !pq) ? 1 : 0); }   // блок уже прочитан в фоне (pq) — синхронного чтения нет, запись ящика не в кадре   // правка 103: самописец — ящик на карте ДО чтения модели
   unsigned t0 = sceKernelGetSystemTimeLow();
   unsigned char *b = pq ? mcrPreTake(pq, u[1]) : 0; int fromPre = b != 0;
-  if (!b) { b = memalign(64, u[1]); if (!b) return 0; }
+  if (!b) {
+    // №1238 (аудит моделей миссий, семейство №1235): блок машины миссии читался мимо лестницы памяти (канон п.13): нет цельного куска — молча «без машины» (MCRNONE), хотя клетки и впрок прочитанное можно было выкинуть.
+    // Теперь перед memalign — memLadder (машине миссии высший приоритет); отказ чтения — не навсегда: до MCR_BAD_TRIES попыток. MCRLAD1238_OLD=1 / flag mcrlad1238 0 / файл mcrlad1238old — как было; flag mcrfail N — N отказов подряд (служебно)
+    if (mcrFailSim1238 > 0) { mcrFailSim1238--; if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MCR sim-fail %.15s left=%d t=%.1f\n", (const char *)d, mcrFailSim1238, smkT); smkWrite(s_); } mcrWaitMark94(e, (const char *)d); return 0; }
+    if (mcrLad1238 && memLadOn) memLadderZ(LADZ_MISSION, "car", u[1] + (64u << 10), 2 /* LAD_TOP */);
+    b = zone3AllocX(Z3A_MISSION, "mcr", u[1], 64); if (!b) { mcrWaitMark94(e, (const char *)d); return 0; } }   // П5 Зоны-95: область «миссия» (после лестницы 1238); Build 94: метка «ждёт память»
   SceUID f = fromPre ? 0 : sceIoOpen(mcrPath, PSP_O_RDONLY, 0);
+  if (!fromPre) DCPRE96(b, u[1]);
   if (!fromPre && (f < 0 || sceIoLseek32(f, u[0], PSP_SEEK_SET) < 0 || sceIoRead(f, b, u[1]) != (int)u[1])) {
-    if (f >= 0) sceIoClose(f); free(b); mcrBad[e] = 1;
+    if (f >= 0) sceIoClose(f); free(b); if (!mcrLad1238 || ++mcrBadN1238[e] >= MCR_BAD_TRIES) mcrBad[e] = 1;
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "MCR bad %.15s t=%.1f\n", (const char *)d, smkT); smkWrite(s); }
+    if (!mcrBad[e]) mcrWaitMark94(e, (const char *)d);
     return 0; }
   if (!fromPre) sceIoClose(f);
   sceKernelDcacheWritebackRange(b, u[1]); toneBlkAdd(b, u[1], TF_MCR, u[0]);   // правка 144: палитры — из пакета заново
@@ -2064,6 +2094,7 @@ static const McrModel *mcrGet(const char *name) {   // модель машины
     if (x->pre) memcpy(x->slv, x->lv, sizeof x->lv);
     p = (const unsigned char *)(((uintptr_t)q + 15) & ~(uintptr_t)15);
   }
+  if (mcrWait94On && e < MCR_CAT && mcrWaitN94[e]) { mcrWaitLog94(M->name, "ready", mcrWaitN94[e]); mcrWaitN94[e] = 0; mcrWaitT94[e] = 0; }
   if (!fromPre) mcrLoadedF = 1;   // готовый фоновый блок кадр не задерживает
   bound = -2; mcrLoads++; mcrLoadBytes += u[1]; mcrLoadMs = (sceKernelGetSystemTimeLow() - t0) / 1000.f;
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "MCR load %s bytes=%u ms=%.0f t=%.1f\n", M->name, u[1], mcrLoadMs, smkT); smkWrite(s); }
@@ -2095,10 +2126,11 @@ static void mcrPreStart(const char *name) {   // начать фоновое ч�
   for (int j = 0; j < MCR_MAX; j++) if (!mcr[j].blob || !mcrUsed(mcr[j].name)) ms++;
   const unsigned char *d = mcrDir + e * 176; unsigned u[8]; memcpy(u, d + 144, sizeof u);
   if (u[7] > MCR_TEXPER || !u[1]) return;
-  int heapOk = memPrefetchRoom(u[1] + (64u << 10));
+  int heapOk = zone3AreaOnX(Z3A_MISSION) ? zone3MaxFreeX(Z3A_MISSION) >= u[1] : memPrefetchRoom(u[1] + (64u << 10));   // П5 Зоны-95: предчтение смотрит свою область, не кучу
   if (!mcrPreMayStart(qf, ms - pend, heapOk, 0, 0)) return;
-  unsigned char *b = memalign(64, u[1]); if (!b) return;
+  unsigned char *b = zone3TryX(Z3A_MISSION, "mcrpre", u[1], 64); if (!b) return;
   SceUID f = sceIoOpen(mcrPath, PSP_O_RDONLY, 0);
+  DCPRE96(b, u[1]);
   if (f < 0 || sceIoLseek32(f, u[0], PSP_SEEK_SET) < 0 || sceIoReadAsync(f, b, u[1]) < 0) { if (f >= 0) sceIoClose(f); free(b); return; }
   slot->e = e; slot->fd = f; slot->b = b; slot->size = u[1]; slot->age = 0;
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "MCR pre %.15s bytes=%u t=%.1f\n", (const char *)d, u[1], smkT); smkWrite(s); }
@@ -2178,6 +2210,26 @@ static int mcrDrawPlayer(const Car *k, float wheelAng) {
   const char *fc = mvForcedCar(); if (!fc) return 0;
   trHideDriver = 1; carFillPlayer++; int r = mcrDrawPlayer2(k, wheelAng, fc); carFillPlayer--; trHideDriver = 0; return r;   // №930: машина игрока (в том числе после пересадки) — с текстурой   // №666: у машины игрока водителя нет
 }
+// Build 96 (правка Роба 1250, L6 около J3-1: из будки выбрана основная машина Барта, она НЕ рисуется, Барт едет в воздухе): модель машины игрока не прочиталась (память), а кадр шёл без машины
+// («модель дочитывается — кадр без машины»), вечно. Канон п.11/14: игрок не выезжает в невидимой машине. Теперь: (1) при вызове машины из будки модель берётся сразу, с лестницей памяти и сбросом метки «ждёт память»
+// (mcrEnsure96); не вышло — своя машина уровня, не невидимая; (2) в кадре: машины игрока нет дольше 90 кадров — WATCHDOG car invisible, лестница, а после трёх попыток — своя машина уровня.
+// CARVIS96_OLD=1 / файл carvis96old / flag carvis96 0 — как было. Служебное flag carfail96 N — N отказов подряд (красный/зелёный контроль)
+#ifndef CARVIS96_OLD
+#define CARVIS96_OLD 0
+#endif
+static int carVis96 = !CARVIS96_OLD, carFailSim96, carMissN96, carMissTry96, carRevert96, carHide96;   // carHide96 — служебно (flag carhide96 1): модель машины игрока «не пришла» в кадре (красный/зелёный контроль сторожа)
+static int mcrEnsure96(const char *name) {
+  if (trModelOf(name) >= 0) return 1;
+  for (int st = 0; st <= 3; st++) {
+    unsigned b0 = memMaxBlock ? memMaxBlock() : 0, f0 = heapFreeBytes();
+    if (st > 0) { if (memLadOn) { if (st == 3) memLadderZ(LADZ_MISSION, "car-res", 1536u << 10, 2); memLadder("car", 1536u << 10, 2); }
+      if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "WATCHDOG mem who=car size=%u step=%d blk=%u->%u free=%u->%u carvis t=%.1f\n", 1536u << 10, st, b0, memMaxBlock ? memMaxBlock() : 0, f0, heapFreeBytes(), smkT); smkWrite(s_); } }
+    if (mcrDir) for (unsigned i = 0; i < mcrN && i < MCR_CAT; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) mcrWaitT94[i] = 0;   // «ждёт память» снято: пробуем сейчас
+    if (carFailSim96 > 0) { carFailSim96--; continue; }
+    mcrForceLoad = 1; const McrModel *M = mcrGet(name); mcrForceLoad = 0; if (M) return 1;
+  }
+  return 0;
+}
 static int mcrDrawPlayer2(const Car *k, float wheelAng, const char *fc) {
   // правка Роба 286 (04.10: «школьный автобус горит и взрывается, но стоит целый»): угнанная машина / машина миссии у игрока после
   // взрыва — остов трафика (huskA), как машины миссий (mcrDraw) и трафик; прежде рисовалась целой моделью. «flag huskold 1» — прежнее
@@ -2186,7 +2238,14 @@ static int mcrDrawPlayer2(const Car *k, float wheelAng, const char *fc) {
     trafficDrawModel(&traffic.model[traffic.hd->huskModel], traffic.piece, traffic.vert, k, wheelAng, 0, mcDrawPiece, &b, &mcrTris); return 1; }
   { int tm = trModelOf(fc); if (tm >= 0) { int b = (int)trTexBase;   // правка 63: угнанная машина — модель трафика уровня
       trafficDrawModel(&traffic.model[tm], traffic.piece, traffic.vert, k, wheelAng, 0, mcDrawPiece, &b, &mcrTris); return 1; } }
-  mcrForceLoad = 1; const McrModel *M = mcrGet(fc); mcrForceLoad = 0; if (!M) return 1;   // модель дочитывается — кадр без машины, не машина уровня
+  mcrForceLoad = 1; const McrModel *M = carHide96 ? 0 : mcrGet(fc); mcrForceLoad = 0;
+  if (!M && !carVis96) { if (smkOn && ++carMissN96 % 90 == 0) { char s_[96]; snprintf(s_, sizeof s_, "CARMISS96 frames=%d %.15s t=%.1f\n", carMissN96, fc, smkT); smkWrite(s_); } return 1; }   // прежнее: без машины, пока не придёт (счётчик для красного контроля)
+  if (!M) {   // модель дочитывается — кадр без машины, не машина уровня; Build 96: но не вечно (1250)
+    if (carVis96 && ++carMissN96 >= 90) { carMissN96 = 0;
+      if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "WATCHDOG car invisible %.15s try=%d t=%.1f\n", fc, carMissTry96, smkT); smkWrite(s_); }
+      if (++carMissTry96 >= 3) { carMissTry96 = 0; carRevert96 = 1; carHide96 = 0; } else mcrEnsure96(fc); }
+    return 1; }
+  carMissN96 = 0; carMissTry96 = 0;
   int b = (int)(mcrTexBase + M->tex0); trafficDrawModel(M->M, M->pc, M->vt, k, wheelAng, 0, mcDrawPiece, &b, &mcrTris);
   return 1;
 }
@@ -2356,10 +2415,34 @@ static void cullPieceIn(unsigned k, int inside) {   // горячая ветка
   if (nd >= MAXDRAW) return;
   tk[nd] = h->tk; tp[nd] = k; tf[nd] = far_; tcl[nd] = h->tcl; nd++;
 }
+// PVB1: разворот маски ячейки gi в список кусков; три буфера по ячейкам, указатель и длина одной ячейки стабильны (повтор отсечения B8 сверяет pl/n, ME читает список в этом же кадре)
+static int pvbList(int gi, unsigned short **out) {
+  unsigned mi = pvbIdx[gi]; if (mi == 0xFFFFu) return -1;
+  int s = -1, lru = 0; for (int i = 0; i < 3; i++) { if (pvbKey[i] == gi) s = i; if (pvbUse[i] < pvbUse[lru]) lru = i; }
+  if (s >= 0) { pvbUse[s] = ++pvbTick; pvbHits++; *out = pvbBuf[s]; return (int)(pvbBuf[s][pvbNpc]); }   // длина лежит за последним возможным номером
+  s = lru; pvbKey[s] = -1; pvbUse[s] = ++pvbTick;
+  unsigned short *o = pvbBuf[s]; unsigned n = 0;
+  if (pvbVer == 2) {   // точный режим: серии подряд идущих номеров (зазор, длина) LEB128 — ровно список PVS1
+    const unsigned char *p = pvbStream + pvbOffs[mi], *e = pvbStream + pvbOffs[mi + 1]; unsigned pos = 0;
+    while (p < e) { unsigned gap = 0, len = 0, sh = 0; unsigned char b;
+      do { b = *p++; gap |= (unsigned)(b & 0x7F) << sh; sh += 7; } while ((b & 0x80) && p < e); sh = 0;
+      do { b = *p++; len |= (unsigned)(b & 0x7F) << sh; sh += 7; } while ((b & 0x80) && p <= e);
+      unsigned st = pos + gap; if (st + len > pvbNpc || n + len > pvbNpc) break;
+      for (unsigned k = 0; k < len; k++) o[n++] = (unsigned short)(st + k);
+      pos = st + len; }
+    o[pvbNpc] = (unsigned short)n; pvbKey[s] = gi; pvbExpands++; *out = o; return (int)n; }
+  const unsigned char *m = pvbMask + (size_t)mi * pvbRowB;
+  for (unsigned b = 0; b < pvbRowB; b++) { unsigned v = m[b];
+    while (v) { unsigned g = b * 8u + (unsigned)__builtin_ctz(v); v &= v - 1u; if (g >= pvbNgrp) break;
+      unsigned f = pvbGrp[2 * g], c = pvbGrp[2 * g + 1];
+      for (unsigned k = f; k < f + c && k < pvbNpc; k++) if (!pc[k].r.owner) o[n++] = (unsigned short)k; } }
+  o[pvbNpc] = (unsigned short)n; pvbKey[s] = gi; pvbExpands++; *out = o; return (int)n;
+}
 static int pvsList(float x, float z, unsigned short **out) {
   if (!pvsEnt) return -1;
   int gx = (int)floorf((x - pvsOx) / pvsCell), gz = (int)floorf((z - pvsOz) / pvsCell);
   if (gx < 0 || gz < 0 || gx >= pvsW || gz >= pvsH) return -1;
+  if (pvbOn) return pvbList(gz * pvsW + gx, out);
   unsigned *e = pvsEnt + 2 * (gz * pvsW + gx);
   if (e[1] == 0xFFFFFFFFu) return -1;
   *out = pvsChN ? (unsigned short *)pvsChAt(pvsChP, pvsChB, pvsChN, e[0]) : pvsPool + e[0]; return (int)e[1];   // №1068: пул кусками
@@ -2675,6 +2758,15 @@ static int ccCompareKeep(int fly) {
 // процессора). У кусков клетки один центр и масштаб (правки швов 570ac3a: 1134 клетки из 1134) — матрица модели одна на клетку,
 // в осях камеры, как у прежнего пути. Полупрозрачное — прежней очередью tq по кускам. Лист пишет все состояния сам (кэши
 // bound/curFlags/... сброшены перед сборкой), после вызова кэши недействительны — dlLost. «flag dloff» — прежний путь по кускам
+// По умолчанию ВЫКЛ (замер 09.11: на езде L1 40 с сборок по первой видимости 100 против 92 без предсборки, мс/кадр 0,004 в обоих; пики 5–8 мс тура 100 — первые секунды сцен после goto/golevel,
+// 16–19 сборок за секунду, а не езда). Включить: -DDL_PREBUILD_OLD=0
+#ifndef DL_PREBUILD_OLD
+#define DL_PREBUILD_OLD 1
+#endif
+#ifndef DL_PREBUILD_RANGE_K
+#define DL_PREBUILD_RANGE_K .6f   // предсборка листов: клетки ближе этой доли дальности
+#endif
+static unsigned dlPreBuilt, dlPreUs;
 #define DL_BUILD_MAX 32       // листов за кадр: остальные клетки этого кадра — прежним путём (без рывка на въезде)
 static unsigned farCellPieces;   // правка 508: кусков дальних клеток за кадр (дальняя версия без нарезки), в строку RFAST не входит — для отладки
 static int dlOff, dlNoList, dlNoDepth;   // dlnodepth — красный контроль гейта tests/dl/run.py (лист без границ глубины: дома пропадают)
@@ -2701,7 +2793,7 @@ static unsigned marksBuildList(unsigned *b, const MkVert *v, unsigned n) {   // 
   bindTexLean(-1); setFlags(F_LAYER);
   sceGuDrawArray(GU_TRIANGLES, MK_VT, (int)n, 0, v);
   flatOff(); flatInList = 0;
-  unsigned sz = (unsigned)sceGuFinish(); dlLost(); return sz;
+  DCALL96(); unsigned sz = (unsigned)sceGuFinish(); dlLost(); return sz;
 }
 static void ldSignal(void);
 static void marksWake(void) { ldSignal(); }
@@ -2730,8 +2822,39 @@ static void marksCall(unsigned ci, float ex, float ez) {
     else if (m->sepoch != marksEpoch) { L->mok2 = 0; dlBytesNow -= L->mbytes2; marksFreeLater(L->mbuf2); L->mbuf2 = 0; return; }
     sceGuCallList(L->mbuf2); dlLost(); drawnTris += L->mtrisB; draws++; marksCalls++; marksTrisDrawn += (unsigned)L->mtrisB; }
 }
+// Build 95 (longgame L4 Публичного: отказ мелкого блока 5776 Б ×7 в dlBuildM): лист GE клетки города (не модель) не собрался из-за памяти — клетка рисуется прежним путём (куски напрямую),
+// невидимки нет, но попытка шла КАЖДЫЙ кадр и молча. Теперь: одна строка WATCHDOG mem who=dl на первый отказ клетки, повтор не раньше чем через секунду, строка «ready» при успехе после отказа.
+// DLRETRY95_OLD=1 / flag dlretry95 0 / файл dlretry95old — как было; flag dlfail N — N первых выделений листа «нет памяти» (служебно, красный/зелёный контроль)
+#ifndef DLRETRY95_OLD
+#define DLRETRY95_OLD 0
+#endif
+#ifndef SPNOPOOL_OLD
+#define SPNOPOOL_OLD 0   // см. memwatch.c: 1 - списки GE клеток через пул мелочи, как было
+#endif
+extern void *memalignNoPool(size_t al, size_t n);
+#define DLMEMALIGN(al, n) (SPNOPOOL_OLD ? memalign((al), (n)) : memalignNoPool((al), (n)))   // Build 96: списки GE клеток растут с числом клеток (дальность 250 м) - мимо пула мелочи
+static int dlRetry95 = !DLRETRY95_OLD, dlFailSim95; static unsigned dlSimN95;
+static void dlWatchLog95(const char *what, unsigned ci, unsigned bytes, int n) {
+  char l[150]; snprintf(l, sizeof l, "WATCHDOG mem who=dl size=%u step=0 %s n=%d cell=%u free=%.2f t=%.1f\n", bytes, what, n, ci, heapFreeBytes() / 1048576.f, smkT);
+  if (smkOn) smkWrite(l);
+  bbNote(l);
+}
+static unsigned *dlAlloc95(unsigned ci, unsigned bytes) {   // 0 — нет памяти (или служебный отказ): запомнить время повтора
+  CellDL *L = &cdl[ci]; unsigned *b = 0;
+  if (dlFailSim95 > 0) { dlFailSim95--; dlSimN95++; if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "DL sim-fail cell=%u left=%d t=%.1f\n", ci, dlFailSim95, smkT); smkWrite(s_); } }
+  else b = (unsigned *)DLMEMALIGN(16, bytes);
+  if (b) { if (L->retryN) { dlWatchLog95("ready", ci, bytes, L->retryN); L->retryN = 0; L->retry = 0; } return b; }
+  if (dlRetry95) { if (!L->retryN++) dlWatchLog95("wait", ci, bytes, 1); L->retry = sceKernelGetSystemTimeLow() + 1000000u; if (!L->retry) L->retry = 1; }
+  return 0;
+}
+// Зоны-95 (подсказка дирижёра 08.11): размер words листа GE оценивался заранее и проверялся ПОСЛЕ записи (sz > bytes) - при занижении оценки лист пишет за край своего буфера в соседнюю память. Теперь перед каждым куском
+// занятое (sceGuCheckList) сверяется с запасом на кусок, при нехватке построение останавливается ДО края буфера, лист не принимается (-1, free; клетка идёт прежним путём по кускам). DLGUARD_OLD=1 - как было
+#ifndef DLGUARD_OLD
+#define DLGUARD_OLD 0
+#endif
 static int dlBuildM(unsigned ci, unsigned long long skip, int part) {
   Cell *c = &cl[ci]; CellDL *L = &cdl[ci]; unsigned short ord[64]; int n = 0; unsigned words = 16;
+  if (dlRetry95 && cdl[ci].retry && (int)(sceKernelGetSystemTimeLow() - cdl[ci].retry) < 0) return -1;   // Build 95: после отказа памяти — не раньше чем через секунду
   if (part && c->n > 64) return -1;
   for (unsigned k = c->first; k < c->first + c->n && n < 64; k++) {
     const Piece *d = &pc[k];
@@ -2744,17 +2867,18 @@ static int dlBuildM(unsigned ci, unsigned long long skip, int part) {
   }
   if (c->n > 64) return -1;
   if (!n) { if (part) { L->pok = 2; L->pmask = skip; } else L->ok = 2; return 0; }
-  unsigned bytes = words * 4; unsigned *b = (unsigned *)memalign(16, bytes); if (!b) return -1;
+  unsigned bytes = words * 4; unsigned *b = dlAlloc95(ci, bytes); if (!b) return -1;
   sceKernelDcacheWritebackInvalidateRange(b, bytes);   // лист пишется мимо кэша (sceGuStart): грязные строки не должны лечь поверх
   dlLost(); sceGuStart(GU_CALL, b); flatOff(); unsigned nb0_ = binds + flatBinds, nn0_ = flatNoiseN; flatInList = 1;
   if (!dlNoDepth) sceGuDepthRange(65535, 0);   // у контекста листа свои границы глубины (нули): sceGuDepthOffset слоёв (setBias) считает от них — как у кадра
-  int tris = 0, dr = 0;
+  int tris = 0, dr = 0, dlOver = 0;
   for (int i = 0; i < n; i++) { Piece *d = &pc[ord[i]]; if (!pieceOk(d, 0)) continue;
+    if (!DLGUARD_OLD) { unsigned pw_ = (d->r.flags & F_STRIP) ? stripDlWords(d, 0) + ((d->r.flags & F_FARP) && d->r.nf > 0 ? stripDlWords(d, 1) : 0) + 76 : 76 + 8 * (d->r.ni / 65532 + 1); if ((unsigned)sceGuCheckList() + pw_ * 4u > bytes) { dlOver = 1; break; } }
     phAllow = d->r.owner == 0; NZP(d); bindTexLean(d->r.tex); phAllow = 0; setFlags(d->r.flags); drawGeo(d, 0, d->r.ni); tris += d->r.ni / 3; dr++; }
   if (phTfx) { sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA); phTfx = 0; }   // правка 411: лист кончается обычной модуляцией
   flatOff(); flatInList = 0;
-  unsigned sz = (unsigned)sceGuFinish(); dlLost();
-  if (sz > bytes) { smkGeBad++; free(b); return -1; }   // не должно быть: запас на кусок 72 слова
+  DCALL96(); unsigned sz = (unsigned)sceGuFinish(); dlLost();
+  if (dlOver || sz > bytes) { smkGeBad++; free(b); return -1; }   // не должно быть: запас на кусок 72 слова; dlOver - остановились до края буфера
   if (part) { L->pnoise = flatNoiseN != nn0_; L->pnb = (unsigned short)(binds + flatBinds - nb0_); L->pbuf = b; L->pbytes = bytes; L->ptris = tris; L->pdraws = dr; L->pmask = skip; L->pok = 1; dlBuilt++; dlBytesNow += bytes; return 1; }
   L->noise = flatNoiseN != nn0_; L->nb = (unsigned short)(binds + flatBinds - nb0_); L->buf = b; L->bytes = bytes; L->tris = tris; L->draws = dr; L->ok = 1; dlBuilt++; dlBytesNow += bytes;
   return 1;
@@ -2777,17 +2901,18 @@ static int dlBuildFar(unsigned ci) {
     ord[j] = (unsigned short)k; words += (d->r.flags & F_STRIP) ? stripDlWords(d, 0) + ((d->r.flags & F_FARP) && d->r.nf > 0 ? stripDlWords(d, 1) : 0) + 76 : 76 + 8 * (d->r.ni / 65532 + 1);   // №949: +4 слова на масштаб шума (2 команды TexScale + возврат)
   }
   if (!n) { L->fok = 2; return 0; }
-  unsigned bytes = words * 4; unsigned *b = (unsigned *)memalign(16, bytes); if (!b) return -1;
+  unsigned bytes = words * 4; unsigned *b = (unsigned *)DLMEMALIGN(16, bytes); if (!b) return -1;
   sceKernelDcacheWritebackInvalidateRange(b, bytes);
   dlLost(); sceGuStart(GU_CALL, b); flatOff(); unsigned nb0_ = binds + flatBinds, nn0_ = flatNoiseN; flatInList = 1;
   if (!dlNoDepth) sceGuDepthRange(65535, 0);
-  int tris = 0, dr = 0;
+  int tris = 0, dr = 0, dlOver = 0;
   for (int i = 0; i < n; i++) { Piece *d = &pc[ord[i]]; int fp = (d->r.flags & F_FARP) != 0 && d->r.nf > 0; if (!pieceOk(d, fp)) continue;
+    if (!DLGUARD_OLD) { unsigned pw_ = (d->r.flags & F_STRIP) ? stripDlWords(d, 0) + ((d->r.flags & F_FARP) && d->r.nf > 0 ? stripDlWords(d, 1) : 0) + 76 : 76 + 8 * (d->r.ni / 65532 + 1); if ((unsigned)sceGuCheckList() + pw_ * 4u > bytes) { dlOver = 1; break; } }
     phAllow = d->r.owner == 0; NZP(d); bindTexLean(d->r.tex); phAllow = 0; setFlags(d->r.flags); int cnt = fp ? d->r.nf : d->r.ni; drawGeo(d, fp, cnt); tris += cnt / 3; dr++; }
   if (phTfx) { sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA); phTfx = 0; }
   flatOff(); flatInList = 0;
-  unsigned sz = (unsigned)sceGuFinish(); dlLost();
-  if (sz > bytes) { smkGeBad++; free(b); return -1; }
+  DCALL96(); unsigned sz = (unsigned)sceGuFinish(); dlLost();
+  if (dlOver || sz > bytes) { smkGeBad++; free(b); return -1; }
   L->fnoise = flatNoiseN != nn0_; L->fnb = (unsigned short)(binds + flatBinds - nb0_); L->fbuf = b; L->fbytes = bytes; L->ftris = tris; L->fdraws = dr; L->fok = 1; dlBuilt++; dlBytesNow += bytes;
   return 1;
 }
@@ -2989,8 +3114,24 @@ static int loadWarmPending(void) {
   }
   return n;
 }
+// Зоны-95 (08.11): экран загрузки вставал в первом проходе прогрева при куче ~0,4 МБ (ballast 5, «место» целиком на L1: smkT стоит, потоки молчат, кадры не идут). Прогрев - оптимизация, не обязательное:
+// при свободной куче < WARMMEM_KB он пропускается, а первый отказ выделения листа (dlBuild < 0) в проходе завершает прогрев этой загрузки (ldWarmGiveUp до следующего loadEnd). Строка WATCHDOG warm - в журнал
+// и чёрный ящик. WARMMEM_OLD=1 - как было (красный контроль: прогон «место на L1 целиком + ballast 5» висит)
+#ifndef WARMMEM_OLD
+#define WARMMEM_OLD 0
+#endif
+#ifndef WARMMEM_KB
+#define WARMMEM_KB 1024u
+#endif
+static int ldWarmGiveUp; static unsigned ldWarmSkipN;
+static void warmWatch(const char *what) {
+  if (ldWarmSkipN++) return;
+  char s[120]; snprintf(s, sizeof s, "WATCHDOG warm %s free=%.2f blk=%.2f t=%.1f\n", what, heapFreeBytes() / 1048576.f, (memMaxBlock ? memMaxBlock() : 0u) / 1048576.f, smkT);
+  if (smkOn) smkWrite(s); bbNote(s);
+}
 static void loadWarmStep(void) {
   if (LOAD_WARM_OLD || dlNoList || !cdl || !ncell || !ldWarmOn) return;
+  if (!WARMMEM_OLD && (ldWarmGiveUp || heapFreeBytes() < (WARMMEM_KB << 10))) { warmWatch(ldWarmGiveUp ? "giveup" : "skip"); return; }
   const float *c = ldWarmC; unsigned t0 = sceKernelGetSystemTimeLow(); int b = 0; int ggSave = ggOn; ggOn = 0;   // без среза у камеры: целые листы
   for (int it = 0; it < 4 && b < 4; it++) {
     int best = -1; float bd = 160.f * 160.f;
@@ -2999,7 +3140,7 @@ static void loadWarmStep(void) {
       float dx = (k->bb[0] + k->bb[3]) * .5f - c[0], dz = (k->bb[2] + k->bb[5]) * .5f - c[2], d2 = dx * dx + dz * dz;
       if (d2 < bd) { bd = d2; best = (int)i; } }
     if (best < 0) break;
-    if (dlBuild((unsigned)best) < 0) cdl[best].ok = 3;   // не собрался (память): не пробуем снова в этом проходе
+    if (dlBuild((unsigned)best) < 0) { int mem_ = cdl[best].retry != 0; cdl[best].ok = 3; if (!WARMMEM_OLD && mem_) { ldWarmGiveUp = 1; warmWatch("giveup-dl"); break; } }   // сдаёмся только на отказе ПАМЯТИ (retry выставляет dlAlloc95): -1 бывает и по другим причинам (уровень без F_NEAR, >64 кусков), раньше строка WATCHDOG warm шла в обычных прогонах   // не собрался (память): не пробуем снова в этом проходе; отказ выделения - прогрев сдаётся
     else { b++; rfLoadWarmBuilt++; }
     if (sceKernelGetSystemTimeLow() - t0 > 2500u) break; }
   ggOn = ggSave;
@@ -3060,7 +3201,7 @@ static void zfPassEnd(void) {
 static void dlCity(float ex, float ey, float ez) {
   unsigned dcT0_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
   if (smkOn) { if (dfFrame > dfFrameMax) dfFrameMax = dfFrame; dfFrame = 0; dfFrames++; unsigned n_ = sceKernelGetSystemTimeLow(); if (!dfT0) dfT0 = n_;
-    if (n_ - dfT0 >= 1000000u) { char l_[160]; snprintf(l_, sizeof l_, "DLBUILD t=%.1f frames=%u far_n=%u far_us=%u far_max_frame=%u near_n=%u near_us=%u\n", smkT, dfFrames, DLFARN, dfUs, dfFrameMax, dnN, dnUs); smkWrite(l_); dfT0 = n_; DLFARN = dfUs = dfFrameMax = dfFrames = dnN = dnUs = 0; } }
+    if (n_ - dfT0 >= 1000000u) { char l_[220]; snprintf(l_, sizeof l_, "DLBUILD t=%.1f frames=%u far_n=%u far_us=%u far_max_frame=%u near_n=%u near_us=%u pre_n=%u pre_us=%u\n", smkT, dfFrames, DLFARN, dfUs, dfFrameMax, dnN, dnUs, dlPreBuilt, dlPreUs); smkWrite(l_); dfT0 = n_; DLFARN = dfUs = dfFrameMax = dfFrames = dnN = dnUs = 0; dlPreBuilt = dlPreUs = 0; } }
   if (++cdlEpoch == 0) { memset(cdlMark, 0, ncell * sizeof *cdlMark); cdlEpoch = 1; }
   int builds = 0; dlCallsFrame = dlFallFrame = 0; unsigned dcT1_ = 0;
   cellHybPrep();
@@ -3179,6 +3320,16 @@ static void dlCity(float ex, float ey, float ez) {
   }
   if (zfN_ == 2 && zp_ == 0) zfPassEnd();
   }
+  // Пропечка №1 (замер тура 100 на PSP: сборка листов в среднем 0,01 мс/кадр, но 31 секунда из 3068 дороже 0,5 мс/кадр, пики 5–8 мс — поворот, въезд в новый район, 32 сборки в одном кадре):
+  // клетки, загруженные и ещё без листа, но ближе PREBUILD_RANGE_K·дальности, собираются заранее — по одной за кадр, когда в этом кадре сборок не было и кадр не перегружен; к моменту,
+  // когда клетка войдёт в обзор, лист готов. Содержимое листа то же (тот же dlBuildM), память та же, что у листа при первой видимости (≈2 КБ на клетку). DL_PREBUILD_OLD=1 — как было
+  if (!DL_PREBUILD_OLD && !dlNoList && !builds && !geOver(GE_SOFT) && ncell) {
+    static unsigned cur_; unsigned scanned = 0;
+    for (; scanned < 48; scanned++) { if (++cur_ >= ncell) cur_ = 0; unsigned ci = cur_; const Cell *c_ = &cl[ci];
+      if (c_->state != 2 || cdl[ci].ok || cdl[ci].retry || c_->n > 64 || c_->n == 0) continue;
+      float rr_ = drawDist * DL_PREBUILD_RANGE_K; if (boxD2(c_->bb) > rr_ * rr_) continue;
+      if (farPlainD > 0.f && boxD2(c_->bb) > farPlainD * farPlainD) continue;   // дальние клетки — свой лист (dlBuildFar) по первой видимости
+      unsigned t0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; int r_ = dlBuildT(ci); dlPreBuilt++; (void)r_; if (smkOn) dlPreUs += sceKernelGetSystemTimeLow() - t0_; break; } }
   if (jitActive && !JITTER_NEAR_OLD && !jitCur) jitterUse(1);   // дальше (небо) — со сдвигом, как раньше
   if (smkOn) { dcUs[7] += sceKernelGetSystemTimeLow() - dcT0_; dcN[7]++; }
   dlLost(); resetState();   // после листов состояние GE — последнего куска листа: вернуть кадру его (сдвиг глубины 0, без отсечения)

@@ -1,25 +1,18 @@
 #!/bin/bash
-# №bake-3Б: гейт печёного разбора COL1 в эмуляторе (тот же бинарник, что на PSP). На уровень два прогона:
-#   «use»   — движок берёт colbake.shr: ждём COLBAKE used=1;
-#   «check» — считает живое и сверяет с файлом (colBakeVerify): ждём verify=0.
-# Красный контроль: tools/colbake_gate.sh SET -n — на уровне 1 вместо файла подставляется копия с испорченным байтом: ждём used=0 (хеш записи отверг, откат на живое), verify=-9.
-#   tools/colbake_gate.sh SET [-n] [УРОВНИ]    SET с colbake.shr рядом с уровнями (L1 — в корне SET, L<N> — в l<N>/); хост-печь tools/colbake.sh
+# Гейт выпуска: colbake.shr набора = живой разбор ТЕКУЩЕГО col.c, по всем 7 уровням. tools/colbake_gate.sh НАБОР [N ...]   -> строка на уровень, последняя PASS/FAIL (код 1 при расхождении)
+#   НАБОР — папка с level.shr и colbake.shr (L1 в корне, L2..L7 в l2..l7/). Ищет устаревший бейк: ключ файла — хеш сырого COL1, версии логики разбора в нём нет (CB_REV, viewer/col.c).
+#   Живой разбор строится tools/colbake.sh (хост, секунды). Красный на test96: L1, L2, L4, L5, L7 (набор t93/build/test96tour, 08.11).
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"; SET="$1"; shift; NEG=0; [ "${1:-}" = -n ] && { NEG=1; shift; }; LV="${*:-1 2 3 4 5 6 7}"; SCN="$(mktemp -d)"; FAIL=0
-EXTRA="colbake.shr l2/colbake.shr l3/colbake.shr l4/colbake.shr l5/colbake.shr l6/colbake.shr l7/colbake.shr"
-one() { # level flags tag set
-  printf 'flag level %s\nscene c%s\nwait 14\nend\n' "$1" "$1" > "$SCN/s$1$3.txt"
-  SHIP_LEVELS="2 3 4 5 6 7" SMOKE_EXTRA="$EXTRA" SMOKE_HEADLESS=1 SMOKE_FILEDATA="meaudio=3" SMOKE_FLAGS="$2" SMOKE_SCN="$SCN/s$1$3.txt" SMOKE_MAXT="${SMOKE_MAXT:-600}" "$ROOT/tools/smoke.sh" "${4:-$SET}" >"$SCN/run$1$3.log" 2>&1
-  d=$(sed -n 's/^отчёт: \(.*\)\/summary.txt.*/\1/p' "$SCN/run$1$3.log" | tail -1); case "$d" in /*) ;; *) d="$ROOT/$d" ;; esac; grep -a '^COLBAKE ' "$d/smoke.txt" | head -1
-}
-fld() { echo "$1" | sed -n "s/.* $2=\([^ ]*\).*/\1/p"; }
+cd "$(dirname "$0")/.."; export DEVELOPER_DIR=${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}
+SET=${1:?набор (папка с level.shr, colbake.shr, l2..l7/)}; shift; LV=${*:-1 2 3 4 5 6 7}
+T=$(mktemp -d "${TMPDIR:-/tmp}/cbgate.XXXXXX"); bad=0
 for n in $LV; do
-  u=$(one $n "" u); c=$(one $n colbakecheck c)
-  if [ "$(fld "$u" used)" = 1 ] && [ "$(fld "$c" verify)" = 0 ]; then echo "L$n PASS  use: $u | check: $c"; else echo "L$n FAIL  use: $u | check: $c"; FAIL=1; fi
+  if [ "$n" = 1 ]; then L=$SET/level.shr; B=$SET/colbake.shr; else L=$SET/l$n/level.shr; B=$SET/l$n/colbake.shr; fi
+  [ -f "$L" ] || { echo "L$n: нет level.shr — пропуск"; continue; }
+  [ -f "$B" ] || { echo "L$n: КРАСНЫЙ нет colbake.shr (движок считает сам, это допустимо, но выпуск должен его печь)"; bad=1; continue; }
+  tools/colbake.sh "$L" "$T/b$n.shr" > /dev/null 2>&1 || { echo "L$n: colbake.sh не отработал"; bad=1; continue; }
+  if cmp -s "$T/b$n.shr" "$B"; then echo "L$n: OK  бейк набора = живой разбор ($(stat -f%z "$B") Б)"
+  else echo "L$n: КРАСНЫЙ  бейк набора ($(stat -f%z "$B") Б) != живой разбор ($(stat -f%z "$T/b$n.shr") Б): перепечь tools/colbake.sh $L $B"; bad=1; fi
 done
-if [ $NEG = 1 ]; then
-  BAD="$(mktemp -d)"; for f in $(ls -A "$SET"); do ln -s "$SET/$f" "$BAD/$f"; done; rm "$BAD/colbake.shr"; cp "$SET/colbake.shr" "$BAD/colbake.shr"; python3 -c "
-import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)//2]^=0x5a; open(p,'wb').write(b)" "$BAD/colbake.shr"
-  a=$(one 1 "" a "$BAD"); [ "$(fld "$a" used)" = 0 ] && echo "КОНТРОЛЬ испорченный файл OK (used=0, откат на живое): $a" || { echo "КОНТРОЛЬ НЕ СРАБОТАЛ: $a"; FAIL=1; }
-fi
-exit $FAIL
+find "$T" -type f -delete; rmdir "$T"
+[ $bad -eq 0 ] && echo PASS || { echo FAIL; exit 1; }

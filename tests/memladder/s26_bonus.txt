@@ -1,0 +1,54 @@
+# Лестница-96 (блокер 102): бонус-игра после цепочки уровней с прицепленными областями Z3 (L2, L5): куча при загрузке трассы, MEMFAIL 0. Блок трасс 1 и 7 из тура 102 как есть.
+# Красное: s26_bonus_red.txt (flag bonusshrink 0).
+flag nosave
+scene BOOT
+flag golevel 2
+wait 40
+flag golevel 5
+wait 40
+scene F_BONUS_T1
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5     # carhom_v: водитель ИИ за игрока проходит круг и финиширует (с family sedan на повороте у старта застревает, в туре нужен финиш P1)
+flag bonustrack 1
+flag bonusquitat 110   # страховка: гонка идёт до финиша (≈60–90 с), выход по таймеру только если не закончилась
+wait 1            # после выхода из гонки игра остаётся на экране выбора трассы бонус-игры
+shot bonus_t1_track
+press cross 0.3   # трасса принята -> выбор игрока
+wait 1.5
+shot bonus_t1_chr
+press cross 0.3   # персонаж выбран -> выбор машины
+wait 1.5
+shot bonus_t1_veh
+press cross 0.3   # машина принята: гонка сразу (№1181, без ожидания других игроков)
+wait 4
+flag bonusgo      # страховка: не прошла кнопка — старт без неё (после старта гонки флаг сбрасывается)
+wait 12
+shot bonus_t1_race
+wait 100
+shot bonus_t1_back
+scene F_BONUS_T7
+flag bonusopen 1
+flag bonuslaps 1
+flag bonusauto 1
+flag bonusveh 5     # carhom_v: водитель ИИ за игрока проходит круг и финиширует (с family sedan на повороте у старта застревает, в туре нужен финиш P1)
+flag bonustrack 7
+flag bonusquitat 110   # страховка: гонка идёт до финиша (≈60–90 с), выход по таймеру только если не закончилась
+wait 1            # после выхода из гонки игра остаётся на экране выбора трассы бонус-игры
+shot bonus_t7_track
+press cross 0.3   # трасса принята -> выбор игрока
+wait 1.5
+shot bonus_t7_chr
+press cross 0.3   # персонаж выбран -> выбор машины
+wait 1.5
+shot bonus_t7_veh
+press cross 0.3   # машина принята: гонка сразу (№1181, без ожидания других игроков)
+wait 4
+flag bonusgo      # страховка: не прошла кнопка — старт без неё (после старта гонки флаг сбрасывается)
+wait 12
+shot bonus_t7_race
+wait 100
+shot bonus_t7_back
+end
+end

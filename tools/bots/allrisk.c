@@ -214,14 +214,18 @@ static void trafficSanity(void) {
     if ((isfinite(g) && m->car.y - g > 3.f && m->car.wheels == 0 && m->car.airT > 3.f) || u[1] < 0.f)
       if (watchLog && !quiet(E_MCAR, m->car.x, m->car.z)) cs(EFAM[E_MCAR], "risk", CASEID, m->car.x, m->car.y, m->car.z, "msncar=%s air=%.1f up=%.2f", m->name, m->car.airT, u[1]); }
 }
+typedef struct { float x, y, z, h, v, roll, pitch; int wheels, grounded; } TwTrace;   // Коллизия-96: последние 150 кадров до события «на два колеса» (ALLRISK_TWTRACE=файл)
+static TwTrace twRing[150]; static int twRingN;
 static void watchFrame(int gasHeld) {
   const Car *c = &W.car; if (gameOnFoot(&W.G)) return;
+  { TwTrace *t = &twRing[twRingN++ % 150]; t->x = c->x; t->y = c->y; t->z = c->z; t->h = c->h; t->v = c->v * 3.6f; t->roll = c->roll * 57.2958f; t->pitch = c->pitch * 57.2958f; t->wheels = c->wheels; t->grounded = c->grounded; }
   float u[3]; qUp(c->q, u); float roll = fabsf(c->roll) * 57.2958f; if (roll > wa.rollMax) wa.rollMax = roll;
   int up = u[1] < 0.f;
   if (up && !wa.upside) { wa.flips++; if (watchLog && !quiet(E_FLIP, c->x, c->z)) cs(EFAM[E_FLIP], "risk", CASEID, c->x, c->y, c->z, "car=%s v=%.1f", c->p.name, c->v * 3.6f); }
   wa.upside = up;
   int two = c->grounded && c->wheels > 0 && c->wheels <= 2 && roll > 12.f;
   wa.twoRun = two ? wa.twoRun + 1 : 0; if (wa.twoRun > wa.twoRunMax) wa.twoRunMax = wa.twoRun;
+  if (wa.twoRun == 30 && watchLog && getenv("ALLRISK_TWTRACE")) { FILE *tf = fopen(getenv("ALLRISK_TWTRACE"), "a"); if (tf) { fprintf(tf, "# событие два колеса %s у (%.1f %.1f %.1f)\n", CASEID, c->x, c->y, c->z); for (int i = 0; i < 150 && i < twRingN; i++) { const TwTrace *t = &twRing[(twRingN + i - (twRingN < 150 ? twRingN : 150)) % 150]; fprintf(tf, "%.2f %.2f %.2f h%.0f v%.0f roll%.1f pit%.1f w%d g%d\n", t->x, t->y, t->z, t->h * 57.2958f, t->v, t->roll, t->pitch, t->wheels, t->grounded); } fclose(tf); } }
   if (wa.twoRun == 30 && watchLog && !quiet(E_TWO, c->x, c->z)) cs(EFAM[E_TWO], "risk", CASEID, c->x, c->y, c->z, "car=%s roll=%.0f v=%.0f", c->p.name, roll, c->v * 3.6f);
   wa.airRun = c->wheels == 0 && !c->grounded ? wa.airRun + 1 : 0; if (wa.airRun > wa.airMax) wa.airMax = wa.airRun;
   if (c->wallV > 4.f && !visAt(c->wallP, c->wallN[0], c->wallN[1])) {
@@ -623,6 +627,9 @@ static int extraTargets(const char *roadsPath, Tgt *ex, int cap) {
 }
 // к точке (gx, gy, gz) по графу дорог; застрял (медленнее 1 м/с 1,5 с) — 1,2 с назад с обратным рулём и новый путь в объезд места
 // (navAvoid), каждая 4-я попытка — START (RESET CAR), как игрок. -> 1 доехал ближе R
+#ifndef ARRESET_OLD
+#define ARRESET_OLD 0   // 1 = прежний счёт «RESET вернул в то же место» (две посадки подряд рядом, без проверки сдвига)
+#endif
 static int rescuesN; static int *rescues = &rescuesN;
 static int drive(float gx, float gy, float gz, float R, float secs, int *resets) {
   P3 q[MAXWP]; int n = navPlan(W.car.x, W.car.y, W.car.z, gx, gy, gz, q, MAXWP);
@@ -646,8 +653,11 @@ static int drive(float gx, float gy, float gz, float R, float secs, int *resets)
     if (backT > 0) { b = GP_L; ax = backAx; backT -= BW_DT; if (backT <= 0) { n = navPlan(W.car.x, W.car.y, W.car.z, gx, gy, gz, q, MAXWP); seg = 0; } }
     else if (slow > 1.5f) { navAvoid(W.car.x, W.car.z);
       if (++tries % 4 == 0) { b = GP_START; (*resets)++; } else { backT = 1.2f; backAx = -ax; } slow = 0; }
-    step(b, ax);
+    float pbx = W.car.x, pbz = W.car.z; step(b, ax);
     if (b & GP_START) { n = navPlan(W.car.x, W.car.y, W.car.z, gx, gy, gz, q, MAXWP); seg = 0;
+      // №1248в: «RESET вернул в то же место» = машину не вынесло (сдвиг от места, где застряла, < 8 м). Прежде считали только близость двух посадок подряд: когда RESET честно выносит из тупика на 28 м, а бот снова едет в тот же тупик за недостижимой целью, ложно писало «ловушку» (L7 G5-3)
+      int stayed = ARRESET_OLD || hypotf(W.car.x - pbx, W.car.z - pbz) < 8.f;
+      if (!stayed) { same = 0; rx = W.car.x; rz = W.car.z; } else
       if (hypotf(W.car.x - rx, W.car.z - rz) < 8.f) same++; else same = 0; rx = W.car.x; rz = W.car.z; }
     if (getenv("AR_TRACE") && f % 300 == 0) fprintf(stderr, "  %.0f с: машина %.1f %.1f %.1f v %.1f пешком %d seg %d/%d цель %.0f %.0f урон %.2f разбита %d husk %d msn places %u tp %u\n", frame / 60.f, W.car.x, W.car.y, W.car.z, W.car.v, gameOnFoot(&W.G), seg, n, gx, gz, W.car.damage, W.car.destroyed, W.car.huskDrive, W.msn.places, W.msn.teleports);
     if (gameOnFoot(&W.G)) {   // пешком (старт уровня, сценка, машина разбита и игрок вышел) — к машине и за руль

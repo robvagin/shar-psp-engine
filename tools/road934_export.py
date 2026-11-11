@@ -124,10 +124,28 @@ class Near:
         return self.col[best] if best >= 0 else np.array([128., 128., 128.])
 
 
+def no_roads(path, names_path, texsrc, nm):
+    """Дорог и мостов 0: громкая остановка с причиной (код 1) вместо тихого падения в пустом np.concatenate (GitHub #3).
+    Причины по порядку: нет side-файла level.shr.texsrc.json; ни одно имя текстуры не нашлось (все '#N'); имена есть, но подходящих треугольников нет."""
+    ts = texsrc or (str(path) + '.texsrc.json'); nres = sum(1 for x in nm if not x.startswith('#'))
+    if not Path(ts).exists():
+        why = (f'не найден side-файл {ts}: без него у текстур нет имён и дорогу не отличить (level.shr.texsrc.json пишет tools/psp_export.py рядом с level.shr; '
+               f'шаг установки или копирования файлов не должен его терять; --texsrc указывает путь вручную)')
+    elif nm and nres == 0:
+        why = (f'side-файл {ts} есть, но ни одно из {len(nm)} имён текстур не нашлось в словаре {names_path or "texnames.json"}: все текстуры остались как #N '
+               f'(диск распакован другим инструментом или другой версии, либо словарь собран не с этого диска; пересоберите build/roads/texnames.json)')
+    else:
+        why = (f'имена текстур найдены ({nres} из {len(nm)}), но ни одного непрозрачного треугольника с текстурой дороги или моста нет '
+               f'(проверьте, что level.shr — настоящий уровень, а не пустой или повреждённый)')
+    raise SystemExit(f'road934_export: дорог 0 и мостов 0, {path} не обработан. Причина: {why}.\n'
+                     f'road934_export: no roads and no bridges found in {path}; nothing written. Likely cause: the texture-name side file ({ts}) is missing or none of the texture names matched (all #N).')
+
+
 def build(path, names_path='', texsrc='', block=160.0, reduce=0.0, report=None, eps=0.0, bw=40.0, eps_br=None):
     if eps_br is None: eps_br = eps
     Pq, G, tm, vc, isbr, nm, nroad, nbr = select(path, names_path, texsrc)
     print('треугольников: дорога', nroad, 'мост', nbr)
+    if nroad + nbr == 0: no_roads(path, names_path, texsrc, nm)   # GitHub #3: раньше здесь шла пустая склейка np.concatenate и падала без причины
     tri_xyz, tri_col = [], []   # упрощённые треугольники (3,3) и цвет вершин (3,3)
     stats = {}
     for cls in (0, 1):
@@ -152,6 +170,7 @@ def build(path, names_path='', texsrc='', block=160.0, reduce=0.0, report=None, 
             tri_xyz.append(T); tri_col.append(vcol[F2])
             stats[f'{"bridge" if cls else "road"}:{nm[g]}'] = [int(m.sum()), n0, int(len(F2))]
             print(f'  {"мост" if cls else "дорога"} {nm[g]:28s} исходных {int(m.sum()):6d} сварено {n0:6d} -> {len(F2):6d}')
+    if not tri_xyz: no_roads(path, names_path, texsrc, nm)
     T = np.concatenate(tri_xyz); C = np.concatenate(tri_col)
     cen = T.mean(1); ytop = cen[:, 1]
     # общая рамка уровня: вершины int16 от центра рамки O, полудиапазон E (кратен 64 м) — одна матрица модели на кадр, вершины общие у всех блоков

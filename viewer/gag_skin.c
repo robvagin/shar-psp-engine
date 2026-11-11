@@ -43,8 +43,8 @@ static int bindModel(unsigned i,const unsigned char *d,unsigned size) {
       const SkinTrackRec *tracks = (const SkinTrackRec *)(d + m->c[k].offTracks);
       for (unsigned j = 0; j < h->nJoints; j++) {
         const SkinTrackRec *tr = tracks + j;
-        if (!inside(h->size, tr->offRot, ((tr->nRot * 2 + 3u) & ~3u) + tr->nRot * 8u, 1) ||
-            !inside(h->size, tr->offTrans, ((tr->nTrans * 2 + 3u) & ~3u) + tr->nTrans * 12u, 1)) return -1;
+        if (!inside(h->size, tr->offRot, skinTrackRotBytes(tr), 1) ||
+            !inside(h->size, tr->offTrans, skinTrackTransBytes(tr), 1)) return -1;
       }
     }
     return 0;

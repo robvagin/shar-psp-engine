@@ -46,6 +46,9 @@
 #ifndef HOMER_FRAME_PS2_OLD
 #define HOMER_FRAME_PS2_OLD 0    // P02-2: направление стика от камеры каждый кадр; на смене камеры держится прежнее, пока стик в 15° от запомненного; 1 — схема №704/836/916/920/947б/1059
 #endif
+#ifndef HOMER_RUNSLIDE1230_OLD
+#define HOMER_RUNSLIDE1230_OLD 0 // №1230 (Роб, L5 E3-5: бежит по косой вдоль перил — встаёт намертво): бег с ○ растил скорость от уже погашенной стеной (cur + 13 м/с² за кадр), а ход каждый кадр заново шёл по лицу, в стену — вдоль стены оставалось ~0,2 м/с вместо v·cos(угла); 1 — как было
+#endif
 #ifndef HOMER_JUMP_WALL_OLD
 #define HOMER_JUMP_WALL_OLD 0    // P02-Д5: в отрыве (прыжок, сход с края) горизонталь 0, если в прошлом шаге касался твёрдого (стена, ящик, персонаж); 1 — горизонталь сохраняется
 #endif
@@ -94,6 +97,9 @@
 #define HOMER_RUNRAMP_OLD 0     // GitHub #2 разбор tests/homer: запись PS2 gh2_dir_right/gh2_stop_all — бег с места разгоняется (путь за 0,6 с 2,3 м, за 1,2 с 7,1 м; мгновенные 8 м/с дали бы 4,8 и 9,6 м), ≈ 13 м/с²; 1 — сразу 8 м/с (сверка круга 3: скорость желаемая ставится сразу, реальный разгон вёл клип)
 #endif
 #define HOMER_RUN_ACCEL 13.0f    // м/с² разгона бега из ходьбы или с места (по записи PS2)
+#ifndef MARGE_HAIR_OLD
+#define MARGE_HAIR_OLD 0         // правка 1240 (Роб, PSP): клип сидения водителя ndr (общий, под закрытую кабину) кладёт причёску Мардж (hair_1..3) назад; в открытой машине (список tools/open_cars.txt -> carparams.h carOpenCons) причёска остаётся стоймя; 1 — всегда как в клипе
+#endif
 #ifndef HOMER_HIGHSEAT_OLD
 #define HOMER_HIGHSEAT_OLD 0     // аудит 04.11 (решение дирижёра): высокое сиденье водителя (над началом машины выше 0,1 м, у 23 из 88 машин) — клипы посадки и выхода *_high_driver; 1 — всегда обычные клипы
 #endif
@@ -357,6 +363,7 @@ typedef struct {
                                // дверь дальше от борта (коробка кузова шире кабины), якорь доезжает от двери за время клипа посадки
   int husk;                    // правка 355: остов после взрыва — посадка/выход без двери и ириса (HOMER_HUSK_SEAT)
   int hostile;                 // сверка g04-homer ГОМЕР 5.7: машина ИИ миссии (погоня, цель) — только такая сбивает пешего (ставит вызывающий после homerCarFrom)
+  int openTop;                 // правка 1240: машина без верха над сиденьем (carOpenFor, список tools/open_cars.txt) — причёска Мардж за рулём стоймя
   int iris;                    // правка 333: в .con машины SetIrisTransition(1) (car.c carIrisFor) — посадка и выход ирисом, без клипов двери
 } HomerCar;
 void homerCarFrom(HomerCar *hc, const Car *c, float lift);
@@ -456,7 +463,8 @@ typedef struct {
   int carHits; float carHitCool;   // №709: ++ при ударе машины по Гомеру пешком (падает и встаёт); пауза до следующего удара, с
   // --- правка Роба 147: выброс взрывом как в оригинале — задержка в горящем остове, полёт головой вперёд (тело наклонено),
   // касание грудью, лёжа, hom_get_up. pitch — наклон тела вокруг оси X модели (0 стоит, pi/2 ничком, голова по курсу)
-  float pitch, ejWait, ejPow, ejFromX, ejFromZ; int ejPh, jExtra;   // jExtra — сустав Extra_Attributes (не часть тела)   // ejPh: 0 нет, 1 полёт, 2 касание/скольжение, 3 встаёт
+  float pitch, ejWait, ejPow, ejFromX, ejFromZ; int ejPh, jExtra; int hair[4], nHair;   // hair[] — суставы причёски hair_* (правка 1240)
+  // jExtra — сустав Extra_Attributes (не часть тела)   // ejPh: 0 нет, 1 полёт, 2 касание/скольжение, 3 встаёт
   // --- разговор миссии (правка Роба 38): жест реплики (клип dialogue_* из homer.shr, AddAmbientPcAnimation) и рот
   int cTalk, jaw; float jawOpen;
   // --- подкидывающие точки (правка Роба 46; блок JMP1 COL1, tools/jumps_export.py): последняя точка (-1 — вне точек;
@@ -466,6 +474,7 @@ typedef struct {
   float supY;                  // ГОМЕР 4.1: высота последней опоры не круче 30° (подъём по круче больше чем на HOMER_SLOPE_RISE над ней — стена)
   float wantV;                 // желаемая скорость от стика в этом кадре, м/с (событие шага, звук шага)
   int wallHit;                 // в прошлом подшаге касался твёрдого (стена, ящик, персонаж) — P02-Д5
+  float wallSpd;               // №1230: скорость хода (скаляр) до гашения стеной в последнем касании этого кадра; 0 — касания не было (сбрасывается в moveBody)
   int jkicked, edgeFall;       // удар в прыжке был (до приземления); сошёл с края без прыжка — P02-11 / P02-10
   float stompVy;               // вертикаль в момент стомпа — P02-12
   float stunT;                 // оглушение осой, с (homerStun)
@@ -494,6 +503,7 @@ const char *homerClipPrefix(void);
 // круг 6: имя героя игрока по префиксу клипов (hom_ homer, brt_ bart, lsa_ lisa, mrg_ marge, apu_ apu) — для таблицы рта; HOMER_MOUTHNAME_OLD=1 — всегда "homer"
 const char *homerCharName(void);
 // поставить на землю под (x, y + 2, z) с курсом h, пешком
+extern int homerRoomPlace96; extern int (*homerRoomPointHook)(float x, float y, float z);   // Build 96: roomplace вместо hold для постановки на пол комнаты (hook ставит движок и бот)
 void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h);
 // Правка 431, вторая половина канона: «геометрия» под точкой постановки. Крючки ставит движок (main_loop.h): готова ли сцена города под точкой (клетки в памяти) и «нужна клетка под точкой»
 // (лестница памяти окна «Меню»). NULL (боты, хост) — сцена всегда готова. failed = 1 — клетка не загрузилась вообще (state 3, нет памяти), а не «ещё грузится».
@@ -580,6 +590,9 @@ void homerCamDeathPose(Homer *H);
 #define HOMER_CAM_DEATH_DIST 4.165f   // [PS2] В86 trace.tsv кадр 608: |cam − Гомер| по горизонтали
 #define HOMER_CAM_DEATH_EYE 1.891f    // [PS2] В86 trace.tsv кадр 608: cam y − Гомер y
 int camOverGround(const ColWorld *w, float x, float z, float y);   // правка 40: под глазом камеры есть опора коллизии
+extern int homerSpawnWait431;   // правка 431: 1 — ожидание опоры под точкой постановки (HOMER_SPAWNWAIT_OLD=1 / flag spawnhold 0 — как было)
+extern int homerSceneGate431;   // правка 431: 1 — герой ждёт сцену под точкой (HOMER_SCENEGATE_OLD=1 / файл spawnholdold / flag spawnhold 0 — как было)
+extern int homerRunSlide1230;   // №1230: 1 — бег вдоль стены с косым касанием держит скорость v·cos(угла), скользит; HOMER_RUNSLIDE1230_OLD=1 / файл runslide1230old / flag runslide1230 0 — как было (красный контроль tests/rail1230)
 extern int homerIrisCarOld;   // правка 333: 1 — прежнее (клипы двери и у машин с SetIrisTransition); красный контроль tests/homer/iris_car.py
 extern int homerWalkCam1059Old, homerViewOk; extern float homerWalkCamTau, homerWalkCamRate, homerViewYaw;   // №1059
 extern int homerCtrl916Old, homerExitYawOld, homerCtrlFreezeOld, homerCtrlOn, homerCamBusy; extern float homerCtrlYaw;   // homerCamBusy — №836: камера в переходе/вращается (ставит main_loop.h)   // №704: курс управления, замороженный на время облёта камеры
@@ -594,6 +607,10 @@ extern int homerCamWallOff;   // 1 — камера пешком без обхо
 // №996 (Роб 26.10: «настройка высоты и дальности камеры в меню, и в машине, и пешком»): множители страницы CAMERA паузы (Height, Distance; 1 — как было): камера пешком и камера за машиной
 // (main_camera.h chaseCamUpdate). Задаёт cfgApply (viewer/main_save.h). CAMCFG996_OLD=1 / файл camcfg996old рядом с EBOOT / «flag camcfg996 0» — множители всегда 1
 extern float homerCamUserD, homerCamUserH;
+// №1231 (Роб, TEST93: «пешком зажать L и R вместе и двигать стик — камера облетает Гомера и наклоняется, Гомер стоит»): main_loop.h ставит homerCamLR = 1, пока пешком зажаты обе кнопки, и кладёт стик
+// в homerCamLRx/y (−1..1, мёртвая зона снята; бег при этом выключен). Влево-вправо — курс камеры (homer.camTurn, как у одиночных L/R, но с аналоговой скоростью), вверх-вниз — высота глаза
+// (наклон, homer.c homerCameraAt); отпустил L или R — наклон возвращается за HOMER_CAMLR_RETURN_S, курс остаётся (дальше камеру ведёт обычная погоня за спину при ходьбе). CAMLR1231_OLD=1 / flag camlr1231 0 / файл camlr1231old — как было
+extern int homerCamLR, camLR1231; extern float homerCamLRx, homerCamLRy, homerCamLRpitch;
 extern float homerCamDist, homerCamEyeH, homerCamLookH;   // камера пешком (HOMER_CAM_DIST / _EYE_H / _LOOK_H; служебное — красный контроль)
 #ifndef HOMER_CAM_SEAT_K
 #define HOMER_CAM_SEAT_K (1.f / 3.8f)   // правка 223: на посадке камера догоняет Гомера с постоянной 3,8 с (близнец В23); 0 (-D) — жёстко, как было

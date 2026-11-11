@@ -651,6 +651,7 @@ def chr_batches(parts, shd, imgs, tex_index, textures, eye_shader=None):
     """части [(shader, P, N, UV, T, bi, bw)] в осях игры (P/N не отзеркалены) -> батчи GU_TRIANGLES, союз костей <= 8
     (жадно, как char_export). Батч шейдера eye_shader помечен флагом 1 (глаза: текстура по дорожке TEX_*)"""
     batches = []; ntri = 0
+    pscale = ce.pos16_scale([P for _, P, *_r in parts])           # Модели-96: позиции s16 с масштабом модели в заголовке (CHARPOS16_OLD=1 — f32)
     for shader, P, N, UV, T, bi, bw in parts:
         tname = shd.get(shader, {}).get('TEX', '')
         if tname not in tex_index: tex_index[tname] = len(textures); textures.append((tname, imgs[tname]))
@@ -668,7 +669,7 @@ def chr_batches(parts, shd, imgs, tex_index, textures, eye_shader=None):
             best['bones'] |= used; best['tris'].append(t)
         for bt in open_:
             bones = sorted(bt['bones']); slot = {b: i for i, b in enumerate(bones)}; nb = len(bones)
-            uvo, nro, poo, stride = ce.vertex_layout(nb)
+            uvo, nro, poo, stride = ce.vertex_layout(nb, pscale is not None)
             seq = [v for t in bt['tris'] for v in t]
             buf = bytearray(stride * len(seq))
             for k, v in enumerate(seq):
@@ -678,10 +679,12 @@ def chr_batches(parts, shd, imgs, tex_index, textures, eye_shader=None):
                 w /= w.sum(); q = ce.quantize_weights(w, nb)
                 buf[o:o + nb] = bytes(int(x) for x in q)
                 struct.pack_into('<hh', buf, o + uvo, int(round(UV[v, 0] * ce.UV_SCALE)), int(round((1 - UV[v, 1]) * ce.UV_SCALE)))
-                struct.pack_into('<bbb', buf, o + nro, *[int(round(max(-1, min(1, c)) * 127)) for c in N[v]])
-                struct.pack_into('<fff', buf, o + poo, *P[v])
-            vt = ce.GU_WEIGHTS(nb) | ce.GU_WEIGHT_8BIT | ce.GU_TEXTURE_16BIT | ce.GU_NORMAL_8BIT | ce.GU_VERTEX_32BITF
-            batches.append(dict(tex=bt['tex'], bones=bones, nb=nb, stride=stride, nverts=len(seq), data=bytes(buf), vtype=vt, pos=P,
+                if pscale is None: struct.pack_into('<bbb', buf, o + nro, *[int(round(max(-1, min(1, c)) * 127)) for c in N[v]])
+                else: struct.pack_into('<hhh', buf, o + nro, *[int(round(max(-1, min(1, c)) * 32767 / (pscale * 32768))) for c in N[v]])
+                if pscale is None: struct.pack_into('<fff', buf, o + poo, *P[v])
+                else: struct.pack_into('<hhh', buf, o + poo, *[int(round(float(c) / pscale)) for c in P[v]])
+            vt = ce.GU_WEIGHTS(nb) | ce.GU_WEIGHT_8BIT | ce.GU_TEXTURE_16BIT | (ce.GU_NORMAL_8BIT | ce.GU_VERTEX_32BITF if pscale is None else ce.GU_NORMAL_16BIT | ce.GU_VERTEX_16BIT)
+            batches.append(dict(tex=bt['tex'], bones=bones, nb=nb, stride=stride, nverts=len(seq), data=bytes(buf), vtype=vt, pos=P, pscale=pscale,
                                 flags=1 if eye_shader is not None and shader == eye_shader else 0))
     return batches, ntri
 
@@ -712,19 +715,21 @@ def chr1_blob(joints, batches, textures, clips, eyes=None, clip_flags=None, root
         rec = struct.pack('<IIII', bt['vtype'], 3, bt['nverts'], ov) + struct.pack('<HH', bt['tex'], bt['nb']) + bytes(bt['bones']) + bytes(8 - bt['nb']) \
             + struct.pack('<II', bt['stride'], bt.get('flags', 0))
         bl.b[offB + ce.BAT * i: offB + ce.BAT * i + len(rec)] = rec
-    nkeys = 0
+    nkeys = 0; shared = {}
+    def keys(data):                                   # Модели-96: упаковка ключей (tools/animpack.py, ANIMPACK96_OLD=1 — как было), одинаковые массивы — один раз
+        if ce.ANIMPACK.OLD: return bl.add(data, 4)
+        if data not in shared: shared[data] = bl.add(data, 4)
+        return shared[data]
     for c, cl in enumerate(clips):
         offTr = bl.add(bytes(ce.TRK * nj)); has_root = 0
         for j, tr in enumerate(cl['tracks']):
-            nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0
+            nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0; flags = 0
             if nr:
-                fr = struct.pack(f'<{nr}H', *tr['rf']); fr += bytes(ce.align(len(fr), 4) - len(fr))
-                orr = bl.add(fr + np.clip(np.round(tr['rq'] * 32767), -32767, 32767).astype('<i2').tobytes(), 4); nkeys += nr
+                mode, data = ce.ANIMPACK.pack_rot(tr['rf'], tr['rq']); orr = keys(data); nkeys += nr; flags |= mode
             if nt:
-                fr = struct.pack(f'<{nt}H', *tr['tf']); fr += bytes(ce.align(len(fr), 4) - len(fr))
-                ot = bl.add(fr + tr['tv'].astype('<f4').tobytes(), 4); nkeys += nt
+                mode, data = ce.ANIMPACK.pack_trans(tr['tf'], tr['tv']); ot = keys(data); nkeys += nt; flags |= mode << 2
                 if j == 0: has_root = 2
-            struct.pack_into('<HHII', bl.b, offTr + ce.TRK * j, nr, nt, orr, ot)
+            struct.pack_into('<HHIII', bl.b, offTr + ce.TRK * j, nr, nt, orr, ot, flags)
         dur = (cl['frames'] - 1) / cl['fps']
         fl = clip_flags(c, cl) if clip_flags else 1
         rec = ce.cname(cl['name'], 48) + struct.pack('<fffII', cl['frames'], cl['fps'], dur, fl | has_root, offTr)
@@ -734,6 +739,8 @@ def chr1_blob(joints, batches, textures, clips, eyes=None, clip_flags=None, root
     bl.at(16)
     struct.pack_into('<4s13I7f3I', bl.b, 0, b'CHR1', 1, len(bl.b), nj, nbt, ntx, ncl, nbl, offJ, offB, offT, offC, offBl, root,
                      *bbox, 0., eb, tv, nkeys)
+    ps = next((b.get('pscale') for b in batches if b.get('pscale')), None)
+    if ps: struct.pack_into('<f', bl.b, 96, ps)                      # Модели-96: pad[0] — масштаб s16-позиций
     return bytes(bl.b), tv
 
 

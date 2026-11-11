@@ -1,0 +1,53 @@
+scene F_L4
+flag cfgdefaults 1
+wait 4
+scene K_GO
+flag golevel 4
+wait 40
+flag stop
+flag player
+scene K_in1
+foot 213.97 301.70 0.0000 5.56
+wait 1.5
+press triangle 0.3
+wait 9
+foot 503.8 300.56 1.5708 -20.0
+wait 2
+shot kd_first_intact
+press triangle 0.3
+wait 12
+shot kd_first_after
+scene K_out1
+foot 213.91 299.04 0.0000 5.56
+wait 4
+flag gagreset96 0
+scene K_in_red
+foot 213.97 301.70 0.0000 5.56
+wait 1.5
+press triangle 0.3
+wait 9
+foot 501.4 300.56 1.5708 -20.0
+wait 2
+shot kd_red_a
+wait 0.5
+shot kd_red_b
+scene K_out2
+foot 213.91 299.04 0.0000 5.56
+wait 4
+flag gagreset96 1
+scene K_in_green
+foot 213.97 301.70 0.0000 5.56
+wait 1.5
+press triangle 0.3
+wait 9
+foot 501.4 300.56 1.5708 -20.0
+wait 2
+shot kd_green_a
+wait 0.5
+shot kd_green_b
+foot 503.8 300.56 1.5708 -20.0
+wait 1
+press triangle 0.3
+wait 1
+shot kd_green_replay
+end

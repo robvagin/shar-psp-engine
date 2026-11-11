@@ -27,6 +27,10 @@ void shopViewInput(Shop *s, unsigned hit);               // нажатия ка�
 void shopViewEnd(Shop *s);                               // после ириса выхода: пакеты освобождены, лавка закрыта
 void shopViewDraw3D(void);                               // в открытом списке GE, последним в 3D
 void shopViewDraw2D(Shop *s);                            // шторка света + страница (вместо uiDraw)
+extern int (*shopViewOpenFn)(const char *fn);   // Build 95 П2: открытие пакета ведёт ldrRun (0 — открыт)
+extern int (*shopViewHeal)(unsigned need);   // Будка-93 (1233): ступени лестницы под пакет лавки; 1 — место есть
+extern void (*shopViewFailNote)(const char *what);   // сообщение игроку при отказе
+extern int shopViewFailTest;   // служебное: flag shopfail N
 void shopViewSetLog(void (*log)(const char *line));      // строки SHOPV (smoke.txt)
 int  shopViewPhase(void);                                // SHOPV_* (служебное)
 void shopViewPlant(int off);                             // отрицательный контроль гейта: 1 — экрана нет (прежняя карточка)

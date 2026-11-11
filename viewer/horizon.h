@@ -117,7 +117,8 @@ static int far1042On = !FAR1042_OLD;
 __attribute__((noinline)) static float hz913Apply(float dd, float ex, float ez, float dt, int ok, int hi) {   // потолок города: возвращает новую drawDist
   if (FAR150_OLD || !far150On || !hzN || hzR >= FAR150_D + 30.f) return dd;
   float cap = HZ913_OLD ? FAR150_D : hz913Cap(ex, ez, dt);
-  if (far1042On && ddFloorOver > cap) cap = ddFloorOver;   // №1042: Draw Distance 200/250 в настройках — город до выбранного, не до 150
+  if (far1042On && ddFloorOver > cap) cap = ddFloorOver;
+  if (!ddReg1244Off && far1042On && ddCeilSet > cap) cap = ddCeilSet;   // №1244: выбор 250 - потолок, а не пол (пол регулятора 150)   // №1042: Draw Distance 200/250 в настройках — город до выбранного, не до 150
   return ok && dd > cap && !hi ? cap : dd;
 }
 static void horizonFree(void) { if (!HZ_VB934_OLD) { free(hzVbBuf); hzVbBuf = 0; } hzDst = 0; hzHcl = 0; hzLmCol = 0; for (int q = 0; q < HZ_RSN; q++) hzRs[q].cell = -1; hzWsig = 0; hzWex = hzWey = hzWez = 1e9f; hzWR = 0.f; free(hzZData); hzZData = 0; memset(&hzZ, 0, sizeof hzZ); memset(&hz913St, 0, sizeof hz913St); hzSetCur = -1; free(hzData); hzData = 0; hzN = 0; hzC = 0; hzL = 0; hzNL = 0; hzCur = -1; hzBldCell = -1; hzLevel = -99; }

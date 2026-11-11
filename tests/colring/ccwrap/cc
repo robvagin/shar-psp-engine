@@ -1,0 +1,3 @@
+#!/bin/sh
+# Коллизия-96: обёртка компилятора для прогона существующих хост-гейтов (homer, spawnground, ...) на кольце: PATH=tests/colring/ccwrap:$PATH BOTS_COLRING=1 ...
+exec env DEVELOPER_DIR=/Library/Developer/CommandLineTools /usr/bin/cc -DCOLRING_OLD=0 -DCOLRING_TEST_HOOKS "$@"

@@ -1,3 +1,4 @@
+#include "dcache96.h"
 // B1 (план оптимизации, 10.10.2026): запекание неподвижных пропов (PRP1) и стейтпропов (SPR1) в дисплей-листы GE по клеткам 48 м. Замер 9D: цикл пропов и
 // стейтпропов пишет в список ≈30–40 слов на кусок (привязка текстуры, флаги, матрица, DrawArray: sp_loop ≈17,5 мкс на видимый кусок, props 1,1–1,8 мс), а 94 % кусков
 // стейтпропов L1 (73 % L2, 98 % L7) стоят в покое. Запечённый лист клетки — один CALL: команды те же, что писал бы старый путь (bindTexLean, setFlags, матрица куска, drawGeo),
@@ -135,7 +136,7 @@ static int pbRebuild(PbSet *s, unsigned c) {
     bindTexLean(o->tex); setFlags(o->flags); sceGuSetMatrix(GU_MODEL, (const ScePspFMatrix4 *)o->m); drawGeo(&p, 0, o->ni); tris += o->ni / 3; dr++; }
   if (phTfx) { sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA); phTfx = 0; }
   flatOff(); flatInList = 0; flatNoSuppress = 0;
-  unsigned sz = (unsigned)sceGuFinish(); dlLost();
+  DCALL96(); unsigned sz = (unsigned)sceGuFinish(); dlLost();
   if (sz > bytes) { smkGeBad++; free(b); for (unsigned i = 0; i < s->n; i++) if (s->baked[i] == tag) s->baked[i] = 0; free(C->mem); C->mem = 0; C->nmem = 0; return -1; }
   C->buf = b; C->bytes = bytes; C->tris = tris; C->draws = dr; C->nb = (unsigned short)(binds + flatBinds - nb0_); pbBytes += bytes; pbBuilt++;
   return 1;

@@ -12,6 +12,7 @@
 #include <psputility.h>
 #include <pspgu.h>
 #include <malloc.h>
+#include "zone3_api.h"   // П5 Зоны-95: кольцо и кадр ролика — область «место»
 #include "fpuguard.h"   // правка 252: ловушки FPU потоков ролика выключены (viewer/fpuguard.h)
 #include <stdio.h>
 #include "audio.h"      // правка 276: audioMeHold — пока открыт sceJpeg (кадры считает ME), звук на ME не идёт
@@ -169,7 +170,7 @@ static Movie *movieOpen1(const char *fn, int *errOut) {
   for (int i = 0; i < MV_SLOTS; i++) m->slot[i] = -1;
   m->aChunk = (hd.flags & 1) ? 0 : 1 << 30;   // без звука кольцо держит только кадр
   unsigned il = 4 * (hd.frames + 1);
-  m->idx = malloc(il); m->ring = memalign(64, MV_SLOTS * hd.maxChunk); m->rgba = memalign(64, MV_RGBA);
+  m->idx = malloc(il); m->ring = zone3AllocX(Z3A_PLACE, "movie", MV_SLOTS * hd.maxChunk, 64); m->rgba = zone3AllocX(Z3A_PLACE, "movie", MV_RGBA, 64);
   if (!m->idx || !m->ring || !m->rgba) goto close;
   e = MV_EHDR; if (sceIoRead(fd, m->idx, il) != (int)il || mvIndex(&m->h, m->idx)) goto close;
   for (unsigned i = 0; i < MV_RGBA / 4; i++) m->rgba[i] = MV_SENT;

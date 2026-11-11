@@ -41,6 +41,21 @@ void audioShutdown(void);
 void audioSlotOld(int on);
 void audioBankCapSim(unsigned bytes);
 const char *audioError(void);
+// Звук-96 (Fable §3.4): банк sfx.sab по требованию — таблицы и файлы «всегда» в постоянном месте, остальное в кэше по файлам (грузится в audioPlay на главной нити).
+// audioSbOld(1) — как до правки (весь банк резидентом); audioSbBreak(1) — красный контроль гейта: загрузка файлов «потеряна»
+void audioSbOld(int on);
+void audioSbBreak(int on);
+void audioSbSlotFree(void);               // служебно (тест на Маке): освободить постоянное место (после audioShutdown)
+int  audioSbLine(char *out, int n);        // on= req= play= miss= fail= evict= always_kb= cache_kb= res_kb= load_max_us= (строка SNDB журнала смоука)
+void audioWarm(int id);
+void audioWarmMission(void);               // старт миссии / перед роликами: первые звуки миссии заказать заранее                    // заказать звуки ресурса заранее: файлы кэша читает фон (гэг рядом, машина, миссия); без заказа голос просто чуть ждёт файл
+void audioSbStatReset(void);               // служебно (гейт): обнулить счётчики задержки старта
+int  audioTestWaiting(void);               // служебно: голосов, ждущих файл кэша
+int  audioSbResident(int fi);              // файл банка сейчас в памяти (1 всегда в режиме «целиком»)
+unsigned audioSbArena(void);               // сколько байт занимает банк в памяти (таблицы + «всегда» + кэш)
+int  audioTestVoiceFiles(int *fi, unsigned *dataOff, int max);   // служебно: файлы живых голосов и их смещения в DATA
+const unsigned char *audioTestData(void);  // служебно: начало данных банка
+int audioTestFileLoc(int fi, unsigned *off, unsigned *bytes);
 
 // ids: look up once at load time, keep the int.
 int  audioFind(const char *name);          // sound resource (names from the disc .spt scripts), -1 if absent

@@ -1,0 +1,22 @@
+# Лестница-96 (срочно: Будка-93 на старте L5 «WATCHDOG owner load cell=520/521 tries=3 ok=0» при куче 7 МБ; чёрный ящик PSP Роба на L6: «cells .. bad 2» при куче 5,6 МБ).
+# Корень: клетки-владельцы (небо 2, машина игрока 1) берут память через CP_MEM из области «город» (зона 2); когда она забита (кольцо старта), отказ при свободной куче (лестница смотрит только на кучу и ничего не делает), state=3 навсегда.
+# Правка: владельцы из кучи (cpCityBypass). Гейт: нужен файл zone3sz «3072 3072 4096» в наборе (область «город» 4 МБ цепляется и на ballast). flag cityfill 1 забивает область, ownerdrop 1/2 - как отказ загрузки; сторож перечитывает.
+# Красный контроль: s13_l5_start_red.txt (flag ownerheap 0, тот же EBOOT): владельцы снова из «города» - перечитать нечем, неба нет до конца.
+flag nosave
+flag ownerheap 0
+scene BOOT
+flag golevel 5
+wait 45
+flag stop
+flag player
+wait 3
+scene S13_FILL
+flag ownerdrop 2
+flag ownerdrop 1
+flag cityfill 1
+wait 1.5
+shot s13_after1
+wait 6
+shot s13_after2
+flag cityfill 0
+end

@@ -73,6 +73,17 @@ static int msNewsPend;
 #define MS_SETUP_CAP 90   // кадров (~1,5–3 с) ждать конца подготовки фазы
 #define MS_LATE_WIN 90    // кадров после запасной газеты, когда поздний перенос ещё считается выбором MISSION SELECT
 static int msFlowOld = MS_FLOW1070_OLD, msMusPend, msSetupWait, msLateWin;
+// Будка-93 (правка Роба 1233, T03, и 1228 «двойной ирис»): перенос миссии одним проходом. (а) газета не открылась и после лестницы: честный запасной экран — шнур GE (mem1060Frame), клетки под ним, а не
+// чтение «в никуда» с дырами в кадре (1220); строка TELECORD1228. (б) ирис «msn» после Continue снят (transitSkipMsn), а поздний перенос той же миссии закрывал его второй раз: пока окно
+// T03_IRISWIN_FRAMES кадров, второй перенос идёт БЕЗ нового ириса (дальше 80 м — газета сама), ирис раскрывается один раз; строка MSNEWS2 1228. T03_OLD=1 / файл t03old / flag t03old 1 — как было
+#ifndef T03_OLD
+#define T03_OLD 0
+#endif
+#ifndef T03_IRISWIN_FRAMES
+#define T03_IRISWIN_FRAMES 150
+#endif
+static int t03Old = T03_OLD, msIrisSkipWin, t03DoubleArm;
+static void mem1060Fade(void **fbp); static void mem1060BarTo(void **fbp, int to, int frames); static int mem1060Bar;   // mem1060.h (подключён позже)
 // №894 (Роб 23.10: «Mission Select в паузе открылся в чужой рамке: листать ◄ ► нельзя, виден только текущий уровень, шрифт чужой и кривой»): это запасной список
 // (msn_view.c mvMissionSelect: нет пакета экрана — selRows 0): пакет pextra.shr не открылся (чтение / память после череды загрузок и переносов), результат uiScrOpen
 // не проверялся, повторов не было. Теперь: до 3 повторов с освобождением (готовый пакет будки, ожидание загрузчика, пауза), каждая неудача — строка в журнал и
@@ -127,7 +138,14 @@ static int msOpenTry(const char *fn, int t) {
 // виден, но после закрытия меню стрим возвращает клетки сам. Не вышло и после этого — меню в запасном виде, но главный цикл повторяет открытие (mvMissionSelectNeedPack).
 // MSHEAL_OLD=1 — три повтора как было
 static int msHeld432;   // клетки отданы под меню (BOOTH-режим малого радиуса подгрузки включён) — вернуть при закрытии меню
-static int msPackOpen(const char *fn) {
+static int msPackOpen1(const char *fn);
+static int msPackOpen(const char *fn) {   // Build 95 П2: класс MISSION_SELECT (пакет меню) виден машине переходов: TFSM msnsel plan/load/open, при отказе simplify и WATCHDOG
+  Transit t_; memset(&t_, 0, sizeof t_); t_.name = "msnsel"; t_.screen = TFS_NEWS; t_.need = 512u << 10;
+  if (!tfsm95Old) tfExtBegin(&t_);
+  int rc_ = (!tfsm95Old && tfFailMsn > 0) ? (tfFailMsn--, 1) : msPackOpen1(fn);
+  if (!tfsm95Old) tfExtEnd(&t_, rc_ == 0);
+  return rc_; }
+static int msPackOpen1(const char *fn) {
   if (memLadOn) memLadResTake();   // правка 435: отложенный с начала уровня блок — в кучу перед чтением пакета
   int rc = msOpenTry(fn, 0);
   for (int t = 0; rc && !MS_OPEN_OLD && t < (MSHEAL_OLD ? 3 : 6); t++) {
@@ -137,7 +155,7 @@ static int msPackOpen(const char *fn) {
     if (t == 0) uiScrWarmClear();                                             // пакет будки в куче — первым
     { LdWait lw_ = {0}; lqn = 0; __asm__ volatile("" ::: "memory"); while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe1", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }   // загрузчик — на месте
     if (!MSHEAL_OLD && memLadOn) {   // правка 435: ступени лестницы вместо частных (сегмент следующей попытки: 128 / 64 КБ, вся лестница — под 256 КБ первого куска)
-      memLadder("msnsel", t <= 0 ? 256u << 10 : 128u << 10, LAD_TOP); msHeld432 = msHeld432 || memLadStopped();
+      memLadderZ(LADZ_MISSION, "msnsel", t <= 0 ? 256u << 10 : 128u << 10, LAD_TOP); msHeld432 = msHeld432 || memLadStopped();
     } else if (!MSHEAL_OLD) {
       if (t == 1) mem1060Pre(1536u << 10, "pextra");
       else if (t == 2) { boothRoom1051(0); msHeld432 = 1; }
@@ -160,6 +178,14 @@ static int svcFile(void) { char fn[256]; sibling(fn, "service"); SceUID h = sceI
 // Кадр: чёрный фон + экран открытого пакета; progress 0..1000 — фитиль, часы — секунды с scrT0 (кадры огня/анимации).
 // vsync 0 — между чтениями файлов (как прежняя шкала: загрузка не ждёт развёртку)
 extern int memFailRingGet(unsigned i, unsigned *bytes, unsigned *ra);
+extern unsigned smallPoolOver(void), smallPoolPages(void), smallPoolLive(void);   // memwatch.c
+extern int memFailLastGet(unsigned k, unsigned *bytes, unsigned *ra); extern int memFailHistTop(unsigned k, unsigned *ra, unsigned *n, unsigned *sum, unsigned *max); extern int memFailHistTopRun(unsigned k, unsigned *ra, unsigned *n, unsigned *sum, unsigned *max, unsigned *run); extern int memFailRunBest(unsigned *ra, unsigned *len); extern unsigned memFailHistOther(void);
+#ifndef MEMFAILRUN_OLD
+#define MEMFAILRUN_OLD 0   // 1 - без счёта серий одного ra подряд (viewer/memwatch.c)
+#endif
+#ifndef MEMFAILHIST_OLD
+#define MEMFAILHIST_OLD 0   // 1 - без последних 16 отказов и гистограммы (viewer/memwatch.c)
+#endif
 static int newsLvRed;   // №663: красный контроль гейта «газета своего уровня» (flag newslvred 1): газета всегда уровня 1
 #define LEVEL_IDX (newsLvRed ? 0 : gameLevel - 1)   // газета экрана загрузки уровня (кадр 0..6 пакета load.shr)
 static unsigned scrT0; static int scrLastProg; static float scrLastT;   // для строки SCRSHOT (сверка гейтом со снимком)
@@ -190,10 +216,46 @@ static int loadBlinkOff, loadBlinkLast = -1, loadBlinkN;   // служебное
 // №1060б: экран загрузки, который рисуют loadBegin / loadFrame / loadEnd: UI_LOAD_LEVEL (газета уровня) или UI_LOAD_FE (LoadingFE: Itchy & Scratchy, фитиль к бомбе — как при выходе из игры в меню); ставит mem1060.h на время «освободить → загрузить → вернуть»
 static int ldScr1060 = UI_LOAD_LEVEL;
 static int ldOn;   // №833: объявлено ниже (загрузка уровня идёт) — scrFrame выбирает векторные лучи только на экране загрузки уровня
+// Будка-93 (1233, T01/T02): экран загрузки уровня и LoadingFE не открылись (load.shr не поместился и после лестницы и выгрузки уровня): вместо чёрного кадра на всё чтение — шнур GE с ходом
+// загрузки (тот же, что у будки и переноса миссии), чтение идёт под ним. Строка LOADCORD1233 раз за загрузку. LOADCORD1233_OLD=1 / файл loadcord1233old / flag loadcord1233old 1 — как было (чёрный экран)
+#ifndef LOADCORD1233_OLD
+#define LOADCORD1233_OLD 0
+#endif
+static int loadCord1233Old = LOADCORD1233_OLD, loadCord1233Logged;
+static void mem1060Frame(void **fbp, int permille, int fadeA);   // mem1060.h (подключён позже)
+// Правка 1243 (версия дирижёра 08.11): после сна прошивка сбрасывает состояние GE (буфер глубины, смещение, окно, ножницы, флаги), а движок задаёт его ОДИН раз при старте (main_loop.h) и дальше считает постоянным -
+// кадр города и меню после пробуждения рисовались бы мимо (смещение, мусор на краях паузы). guRestate() заново выставляет всё постоянное состояние в начале списка кадра (экраны scrFrame и кадр города), ~15 команд;
+// любой другой sceGuStart(GU_DIRECT) после пробуждения делает то же один раз (--wrap=sceGuStart, guDirty ставит обратный вызов питания). Буферы кадра (DrawBuffer/DispBuffer) не трогаем: ими владеет sceGuSwapBuffers.
+// GURESTATE_OLD=1 / файл gurestateold - как было. Имитация: guSimClobber() - то же, что сделала бы прошивка (flag сценария gureset; файл gusimat «мс» - посреди загрузки)
+#ifndef GURESTATE_OLD
+#define GURESTATE_OLD 0
+#endif
+static void *guZbpG; static int guRestateOff = GURESTATE_OLD; static unsigned guSimAt, guSimBase;
+static void guRestate(void) {
+  if (guRestateOff || !guZbpG) return;
+  sceGuDepthBuffer(guZbpG, BUF_W); sceGuOffset(2048 - SCR_W / 2, 2048 - SCR_H / 2); sceGuViewport(2048, 2048, SCR_W, SCR_H);
+  sceGuDepthRange(65535, 0); sceGuScissor(0, 0, SCR_W, SCR_H); sceGuEnable(GU_SCISSOR_TEST); sceGuEnable(GU_DEPTH_TEST); sceGuEnable(GU_CLIP_PLANES);
+  sceGuDepthFunc(GU_GEQUAL); sceGuFrontFace(GU_CCW); sceGuShadeModel(GU_SMOOTH); sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0); sceGuAlphaFunc(GU_GREATER, 0x40, 0xff);
+}
+volatile int guDirty; void __real_sceGuStart(int mode, void *list_);
+void guRestateX(void);
+void __wrap_sceGuStart(int mode, void *list_) { __real_sceGuStart(mode, list_); if (guDirty && mode == GU_DIRECT) { guDirty = 0; guRestateX(); } }
+static int guPwrCb(int unk, int flags, void *arg) { (void)unk; (void)arg; if (flags & (0x00040000 | 0x00020000)) guDirty = 1; return 0; }
+static int guPwrThread(SceSize a, void *b) { (void)a; (void)b; int cb = sceKernelCreateCallback("gu_pwr", guPwrCb, NULL); if (cb >= 0) scePowerRegisterCallback(-1, cb); sceKernelSleepThreadCB(); return 0; }
+static void guPwrInit(void) { static int done; if (done) return; done = 1; SceUID t = sceKernelCreateThread("gu_pwr", guPwrThread, 0x11, 0x1000, PSP_THREAD_ATTR_USER, NULL); if (t >= 0) sceKernelStartThread(t, 0, NULL); }
+void guRestateX(void) { guRestate(); }
+static void guSimClobber(void) {   // как после сна: буфер глубины, смещение, окно, ножницы, функция глубины, клипы сбиты
+  sceGuStart(GU_DIRECT, list); sceGuDepthBuffer((void *)(BUF_W * SCR_H * 2 * 3), BUF_W); sceGuOffset(2048 - 60, 2048 - 30); sceGuViewport(2048, 2048, 240, 136); sceGuScissor(0, 0, 240, 136); sceGuDepthRange(0, 65535); sceGuDepthFunc(GU_LESS); sceGuDisable(GU_CLIP_PLANES); sceGuFinish(); sceGuSync(0, 0); guDirty = 1;
+}
+static void guSimPoll(void) { if (guSimAt && guSimBase && (unsigned)(sceKernelGetSystemTimeLow() - guSimBase) / 1000u >= guSimAt) { guSimAt = 0; guSimClobber(); } }
 static void scrFrame(int screen, int progress, int vsync, void **fbp) {
   GE_NEST_GUARD("scrFrame");   // №1186/№1188
   scrLastProg = progress; scrLastT = (sceKernelGetSystemTimeLow() - scrT0) * 1e-6f;
-  sceGuStart(GU_DIRECT, list); resetState();
+  if (!loadCord1233Old && (screen == UI_LOAD_LEVEL || screen == UI_LOAD_FE) && !uiScrReady()) {
+    if (smkOn && !loadCord1233Logged) { loadCord1233Logged = 1; char s_[96]; snprintf(s_, sizeof s_, "LOADCORD1233 screen=%d blk=%u t=%.1f\n", screen, memMaxBlock ? memMaxBlock() : 0, smkT); smkWrite(s_); }
+    mem1060Frame(fbp, progress, 0); return;
+  }
+  sceGuStart(GU_DIRECT, list); resetState(); guRestate();
   sceGuScissor(0, 0, SCR_W, SCR_H); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
   if (screen == UI_LOAD_LEVEL) {   // правка Роба 244 (видео 03.10 1:02: «газета на загрузке стоит, хотя должно мигать»): LOADING
     int on = loadBlinkOff || fmodf(scrLastT, LOAD_BLINK_S) < LOAD_BLINK_S * LOAD_BLINK_ON;   // мигает, пока идёт загрузка (правило порта)
@@ -211,6 +273,7 @@ static void scrFrame(int screen, int progress, int vsync, void **fbp) {
   if (scrTvOver && tvFrameOn) { uiScrDraw(UI_BOOT_TVMOVIE, 0, 0.f, 0); resetState(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0); }
   if (scrIris) { irisOver(); sceGuClutMode(GU_PSM_8888, 0, 0xff, 0); }   // правка 154: титульный под раскрывающимся ирисом
   sceGuFinish(); sceGuSync(0, 0); if (vsync) sceDisplayWaitVblankStart(); *fbp = swapBufG(vsync);
+  guSimPoll();
 }
 // снимок экрана пакета для гейта (tools/screens_check.py): строка с тем, что нарисовано, и SHOT (ждёт снимок окна)
 static void scrShot(const char *name, const char *packName, int screen, const char *show) {
@@ -388,6 +451,8 @@ static void loadWaitNote(const char *what) { bbOp("loadwait", what, 0); if (smkO
 static void bnsFlag(const SmokeCmd *sc);   // bonus_play.h
 static int ldMenuNew, ldDuck;
 static void loadBegin(void **fbp) {   // Loading.scr открыт: газета влетает ровными кадрами, потом начинается чтение
+  { char fn_[256]; sibling(fn_, "gusimat"); SceUID f_ = sceIoOpen(fn_, PSP_O_RDONLY, 0); if (f_ >= 0) { char b_[24] = {0}; sceIoRead(f_, b_, 23); sceIoClose(f_); guSimAt = (unsigned)atoi(b_); guSimBase = sceKernelGetSystemTimeLow() | 1u; } }   // правка 1243: имитация сброса GE посреди загрузки
+  loadCord1233Logged = 0;
   if (!LOADDUCK_OLD && !ldMenuNew && ldScr1060 == UI_LOAD_LEVEL) { sndLoadDuck(1); ldDuck = 1; }
   levelPreread();   // №PREREAD: чтение резидентной части — в фон на время влёта
   loadFuseIoEnd(); ldFbp = fbp; ldPermLast = 0; ldFrameLast = ldGapMax = 0;
@@ -477,7 +542,7 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "LOADFUSE508 old=%d calls=%d max_jump=%d permille\n", LOAD_SMOOTH_OLD, ldFuseCalls, ldFuseJump); smkWrite(s_); }
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "LOADREAD ms=%u frames=%d skip=%d min_ms=%d t=%.1f\n",   // правка 336: время чтения
                                    (sceKernelGetSystemTimeLow() - ldReadT0) / 1000u, ldFrames, ldSkips, LOAD_FRAME_MIN_MS, smkT); smkWrite(s_); }
-  ldWarmStep_ = 0;
+  ldWarmStep_ = 0; ldWarmGiveUp = 0; ldWarmSkipN = 0;
   while (ldOn && ldShown < 1000) { scrFrame(ldScr1060, ldProgress(1000), 1, fbp); newsShotTick(); loadWarmStep(); }   // №538: простой показа (до 3 с) — прогрев листов клеток и B1 вокруг старта
   if (!LOAD_NEWS_MUSIC_OLD && !loadNewsMusicOld && ldOn) { float left0 = feNewsMusicLeft(), held = 0.f; unsigned h0 = sceKernelGetSystemTimeLow();
     while (ldOn && feNewsMusicLeft() > 0.05f && ldSec() < LOAD_NEWS_MUSIC_CAP_S) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); }
@@ -543,6 +608,17 @@ static void firstCount(void) {   // показан кадр игры: видим
 #ifndef TVLEAVE1169_OLD
 #define TVLEAVE1169_OLD 0
 #endif
+// №1245 (Роб, Build 96: «RESUME GAME, камера наезжает на телевизор — в последний момент наезда стрелки выбора влево/вправо вверху появляются на телевизоре»):
+// №1169 прятал строку только ПОСЛЕ перелёта, а последний кадр самого перелёта «туда» цикл рисует уже с feFlying()=0 (feDraw в нём довёл время до конца) — полное меню со стрелками
+// ровно в кадре, где камера встала у ТВ. Теперь строка скрыта и в последнем кадре перелёта «туда» (menuFlyGo ставит menuFly). По оригиналу: с выбора пункта до ухода из меню строки нет,
+// рамка-телевизор гаснет в последних 15 кадрах (альфа²), страница меню не возвращается; запись PS2 (v15_newgame): строка исчезает с началом перелёта и до чёрного экрана не появляется.
+// TVLEAVE1245_OLD=1 — прежнее (последний кадр перелёта «туда» с полным меню); smoke «flag tvlastold 1» — то же на лету (красный контроль гейта)
+#ifndef TVLEAVE1245_OLD
+#define TVLEAVE1245_OLD 0
+#endif
+static int menuFlyGo;     // 1 — идёт перелёт «туда» (FE_GO), включая последний кадр, где feFlying() уже 0
+static int tvFlyEnd;      // служебно (smoke «flag tvflyend 1»): снимок TV_flyend сразу после последнего кадра перелёта «туда»
+static int tvLastOld;     // служебно (smoke «flag tvlastold 1»): прежнее поведение
 static int menuHoldFly;   // 1 — камера ушла в игру (RESUME GAME): до выхода из меню рисуем кадр подлёта без строки меню
 static int tvHold;        // служебно (smoke «flag tvhold 1»): после выхода из цикла меню ещё 40 кадров полным menuFrame и снимок TV_leave — так выглядит кадр, что висит на PSP во время загрузки
 static int flyNoFrame;   // служебное (отрицательный контроль гейта tools/fe_gate.sh): в перелёте меню не рисуется совсем
@@ -633,7 +709,7 @@ static void menuFrame(int sel, void **fbp) {   // главное меню Scroob
   feDraw(sel); resetState(); uiMenuBackdrop(!feReady());
   // правка Роба 49: пока камера летит к предмету и обратно (после NEW GAME — к газете) рамка-телевизор TVFrame.pag остаётся,
   // как в оригинале; скрыты только строка меню, подсказка и название уровня. «flag flynoframe» — прежний код (без рамки)
-  uiMenuFlight(feFlying() || (!TVLEAVE1169_OLD && menuHoldFly));
+  uiMenuFlight(feFlying() || (!TVLEAVE1169_OLD && menuHoldFly) || (!TVLEAVE1245_OLD && !tvLastOld && menuFlyGo));
   if (!(flyNoFrame && feFlying())) uiDrawMenu(UI_MENU_MAIN, sel);
   if (smkOn && !feFlying() && uiMenuItemBox[0] >= 0.f) {   // правка 412: пульс выбранного пункта по кадрам (tests/menu/item_pulse.sh)
     char s_[160]; snprintf(s_, sizeof s_, "MENUITEM t=%.3f sel=%d ms=%.1f s=%.4f x0=%.2f y0=%.2f x1=%.2f y1=%.2f\n", smkT, sel, uiMenuItemBox[0], uiMenuItemBox[1],
@@ -713,18 +789,26 @@ static void optFlyMovie(int back, int sel, void **fbp) {   // просмотр �
 // город вокруг спавна до первого кадра («весь видимый круг, без дыр на старте»); радиус как раньше на заставке —
 // дальний режим + 10 м. bar: экран загрузки со шкалой по числу клеток. Возвращает число прочитанных клеток
 // Загрузка 2, п.5: задание «круг клеток у точки c» загрузчику — главный поток в это время грузит остальное; cellsRingAt дождётся и дочитает остаток
+// П5 Зоны-95: радиус круга старта. Круг читался на DIST_LONG + 10 м, а отдача (trim) держит только дальность + 20 м, для клеток сзади ещё на 40 м ближе (каждая клетка сзади дальше дальности − 20 м уходит как лишняя):
+// при тесной куче клетки круга грузились и в течение секунд отдавались (cellthrash, MEMTRIM десятки тысяч за тур). Пока свободно меньше резерва + 4 МБ, круг не шире дальности − 20 м. STREAMHYST_OLD=1 — как было
+static float ringRadius(void) {
+  float r = DIST_LONG + 10.f;
+  if (!STREAMHYST_OLD && cityStreamFree(heapFreeBytes()) < MEM_RESERVE + (4u << 20)) { float lim = drawDist - 20.f; if (lim < 100.f) lim = 100.f; if (r > lim) r = lim; }
+  return r;
+}
 static float ringC[3];   // точка, вокруг которой загрузчик читает круг
 static void cellRingStart(const float *c) {
-  if (CELLRING_BG_OLD || CELLRING_OLD || !loaderUp || ringState) return;
-  const float r = DIST_LONG + 10.f; int n = 0;
+  if (CELLRING_BG_OLD || CELLRING_OLD || !loaderUp || ringState || cellThrashGive()) return;   // П5: сторож круга «загрузил — отдал» — круг старта не перезапускаем
+  const float r = ringRadius(); int n = 0;
   // высота точки старта в этот момент ещё не настоящая (L6: spawn y = -53 до carInit): отбор по расстоянию на плоскости — надмножество круга по 3D, лишнее потом уйдёт в stream()
   for (unsigned i = 0; i < ncell && n < RING_MAX; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
     float dx = q->cx - c[0], dz = q->cz - c[2]; if (sqrtf(dx * dx + dz * dz) - q->rad < r) ringIdx[n++] = (short)i; }
+  farWantRing(ringIdx, n, c); n = ringFit(ringIdx, n, c, "bg");
   if (!n) return;
   ringC[0] = c[0]; ringC[1] = c[1]; ringC[2] = c[2]; ringN = n; ringDone = 0; __asm__ volatile("" ::: "memory"); ringState = 1; ldSignal();
 }
 static int cellsRingAt(const float *c, int bar, void **fbp) {
-  const float r = DIST_LONG + 10.f; int need = 0, done = 0, shot = loadShot; loadShot = 0; unsigned rt0 = sceKernelGetSystemTimeLow(), bgN = 0, bgReads = 0, bgKb = 0; int relFreed = 0;
+  const float r = ringRadius(); int need = 0, done = 0, shot = loadShot; loadShot = 0; unsigned rt0 = sceKernelGetSystemTimeLow(), bgN = 0, bgReads = 0, bgKb = 0; int relFreed = 0;
   if (bar) { if (!ldOn) loadBegin(fbp); loadFrame(ldBase, fbp); }
   if (ringState) {   // п.5: круг уже читает загрузчик — ждём (кадры газеты по готовым клеткам)
     bgN = (unsigned)ringN;
@@ -736,7 +820,7 @@ static int cellsRingAt(const float *c, int bar, void **fbp) {
       relFreed = freed;
       if (smkOn && freed) { char s2[96]; snprintf(s2, sizeof s2, "CELLRING released=%d far=%.0f\n", freed, sqrtf(dx * dx + dz * dz)); smkWrite(s2); } }
   }
-  for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner && !cl[i].state && cellDist(&cl[i], c[0], c[1], c[2]) < r) need++;
+  if (!cellThrashGive()) for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner && !cl[i].state && cellDist(&cl[i], c[0], c[1], c[2]) < r) need++;
   if (CELLRING_OLD) {
     SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0);
     for (unsigned i = 0; i < ncell; i++) {
@@ -755,7 +839,8 @@ static int cellsRingAt(const float *c, int bar, void **fbp) {
   // п.4: остаток (всё, если загрузчик не брал) — укрупнёнными чтениями, порциями по 24 клетки (между порциями кадр газеты)
   short *idx = need ? malloc((size_t)need * sizeof *idx) : 0; int n = 0;
   for (unsigned i = 0; idx && i < ncell; i++) if (!cl[i].owner && !cl[i].state && cellDist(&cl[i], c[0], c[1], c[2]) < r && n < need) idx[n++] = (short)i;
-  if (n && memLadOn) memLadder("ring", RING_RUNMAX, LAD_TOP);   // правка 435: буфер кольца (512 КБ) — через лестницу; не вышло — читаем по клетке (запасной путь cellsReadRuns)
+  if (n > 1) { farWantRing(idx, n, c); n = ringFit(idx, n, c, "fg"); need = n; } else if (n) farWantRing(idx, n, c);   // Лестница-96: круг — по свободному месту области города (RINGFIT_OLD)
+  if (n && memLadOn) memLadderZ(LADZ_PLACE, "ring", RING_RUNMAX, LAD_TOP);   // правка 435: буфер кольца (512 КБ) — через лестницу; не вышло — читаем по клетке (запасной путь cellsReadRuns)
   if (n) { SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); unsigned reads = 0, bytes = 0;
     for (int a = 0; a < n; a += 24) { int m = n - a < 24 ? n - a : 24;
       cellsReadRuns(fd, idx + a, m, NULL); reads += ringReads; bytes += ringBytes; done += m;
@@ -788,18 +873,36 @@ static int cellsDropFar1213(const float *c, float r) {
 }
 // пункт 8: сценарий миссии перенёс игрока далеко (старт миссии, MISSION SELECT, повтор с чекпоинта) — город вокруг новой
 // точки читается сразу, на экране загрузки (как в оригинале), а не дырами в кадре. Загрузчик сперва останавливается
+// Build 95 П2 (спец Б.3, решение Роба 3): перенос миссии ВНУТРИ уровня (дальше 80 м, площадки L3/L6) идёт под прелоадером Itchy & Scratchy через ldrRun, газета остаётся за MISSION_SELECT и возвратами из
+// будки/ролика (msnTeleNews1239 = 1 по умолчанию; главный цикл ставит 0 на перенос без выбора из меню). Ступени FREE_MORE, SIMPLIFY с надписью. TFSM95_OLD=1 — газета, как было
+static int msnTeleNews1239 = 1; static float teleAt1239[3];
+static int teleFreeCb(void *u) { (void)u; return cellsDropFar1213(teleAt1239, DIST_LONG + 50.f); }
+static int teleLoadCb(void *u) { void **fb = (void **)u; int n = cellsRingAt(teleAt1239, 0, fb); return n >= 0; }
+static void msnTeleportFsm(float x, float y, float z, void **fbp) {
+  teleAt1239[0] = x; teleAt1239[1] = y; teleAt1239[2] = z;
+  Transit t; memset(&t, 0, sizeof t);
+  t.name = "teleport"; t.screen = TFS_PRELOADER; t.need = 1u << 20; t.at[0] = x; t.at[1] = y; t.at[2] = z;
+  t.freeFn = teleFreeCb; t.load = teleLoadCb; t.u = fbp; t.noReturn = 1; t.simplifyText = "PLEASE WAIT.";
+  int ok = ldrRun(&t, fbp); stInit = 0;
+  ldWarmC[0] = x; ldWarmC[1] = y; ldWarmC[2] = z; ldWarmOn = 1;
+  char s_[96]; snprintf(s_, sizeof s_, "MSNLOAD cells=%d at %.1f %.1f fsm=%d\n", ok, x, z, ok); smkWrite(s_);
+}
 static void msnTeleport(float x, float y, float z, void **fbp) {
+  if (!tfsm95Old && !msnTeleNews1239) { msnTeleportFsm(x, y, z, fbp); return; }
   lqn = 0; __asm__ volatile("" ::: "memory");
   { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_fe2", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
-  scrOpen1065("teleport"); scrTvOver = 0;   // экран загрузки оригинала (Loading.scr) — на время чтения (№1065: отказ -> место и повтор)
+  { float at_[3] = {x, y, z}; transitPlan("msn", 1u << 20, at_); }   // Будка-93 (1233): общий вход перехода
+  int rcScr_ = scrOpen1065("teleport"); scrTvOver = 0;   // экран загрузки оригинала (Loading.scr) — на время чтения (№1065: отказ -> место и повтор)
+  int cord_ = !t03Old && rcScr_ != 0;
+  if (cord_) { mem1060Bar = 0; mem1060Fade(fbp); mem1060BarTo(fbp, 150, 6); if (smkOn) { sceDisplayWaitVblankStart(); sceDisplayWaitVblankStart(); smokeShotNow("tele_cord"); char s_[96]; snprintf(s_, sizeof s_, "TELECORD1228 rc=%d blk=%u t=%.1f\n", rcScr_, memMaxBlock ? memMaxBlock() : 0, smkT); smkWrite(s_); } }
   float c[3] = {x, y, z};
   if (!MSNTELEFREE1213_OLD && !msnTeleFree1213Old) {
     float h0 = heapFreeBytes() / 1048576.f; int fr = cellsDropFar1213(c, DIST_LONG + 50.f);
     if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "TELEFREE1213 cells=%d heap=%.2f->%.2f blk=%.2f\n", fr, h0, heapFreeBytes() / 1048576.f, memMaxBlockMB()); smkWrite(s_); }
   }
-  int n = cellsRingAt(c, 1, fbp); stInit = 0;
+  int n = cellsRingAt(c, cord_ ? 0 : 1, fbp); stInit = 0;
   ldWarmC[0] = x; ldWarmC[1] = y; ldWarmC[2] = z; ldWarmOn = 1;
-  loadEnd(fbp); SCR_CLOSE();
+  if (cord_) mem1060BarTo(fbp, 1000, 8); else { loadEnd(fbp); SCR_CLOSE(); }
   char s[96]; snprintf(s, sizeof s, "MSNLOAD cells=%d at %.1f %.1f\n", n, x, z); smkWrite(s);
 }
 // ag/loadorder (№1209, «подгрузились раньше, чем подгрузился пол»): город у двери комнаты читается синхронно под закрытым ирисом, а не «потом стримом». Комната держит игрока в кармане x 480…520
@@ -829,7 +932,8 @@ static int cellsRingNear1209(const float *c, float r, int *outBytes) {
   for (unsigned i = 0; i < ncell && n < need; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
     if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
     if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) idx[n++] = (short)i; }
-  if (memLadOn) memLadder("ring", RING_RUNMAX, LAD_TOP);
+  for (int k_ = 0; k_ < n; k_++) cl[idx[k_]].wantFar = 0;   // Лестница-96: кольцо двери - рядом, все полные
+  if (memLadOn) memLadderZ(LADZ_PLACE, "ring", RING_RUNMAX, LAD_TOP);
   SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); unsigned bytes = 0;
   if (fd >= 0) { for (int a = 0; a < n; a += 24) { int m = n - a < 24 ? n - a : 24; cellsReadRuns(fd, idx + a, m, NULL); bytes += ringBytes; bbBeatTick(); } sceIoClose(fd); }
   else n = -2;
@@ -912,6 +1016,8 @@ static int radarLog; static float radarLogT;   // служебное (flag radar
 #define TUT_CALM (TUTPAUSE_OLD ? 1.0f : 0.f)
 static float tutCalm;     // секунды свободной игры подряд (правка 60); 0 — на старте уровня и при включении подсказок
 static int tutCalmOff;   // отрицательный контроль правки 60 (flag tutnow): подсказка сразу, как раньше
+static int oldCarAwake; static float oldCarStill, oldCarX0, oldCarZ0;   // правка 1241: оставленная своя проснулась от тарана / тише порога, с; oldCarX0/Z0 — место, где её оставили (для журнала: на сколько её сдвинуло)
+static int oldCarHit1241Old;   // служебное (flag oldcarhitold): отрицательный контроль правки 1241 — игрок проезжает сквозь оставленную свою машину, как раньше
 static int jackOff;   // отрицательный контроль правки 63 (flag jackoff): угона нет, как раньше
 // Правки Роба 64/72 (запись PS2, голос Роба: «надпись HIT AND RUN, музыка погони, за тобой несутся полицейские»): шкала
 // заполнилась — надпись «Hit & Run!» (поле HNR_TEXT Hud.pag), событие композиции Hit_and_Run (музыка погони), полицейская
@@ -1031,7 +1137,7 @@ static void homerWear(int k) {
   // обычный костюм = модель игрока уровня (pcPath: homer.shr или l<N>/player.shr)
   if (!pcOld) { if (wardrobeFile(k)) levelFile(fn, f); else if (pcPath[0]) snprintf(fn, sizeof fn, "%s", pcPath); }
 #endif
-  SkinModel *m = skinLoad(fn); if (!m) return;
+  SkinModel *m = skinLoadH(fn); if (!m) return;
   float x = homer.x, y = homer.y, z = homer.z, h = homer.h;
   SkinModel *old = homerM; homerM = m;
   if (homerInit(&homer, homerM) != 0) { homerM = old; skinFree(m); homerInit(&homer, homerM); }
@@ -1043,10 +1149,32 @@ static void homerWear(int k) {
 }
 // правка 94: машина из галереи будки — своя (машина уровня) или награда уровня из пакета msncars (gameMsnPhoneCar); стоит рядом
 static int phoneK;
+// Решение Роба (1250): ни надписи «машина недоступна», ни подмены машины. Модель выбранной машины не легла в память -> экран будки остаётся закрытым (переход п.14), память освобождается, пока машина не влезет:
+// вся лестница (mcrEnsure96, ступени 1-3), затем ступень 4 «мир стоит»: все клетки города кроме клеток-владельцев неба и кузова (mem1060Free; вернёт mem1060Return после), затем модели машин миссий;
+// сначала модель машины, потом мир вокруг точки выхода (его читает mem1060Return под тем же экраном). Подмена на машину уровня - только невозможный случай (WATCHDOG car fallback, без надписи). CARHARD96_OLD=1 / файл carhard96old / flag carhard96 0 - прежние надпись и подмена
+#ifndef CARHARD96_OLD
+#define CARHARD96_OLD 0
+#endif
+static int carHard96On = !CARHARD96_OLD;
+static int carHard96(const char *name) {
+  if (mcrEnsure96(name)) return 1;
+  if (!carHard96On) return 0;
+  void **fb = fbpG1226; unsigned b0 = memMaxBlock ? memMaxBlock() : 0, f0 = heapFreeBytes();
+  if (fb) { mem1060Fade(fb); mem1060BarTo(fb, 120, 6); }   // экран закрыт на время освобождения
+  int n = mem1060Free(); mem1060Back = 1;
+  if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "WATCHDOG mem who=car size=%u step=4 world-free cells=%d blk=%u->%u free=%u->%u carvis t=%.1f\n", 1536u << 10, n, b0, memMaxBlock ? memMaxBlock() : 0, f0, heapFreeBytes(), smkT); smkWrite(s_); }
+  if (mcrEnsure96(name)) return 1;
+  b0 = memMaxBlock ? memMaxBlock() : 0; f0 = heapFreeBytes(); mcrFreeAll();
+  if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "WATCHDOG mem who=car size=%u step=5 mcr-free blk=%u->%u free=%u->%u carvis t=%.1f\n", 1536u << 10, b0, memMaxBlock ? memMaxBlock() : 0, f0, heapFreeBytes(), smkT); smkWrite(s_); }
+  if (mcrEnsure96(name)) return 1;
+  if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "WATCHDOG car fallback %.15s t=%.1f\n", name, smkT); smkWrite(s_); }
+  return 0;
+}
 static void phoneSummonCar(int k, const char *name) {
   bbOp("phone", name, 0);   // правка 103: самописец — машина из будки
   mcrPrefetch(name);        // правка 474: модель с карты памяти сразу (экран будки ещё гаснет), прежняя вызванная выгрузится в mcrSync
   if (!mvPhoneCar(name)) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "PHONECAR nomodel %.15s t=%.1f\n", name, smkT); smkWrite(s_); } phoneSummon(k); return; }   // машина уровня / нет модели — прежний вызов своей
+  if (carVis96 && !carHard96(name)) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "PHONECAR nomem %.15s t=%.1f\n", name, smkT); smkWrite(s_); } if (uiReady && !carHard96On) uiMessage("VEHICLE UNAVAILABLE", -1, 2.f); phoneSummon(k); return; }   // Build 96 (1250): модели нет и после лестницы — своя машина уровня, не невидимая
   float x, y, z, a; phoneCarSpot(k, &x, &y, &z, &a);   // правка 117: на полосу у будки, вдоль дороги
   carPlace(&car, &world, x, y, z, a); gameCarSummon(&G, name, &car); wasDestroyed = car.destroyed;   /* сверка g10-flow P01 Д1 */ chase.init = 0; oldCarOn = 0;
   phoneCamStart(k, car.x, car.y, car.z);   // правка 166
@@ -1194,6 +1322,12 @@ static void bbSample(const char *ev) {
   if (smkOn && !MEMLOAD1065_OLD) { static unsigned mfLog_; unsigned mfb_, mfra_;   // №1065: размер и вызывающий каждого нового отказа (адрес по ELF: tools/crash_addr.py)
     while (mfLog_ < memFailsNow() && memFailRingGet(mfLog_, &mfb_, &mfra_)) { char t[140]; snprintf(t, sizeof t, "MEMFAILSZ n=%u bytes=%u ra=%08x heap=%.2f blk=%.2f t=%.1f\n", mfLog_ + 1, mfb_, mfra_, heapFreeBytes() / 1048576.f, memMaxBlockMB(), bbClock); smkWrite(t); mfLog_++; }
     if (mfLog_ < memFailsNow()) mfLog_ = memFailsNow(); }
+  { static unsigned spO_; if (smallPoolOver() != spO_) { spO_ = smallPoolOver(); char t_[96]; snprintf(t_, sizeof t_, "WATCHDOG smallpool over n=%u pages=%u live=%u", spO_, smallPoolPages(), smallPoolLive()); bbNote(t_); if (smkOn) { char u_[110]; snprintf(u_, sizeof u_, "%s t=%.1f\n", t_, bbClock); smkWrite(u_); } } }   // Build 95 шаг 1: пул мелочи переполнен - блок ушёл в кучу (в туре PSP over = 0)
+  if (!MEMFAILHIST_OLD && memFailsNow() > 16u) { static unsigned mfH_; static float mfT_ = -100.f;   // Опора-93: раз в 30 с при росте числа отказов - топ-3 вызывающих строкой в ящик (видно в blackbox.txt) и в smoke
+    if (memFailsNow() != mfH_ && bbClock - mfT_ >= 30.f) { mfH_ = memFailsNow(); mfT_ = bbClock; char t[200]; int w = snprintf(t, sizeof t, "MEMFAILHIST n=%u other=%u", memFailsNow(), memFailHistOther());
+      for (unsigned k = 0; k < 3u; k++) { unsigned ra_, n_, sm_, mx_; if (!memFailHistTop(k, &ra_, &n_, &sm_, &mx_)) break; w += snprintf(t + w, sizeof t - (size_t)w, " %08x:%u/%uK/%uK", ra_, n_, sm_ >> 10, mx_ >> 10); if (w >= (int)sizeof t - 40) break; }
+      if (!MEMFAILRUN_OLD) { unsigned rr_, rl_; if (memFailRunBest(&rr_, &rl_)) snprintf(t + w, sizeof t - (size_t)w, " run=%u@%08x", rl_, rr_); }   // Лестница-96 (Fable шаг 1): самая длинная серия одного ra подряд
+      bbNote(t); if (smkOn) { char u[210]; snprintf(u, sizeof u, "%s t=%.1f\n", t, bbClock); smkWrite(u); } } }
 }
 static int bbCompose(const char *head) {   // шапка + кольцо -> bbOut (BB_FILE байт, хвост — пробелы и перевод строки)
   char h[1536]; int n = snprintf(h, sizeof h, "%s n=%u t=%.0f EBOOT %s %s kexc %d vol %d %dK fpu %x>%x\n# t(с) событие уровень место x y z · куча МБ: свободно, наибольший кусок · клетки в памяти, "
@@ -1455,6 +1589,15 @@ static void bbReportWrite(const char *why, unsigned ms, int ph) {
   p = bbPutS(p, e, "MEMFAILSZ ring (n bytes ra) ra по ELF: tools/crash_addr.py\n");
   for (unsigned i = 0; i < 16u && i < memFailsNow(); i++) { unsigned b_ = 0, ra_ = 0; if (!memFailRingGet(i, &b_, &ra_)) break;
     p = bbPutU(p, e, i + 1); p = bbPutS(p, e, " "); p = bbPutU(p, e, b_); p = bbPutS(p, e, " 0x"); p = bbPutX(p, e, ra_, 8); p = bbPutS(p, e, "\n"); }
+  { p = bbPutS(p, e, "SMALLPOOL pages="); p = bbPutU(p, e, smallPoolPages()); p = bbPutS(p, e, " live="); p = bbPutU(p, e, smallPoolLive()); p = bbPutS(p, e, " over="); p = bbPutU(p, e, smallPoolOver()); p = bbPutS(p, e, "\n"); }
+  if (!MEMFAILHIST_OLD && memFailsNow() > 16u) {   // Опора-93: кольцо первых 16 не показывает остальное — последние 16 и гистограмма по вызывающему
+    p = bbPutS(p, e, "MEMFAILLAST newest first (back bytes ra)\n");
+    for (unsigned k = 0; k < 16u; k++) { unsigned b_ = 0, ra_ = 0; if (!memFailLastGet(k, &b_, &ra_)) break;
+      p = bbPutU(p, e, k); p = bbPutS(p, e, " "); p = bbPutU(p, e, b_); p = bbPutS(p, e, " 0x"); p = bbPutX(p, e, ra_, 8); p = bbPutS(p, e, "\n"); }
+    p = bbPutS(p, e, "MEMFAILHIST top8 total="); p = bbPutU(p, e, memFailsNow()); p = bbPutS(p, e, " other="); p = bbPutU(p, e, memFailHistOther()); p = bbPutS(p, e, " (ra n sum_bytes max_bytes run) run = самая длинная серия этого ra подряд\n");
+    for (unsigned k = 0; k < 8u; k++) { unsigned ra_, n_, sm_, mx_, rn_ = 0; if (!memFailHistTopRun(k, &ra_, &n_, &sm_, &mx_, &rn_)) break;
+      p = bbPutS(p, e, "0x"); p = bbPutX(p, e, ra_, 8); p = bbPutS(p, e, " "); p = bbPutU(p, e, n_); p = bbPutS(p, e, " "); p = bbPutU(p, e, sm_); p = bbPutS(p, e, " "); p = bbPutU(p, e, mx_); p = bbPutS(p, e, " "); p = bbPutU(p, e, rn_); p = bbPutS(p, e, "\n"); }
+    if (!MEMFAILRUN_OLD) { unsigned rr_ = 0, rl_ = 0; if (memFailRunBest(&rr_, &rl_)) { p = bbPutS(p, e, "MEMFAILRUN best="); p = bbPutU(p, e, rl_); p = bbPutS(p, e, " ra=0x"); p = bbPutX(p, e, rr_, 8); p = bbPutS(p, e, "\n"); } } }
   if (why[0] == 'S') { p = bbPutS(p, e, "--- stall.txt (список GE, текстура, последний вызов интерфейса) ---\n"); for (const char *q = stallBuf; *q && p < e; q++) *p++ = *q; }
   p = bbPutS(p, e, "--- ring ящика (старые сверху) ---\n");
   for (unsigned k = 0; k < bbCnt && k < BB_N; k++) { const char *r = bbRing[(bbHead + BB_N - bbCnt + k) % BB_N]; unsigned l = (unsigned)strnlen(r, BB_LINE);
@@ -1681,6 +1824,13 @@ static void blackBoxBoot(void) {   // старт: прошлый ящик без
 #endif
 #define DEATH_FADE_S .92f   // [PS2] 46 кадров 50 Гц до чёрного
 #define DEATH_HOLD_S .26f   // [PS2] чёрный после переноса 12–14 кадров
+// Build 95 П2 (спец Б.3, класс DEATH/BUSTED): точка возврата может лежать вне загруженных клеток (двор горящих покрышек L1 K2-8 увозит на сотни метров): клетки вокруг неё читаются под ЗАКРЫТЫМ экраном
+// (ирис или затемнение), как у выхода из комнаты (roomRing1209: нечего читать, ничего не стоит), а не стримом на глазах после раскрытия. Строка ROOMRING1209 death / busted. DEATHRING1239_OLD=1 /
+// файл deathring1239old / flag deathring1239old 1 — как было (стрим); TFSM95_OLD=1 тоже выключает
+#ifndef DEATHRING1239_OLD
+#define DEATHRING1239_OLD 0
+#endif
+static int deathRing1239Old = DEATHRING1239_OLD;
 static int deathCheck(void **fbp) {   // проверка и перенос — viewer/game.c (общие с миром ботов); -> показано кадров затемнения
   if (!haveCol || inRoom() || !world.ndeath) return 0;
   int foot = onFoot(), k = gameDeathAt(&G), shown = 0; if (k < 0) return 0;
@@ -1690,6 +1840,7 @@ static int deathCheck(void **fbp) {   // проверка и перенос — 
   else if (fade) shown = transitFade(fbp, "death", DEATH_FADE_S);
   gameDeathPut(&G, k);
   const float *A = world.death[k].apex;
+  if (!deathRing1239Old && !tfsm95Old) { float a_[3] = {A[0], A[1], A[2]}; roomRing1209(a_, "death"); }   // Build 95 П2: клетки у точки возврата под закрытым экраном
   if (!foot) chase.init = 0;
   if (fade) transitHold(DEATH_HOLD_S);
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "DEATH %s rec=%d -> %.1f,%.1f,%.1f h=%.3f foot=%d fade=%d iris=%d t=%.1f\n", world.death[k].name, k, A[0], A[1], A[2],
@@ -1716,6 +1867,7 @@ static int bustedCheck(void **fbp, float dt) {   // №627: после арес�
   if (iris) shown = transitClose(fbp, "busted");
   else if (fade) shown = transitFade(fbp, "busted", BUSTED_FADE_S);
   if (!onFoot() && haveTraffic && trafficLaneSpot(&traffic, car.x, car.z, 30.f, p, &hh)) { carPlace(&car, &world, p[0], p[1] + .5f, p[2], hh); chase.init = 0; placed = 1; }
+  if (placed && !deathRing1239Old && !tfsm95Old) roomRing1209(p, "busted");   // Build 95 П2: клетки у новой точки машины под закрытым экраном
   if (fade) transitHold(BUSTED_HOLD_S);
   if (smkOn) { char s[112]; snprintf(s, sizeof s, "BUSTED fade=%d iris=%d placed=%d t=%.2f\n", fade, iris, placed, smkT); smkWrite(s); }
   return shown;
@@ -2076,7 +2228,7 @@ static int jackNear(int *park) {
 }
 // The parked level car owns its damage, hinges and wheel pose across a hijack.
 static void parkOwnCar(const Car *kept, const CarVis *visual) {
-  oldCar = *kept; oldCv = *visual; oldCarOn = 1;
+  oldCar = *kept; oldCv = *visual; oldCarOn = 1; oldCarAwake = 0; oldCarStill = 0.f; oldCarX0 = oldCar.x; oldCarZ0 = oldCar.z;
 }
 static void resumeOwnCar(void) {
   car = oldCar; cv = oldCv; cv.motionValid = 0; oldCarOn = 0;
@@ -2562,9 +2714,16 @@ static void msncamLoad(void) {   // камеры уровня gameLevel: у 2–
 #ifndef CAMIN1041_OLD
 #define CAMIN1041_OLD 0
 #endif
-#define CAMIN1041_FAR 30.f
+#define CAMIN1041_FAR 30.f   // до 103; в 103 умолчание MSNCAM_FAR_DEF (Р3: один параметр «короче/длиннее»: flag msncamfar N / файл msncamfar с числом, метры)
+#ifndef MSNCAM_FAR_DEF
+#define MSNCAM_FAR_DEF 40.f
+#endif
+static float camFar1041 = MSNCAM_FAR_DEF;
+#include "msncamwall.h"
+static int mcWall103 = !MSNCAMWALL_OLD; static float mcWallSt = -1.f;
 // сверка g09b-menu (СВЕРКА_КАМЕРА 3.4): конец наезда — у оригинала быстрый переход (95 % за 0,32 с; лимит 3 с); сглаживание за 0,37 с даёт те же 0,32 с до 95 % (круг 6: было 0,39, 95 % за 0,337 с — тест tests/sverka_g09b). CAMBLEND_OLD=1 — 0,7 с
 static int camIn1041 = !CAMIN1041_OLD;
+static int bubShotN, bubShotSkip;   // №1247: автосъёмка кадров пузыря (flag bubshots)
 // №1170 (Роб, TEST87 на PSP, L5: «при появлении Апу close up перед лицом, перед лбом»). Камера старта L5 кончается в 8 м ПЕРЕД лицом героя (смотрит на него и собеседника), игровая камера пешком стоит за его спиной:
 // переход «от позы наезда» шёл по прямой между этими позами и проходил в 1,0-1,5 м над головой героя (на 4,7-4,9 с кадры в волосы и лоб). У L2, L3, L6 облёт кончается с той же стороны, где потом встаёт игровая камера
 // (косинус между направлениями 0,99, 0,50, 0,98), прямая не задевает героя; у L5 направления противоположны (-1,00). У оригинала обычный переход между камерами идёт по дуге вокруг точки взгляда: угол вокруг неё
@@ -2579,16 +2738,77 @@ static int camExit1170 = !CAMEXIT1170_OLD;
 #ifndef BUBAFTERCAM1218_OLD
 #define BUBAFTERCAM1218_OLD 0
 #endif
-static int camBusy1047(void) { return camIn1041 && (mcPlay != 0 || lbOpen > 0.f || (!BUBAFTERCAM1218_OLD && camBExit && camBT >= 0.f)); }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
+// №1235: просьба памяти от моделей персонажей миссии (msn_view.c npcRoom) — лестница п.13: персонажу миссии высший приоритет, фоновому — ступени впрок. Лестница выключена — как есть (1)
+static void msnartWatchLog94(const char *note, const char *path, int tries) { char w[96]; snprintf(w, sizeof w, "%s n=%d %s", note, tries, path); memLadLog("WATCHDOG", "msnart", 0, 0, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), w); }   // Build 94
+// Build 96 (Опора-93, срочно от дирижёра: Kearney на L4 невидим 36 с, при куче как у PSP и 250 м): модель персонажа читается в область «миссия» (skin.c), а лестница смотрела только кучу и по каждому опросу
+// (раз в 0,12-0,25 с) писала строки WATCHDOG mem who=npc (ступень 1 «none», 2 «more», 5 «simplify»), ничего не выбрасывая надолго: далёкие клетки уходили и тут же ложились обратно. Теперь:
+// (1) «влезло» = кусок в области «миссия» ИЛИ цельный кусок в куче (туда идёт пролив), ступени у зоны свои (memLadRunZ); персонажу миссии до ступени 4, фоновому до далёких клеток (без сжатия дальности);
+// (2) повтор модели одного имени не чаще раза в секунду (msn_view.c, npcRetryAt); (3) строка WATCHDOG - одна на событие (с первой неудачи до первого успеха), закрытие - строкой MEMLAD npc-fits (лестница снова видит место; сама модель читается раньше, см. MSNNPC load).
+// NPCRETRY96_OLD=1 (сборка) / flag npcretry96 0 / файл npcretry96old - прежнее
+static int npcLadOpen96; static unsigned npcLadT96;
+static int memLadNpc96(const char *who, unsigned need, int top) {
+  int zn = !MEMLADZ_OLD && zone3WantedX();
+#define NPC_FITS96() (zn ? memLadFitsZ(LADZ_MISSION, need) : (!memMaxBlock || memMaxBlock() >= need))
+  if (NPC_FITS96()) {
+    if (npcLadOpen96) { npcLadOpen96 = 0; if (smkOn) { char s[140]; snprintf(s, sizeof s, "MEMLAD npc-fits need=%u event_ms=%u blk=%.2f free=%.2f t=%.1f\n", need, (sceKernelGetSystemTimeLow() - npcLadT96) / 1000u, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, heapFreeBytes() / 1048576.f, smkT); smkWrite(s); } }
+    return 1;
+  }
+  unsigned b0 = memMaxBlock ? memMaxBlock() : 0, f0 = heapFreeBytes(); int last = 0, did = 0, ok = 0, maxSt = top ? 4 : (zn ? 3 : 2);
+  for (int st = 1; st <= maxSt && !ok; st++) { did |= zn ? memLadRunZ(LADZ_MISSION, st, who, need) : memLadRun(st, who, need); memLadStep[st]++; last = st; ok = NPC_FITS96(); }
+  if (ok) {
+    if (npcLadOpen96) { npcLadOpen96 = 0; if (smkOn) { char s[140]; snprintf(s, sizeof s, "MEMLAD npc-fits need=%u event_ms=%u blk=%.2f free=%.2f t=%.1f\n", need, (sceKernelGetSystemTimeLow() - npcLadT96) / 1000u, (memMaxBlock ? memMaxBlock() : 0) / 1048576.f, heapFreeBytes() / 1048576.f, smkT); smkWrite(s); } }
+    return 1;
+  }
+  if (!npcLadOpen96) {   // одна строка на событие
+    npcLadOpen96 = 1; npcLadT96 = sceKernelGetSystemTimeLow(); memLadFail++; memLadStep[5]++;
+    memLadLog("WATCHDOG", who, need, top ? 5 : last, b0, f0, did ? "more npc-event" : "none npc-event");
+  }
+  return 0;
+}
+#undef NPC_FITS96
+static int memLadNpc1235(const char *who, unsigned need, int top) {
+  if (!memLadOn) return 1;
+  if (npcRetry96) return memLadNpc96(who, need, top);
+  return memLadder(who, need, top ? LAD_TOP : LAD_PRE);
+}
+// служебное (№1235, flag memeat N): занимает кучу блоками, пока наибольший цельный кусок не станет меньше N КБ (балласт разбитой кучи: модель персонажа не ложится); N = 0 — отдать всё
+static void *memEatList[96]; static int memEatN;
+static void memEat1235(int kb) {
+  if (kb <= 0) { for (int i = 0; i < memEatN; i++) free(memEatList[i]); memEatN = 0; if (smkOn) smkWrite("MEMEAT freed\n"); return; }
+  unsigned lim = (unsigned)kb << 10;
+  while (memMaxBlock && memMaxBlock() >= lim && memEatN < 96) { unsigned b = memMaxBlock(), sz = b > lim ? b - lim / 2 : b; void *p = malloc(sz); if (!p) break; memset(p, 0x5a, sz < 4096 ? sz : 4096); memEatList[memEatN++] = p; }
+  if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "MEMEAT limit=%dKB blocks=%d blk=%.2f free=%.2f\n", kb, memEatN, memMaxBlock ? memMaxBlock() / 1048576.f : 0.f, heapFreeBytes() / 1048576.f); smkWrite(s_); }
+}
+static int camBusy1047(void) { int b_ = camIn1041 && (mcPlay != 0 || lbOpen > 0.f || (!BUBAFTERCAM1218_OLD && camBExit && camBT >= 0.f)); static int p_; if (smkOn && b_ != p_) { char s_[96]; snprintf(s_, sizeof s_, "MSNCAM busy=%d fr=%u t=%.1f\n", b_, smkFrameAbs, smkT); smkWrite(s_); } p_ = b_; return b_; }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
+// правка Роба 1246 (07.11): наезды старта миссий — то огромные пролёты на сотни метров (дальние клетки догружаются, PSP слабее), то совсем без наезда. Решение Роба: везде один короткий
+// плавный наезд на игрока, отход от оригинала разрешён. Теперь вместо анимации с диска (и там, где её нет) идёт синтетический наезд MCSHORT96_DUR с: глаз начинает в MCSHORT96_BACK м позади и
+// MCSHORT96_UP м выше обычной игровой позы камеры и плавно (S-кривая) приходит в неё, взгляд на игрока; все клетки — вокруг игрока, дальних нет. Остальное прежнее (игрок стоит, полосы, X/START — пропустить,
+// пузырь цели ждёт конец). Строка MSNCAM done — общий сигнал конца (Пропечка-96). MSNCAMSHORT96_OLD=1 / файл msncamshort96old / flag msncamshort96 0 — прежние наезды с диска
+// Тур Роба на 102 (Р3, 10.11): «камеры-наезды сделать попроще — ты сделал везде кое-как, где-то проходят сквозь стены; верни родные, сократи траекторию». Умолчание 103: наезды с диска (родные),
+// путь укорочен до последнего отрезка не дальше camFar1041 м от игрока (№1041) и глаз не заходит за стену (msncamwall.h). Синтетический наезд 1246 — только по flag msncamshort96 1 / -DMSNCAMSHORT96_OLD=0
+#ifndef MSNCAMSHORT96_OLD
+#define MSNCAMSHORT96_OLD 1
+#endif
+#define MCSHORT96_DUR 1.25f
+#define MCSHORT96_BACK 7.f
+#define MCSHORT96_UP 2.f
+static int mcShort96 = !MSNCAMSHORT96_OLD;
+static float mcHold96, mcF96 = -1.f;
+static MsnCam mcSyn96;   // синтетический «наезд»: два кадра-пустышки, длительность (nfr-1)/fps
 static void msncamPlay(const MsnCam *c) {
-  mcPlay = c; mcT = 0.f;
+  mcPlay = c; mcT = 0.f; mcWallSt = -1.f;
+  if (mcShort96) { mcHold96 = 0.f; mcF96 = -1.f; memset(&mcSyn96, 0, sizeof mcSyn96); mcSyn96.nfr = 2; mcSyn96.fps = 1.f / MCSHORT96_DUR; mcSyn96.mission = c ? c->mission : -1;
+    snprintf(mcSyn96.name, sizeof mcSyn96.name, "%s", c ? c->name : "short"); snprintf(mcSyn96.phase, sizeof mcSyn96.phase, "%s", c ? c->phase : "-");
+    mcPlay = &mcSyn96;
+    if (smkOn) { char s[128]; snprintf(s, sizeof s, "MSNCAM start m%d %s phase=%s frames=2 short=1 data=%d dur=%.2f t=%.1f\n", mcSyn96.mission, mcSyn96.name, mcSyn96.phase, c != 0, MCSHORT96_DUR, smkT); smkWrite(s); }
+    return; }
   if (camIn1041 && c->nfr > 2 && c->fps > 1.f) {
     float ref[3] = {homer.x, homer.y, homer.z}; if (!onFoot()) { ref[0] = car.x; ref[1] = car.y; ref[2] = car.z; }
     float dur = (c->nfr - 1) / c->fps, e[3], l[3], u[3], fy;
     for (float t = 0.f; t < dur; t += 1.f / c->fps) {
       msncamPose(c, t, e, l, u, &fy);
       float dx = e[0] - ref[0], dz = e[2] - ref[2];
-      if (dx * dx + dz * dz <= CAMIN1041_FAR * CAMIN1041_FAR) { mcT = t; break; }
+      if (dx * dx + dz * dz <= camFar1041 * camFar1041) { mcT = t; break; }
     }
   }
   if (smkOn && trOn) { trLeft = TR_FRAMES; trDetail = trDetailOn; trPhase(BBP_MSN); }   // куски по строке держали кадр 5 с (сторож писал STALL) — только по флагу   // след зависания 259: кадры камеры миссии — по фазам в trace.txt
@@ -2598,9 +2818,10 @@ static void msncamStart(int mission) {   // служебное (flag flyin N): �
   for (int i = 0; i < nmcam; i++) if (mcam[i].mission == mission) { msncamPlay(&mcam[i]); return; }
 }
 static void msncamStartPhase(const char *phase, const char *cam) {   // крючок миссий: камера фазы (имя камеры сверяется с данными)
+  if (!booth1225Old && camHold1225 > 0) { if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "MSNCAM hold phase=%s cam=%s left=%d t=%.1f\n", phase ? phase : "-", cam ? cam : "-", camHold1225, smkT); smkWrite(s_); } return; }   // Будка-93 (1225): после будки без наезда
   const MsnCam *c = msncamFind(mcam, nmcam, phase, cam);
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "MSNCAM req phase=%s cam=%s found=%d play=%d t=%.1f\n", phase ? phase : "-", cam ? cam : "-", c != 0, c && (!svcMode || startCamSvc), smkT); smkWrite(s); }
-  if (c && (!svcMode || startCamSvc)) msncamPlay(c);
+  if ((c || (mcShort96 && cam)) && (!svcMode || startCamSvc)) msncamPlay(c);   // 1246: данных камеры нет — всё равно короткий наезд
 }
 // правка Роба 69 (30.09, «музыка в начале новой игры не та — только пам-пам-пам»): композиция l1_music.rms — старт уровня
 // играет событие Level_Intro (короткая туба Гомера), музыка езды (Sunday_Drive_Intro -> Sunday_Drive) — событием
@@ -2674,7 +2895,7 @@ static void newGame(void) {
   ldStep("pre-traffic"); if (haveTraffic) trafficReset(&traffic, &world);   // стоящие машины на места, трафик и пешеходы — заново вокруг спавна
   if (ldOn || audioDefer) ldAudio = 1;   // правка 20: под экраном загрузки звучит стингер газеты — атмосфера и музыка уровня после него (loadEnd)
   else levelAudioStart();
-  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = memLadRoomUi; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; msnStart();
+  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = memLadRoomUi; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; mvMemLadder = memLadNpc1235; msnartWatch = msnartWatchLog94; msnStart();
   // NPC_ASYNC (видео TEST17: «подгрузка NPC роняет FPS до 11»): mvPump означает «идёт экран загрузки», а здесь он ставился один раз и жил до конца игры, поэтому фоновое
   // чтение моделей персонажей (msn_view.c modelFor/modelPrefetch, коммит 85ac58e4) не срабатывало ни в одном туре: все MSNNPC load шли синхронно в кадре (44–82 мс на
   // файл, 40 загрузок за тур, ни одной с async=1). Теперь после старта уровня насос снимается: дальше модели читаются в фоне, NPC до готовности не рисуется.
@@ -2732,16 +2953,20 @@ static void feVoiceEvent(int event, int index, int segment) {
     event, index, segment, feAudioName(index, segment), feAudioStatus(), feAudioPrepared(), audioStreamTrack(AUDIO_ST_DIALOG), audioStreamRequestSerial(AUDIO_ST_DIALOG), readyBefore, serialBefore, smkT); smkWrite(s); }
 }
 static void feLoadShown(int screen, const char *packName, void **fbp) {   // вход в меню: куча (MENU), потом гостиная
+  Transit tm_; memset(&tm_, 0, sizeof tm_); tm_.name = "menuload"; tm_.screen = TFS_PRELOADER; tm_.need = 1u << 20;   // Build 95 П2: класс MENU_FROM_GAME виден машине
+  if (!tfsm95Old) tfExtBegin(&tm_);
   menuMem(++nMenu); feU0 = (unsigned)mallinfo().uordblks;   // куча сверяется без пакетов экранов (они на время показа)
   if (!strcmp(packName, "load")) { scrOpen1065("fe"); scrTvOver = 0; }   // LoadingFE — только на время чтения (№1065: отказ -> место и повтор)
   feScr = screen >= 0 && uiScrReady() ? screen : -1; feScrPack = packName; feFbp = fbp; scrT0 = sceKernelGetSystemTimeLow();
   if (feScr >= 0) scrFrame(feScr, 0, 1, fbp);
-  { char fn[256]; sibling(fn, "fe.shr"); feReadHook = feHook; feLoad(fn); feReadHook = 0; }   // гостиная: только на время меню
+  int menuOk_ = 1; if (!tfsm95Old && tfFailMenu > 0) { tfFailMenu--; menuOk_ = 0; }   // Build 96: принудительный отказ чтения гостиной
+  if (menuOk_) { char fn[256]; sibling(fn, "fe.shr"); feReadHook = feHook; feLoad(fn); feReadHook = 0; }   // гостиная: только на время меню
   feGagLog = smkOn ? feGagLine : 0;   // №404: строки FEGAG сценок меню в smoke.txt
   { char fn[256]; sibling(fn, FE_AUDIO_FILE); int n = feAudioLoad(fn); feGagEvent = feVoiceEvent;
     if (smkOn) { char s[80]; snprintf(s, sizeof s, "FEAUDIO load=%d t=%.1f\n", n, smkT); smkWrite(s); } }
   feScr = -1;
   if (!strcmp(packName, "load")) SCR_CLOSE();
+  if (!tfsm95Old) tfExtEnd(&tm_, menuOk_);   // Build 96: отказ чтения гостиной -> simplify + WATCHDOG (меню остаётся без сценок)
 }
 // Титульный экран оригинала (frontend.p3d Splash.scr: логотип и «Press START button») — экран ПРОСТОЯ (правка Роба 33,
 // видео 28.09 1:45–2:04: «при старте сразу показывать меню; титульный — когда долго никто не играет»). В оригинале

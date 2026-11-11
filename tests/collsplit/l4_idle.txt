@@ -1,0 +1,6 @@
+flag nosave
+scene BOOT
+flag golevel 4
+wait 60
+shot l4_idle
+wait 10

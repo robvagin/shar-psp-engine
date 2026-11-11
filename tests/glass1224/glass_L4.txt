@@ -1,0 +1,39 @@
+# №1224: Гомер пешком идёт на стекло L4 (E7-2, проп 57, центр -244.5 23.7 -91.5, плоскость поперёк z), подход с +z лицом на -z (курс π).
+# G_old — flag glass1224 0 (проходит насквозь), G_new — 1 (упирается), G_kick — 1 и пинок □ у стекла (разбивается, дальше проход). Журнал BENCH1034 (flag benchlog 1).
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene G_GO4
+flag golevel 4
+wait 40
+flag stop
+flag player
+flag benchlog 1
+scene G_old
+flag glass1224 0
+foot -244.5 -88.5 3.1416
+wait 2.5
+shot old_start
+stick 0 -1 2.5
+wait 3
+shot old_walk
+scene G_new
+flag glass1224 1
+foot -244.5 -88.5 3.1416
+wait 2.5
+shot new_start
+stick 0 -1 2.5
+wait 3
+shot new_walk
+scene G_kick
+flag glass1224 1
+foot -244.5 -88.5 3.1416
+wait 2.5
+stick 0 -1 1.2
+wait 1.4
+tap square 0.15
+wait 0.6
+stick 0 -1 2.0
+wait 2.5
+shot kick_walk
+end

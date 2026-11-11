@@ -1,0 +1,30 @@
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene S_GO
+flag golevel 1
+wait 40
+flag stop
+flag player
+scene S_bbq
+foot 228.567 201.097 3.1416 3.4
+wait 4
+shot se_bbq_before
+press triangle 0.3
+wait 14
+shot se_bbq_after
+scene S_far_red
+flag gagreset96 0
+foot 11.0 -330.0 0.0 1.0
+wait 5
+foot 228.567 201.097 3.1416 3.4
+wait 5
+shot se_red_back
+scene S_far_green
+flag gagreset96 1
+foot 11.0 -330.0 0.0 1.0
+wait 5
+foot 228.567 201.097 3.1416 3.4
+wait 5
+shot se_green_back
+end

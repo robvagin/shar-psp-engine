@@ -32,6 +32,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'hit-and-run-web/tools'))
 from p3d import read, walk, string      # noqa: E402  (MIT, bounds-checked Pure3D reader)
 from vif import unpack                  # noqa: E402  (MIT, PS2 VIF UNPACK reader)
+sys.path.insert(0, str(ROOT / 'tools'))
+import animpack as ANIMPACK             # noqa: E402  (Модели-96: упаковка ключей, ANIMPACK96_OLD=1 — как было)
 
 GAME = ROOT / 'hit-and-run-web/source/game'
 F = np.diag([1., 1., -1., 1.])          # game (left-handed) <-> hit-and-run-web coordinates
@@ -54,10 +56,35 @@ HDR, JNT, BAT, TEXR, CLIP, TRK = 128, 128, 48, 48, 80, 16
 def align(n, a): return (n + a - 1) & ~(a - 1)
 
 
-def vertex_layout(nb):
-    """GE vertex: nb u8 weights, s16 uv, s8 normal, f32 position (each part aligned to its own size)."""
-    uv = align(nb, 2); nrm = uv + 4; pos = align(nrm + 3, 4); stride = align(pos + 12, 4)
+POS16_OLD = bool(os.environ.get('CHARPOS16_OLD'))   # Модели-96: 1 — позиции вершин f32, как было (по умолчанию s16 с масштабом на модель)
+GU_VERTEX_16BIT = 2 << 7
+GU_NORMAL_16BIT = 2 << 5
+POS16_MARGIN = 0.10                                  # м: запас диапазона s16 под раздутие контура
+
+
+def vertex_layout(nb, pos16=False):
+    """GE vertex: nb u8 weights, s16 uv, s8 normal, f32 position (each part aligned to its own size).
+    pos16 (Модели-96): позиция s16 x3 и нормаль s16 x3 (по 6 Б) вместо f32 x3 (12 Б) и s8 x3 (3 Б).
+    GE читает s16 как целое / 32768 (так же level.shr, main_render.h S = 1/32768): метры = целое * scale, палитра костей множит столбцы на scale * 32768
+    (header pad[0] = scale, метры на единицу); та же палитра растягивает нормаль в F = scale * 32768 раз, поэтому нормаль хранится поделённой на F (s16 -> |n| = 1 после кости,
+    свет не зависит от того, нормирует ли GE нормаль)"""
+    uv = align(nb, 2); nrm = uv + 4
+    if pos16:
+        pos = align(nrm + 6, 2); stride = align(pos + 6, 2)
+    else:
+        pos = align(nrm + 3, 4); stride = align(pos + 12, 4)
     return uv, nrm, pos, stride
+
+
+def pos16_scale(strips_pos):
+    """Масштаб s16-позиций модели: степень двойки (в палитре костей умножение точное), наименьшая, при которой весь ящик влезает в ±32767.
+    strips_pos — список массивов Nx3 (позиции в системе покоя модели). None — если s16 выключен."""
+    if POS16_OLD: return None
+    m = max(float(np.abs(p).max()) for p in strips_pos if len(p)) + POS16_MARGIN       # запас: контур раздувает вершины (viewer/skin.c toonHull)
+    if not m > 0: return None
+    s = 2.0 ** math.ceil(math.log2(m / 32767.0))
+    while m / s > 32767.0: s *= 2
+    return max(s, 2.0 ** -15)       # F = s * 32768 >= 1: нормаль s16 делится на F, при F < 1 не влезла бы
 
 
 # ------------------------------------------------------------------ source parsing
@@ -364,9 +391,10 @@ def quantize_weights(w, nb):
     return q
 
 
-def batch_vertices(bt):
+def batch_vertices(bt, scale=None):
+    """scale — масштаб s16-позиций модели (pos16_scale); None — позиции f32"""
     bones = sorted(bt['bones']); slot = {b: i for i, b in enumerate(bones)}; nb = len(bones)
-    uvo, nro, poo, stride = vertex_layout(nb)
+    uvo, nro, poo, stride = vertex_layout(nb, scale is not None)
     seq = []                                                     # strips joined with degenerate vertices, parity kept
     for s in bt['strips']:
         n = len(s['pos']); idx = [(s, i) for i in range(n)]
@@ -388,9 +416,11 @@ def batch_vertices(bt):
         buf[o:o + nb] = bytes(int(v) for v in q)
         u, v = s['uv'][i]; v = 1 - v                             # Pure3D uv: v up; GE: v = 0 is the first texture row
         struct.pack_into('<HH', buf, o + uvo, min(65535, max(0, int(round((u + ku) * UV_SCALE)))), min(65535, max(0, int(round((v + kv) * UV_SCALE)))))
-        struct.pack_into('<bbb', buf, o + nro, *[int(round(max(-1, min(1, c)) * 127)) for c in s['nrm'][i]])
-        struct.pack_into('<fff', buf, o + poo, *s['pos'][i])
-    vtype = GU_WEIGHTS(nb) | GU_WEIGHT_8BIT | GU_TEXTURE_16BIT | GU_NORMAL_8BIT | GU_VERTEX_32BITF
+        if scale is None: struct.pack_into('<bbb', buf, o + nro, *[int(round(max(-1, min(1, c)) * 127)) for c in s['nrm'][i]])
+        else: struct.pack_into('<hhh', buf, o + nro, *[int(round(max(-1, min(1, c)) * 32767 / (scale * 32768))) for c in s['nrm'][i]])
+        if scale is None: struct.pack_into('<fff', buf, o + poo, *s['pos'][i])
+        else: struct.pack_into('<hhh', buf, o + poo, *[int(round(float(c) / scale)) for c in s['pos'][i]])
+    vtype = GU_WEIGHTS(nb) | GU_WEIGHT_8BIT | GU_TEXTURE_16BIT | (GU_NORMAL_8BIT | GU_VERTEX_32BITF if scale is None else GU_NORMAL_16BIT | GU_VERTEX_16BIT)
     return dict(bones=bones, nb=nb, stride=stride, nverts=len(seq), data=bytes(buf), vtype=vtype, werr=maxerr)
 
 
@@ -426,7 +456,19 @@ def indexed_vertices(data, stride):
     return bytes(unique), np.asarray(indices,dtype='<u2').tobytes(), len(seen)
 
 
-def write_chr(path, joints, batches, textures, clips, blink, blink_batch, compact=False):
+def footbake(path):
+    """Модели-96: поправка стоп (viewer/skin.c skinFootLift) считается здесь, на Маке, и ложится в запись клипа (tools/footbake.c, той же функцией, что у игры):
+    в игре только чтение, без обхода вершин на PSP при первом появлении клипа. FOOTBAKE_OFF=1 — не запекать (движок посчитает на месте, как в сборке 100); нет cc — предупреждение, файл без числа"""
+    if os.environ.get('FOOTBAKE_OFF'): return
+    import subprocess
+    sh = Path(__file__).resolve().parent / 'footbake.sh'
+    try: r = subprocess.run([str(sh), str(path)], capture_output=True, text=True)
+    except OSError as e: print('footbake: не запустить (%s): %s без поправки стоп' % (e, path), file=sys.stderr); return
+    if r.returncode: print('footbake: ОШИБКА %s: %s' % (path, (r.stderr or r.stdout).strip()[:300]), file=sys.stderr)
+
+
+def write_chr(path, joints, batches, textures, clips, blink, blink_batch, compact=False, pack_rot=True, pos_scale=None):
+    """pack_rot=False — вращения без упаковки «три меньших» (гэги-сцены: рычаг в десятки метров, 0,14° дают сантиметры)"""
     nj, nbt, ntx, ncl = len(joints), len(batches), len(textures), len(clips)
     bl = Blob(); bl.b += bytes(HDR)
     offJ = bl.add(bytes(JNT * nj)); offB = bl.add(bytes(BAT * nbt)); offT = bl.add(bytes(TEXR * ntx)); offC = bl.add(bytes(CLIP * ncl))
@@ -452,20 +494,24 @@ def write_chr(path, joints, batches, textures, clips, blink, blink_batch, compac
             + struct.pack('<II', bt['stride'], (1 if bt['eyes'] else 0) | (2 if bt['alpha'] else 0) | (4 if oi else 0))
         rec += struct.pack('<III', oi, stored if oi else 0, 0)
         bl.b[offB + BAT * i: offB + BAT * i + len(rec)] = rec
-    nkeys = 0
+    nkeys = 0; shared = {}
+    def keys(data):                                   # Модели-96: одинаковые массивы ключей (в том числе из разных клипов) лежат один раз
+        if ANIMPACK.OLD: return bl.add(data, 4)
+        if data not in shared: shared[data] = bl.add(data, 4)
+        return shared[data]
     for c, cl in enumerate(clips):
         offTr = bl.add(bytes(TRK * nj)); has_root = 0
         for j, tr in enumerate(cl['tracks']):
-            nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0
+            nr, nt = len(tr['rf']), len(tr['tf']); orr = ot = 0; flags = 0
+            if nr and pack_rot and ANIMPACK.is_rest_rot(tr['rq'], joints[j]['q']): nr = 0      # все ключи = поза покоя: дорожка не нужна
             if nr:
-                fr = struct.pack(f'<{nr}H', *tr['rf']); fr += bytes(align(len(fr), 4) - len(fr))
-                qv = np.clip(np.round(tr['rq'] * 32767), -32767, 32767).astype('<i2').tobytes()
-                orr = bl.add(fr + qv, 4); nkeys += nr
+                mode, data = ANIMPACK.pack_rot(tr['rf'], tr['rq'], pack_rot)
+                orr = keys(data); nkeys += nr; flags |= mode
             if nt:
-                fr = struct.pack(f'<{nt}H', *tr['tf']); fr += bytes(align(len(fr), 4) - len(fr))
-                ot = bl.add(fr + tr['tv'].astype('<f4').tobytes(), 4); nkeys += nt
+                mode, data = ANIMPACK.pack_trans(tr['tf'], tr['tv'])
+                ot = keys(data); nkeys += nt; flags |= mode << 2
                 if j == 0: has_root = 2
-            struct.pack_into('<HHII', bl.b, offTr + TRK * j, nr, nt, orr, ot)
+            struct.pack_into('<HHIII', bl.b, offTr + TRK * j, nr, nt, orr, ot, flags)
         dur = (cl['frames'] - 1) / cl['fps']
         rec = cname(cl['name'], 48) + struct.pack('<fffII', cl['frames'], cl['fps'], dur, (cl['loop'] & 1) | has_root, offTr)
         bl.b[offC + CLIP * c: offC + CLIP * c + len(rec)] = rec
@@ -473,19 +519,25 @@ def write_chr(path, joints, batches, textures, clips, blink, blink_batch, compac
         for k, (fr, tn) in enumerate(zip(blink['frames'], blink['tex'])): struct.pack_into('<HHI', bl.b, offBl + 8 * k, fr, tn, 0)
     allp = np.concatenate([s['pos'] for bt in batches for s in bt['strips']])
     bbox = list(allp.min(0)) + list(allp.max(0))
+    offF = bl.add(bytes(4 * max(ncl, 1)), 16)   # Модели-96: таблица поправок стоп на клип — заполняет tools/footbake.c (заголовок pad[1] — смещение, pad[2] — метка)
     bl.at(16)
     struct.pack_into('<4s13I7f3I', bl.b, 0, b'CHR1', version, len(bl.b), nj, nbt, ntx, ncl, nbl, offJ, offB, offT, offC, offBl, 0,
                      *bbox, blink['fps'] if blink else 0., blink_batch, tv, nkeys)
+    struct.pack_into('<I', bl.b, 100, offF)
+    if pos_scale: struct.pack_into('<f', bl.b, 96, pos_scale)       # Модели-96: pad[0] — масштаб s16-позиций (0 — позиции f32)
     path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(bytes(bl.b))
+    footbake(path)
     return len(bl.b), tv, nkeys
 
 
 # ------------------------------------------------------------------ reader + runtime mirror (same math as viewer/skin.c)
-def read_chr(path):
+def read_chr(path, offH=0):
+    """offH — смещение заголовка CHR1 внутри файла (общий блоб пешеходов traffic: все смещения от начала блоба)"""
     b = path.read_bytes()
-    (magic, ver, size, nj, nbt, ntx, ncl, nbl, offJ, offB, offT, offC, offBl, rootJ, *rest) = struct.unpack_from('<4s13I7f3I', b, 0)
+    (magic, ver, size, nj, nbt, ntx, ncl, nbl, offJ, offB, offT, offC, offBl, rootJ, *rest) = struct.unpack_from('<4s13I7f3I', b, offH)
     assert magic == b'CHR1' and size == len(b)
-    m = dict(joints=[], batches=[], tex=[], clips=[], blink=[], bbox=rest[:6], blinkFps=rest[6], blinkBatch=rest[7])
+    pscale, = struct.unpack_from('<f', b, offH + 96)            # Модели-96: масштаб s16-позиций (0 — f32)
+    m = dict(joints=[], batches=[], tex=[], clips=[], blink=[], bbox=rest[:6], blinkFps=rest[6], blinkBatch=rest[7], posScale=pscale)
     for j in range(nj):
         o = offJ + JNT * j
         name = b[o:o + 32].split(b'\0')[0].decode(); parent, = struct.unpack_from('<i', b, o + 32)
@@ -501,7 +553,7 @@ def read_chr(path):
     for i in range(nbt):
         o = offB + BAT * i; vtype, prim, nv, ov, tex, nb = struct.unpack_from('<IIIIHH', b, o)
         bones = list(b[o + 20:o + 20 + nb]); stride, flags = struct.unpack_from('<II', b, o + 28)
-        uvo, nro, poo, st = vertex_layout(nb); assert st == stride
+        uvo, nro, poo, st = vertex_layout(nb, bool(pscale)); assert st == stride and ((vtype >> 7) & 3) == (2 if pscale else 3) and ((vtype >> 5) & 3) == (2 if pscale else 1)
         stored = struct.unpack_from('<I', b, o+40)[0] if flags & 4 else nv
         raw = np.frombuffer(b, np.uint8, stored * stride, ov).reshape(stored, stride)
         if flags & 4:
@@ -511,17 +563,17 @@ def read_chr(path):
             raw = raw[indices]
         w = raw[:, :nb].astype(np.float64) / 128
         uv = raw[:, uvo:uvo + 4].copy().view('<u2').astype(np.float64) / UV_SCALE   # как читает GE: без знака
-        nrm = raw[:, nro:nro + 3].copy().view(np.int8).astype(np.float64) / 127
-        pos = raw[:, poo:poo + 12].copy().view('<f4').astype(np.float64)
+        nrm = raw[:, nro:nro + 6].copy().view('<i2').astype(np.float64) * (pscale * 32768) / 32767 if pscale else raw[:, nro:nro + 3].copy().view(np.int8).astype(np.float64) / 127
+        pos = raw[:, poo:poo + 6].copy().view('<i2').astype(np.float64) * pscale if pscale else raw[:, poo:poo + 12].copy().view('<f4').astype(np.float64)
         m['batches'].append(dict(tex=tex, bones=bones, w=w, uv=uv, nrm=nrm, pos=pos, flags=flags))
     for c in range(ncl):
         o = offC + CLIP * c; name = b[o:o + 48].split(b'\0')[0].decode(); frames, fps, dur, flags, offTr = struct.unpack_from('<fffII', b, o + 48)
         tracks = []
         for j in range(nj):
-            nr, nt, orr, ot = struct.unpack_from('<HHII', b, offTr + TRK * j)
-            tr = dict(rf=np.frombuffer(b, '<u2', nr, orr) if nr else None, tf=np.frombuffer(b, '<u2', nt, ot) if nt else None)
-            if nr: tr['rq'] = np.frombuffer(b, '<i2', nr * 4, orr + align(2 * nr, 4)).reshape(-1, 4) / 32767.
-            if nt: tr['tv'] = np.frombuffer(b, '<f4', nt * 3, ot + align(2 * nt, 4)).reshape(-1, 3).astype(np.float64)
+            nr, nt, orr, ot, tflags = struct.unpack_from('<HHIII', b, offTr + TRK * j)
+            tr = dict(rf=None, tf=None)
+            if nr: tr['rf'], tr['rq'] = ANIMPACK.decode_rot(tflags & 3, b, orr, nr)
+            if nt: tr['tf'], tr['tv'] = ANIMPACK.decode_trans((tflags >> 2) & 3, b, ot, nt)
             tracks.append(tr)
         m['clips'].append(dict(name=name, frames=frames, fps=fps, dur=dur, flags=flags, tracks=tracks))
     for k in range(nbl): m['blink'].append(struct.unpack_from('<HH', b, offBl + 8 * k))
@@ -754,10 +806,11 @@ def export(name, model, anims, out, keep=None):
         tex_index[tn] = tex_id(tn)
     if blink: blink['tex'] = [tex_id(t) for t in blink['textures']]
     batches = build_batches(groups, shaders, tex_index, blink)
-    batches = [dict(bt, **batch_vertices(bt)) for bt in batches]
+    pscale = pos16_scale([s['pos'] for bt in batches for s in bt['strips']])
+    batches = [dict(bt, **batch_vertices(bt, pscale)) for bt in batches]
     blink_batch = next((i for i, bt in enumerate(batches) if bt['eyes']), 0xffffffff)
     textures = [(t, images[t]) for t in used]
-    size, tv, nkeys = write_chr(out, joints, batches, textures, clips, blink, blink_batch, compact=not os.environ.get('CHAR_INDEXED_OLD'))
+    size, tv, nkeys = write_chr(out, joints, batches, textures, clips, blink, blink_batch, compact=not os.environ.get('CHAR_INDEXED_OLD'), pos_scale=pscale)
     # report
     src_v = sum(len(s['pos']) for _, st in groups for s in st); src_s = sum(len(st) for _, st in groups)
     tris = sum(len(s['pos']) - 2 for _, st in groups for s in st)

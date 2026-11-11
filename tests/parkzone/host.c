@@ -15,6 +15,7 @@
 #include <string.h>
 #include <math.h>
 #include "traffic.h"
+int (*sceneReadyHook)(const ColWorld *w, float x, float z, int *failed);   // заглушка: в игре определён в homer.c (traffic.c его читает)
 
 #if !TRAFFIC_ZONE_PARK
 #error "собирать с -DTRAFFIC_ZONE_PARK=1"
@@ -22,7 +23,7 @@
 
 static ColWorld world; static Traffic T;
 static const float DT = 1.f / 30.f;
-static int vanishInFrame, appearInFrame, goneInZone, deferred, nearDead, minLive = 1 << 30;
+static int vanishInFrame, appearInFrame, goneInZone, deferred, nearDead, minLive = 1 << 30, activated, badLazy;
 static int surelyOut(const float eye[3], const float fwd[3], float x, float y, float z) {   // точно вне кадра
   float dx = x - eye[0], dy = y + 1.f - eye[1], dz = z - eye[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
   return d > 100.f || (d > 8.f && dx * fwd[0] + dy * fwd[1] + dz * fwd[2] < 0.f);
@@ -50,6 +51,8 @@ static void frame(const float p[3], float yaw) {
   int live = 0;
   for (int i = 0; i < n; i++) {
     int now = !T.park[i].gone; live += now;
+    if (now && !was[i]) activated++;   // Коллизия-96: место включилось — должно быть посажено на землю (lazy снят)
+    { float ex_ = T.parkd[i].x - p[0], ez_ = T.parkd[i].z - p[2]; if (now && T.park[i].lazy && ex_ * ex_ + ez_ * ez_ < 170.f * 170.f) badLazy++; }   // ближе 170 м включённое место обязано стоять на земле
     if (was[i] && !now && wasSeen[i]) { vanishInFrame++; if (vanishInFrame < 4) printf("  vanish in frame: %.12s\n", T.parkd[i].name); }
     if (!was[i] && now && inFrame(eye, fwd, &T.park[i].car)) { appearInFrame++; if (appearInFrame < 4) printf("  appear in frame: %.12s\n", T.parkd[i].name); }
     if (!now && (!T.parkd[i].zmask || (T.parkd[i].zmask & T.zoneMask))) {
@@ -80,7 +83,9 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < h->nLoader; i++) L[i].group = ~L[i].group & all;
   }
   int r = trafficInitMem(&T, buf, tsize, 0); if (r) { printf("trafficInitMem %d\n", r); return 2; }
+  extern long colStat[4]; long g0_ = colStat[1];
   trafficReset(&T, &world);
+  long resetGround = colStat[1] - g0_;
   printf("%s: %d мест, %d ворот загрузчиков%s\n", trf, T.npark, T.nLoader, swap ? " (ПОДБРОСКА swap)" : "");
   if (!T.nLoader) { printf("FAIL нет ворот загрузчиков в traffic.shr\n"); return 1; }
   int ng = T.nLoader, done[64] = {0}, cur = 0; float p[3] = {T.loader[0].c[0], T.loader[0].c[1], T.loader[0].c[2]}, yaw = 0.f;
@@ -112,6 +117,9 @@ int main(int argc, char **argv) {
   CHECK(goneInZone == 0, "(2) спрятаны только места вне загруженных файлов");
   CHECK(nearDead == 0, "(3) места у ворот в загруженных файлах живы");
   CHECK(minLive < T.npark, "(4) правило работает: живых меньше всех мест");
+  CHECK(badLazy == 0 && activated > 0, "(6) включённое место ближе 170 м посажено на землю, и включения были");
+  printf("опросов земли при сбросе трафика: %ld (мест %d), включений в прогоне %d, включённых ближе 170 м без посадки (кадров) %d\n", resetGround, T.npark, activated, badLazy);
+  CHECK(resetGround == 0, "(5) сброс трафика не опрашивает землю (места сажаются при включении зоны, а не все сразу за сотни метров от старта)");
   printf("RESULT %s\n", fails ? "FAIL" : "PASS");
   trafficFree(&T); return fails ? 1 : 0;
 }

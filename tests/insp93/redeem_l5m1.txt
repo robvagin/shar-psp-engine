@@ -1,0 +1,20 @@
+# L5 m1 m1.0.1: разговор redeem/m1 apu с «npd» (скрытый собеседник, кожи нет): голос звучит, этап проходит (->m1.1.0)
+scene REDEEM_L5
+flag golevel 5
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 0
+wait 6
+shot b0
+flag msnpass 1
+wait 2
+shot b1
+wait 6
+shot b2
+wait 10
+shot b3
+wait 12
+shot b4
+end

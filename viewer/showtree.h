@@ -46,3 +46,32 @@ static int showTreeDraw(const float e[3], const float l[3], float fovYdeg, const
   sceGuEnable(GU_DEPTH_TEST); sceGuDepthMask(GU_FALSE);
   return 1;
 }
+
+// №1223 (служебно, только в смоуке: flag colwire N): зелёный каркас ящиков коллизии мира поверх кадра (живые объёмы ANM1 тоже — они лежат в world.box и переставляются каждый кадр), чтобы увидеть,
+// совпадает ли рисунок с коллизией. Показывает ящики не дальше N м от глаза (≤ 40 штук). Только отладка: в игре flag не ставится, колл-сайт стоит под smkOn.
+static int colWire1223;
+static unsigned smkGateInst = ~0u, smkGateMask;   // №1223 служебно (только смоук): экземпляр стейтпропа, чьи «ворота отсечения» пишет AOGATE; маска последнего кадра: 1 в списке кандидатов, 2 spDrawable, 4 сфера/пиксели, 8 охрана камеры, 16 куски нарисованы
+static int boxWireDraw(const ColWorld *w, const float e[3], const float l[3], float fovYdeg, float range) {
+  float f[3] = {l[0] - e[0], l[1] - e[1], l[2] - e[2]}, fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]); if (fl < 1e-4f) return 0;
+  for (int i = 0; i < 3; i++) f[i] /= fl;
+  float r[3] = {-f[2], 0.f, f[0]}, hl = sqrtf(r[0] * r[0] + r[2] * r[2]); if (hl < 1e-4f) return 0; r[0] /= hl; r[2] /= hl;
+  float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+  float tanV = tanf(fovYdeg * .5f * 3.14159265f / 180.f), tanH = tanV * ((float)SCR_W / (float)SCR_H);
+  enum { CAP = 40 * 24 + 8 }; StV *v = (StV *)sceGuGetMemory(CAP * sizeof(StV)); int n = 0, nb = 0;
+  static const unsigned char ed[12][2] = {{0,1},{2,3},{4,5},{6,7},{0,2},{1,3},{4,6},{5,7},{0,4},{1,5},{2,6},{3,7}};
+  for (uint32_t i = 0; i < w->nbox && nb < 40; i++) {
+    const ColBox *B = &w->box[i]; float d0 = B->c[0] - e[0], d1 = B->c[1] - e[1], d2 = B->c[2] - e[2];
+    if (d0 * d0 + d1 * d1 + d2 * d2 > range * range) continue;
+    float c[8][3]; for (int k = 0; k < 8; k++) for (int a = 0; a < 3; a++)
+      c[k][a] = B->c[a] + ((k & 1) ? 1.f : -1.f) * B->ax[a] * B->h[0] + ((k & 2) ? 1.f : -1.f) * B->ay[a] * B->h[1] + ((k & 4) ? 1.f : -1.f) * B->az[a] * B->h[2];
+    int n0 = n; for (int k = 0; k < 12; k++) stEdge(v, &n, CAP, e, f, r, u, tanH, tanV, c[ed[k][0]], c[ed[k][1]]);
+    for (int k = n0; k < n; k++) v[k].c = 0xff00ff00u;   // зелёный (ABGR)
+    nb++;
+  }
+  if (!n) return 0;
+  sceGuDisable(GU_DEPTH_TEST); sceGuDepthMask(GU_TRUE); sceGuDisable(GU_TEXTURE_2D); sceGuDisable(GU_BLEND); sceGuDisable(GU_FOG); sceGuDisable(GU_LIGHTING); sceGuDisable(GU_CULL_FACE);
+  sceGuScissor(0, 0, SCR_W, SCR_H);
+  sceGuDrawArray(GU_LINES, GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D, n, 0, v);
+  sceGuEnable(GU_DEPTH_TEST); sceGuDepthMask(GU_FALSE);
+  return 1;
+}

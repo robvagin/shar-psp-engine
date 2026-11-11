@@ -5,7 +5,7 @@ set -u
 cd "$(dirname "$0")/../.."
 L=${1:-build/level.shr}; Hm=${2:-build/homer.shr}
 T=${TMPDIR:-/tmp}/garage_exit.$$
-CC="cc -std=c99 -O2 -w -DSKIN_HOST -I viewer tests/homer/garage_exit.c viewer/homer.c viewer/skin.c viewer/col.c viewer/car.c viewer/props.c viewer/stateprops.c viewer/coins.c -lm"
+CC="cc -std=c99 -O2 -w -DSKIN_HOST -I viewer tests/homer/garage_exit.c viewer/homer.c viewer/watchdog.c viewer/skin.c viewer/col.c viewer/car.c viewer/props.c viewer/stateprops.c viewer/coins.c -lm"
 $CC -DHOMER_STAIR_UP=1 -o "$T.g" || exit 2
 $CC -o "$T.r" || exit 2
 bad=0

@@ -7,7 +7,17 @@
 #ifndef GAG_SKIN_STREAM_OLD
 #define GAG_SKIN_STREAM_OLD 0
 #endif
-extern int gagSkinStreamOld;
+#ifndef COLLSPLIT_OLD
+#define COLLSPLIT_OLD 0   // Пропечка-96 (Fable шаг 11): 1 - вершины гэгов в блоке пакета целиком, как в Build 95
+#endif
+extern int gagPlan99Off;extern unsigned collStreamPlanN,collStreamPlanKB;extern int gagSkinStreamOld,collSplitOld;extern unsigned collHoldMs;   // flag collhold N - служебное: каждое фоновое чтение гэга держится N мс
+const void *collStreamVerts(unsigned type);   // база вершин типа под piece->vOff; 0 - вершин сейчас нет, тип не рисовать
+int collStreamSplitOn(void),collStreamTexSplitOn(void);
+extern unsigned collStreamVertBytes,collStreamVertLoads,collStreamVertSaved,collStreamTexBytes,collStreamTexSaved;
+#define COLL_STREAM_TW 4   // слов маски текстур: до 128 текстур пакета, больше - текстуры остаются в блоке
+// Текстуры гэгов по номеру: движок (main_collect.h) строит по записи Tex в cxTex; unbind - до освобождения буфера
+extern void (*collStreamTexBind)(unsigned k,unsigned char *rec,unsigned size);extern void (*collStreamTexUnbind)(unsigned k);
+void collStreamTexRebind(void);   // привязать уже загруженные (постоянные) текстуры, когда движок поставил хуки
 extern unsigned collStreamResidentBytes,collStreamTrackBytes;
 void *collStreamLoad(Collect *c,CollectRead read,void *user,unsigned size);
 int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int snap);
@@ -19,5 +29,7 @@ typedef struct { int (*start)(void *user,unsigned off,void *data,unsigned size);
 #define COLL_ASYNC_MS 3000u   // задание не пришло за 3 с — отмена, гэг не играет
 void collStreamSetAsync(const CollectAsync *a);
 extern unsigned collStreamAllocFails,collStreamLastFail;extern int collFailTest;   // ТЕСТ90 память: отказов выделения пакета гэгов; «flag collfail N» — следующие N выделений без памяти (проверка повтора)
+extern int collGagPend1257Old;   // Будка-93 (1257): 1 - счёт ожидания гэгов как был
+unsigned collStreamPending(void);   // Будка-93 (1226): чтений в пути и в очереди
 extern unsigned collStreamAsyncStarts,collStreamAsyncDone,collStreamAsyncDefer,collStreamAsyncCancels,collStreamAsyncFails;   // для журнала: заданий начато / принято / ключей, отложенных на кадр
 #endif

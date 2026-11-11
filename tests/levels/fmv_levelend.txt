@@ -1,6 +1,6 @@
 # Конец уровня по данным диска (tests/levels/fmv_levelend.sh): уровень 2 -> последняя сюжетная миссия m8 (служебный выбор
 # миссии, flag msnsel 7 — как MISSION SELECT) -> цель «fmv» SetFMVInfo("fmv3.rmv") — ролик movies/fmv3.smv (снимок, START —
-# пропуск, как в оригинале) -> этап 2: таймер 2 с и SetLevelOver -> LEVEL COMPLETE -> газета уровня 3 -> уровень 3
+# пропуск, как в оригинале; сценарий ждёт СТРОКИ журнала (waitfor), а не секунды: ролик в эмуляторе 55 с, аудит Fable §7 п.3) -> этап 2: таймер 2 с и SetLevelOver -> LEVEL COMPLETE -> газета уровня 3 -> уровень 3
 flag menu
 flag lvset 2
 wait 1.5
@@ -9,10 +9,12 @@ wait 7
 flag msnsel 7
 wait 4
 shot fmv3
-press start
-wait 6
+waitfor MSNFMVSHOT 30
+press start 0.3
+waitfor MSNFMV name=fmv3 90
 flag lvshot 1.5
-wait 8
+waitfor LEVEL ev=load n=3 180
+wait 2
 flag lvlog
 shot l3_after_fmv
 end

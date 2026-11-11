@@ -18,7 +18,9 @@
 #ifndef GS_KSCALE
 #define GS_KSCALE 1.f   // красный контроль гейта: 1.9 — почти прямой ромб (кончик тупой), .3 — тонкая игла
 #endif
-#define GS_MAXRAYS 5
+#ifndef GS_MAXRAYS
+#define GS_MAXRAYS 12   // №1261: свечение двери рисуется тем же шейпом, 10 лучей по контуру проёма (блик ключа: 4–5)
+#endif
 #define GS_MAXSEG 8
 #define GS_MAXPTS (GS_MAXRAYS * GS_MAXSEG)
 typedef struct { int n; float k, ang[GS_MAXRAYS], len[GS_MAXRAYS]; } GsDef;   // ang — по возрастанию, рад от +X против часовой; len — длина луча (доля радиуса звезды)

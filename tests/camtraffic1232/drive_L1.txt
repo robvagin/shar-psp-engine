@@ -1,0 +1,15 @@
+# №1232 (машина игрока): автопилот flag drive катает машину по L1 среди трафика, журнал CAMTRF (глаз после защиты камеры, ближайшая машина, v). Для сравнения: jitter.py drive (вторая разность глаза по корзинам dmin).
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene D_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag camlog 1
+scene D_run
+flag drive 100
+wait 105
+shot d_end
+end

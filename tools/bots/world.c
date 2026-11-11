@@ -17,6 +17,16 @@ unsigned long long bwTotalFrames;   // все кадры процесса (не 
 int bwLastDeathZone = -1;   // observer only; no simulation/save state changes
 static void printFrames(void) { printf("F\t%llu\n", bwTotalFrames); }
 static unsigned char *lvl; static size_t lvlSize; static ColWorld col; static int haveColData;
+#if !COLRING_OLD
+#include <unistd.h>
+#include <fcntl.h>
+#include "colring.h"
+static ColRing *bwRing; static int bwRingFd = -1; static float bwRingLx, bwRingLz; static unsigned bwRingNL;
+static int bwRingRead(void *u, unsigned off, void *dst, unsigned n) { (void)u; return pread(bwRingFd, dst, n, off) == (ssize_t)n ? 0 : -1; }
+static void bwRingLog(const char *l) { if (getenv("BW_COLRING_VERBOSE") && bwRingNL++ < 40) fprintf(stderr, "%s\n", l); }
+static void bwRingReport(void) { if (bwRing && getenv("BW_COLRING_STAT")) fprintf(stderr, "COLRING_BOT sync=%u/%u load=%u/%u evict=%u/%u ioerr=%u poolshort=%u respeak=%u blobpeak=%u\n", bwRing->st.syncPages, bwRing->st.syncTiles, bwRing->st.loadPages, bwRing->st.loadTiles, bwRing->st.evictPages, bwRing->st.evictTiles, bwRing->st.ioErr, bwRing->st.poolShort, bwRing->st.residentPeak, bwRing->st.blobPeak); }
+unsigned bwRingSyncCount(void) { return bwRing ? bwRing->st.syncPages + bwRing->st.syncTiles : 0; }
+#endif
 static const void *propSec; static unsigned propSecN; static float carLift = 0.f, spawn[4];
 static CarParams carP; static int carPOk = -9;
 #ifdef BW_HAVE_AO
@@ -87,6 +97,16 @@ int bwData(const char *level, const char *homer, const char *msn) {
   float hd[14]; memcpy(hd, lvl + 12, sizeof hd); memcpy(spawn, hd + 6, sizeof spawn);   // спавн x y z курс (заголовок SHR7)
   unsigned pv = *(unsigned *)(lvl + 88), co = *(unsigned *)(lvl + 92), po = *(unsigned *)(lvl + 96), c1 = *(unsigned *)(lvl + 100), ce = (unsigned)lvlSize;
   if (po > co && po < ce) ce = po; if (pv > co && pv < ce) ce = pv;
+#if !COLRING_OLD
+  // Коллизия-96: BW_COLRING=auto|путь — мир коллизии из кольца (viewer/colring.c) вместо COL1 целиком; colring.shr рядом с level.shr. Кольцо едет за героем/машиной (bwStep), недостающее дочитывается
+  char rp[512] = ""; if (co && getenv("BW_COLRING")) { const char *e_ = getenv("BW_COLRING"); if (!strcmp(e_, "auto")) { snprintf(rp, sizeof rp, "%s", level); char *sl = strrchr(rp, '/'); snprintf(sl ? sl + 1 : rp, sizeof rp - (sl ? (size_t)(sl + 1 - rp) : 0), "colring.shr"); } else snprintf(rp, sizeof rp, "%s", e_); if (access(rp, R_OK)) rp[0] = 0; }   // нет файла у этого уровня — уровень без кольца (как в игре)
+  if (rp[0]) {
+    bwRingFd = open(rp, O_RDONLY); ColRingIO io = { bwRingRead, 0, bwRingLog }; int err = 0; unsigned hh[64];
+    if (bwRingFd >= 0 && pread(bwRingFd, hh, sizeof hh, 0) == sizeof hh) { void *pool = malloc((size_t)(hh[35] + 24) * CRING_PAGEB); bwRing = colRingOpen(&io, pool, (hh[35] + 24) * CRING_PAGEB, &err); }
+    if (bwRing && colInitRing(&col, bwRing) == 0) { haveColData = 1; colRingEnsure(bwRing, spawn[0], spawn[2]); bwRingLx = spawn[0]; bwRingLz = spawn[2]; atexit(bwRingReport); }
+    else { fprintf(stderr, "BW_COLRING: кольцо не поднялось (%s, err %d)\n", rp, err); return -4; }
+  } else
+#endif
   if (co && colInit(&col, lvl + co, ce - co) == 0) haveColData = 1;
   // правка Роба 108 (30.09, m4 у ботов «застрял пешком» у двери): в мире ботов анимированные объекты не шагали, створки дверей
   // AutomaticDoor (ANM1 действие 4) стояли закрытыми. В игре дверь открывается, когда игрок в её объёме (viewer/animobj.c
@@ -230,9 +250,13 @@ void bwHitTraffic(Car *c) {   // чужая машина бота о трафи�
   for (int i = 0; i < tr.maxCars; i++) if (tr.car[i].mode != TRM_OFF && hypotf(tr.car[i].car.x - c->x, tr.car[i].car.z - c->z) < 8.f) carHitCar(c, &tr.car[i].car, &col);
   for (int i = 0; i < tr.npark; i++) if (hypotf(tr.park[i].car.x - c->x, tr.park[i].car.z - c->z) < 8.f) carHitCar(c, &tr.park[i].car, &col);
 }
+// 07.11 (Данные-93, стекло №1224): в игре (main_state.h homerSolidAll) пропы уровня твёрдые для Гомера пешком (propsSolidHomer, правка 290), в стенде их не было вовсе: Гомер бота
+// проходил почтовые ящики, скамейки и стекло насквозь. bwPropsSolid = 1 включает их (по умолчанию 0: прогоны ботов не меняются; включает стенд glasshit)
+int bwPropsSolid = 0;
 static int solidAll(void *u, float *x, float *z, float y, float r, float *top, float *nx, float *nz) {   // как homerSolidAll в main.c
   BotWorld *w = u; int hit = 0;
   if (w->haveSP) hit |= homerSolidSprops(&w->sp, x, z, y, r, top, nx, nz);
+  if (bwPropsSolid && w->haveProps) hit |= propsSolidHomer(&w->props, x, z, y, r, HOMER_STEP, HOMER_HEIGHT, top, nx, nz);
   if (w->haveTraffic) hit |= trafficSolid(&tr, x, z, y, r, top, nx, nz);
   return hit;
 }
@@ -245,9 +269,29 @@ static void hkHomer(void *u, const HomerEvent *e) {   // как homerEvFx в mai
 }
 static void hkCoin(void *u) { ((BotWorld *)u)->st.coins++; }
 
-static void bwWdLog(const char *l) { printf("%s\n", l); }   // сторож (viewer/watchdog.h): строки WATCHDOG в stdout бота, их считают отчёты ночи
+// Build 94 (разбор Опоры A4: 1422 строки «spawn hero hold/safe» у трёх гонок): одинаковые строки (без времени t=) после WD_REPEAT_MAX печатаются не каждая, а итогом при выходе:
+// «WATCHDOG repeat n=<сколько> <текст>». Счёт строк в отчёте = первые + итог (n). BW_WD_ALL=1 — печатать все, как раньше
+#define WD_REPEAT_MAX 3
+static struct { char key[200]; int n; } wdRep[24]; static int wdRepN = -1, wdAll;
+static void wdRepFlush(void) { for (int i = 0; i < wdRepN; i++) if (wdRep[i].n > WD_REPEAT_MAX) printf("WATCHDOG repeat n=%d %s\n", wdRep[i].n - WD_REPEAT_MAX, wdRep[i].key); }
+static int bwRoomPoint96(float x, float y, float z) {   // как roomPoint96 в main_rooms.h
+  if (!rooms.nroom) return y > -26.f && y < -14.f;
+  float g, n[3]; for (int k = 0; k < rooms.nroom; k++) { const Room *r = &rooms.room[k];
+    if (colGround(&r->col, x, z, y + 1.5f, y - 3.f, &g, n)) return 1;
+    if (fabsf(y - r->start[1]) < 4.f && hypotf(x - r->start[0], z - r->start[2]) < 12.f) return 1;
+    if (fabsf(y - r->exit[1]) < 4.f && hypotf(x - r->exit[0], z - r->exit[2]) < 12.f) return 1; }
+  return 0; }   // Build 96: roomplace
+static void bwWdLog(const char *l) {   // сторож (viewer/watchdog.h): строки WATCHDOG в stdout бота, их считают отчёты ночи
+  if (wdRepN < 0) { wdRepN = 0; wdAll = getenv("BW_WD_ALL") != 0; atexit(wdRepFlush); }
+  if (wdAll) { printf("%s\n", l); return; }
+  char k[200]; const char *t = strstr(l, " t="); size_t a = t ? (size_t)(t - l) : strlen(l);
+  const char *r = t ? strchr(t + 1, ' ') : 0; snprintf(k, sizeof k, "%.*s%s", (int)a, l, r ? r : "");
+  int i = 0; while (i < wdRepN && strcmp(wdRep[i].key, k)) i++;
+  if (i == wdRepN) { if (wdRepN >= 24) { printf("%s\n", l); return; } snprintf(wdRep[wdRepN].key, sizeof wdRep[0].key, "%s", k); wdRep[wdRepN++].n = 0; }
+  if (++wdRep[i].n <= WD_REPEAT_MAX) printf("%s\n", l);
+}
 int bwNew(BotWorld *w) {
-  wdSetLog(bwWdLog);
+  wdSetLog(bwWdLog); homerRoomPointHook = bwRoomPoint96; if (getenv("ROOMPLACE96_OLD")) homerRoomPlace96 = 0;
   { const char *e_ = getenv("TRFCOST1001B"); if (e_) trfCost1001b = atoi(e_); }   // №1001б: TRFCOST1001B=0 — прежний обход препятствий в pathGap (для «до/после»)   // как newGame в main.c (пункт 12а), без звука и частиц
   memset(w, 0, sizeof *w);
   w->haveCol = haveColData; w->lift = carLift;
@@ -300,6 +344,10 @@ static inline unsigned long long bwNowNs(void) { struct timespec ts; clock_getti
 #define BWP(i, ...) do { if (bwProf) { unsigned long long t0_ = bwNowNs(); __VA_ARGS__; bwPhaseNs[i] += bwNowNs() - t0_; } else { __VA_ARGS__; } } while (0)
 void bwStep(BotWorld *w, unsigned buttons, float ax, float ay) {
   Game *G = &w->G; bwTotalFrames++; bwLastDeathZone = -1;
+#if !COLRING_OLD
+  if (bwRing && w->room < 0) { int ft_ = gameOnFoot(G); float fx_ = ft_ ? w->homer.x : w->car.x, fz_ = ft_ ? w->homer.z : w->car.z, dx_ = fx_ - bwRingLx, dz_ = fz_ - bwRingLz;
+    if (dx_ * dx_ + dz_ * dz_ > 120.f * 120.f) colRingEnsure(bwRing, fx_, fz_); else colRingTick(bwRing, fx_, fz_); bwRingLx = fx_; bwRingLz = fz_; }   // как colRingFrame в игре
+#endif
   GamePad p = {buttons, buttons & ~w->prevButtons, ax, ay}, p0 = p; w->prevButtons = buttons;
   if (w->haveMsn) gameMsnFreezePad(&w->msn, &p);   // отсчёт 3-2-1 этапа: игрок стоит (как main.c)
   // △ — одно действие за нажатие (как main.c): разговор/точка миссии рядом забирает его у посадки в машину, потом гэг (В5)

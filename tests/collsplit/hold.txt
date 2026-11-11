@@ -1,0 +1,21 @@
+# Красный контроль COLLSPLIT (п.11): чтение данных гэга задержано (flag collhold 2500 мс на каждое чтение) - гэг в радиусе не готов:
+# журнал COLLSPLIT notready, подсказка и запуск (△) молчат, пока всё не пришло; без задержки (control.txt) гэг играет сразу.
+scene start
+wait 3
+scene far
+foot 407.99 -413.09 0 4.6
+wait 4
+flag collhold 2500
+scene gag
+foot 228.567 201.097 0 5
+wait 1
+press triangle
+wait 0.5
+shot gag_early
+press triangle
+wait 40
+press triangle
+wait 1.5
+shot gag_late
+wait 2
+end

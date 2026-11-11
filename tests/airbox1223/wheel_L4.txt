@@ -1,0 +1,34 @@
+# №1223: рисунок вращающегося объекта ANM1 №39 (тип SPR1 74, центр -176.4 6.5 -301.9, радиус 10.7, период 6 с = 181 кадр @30) и каркас его живых ящиков COL1 (flag colwire 45, зелёный).
+# cam берёт ВЕКТОР взгляда. Близкий вид с юго-запада (20 м), четыре снимка через 1,5 с (четверть периода), потом то же без каркаса (colwire 0), чтобы рисунок не заслонялся линиями.
+scene F_L4
+flag cfgdefaults 1
+wait 4
+scene W_GO4
+flag golevel 4
+wait 40
+flag stop
+flag player
+foot -160 -301.9 -1.5708
+wait 3
+scene W_wire
+flag colwire 45
+cam -195 6.5 -312 18.6 0 10.1 70
+wait 1
+shot c_w0
+wait 1.5
+shot c_w1
+wait 1.5
+shot c_w2
+wait 1.5
+shot c_w3
+scene W_plain
+flag colwire 0
+wait 1.5
+shot c_p0
+wait 1.5
+shot c_p1
+wait 1.5
+shot c_p2
+wait 1.5
+shot c_p3
+end

@@ -1,0 +1,30 @@
+flag menu
+flag lvset 2
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+scene DD_DRIVE
+flag drive 260
+wait 3
+scene DD_LIGHT0
+flag workmix 22
+wait 40
+scene DD_HEAVY
+flag workmix 42
+wait 40
+scene DD_LIGHT1
+flag workmix 22
+wait 90
+scene DD_MID
+flag workmix 33
+wait 40
+scene DD_END
+flag workmix -1
+flag stop
+wait 2
+end

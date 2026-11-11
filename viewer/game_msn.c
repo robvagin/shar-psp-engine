@@ -10,6 +10,7 @@
 #include "phonebusy.h"
 #include "game_msn.h"
 #include "race_onroad.h"
+#include "flowrules.h"   // подпись △: имя собеседника как в тексте задания (flowTalkName)
 
 #define GM ((GameMsn *)u)
 #define G_ (GM->g)
@@ -212,7 +213,8 @@ static void plReset(void *u, const MsnPlace *at, const MsnPlace *car, const char
 }
 static Traffic *roadsT;   // дороги и трафик уровня (main.c: traffic.shr; боты: bwTraffic); NULL — без дорог
 static int gameMsnResetRoad(const Car *c, float out[4]) { return mcResetPoint(roadsT, c->x, c->y, c->z, c->h, c->vel[0], c->vel[2], out); }
-void gameMsnSetRoads(Traffic *t) { roadsT = t; gameResetRoad = t ? gameMsnResetRoad : 0; }
+static int gameMsnResetRoadAt(const Car *c, float off, float out[4]) { return mcResetPointOff(roadsT, c->x, c->y, c->z, c->h, c->vel[0], c->vel[2], off, out); }
+void gameMsnSetRoads(Traffic *t) { roadsT = t; gameResetRoad = t ? gameMsnResetRoad : 0; gameResetRoadAt = t ? gameMsnResetRoadAt : 0; }
 // ---- машина миссии у игрока: InitLevelPlayerVehicle(имя, локатор, "OTHER") + SetForcedCar (уровень 1: m6 — машина Мардж marge_v).
 // Машина игрока становится этой машиной: ходовые и кузов, сиденье, дверь, камера — блок машины CAR1 v2 из таблицы пакета msncars
 // (MCR1 v2, tools/msncar_export.py; то же правило, что у машины уровня: у marge_v — числа машины уровня 4); нет блока — .con машины
@@ -576,6 +578,12 @@ static GameNpc *npcFind(GameMsn *m, const char *name) {
   }
   return best;
 }
+static GameNpc *npcFindSeller(GameMsn *m, const char *name) {   // персонаж-продавец: то же имя, но не бонус-персонаж (SELLER96_OLD=1 — npcFind, как было)
+  if (!gameSeller96) return npcFind(m, name);
+  for (int i = 0; i < m->nnpc; i++) { GameNpc *n = &m->npc[i]; if (msn_streq(n->name, name) && !n->bonus && n->kind == MSN_NPC_PLACE) return n; }   // сначала «место» (продавец сам): у гонки sr3 свой zmale1 этапа миссии, продавец — не он
+  for (int i = 0; i < m->nnpc; i++) { GameNpc *n = &m->npc[i]; if (msn_streq(n->name, name) && !n->bonus) return n; }               // продавца взяла себе миссия (L1 m2: AddNPC("barney", "m2_barney"), правка 140): место разговора идёт за ним
+  return 0;
+}
 // №984 (боты езды L3–L7, цикл по персонажам: значки продавцов и собеседника mvDrawMarkers звали npcFind по имени КАЖДЫЙ КАДР на каждого продавца — перебор до 24 персонажей со сравнением строк,
 // 0,3–0,48 мс PSP на L3, L4, L6, L7). Теперь ответ npcFind запоминается по указателю имени (16 записей): запись годна, пока не менялся список персонажей (npcGen растёт при появлении, снятии,
 // очистке миссии, новой миссии), указатель, сама строка имени и GameMsn те же — результат побитно тот же (тот же GameNpc*). GAMEMSNNPC984_OLD=1 / flag msnnpc984old 1 — как было; flag msnnpcchk 1 — каждый ответ
@@ -929,7 +937,7 @@ static int npcSidestep(GameNpc *n, const Game *g, float ux, float uz, float s, f
     float c = cosf(a), sn = sinf(a), vx = ux * c - uz * sn, vz = ux * sn + uz * c, px = n->pos.x + vx * s, pz = n->pos.z + vz * s;
     if (npcBlocksHomer(n, g, px, pz) || npcBlocksNpc(n, px, pz)) continue;
     const ColWorld *w = n->interior[0] && g->pHomerWorld ? g->pHomerWorld : g->pWorld; float gy;
-    if (w && !colGround(w, px, pz, n->pos.y + .6f, n->pos.y - .6f, &gy, 0)) continue;   // обрыв/пустота под ногами
+    if (w && colCovered(w, px, pz) && !colGround(w, px, pz, n->pos.y + .6f, n->pos.y - .6f, &gy, 0)) continue;   // обрыв/пустота под ногами (вне плана кольца не проверяется, Коллизия-96)
     float want = atan2f(vx, vz), d = want - n->h; while (d > 3.14159265f) d -= 6.2831853f; while (d < -3.14159265f) d += 6.2831853f;
     n->h += d > 0.f ? fminf(d, .25f) : fmaxf(d, -.25f);   // плавно (≈15° за шаг), не рывком
     *nx = px; *nz = pz; n->blocked = 0; if (k >= 2) n->avoidSide = -n->avoidSide; return 1; }
@@ -1027,7 +1035,16 @@ static int npcWalkTo(GameNpc *n, const Game *g, MsnVec3 t, float dt, float stop)
   // ±1,5 м от прежней; пола нет — высота прежняя
   { const ColWorld *w = n->interior[0] && g->pHomerWorld ? g->pHomerWorld : g->pWorld; float gy;
     n->pos.x = nx; n->pos.z = nz;
-    if (w && colGround(w, nx, nz, n->pos.y + 1.5f, n->pos.y - 1.5f, &gy, 0)) n->pos.y = gy; }
+#if !COLRING_OLD
+    if (w && !colCovered(w, nx, nz)) { n->pos.y += dy * (s / d); n->farHold = 1; }   // Коллизия-96: вне плана кольца земля не спрашивается (каждый шаг был бы чтением карты), высота тянется к маршруту
+    else {
+      if (w && colGround(w, nx, nz, n->pos.y + 1.5f, n->pos.y - 1.5f, &gy, 0)) { n->pos.y = gy; n->farHold = 0; }
+      else if (w && n->farHold && colGround(w, nx, nz, n->pos.y + 8.f, n->pos.y - 12.f, &gy, 0)) { n->pos.y = gy; n->farHold = 0; }   // вернулся в план после дальней прогулки: опору ищем широким окном, затем окно прежнее
+    }
+#else
+    if (w && colGround(w, nx, nz, n->pos.y + 1.5f, n->pos.y - 1.5f, &gy, 0)) n->pos.y = gy;
+#endif
+  }
   (void)dy;
 #else
   n->pos.x = nx; n->pos.z = nz; n->pos.y += dy * (s / d);   // отрицательный контроль: высота к точке маршрута
@@ -1035,6 +1052,14 @@ static int npcWalkTo(GameNpc *n, const Game *g, MsnVec3 t, float dt, float stop)
   return 0;
 }
 int gameTalkCarOld;   // правка 305: служебное — машина на место разговора из данных (прежнее)
+// Правка (Механик/Опора-93, L7 m2 «Long Black Probes»): продавец зомби-машины и ведущий гонки sr3 — два разных персонажа с одним именем zmale1: продавец стоит на zmale1_loc (около кладбища) и
+// ходит по zmale1_walk1, ведущий гонки — на sr3_ralph_sd (у школы). npcFind по имени отдаёт ведущего (бонус старше), и место разговора продавца переезжало на ведущего: △ у «лавки» запускал уличную
+// гонку (бонус-персонаж в радиусе проверялся раньше продавца), машину купить нельзя, миссия по кругу. Теперь (1) место разговора продавца следует за ЕГО персонажем (не бонусным), нет такого — остаётся на локаторе;
+// (2) пока этап — покупка машины/костюма, продавец в радиусе важнее бонус-персонажа. В оригинале это два отдельных персонажа, у каждого свой участок. SELLER96_OLD=1 / файл seller96old / flag seller96 0 — как было
+#ifndef SELLER96_OLD
+#define SELLER96_OLD 0
+#endif
+int gameSeller96 = !SELLER96_OLD;
 int gameShopFirstOld;   // правка 306: служебное — лавка перехватывает △ у собеседника этапа (прежнее)
 int gameBoss967Old = BOSS967_OLD;
 int gameSellerAtLoc;   // правка 288: служебное — место разговора продавца на локаторе, как было
@@ -1822,6 +1847,8 @@ int gameMsnAbortAllowed(const GameMsn *m) { return GAME_ABORT_OLD ? 1 : msn_abor
 int gameMsnTalking(const GameMsn *m) { return m->talk.on; }   // P (5.11): идёт разговор — прибавка шкалы Hit & Run и счёта должна стоять (модуль game.c / stateprops)
 int gameMsnHudHidden(const GameMsn *m) { return m->hudHidden; }   // P06-21: ShowHUD("false") — HUD миссии спрятан
 static int msnWants(GameMsn *m, const MsnWorld *wp);
+static int msnWantsX(GameMsn *m, const MsnWorld *wp, int withBonus);
+static int sellerFirst96(const GameMsn *m);
 int gameMsnWantsMissionAction(GameMsn *m) { MsnWorld w; gameMsnWorld(m, &w); return w.on_foot && msnWants(m, &w); }
 // Правка Роба 206: подпись к △ миссии — что делает действие (правило порта, у HUD оригинала подписи нет): разговор — «Talk To <Имя>»
 // (имя собеседника из данных SetTalkToTarget, без префикса m3_ и т.п.), бонус-персонаж — «Talk», точка с действием — «Use»,
@@ -1829,15 +1856,14 @@ int gameMsnWantsMissionAction(GameMsn *m) { MsnWorld w; gameMsnWorld(m, &w); ret
 const char *gameMsnActionLabel(GameMsn *m, char *buf, int n) {
   MsnWorld w; gameMsnWorld(m, &w); MsnRuntime *rt = &m->rt;
   if (m->shop.open) return "Cancel";
-  if (rt->auto_bonus && msn_bonus_near(rt, &w) >= 0) return "Talk";
+  if (rt->auto_bonus && msn_bonus_near(rt, &w) >= 0 && !(sellerFirst96(m) && shopSellerNear(&m->shop, w.player.x, w.player.y, w.player.z) >= 0 && gameMsnShopAllowed(m))) return "Talk";
   // правка 288: подпись △ — от того, что △ сделает здесь: у продавца, вне радиуса разговора миссии, — «Shop», а не «Talk To Marge»
   { int sv = shopSellerNear(&m->shop, w.player.x, w.player.y, w.player.z);   // правка 306: собеседник этапа — не «Shop»
     if (sv >= 0 && rt->status == MSN_RUNNING && rt->st && rt->obj == MSN_OBJ_TALKTO && rt->target && msn_streq(rt->target, m->shop.seller[sv].npc)) sv = -1;
-    if (!gameSellerAtLoc && !msnWants(m, &w) && sv >= 0 && gameMsnShopAllowed(m)) return "Shop"; }
+    if (!gameSellerAtLoc && !msnWantsX(m, &w, !sellerFirst96(m)) && sv >= 0 && gameMsnShopAllowed(m)) return "Shop"; }
   if (rt->status == MSN_RUNNING && rt->st && rt->obj == MSN_OBJ_TALKTO && rt->target) {
-    const char *nm = strrchr(rt->target, '_'); nm = nm && nm[1] ? nm + 1 : rt->target;
+    char nb[40]; const char *nm = flowTalkName(rt->target, nb, sizeof nb);   // имя как в тексте задания (viewer/flowrules.h), не код данных
     snprintf(buf, (size_t)n, "Talk To %s", nm);
-    char *p = buf + 8; if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 32);
     return buf;
   }
   if (rt->status == MSN_RUNNING && rt->st && rt->obj == MSN_OBJ_GOTO) return "Use";
@@ -1851,9 +1877,9 @@ int gameMsnWantsAction(GameMsn *m) {
   if (msnWants(m, &w)) return 1;
   return !m->talk.on && shopSellerNear(&m->shop, w.player.x, w.player.y, w.player.z) >= 0;   // продавец: лавка
 }
-static int msnWants(GameMsn *m, const MsnWorld *wp) {   // △ нужен самой миссии: бонус-персонаж, разговор в радиусе, точка с действием
+static int msnWantsX(GameMsn *m, const MsnWorld *wp, int withBonus) {   // △ нужен самой миссии: бонус-персонаж, разговор в радиусе, точка с действием
   MsnRuntime *rt = &m->rt; MsnWorld w = *wp;
-  if (rt->auto_bonus && msn_bonus_near(rt, &w) >= 0) return 1;              // бонус-персонаж рядом: разговор
+  if (withBonus && rt->auto_bonus && msn_bonus_near(rt, &w) >= 0) return 1;              // бонус-персонаж рядом: разговор
   if (rt->status != MSN_RUNNING || !rt->st) return 0;
   if (rt->obj == MSN_OBJ_TALKTO && rt->target) {                             // тот же радиус, что у рантайма (msn_run.c, правка 345)
     MsnEntity e; memset(&e, 0, sizeof e);
@@ -1867,6 +1893,8 @@ static int msnWants(GameMsn *m, const MsnWorld *wp) {   // △ нужен сам
   }
   return 0;
 }
+static int sellerFirst96(const GameMsn *m) { return gameSeller96 && m->rt.status == MSN_RUNNING && m->rt.st && (m->rt.obj == MSN_OBJ_BUYCAR || m->rt.obj == MSN_OBJ_BUYSKIN); }   // этап покупки: продавец важнее бонус-персонажа
+static int msnWants(GameMsn *m, const MsnWorld *wp) { return msnWantsX(m, wp, 1); }
 // ---- P04 U1 / Д9, P07-9: луч тарелки L7 (UFO_BEAM_ALWAYS_ON). Числа: сфера 30 м вокруг тарелки, конус вниз — косинус угла к вертикали
 // не меньше 0,94 (около 20°; на глубине 20 м радиус около 7 м), тянет к центру тарелки 3 м/с; ближе 5 м к центру машина убирается. Водитель при втягивании принудительно выходит
 // на землю. Машина игрока с бочкой (rt->cargo, цель pickupitem) — тарелка ранена, цель destroyboss закрыта (MSN_IN_BOSS_HIT); без бочки машина взрывается, цель не
@@ -1996,7 +2024,7 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
   // асфальту»): продавец идёт по маршруту AddPurchaseCarNPCWaypoint (barney_loc -> barney_walk1), а место разговора стояло на
   // локаторе — теперь место разговора там, где сам продавец (тот же радиус данных 1,3 м + SHOP_REACH). Правило порта.
   // «flag selleratloc 1» (gameSellerAtLoc) — прежнее (красный tests/npc/seller_follow.py)
-  if (!gameSellerAtLoc) for (int i = 0; i < m->shop.nseller; i++) { const GameNpc *n = npcFind(m, m->shop.seller[i].npc);
+  if (!gameSellerAtLoc) for (int i = 0; i < m->shop.nseller; i++) { const GameNpc *n = npcFindSeller(m, m->shop.seller[i].npc);
     if (n && !n->knock) { m->shop.seller[i].x = n->pos.x; m->shop.seller[i].y = n->pos.y; m->shop.seller[i].z = n->pos.z; } }
   npcKnock(m, dt);   // правка 240: удар машиной, полёт, лежит, встаёт
   pt1_ = NOWUS_();
@@ -2046,7 +2074,7 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
     // разговор с этим самым продавцом (TALK TO BARNEY), △ у него — разговору, лавка не перехватывает. «flag shopfirstold 1» — прежнее
     if (sv >= 0 && !gameShopFirstOld && m->rt.status == MSN_RUNNING && m->rt.st && m->rt.obj == MSN_OBJ_TALKTO && m->rt.target &&
         msn_streq(m->rt.target, m->shop.seller[sv].npc)) sv = -1;
-    if (sv >= 0) other = msnWants(m, &w);
+    if (sv >= 0) other = msnWantsX(m, &w, !sellerFirst96(m));   // этап покупки: бонус-персонаж в радиусе не перехватывает △ у продавца
     if (sv >= 0 && !other) { m->shop.open = 1; m->shop.at = sv; m->shop.sel = 0; m->shopOpens++; w.action = 0;
       for (int k = 0, n = shopSellerCount(&m->shop, sv); k < n; k++)   // сразу на то, что нужно миссии (этап «купи Plow King»)
         if (m->rt.status == MSN_RUNNING && m->rt.st && (m->rt.obj == MSN_OBJ_BUYCAR || m->rt.obj == MSN_OBJ_BUYSKIN) &&

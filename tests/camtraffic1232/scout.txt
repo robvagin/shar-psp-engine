@@ -1,0 +1,14 @@
+# №1232: Гомер стоит у дороги L1 (120,150): мимо едет трафик, глаз камеры по кадрам (CAMTRF)
+scene F_L1
+flag cfgdefaults 1
+wait 4
+scene S_GO1
+flag golevel 1
+wait 40
+flag stop
+flag player
+flag camlog 1
+scene S_b
+foot 120 150 1.5708
+wait 40
+end

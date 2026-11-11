@@ -772,6 +772,7 @@ static Out playMission(int mi, float secs) {
           else { sideT = .8f; sideN++; stillT = 0.f; fnGx = 1e9f; fnBOnly = (sideN & 2) != 0; } }   // footnav: каждый второй упор — путь вторым пешеходом (B)
         if (sideT > 0.f) { sideT -= BW_DT; float a = atan2f(p.x - W.homer.x, p.z - W.homer.z) + (sideN & 1 ? 1.5708f : -1.5708f);
           p.x = W.homer.x + sinf(a) * 5.f; p.z = W.homer.z + cosf(a) * 5.f; } }
+      static int sjOff = -1; if (sjOff < 0) sjOff = getenv("MISSIONER_SHORTJUMP_OLD") != 0;
       float yaw = W.homer.camYaw, r = atan2f(p.x - W.homer.x, p.z - W.homer.z) - yaw;
       if (verbose && f % 60 == 0) printf("    пешком t=%.0f Гомер %.2f %.2f %.2f -> цель %.1f %.1f  dist %.2f camYaw %.2f state %d\n", f / 60.f, W.homer.x, W.homer.y, W.homer.z, p.x, p.z, dist, yaw, W.homer.state);
       if (verbose && f % 300 == 0 && (rt->obj == MSN_OBJ_BUYCAR || rt->obj == MSN_OBJ_BUYSKIN)) for (int si = 0; si < M->shop.nseller; si++) printf("    продавец %s %.2f %.2f %.2f до Гомера %.2f радиус %.2f\n", M->shop.seller[si].npc, M->shop.seller[si].x, M->shop.seller[si].y, M->shop.seller[si].z, hypotf(M->shop.seller[si].x - W.homer.x, M->shop.seller[si].z - W.homer.z), M->shop.seller[si].radius);
@@ -780,7 +781,8 @@ static Out playMission(int mi, float secs) {
       unsigned b = (f % 30) == 0 && (dist < 1.5f || gameMsnWantsMissionAction(&W.msn) || (buy && gameMsnWantsAction(&W.msn))) ? GP_TRIANGLE : 0;
       if (gameShopOpen(&W.msn) >= 0 && (f % 30) == 0) b = buy ? GP_CROSS : GP_CIRCLE;   // лавка: Purchase (X) для этапа «купи», иначе отказ (○)
       if (dist > 3.f) b |= GP_CIRCLE;   // далеко — бегом, как игрок (○ DASH / SPRINT, ControllerPS2.pag); у цели — шагом
-      if (grid && fnN && sideT <= 0.f && (f % 45) == 0 && W.homer.grounded && stillT > .6f) b |= GP_CROSS;   // упор на пути footnav: прыжок ✕ через низкую преграду (забор 1,5 м)
+      if (((grid && fnN) || (!sjOff && dist < 40.f)) && sideT <= 0.f && (f % 45) == 0 && W.homer.grounded && stillT > .6f) b |= GP_CROSS;   // упор на пути footnav: прыжок ✕ через низкую преграду (забор 1,5 м)
+      // 07.11 (Данные-93, разбор L1 m4): тот же прыжок ✕ и на коротком пешем пути (цель ближе 40 м, footnav не берёт): Гомер упирался в низкую преграду в «кармане» рабочего места 200 с. MISSIONER_SHORTJUMP_OLD=1 — как было (красный контроль: L1 m4 застревает)
       if (kick) { b = W.homer.grounded && (f % 42) == 0 ? GP_SQUARE : 0; bestT = f / 60.f; }   // бьёт — не «застрял»
       step(b, -sinf(r), -cosf(r));   // стик относительно камеры: вправо камеры = −x при курсе 0 (ось z отзеркалена)
     }

@@ -1,0 +1,21 @@
+# Будка-93 (1258): сторож вечного ириса. flag irisdt0 1 - ирису отдаётся dt = 0 (как в модальном экране): раскрытие не идёт. Зелёное: через ~8 с строка WATCHDOG iris stuck и ирис раскрыт (IRIS phase=open).
+# Красное (flag irisstuck1258 0): ирис стоит закрытым до конца сценария.
+scene C_BOOT
+flag cfgdefaults 1
+wait 6
+scene L4_load
+flag golevel 4
+wait 45
+scene KwikEMart_door
+foot 213.91 299.04 0.0 5.56
+wait 2
+press up 0.5
+wait 0.4
+flag irisdt0 1
+flag irisstuck1258 SW
+press triangle 0.2
+wait 16
+shot after_stuck
+flag irisdt0 0
+wait 6
+end

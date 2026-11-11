@@ -1,0 +1,19 @@
+# карточка брифинга с описанием в 3 строки (при 2 допустимых): L1 sr1 (mi 8), sr2 (mi 9), bm1 (mi 12)
+scene CARD3_L1
+flag msn
+flag brtrace
+wait 1
+flag msnmainat 800
+wait 12
+shot c8
+press cross 0.2
+wait 4
+flag msnmainat 1200
+wait 12
+shot c12
+press cross 0.2
+wait 4
+flag msnmainat 300
+wait 12
+shot c3
+end

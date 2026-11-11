@@ -17,6 +17,7 @@ static const uint8_t *sfByte;      // байты поверхности (по ч
 static uint32_t sfN;
 static const uint8_t *sfNib;       // круг 4 (02.11.2026): тип поверхности из ОТДЕЛЬНОГО файла surf-l<N>.shr, по полубайту на треугольник (бит 3 = помещение, 0..2 тип)
 static const void *sfSec; static unsigned sfSecSz;   // секция COL1, к которой привязано (для проверки файла рядом)
+static uint32_t sfRingFp, sfRingNtri;   // Коллизия-96: привязка к кольцу (COL1 целиком в памяти нет): отпечаток и число треугольников из заголовка colring.shr
 
 // Привязка к уровню: вызывается там же, где colInit (main_levels.h levelColAdopt), section — тот же буфер, что отдан colInit.
 // Старые level.shr (без SRF1) и битый блок: sfByte = NULL, svSurfaceAt отвечает «дорога».
@@ -35,7 +36,15 @@ void svSurfaceBind(const ColWorld *w, const void *section, unsigned size) {
   sfByte = b + 16; sfN = v[1];
 }
 
-void svSurfaceFree(void) { sfW = 0; sfByte = 0; sfN = 0; sfNib = 0; sfSec = 0; sfSecSz = 0; }
+void svSurfaceFree(void) { sfW = 0; sfByte = 0; sfN = 0; sfNib = 0; sfSec = 0; sfSecSz = 0; sfRingFp = sfRingNtri = 0; }
+// Коллизия-96: то же, что svSurfaceBind, но COL1 в памяти нет — блок SRF1 (если был) лежит резидентно в файле кольца, отпечаток посчитан сборщиком по тому же алгоритму
+void svSurfaceBindRing(const ColWorld *w, const void *srf, unsigned srfLen, uint32_t fp, uint32_t ntri) {
+  sfW = w; sfByte = 0; sfN = 0; sfNib = 0; sfSec = 0; sfSecSz = 0; sfRingFp = fp; sfRingNtri = ntri;
+  if (SURFACE_OLD || !w || !srf || srfLen < 16 + ntri || memcmp(srf, "SRF1", 4)) return;
+  uint32_t v[3]; memcpy(v, (const uint8_t *)srf + 4, 12);
+  if (v[0] != 1 || v[1] != ntri) return;
+  sfByte = (const uint8_t *)srf + 16; sfN = v[1];
+}
 
 // Круг 4: уровни TEST81 собраны другим рецептом, блока SRF1 в их COL1 нет, а менять COL1 нельзя (хеш проб машин миссий, mcpr.shr). Поэтому
 // те же данные лежат рядом с уровнем, в файле surf-l<N>.shr (tools/sv_overlay.py): 'SRFS', u32 версия 1, u32 число треугольников, u32 отпечаток
@@ -55,10 +64,12 @@ uint32_t svSurfaceFingerprint(const void *section, unsigned size) {
 }
 // side — прочитанный файл рядом с уровнем (вызывающий держит его до svSurfaceFree). 1 — принят, 0 — не подходит (чужой уровень, битый) -> «дорога»
 int svSurfaceSide(const void *side, unsigned n) {
-  if (SURFACE_OLD || !sfW || !sfSec || sfByte || !side || n < 16 || memcmp(side, "SRFS", 4)) return 0;
+  if (SURFACE_OLD || !sfW || !(sfSec || sfRingFp) || sfByte || !side || n < 16 || memcmp(side, "SRFS", 4)) return 0;
   uint32_t v[3]; memcpy(v, (const uint8_t *)side + 4, 12);
-  const ColHdr *h = (const ColHdr *)sfSec;
-  if (v[0] != 1 || v[1] != h->ntri || v[2] != svSurfaceFingerprint(sfSec, sfSecSz) || 16 + ((uint64_t)v[1] + 1) / 2 > n) return 0;
+  if (sfSec) {
+    const ColHdr *h = (const ColHdr *)sfSec;
+    if (v[0] != 1 || v[1] != h->ntri || v[2] != svSurfaceFingerprint(sfSec, sfSecSz) || 16 + ((uint64_t)v[1] + 1) / 2 > n) return 0;
+  } else if (v[0] != 1 || v[1] != sfRingNtri || v[2] != sfRingFp || 16 + ((uint64_t)v[1] + 1) / 2 > n) return 0;   // кольцо: отпечаток из заголовка файла кольца
   sfNib = (const uint8_t *)side + 16; sfN = v[1];
   return 1;
 }

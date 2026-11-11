@@ -1,0 +1,84 @@
+# №1261: фазы пульса — максимум (0) и минимум (π), те же места, что у PS2
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GLOW
+flag camdet 1
+flag stop
+goto 234.60 162.30 -0.263
+wait 4
+flag glowphase 0
+wait 0.3
+shot house_21m_max
+flag glowphase 3.14
+wait 0.3
+shot house_21m_min
+flag glowphase 1.5
+wait 0.3
+shot house_21m_mid
+flag glow1261old 1
+wait 0.3
+shot house_21m_off
+flag glow1261old 0
+goto 232.40 170.70 -0.268
+wait 4
+flag glowphase 0
+wait 0.3
+shot house_13m_max
+flag glowphase 3.14
+wait 0.3
+shot house_13m_min
+flag glowphase 1.5
+wait 0.3
+shot house_13m_mid
+flag glow1261old 1
+wait 0.3
+shot house_13m_off
+flag glow1261old 0
+goto 225.90 275.40 -0.426
+wait 4
+flag glowphase 0
+wait 0.3
+shot kwik_29m_max
+flag glowphase 3.14
+wait 0.3
+shot kwik_29m_min
+flag glowphase 1.5
+wait 0.3
+shot kwik_29m_mid
+flag glow1261old 1
+wait 0.3
+shot kwik_29m_off
+flag glow1261old 0
+goto 214.00 289.00 -0.002
+wait 4
+flag glowphase 0
+wait 0.3
+shot kwik_13m_max
+flag glowphase 3.14
+wait 0.3
+shot kwik_13m_min
+flag glowphase 1.5
+wait 0.3
+shot kwik_13m_mid
+flag glow1261old 1
+wait 0.3
+shot kwik_13m_off
+flag glow1261old 0
+goto 230.40 157.50 2.112
+wait 4
+flag glowphase 0
+wait 0.3
+shot booth_8m_max
+flag glowphase 3.14
+wait 0.3
+shot booth_8m_min
+flag glowphase 1.5
+wait 0.3
+shot booth_8m_mid
+flag glow1261old 1
+wait 0.3
+shot booth_8m_off
+flag glow1261old 0
+end

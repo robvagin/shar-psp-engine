@@ -239,14 +239,52 @@ int (*transitHoldHook)(void);
 int transitHoldGate;   // 1 — шаг ириса зовёт игровой цикл (мир идёт): только тогда ирис ждёт героя; в меню Гомер не шагает и ожидание не кончилось бы
 void (*transitHoldNote)(const char *line);   // строка в чёрный ящик (main_frontend.h bbNote)
 static float holdT; static int holdWhy;
+float transitHoldElapsed(void) { return holdT; }   // Будка-93 (1257): сколько секунд ирис уже держат (крючок main_state.h не держит гэгами дольше потолка)
 static void holdEnd(void) {   // строка события (не кадра): сколько ирис продержали и почему
   if (holdT <= 0.f) return;
-  char s[120]; snprintf(s, sizeof s, "SPAWNHOLD ms=%.0f why=%s iris=%s t=%.2f\n", holdT * 1000.f, holdWhy == 2 ? "scene" : "ground", T.why ? T.why : "-", T.clock ? *T.clock : 0.f);
+  char s[120]; snprintf(s, sizeof s, "SPAWNHOLD ms=%.0f why=%s iris=%s t=%.2f\n", holdT * 1000.f, holdWhy == 3 ? "gag" : holdWhy == 2 ? "scene" : "ground", T.why ? T.why : "-", T.clock ? *T.clock : 0.f);
   if (T.log) T.log(s);
   if (transitHoldNote) transitHoldNote(s);
   holdT = 0.f;
 }
+// Будка-93 (1258, Инспектор: L5 m1 getin, IRIS why=seat закрылся и не открылся 10658 кадров): по канону п.12/14 вечного чёрного экрана нет. Сторож по часам стены (не по dt, который в модальном экране 0):
+// ирис держится на месте раскрытия или в закрытом (T.f <= fOpen) дольше IRISSTUCK1258_S секунд подряд кадров (разрыв > 0,5 с - блокирующая загрузка - счёт заново) - строка WATCHDOG iris stuck и честное
+// раскрытие (в том числе при dt = 0). Не считается: ирис «msn» (стоит закрытым под карточкой брифинга по замыслу, №625), пауза и брифинг (transitStuckExempt). IRISSTUCK1258_OLD=1 / файл irisstuck1258old / flag irisstuck1258 0 - сторожа нет
+#ifndef IRISSTUCK1258_OLD
+#define IRISSTUCK1258_OLD 0
+#endif
+#ifndef IRISSTUCK1258_S
+#define IRISSTUCK1258_S 8.f
+#endif
+int irisStuck1258Old = IRISSTUCK1258_OLD; unsigned irisStuck1258N; int (*transitStuckExempt)(void); const char *(*transitStuckInfo)(void); static unsigned stuckT0, stuckLast; static int stuckForce;
+static void stuckWatch(float dt) {
+  if (irisStuck1258Old || !T.active || T.mode != 0) { stuckT0 = 0; return; }
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (T.f > T.fOpen + 1e-3f || !transitHoldGate || (T.why && !strcmp(T.why, "msn")) || (transitStuckExempt && transitStuckExempt())) { stuckT0 = 0; stuckLast = now; return; }
+  if (!stuckT0 || now - stuckLast > 500000u) stuckT0 = now;
+  stuckLast = now;
+  if (now - stuckT0 > (unsigned)(IRISSTUCK1258_S * 1e6f)) {
+    char s[200]; snprintf(s, sizeof s, "WATCHDOG iris stuck why=%s f=%.2f open=%.2f hold=%d holdT=%.1f dt=%.3f state=%s t=%.2f\n", T.why ? T.why : "-", T.f, T.fOpen, transitHoldHook ? transitHoldHook() : -1, holdT, dt, transitStuckInfo ? transitStuckInfo() : "-", T.clock ? *T.clock : 0.f);
+    if (T.log) T.log(s); if (transitHoldNote) transitHoldNote(s);
+    irisStuck1258N++; holdT = 0.f; T.f = T.fOpen + 0.02f; stuckForce = 1; stuckT0 = 0;
+  }
+}
+// Будка-93 (1259, корень вечного ириса Инспектора на L5 m1 getin): △ закрыл ирис посадки, в тот же кадр миссия провалена («Failed to follow vehicle») - экран провала (MissionOver, мир стоит, dt = 0) оказывался
+// ПОД закрытым ирисом: ирис не раскрывался (его шаг идёт по dt), экран не виден, ответ не дать. Канон п.14: переход не держит экран, пока открыт модальный экран, который игрок обязан видеть - ирис снимается.
+// Вызывает main_loop.h на экране провала. IRISMODAL1259_OLD=1 / файл irismodal1259old / flag irismodal1259 0 - как было
+#ifndef IRISMODAL1259_OLD
+#define IRISMODAL1259_OLD 0
+#endif
+int irisModal1259Old = IRISMODAL1259_OLD;
+int transitDropModal1259(void) {
+  if (irisModal1259Old || !T.active || T.mode != 0 || (T.why && !strcmp(T.why, "msn"))) return 0;
+  T.active = 0; holdEnd(); stuckT0 = 0; stuckForce = 0; logFrame("skip", T.f, 1.f);
+  if (T.log) { char s[120]; snprintf(s, sizeof s, "IRISMODAL1259 why=%s f=%.2f t=%.2f\n", T.why ? T.why : "-", T.f, T.clock ? *T.clock : 0.f); T.log(s); }
+  return 1;
+}
 void transitStep(float dt) {
+  stuckWatch(dt);
+  if (stuckForce) { if (dt < 1.f / 60.f) dt = 1.f / 60.f; if (!T.active) stuckForce = 0; }   // после срабатывания раскрытие идёт и при dt = 0 (модальный экран)
   if (!IRIS_LOADING_OLD) { if (T.active && transitFullyClosed()) blackT += dt; else blackT = 0.f; }
   if (!T.active) return;
   if (T.mode == 1) {   // правка 349: чёрный после затемнения, затем картинка сразу

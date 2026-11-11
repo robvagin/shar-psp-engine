@@ -9,7 +9,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"; SET="$1"; OUT="$2"; shift 2; LV="${*:-
 mkdir -p "$OUT"; SCN="$(mktemp -d)"
 for n in $LV; do
   printf 'flag level %s\nscene bake%s\nwait 14\nend\n' "$n" "$n" > "$SCN/l$n.txt"
-  SHIP_LEVELS="2 3 4 5 6 7" SMOKE_HEADLESS=1 SMOKE_FILEDATA="meaudio=3" SMOKE_FLAGS="texbakedump" SMOKE_SCN="$SCN/l$n.txt" SMOKE_MAXT="${SMOKE_MAXT:-600}" "$ROOT/tools/smoke.sh" "$SET" >"$SCN/run$n.log" 2>&1 || true
+  # 09.11 (Публичный-93): ключ записи несёт flatFromFile и метки notoon (tstat[4]); печь без flat912.bin/notoon.txt (smoke.sh берёт их не из SET) давала ключи, которые на PSP не совпали ни у одной текстуры L2-L7 (тур 100: used=0 miss=все)
+  EX=""; for f in flat912.bin marks912.bin notoon.txt zones1007.bin zones1007p.bin; do if [ "$n" = 1 ]; then q="$f"; else q="l$n/$f"; fi; [ -f "$SET/$q" ] && EX="$EX $q"; done
+  SMOKE_EXTRA="$EX" SHIP_LEVELS="2 3 4 5 6 7" SMOKE_HEADLESS=1 SMOKE_FILEDATA="meaudio=3" SMOKE_FLAGS="texbakedump" SMOKE_SCN="$SCN/l$n.txt" SMOKE_MAXT="${SMOKE_MAXT:-600}" "$ROOT/tools/smoke.sh" "$SET" >"$SCN/run$n.log" 2>&1 || true
   d=$(sed -n 's/^отчёт: \(.*\)\/summary.txt.*/\1/p' "$SCN/run$n.log" | tail -1); case "$d" in /*) ;; *) d="$ROOT/$d" ;; esac   # папка своего прогона (параллельные прогоны)
   if [ -f "$d/texbake_L$n.out" ]; then mkdir -p "$OUT/l$n"; cp "$d/texbake_L$n.out" "$OUT/l$n/texbake.shr"; echo "L$n: $(wc -c < "$OUT/l$n/texbake.shr") байт; $(grep -a '^TEXBAKE' "$d/smoke.txt" | head -1)"; else echo "L$n: НЕТ texbake_L$n.out (см. $d)"; fi
 done

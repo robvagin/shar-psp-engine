@@ -1,0 +1,10 @@
+scene UF_6
+flag golevel 6
+wait 20
+flag player 1
+flag msn
+wait 8
+flag cardinfo96 0
+flag uifit
+wait 2
+end

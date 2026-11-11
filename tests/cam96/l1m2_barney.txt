@@ -1,0 +1,30 @@
+# L1 m2: продавец Барни взят миссией (AddNPC barney m2_barney): место разговора идёт за ним, не остаётся на barney_loc
+scene L1M2_BARNEY
+flag golevel 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 2
+wait 4
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+flag msnpass 1
+wait 2.5
+wait 6
+shot b0
+end

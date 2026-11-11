@@ -1,0 +1,42 @@
+# №1245: RESUME GAME: в ПОСЛЕДНЕМ кадре перелёта камеры к телевизору (он держится на экране, пока грузится игра) нет заголовка меню со стрелками. «flag tvflyend 1» — служебно: снимок TV_flyend сразу после последнего кадра перелёта «туда»; «flag tvlastold 1» (строка TVLASTOLD) — прежнее (красный контроль)
+flag menu
+flag saves
+wait 1.5
+press right
+wait 0.6
+press cross 0.2
+wait 3
+press cross 0.2
+wait 1.5
+press up 0.2
+wait 0.5
+press cross 0.2
+wait 4
+press cross 0.2
+wait 4
+scene TV_resume
+shot F_00
+TVLASTOLD
+flag tvflyend 1
+press cross 0.2
+shot F_01
+wait 0.1
+shot F_02
+wait 0.1
+shot F_03
+wait 0.1
+shot F_04
+wait 0.1
+shot F_05
+wait 0.1
+shot F_06
+wait 0.1
+shot F_07
+wait 0.1
+shot F_08
+wait 0.1
+shot F_09
+wait 0.1
+shot F_10
+wait 4
+end

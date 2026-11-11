@@ -29,6 +29,30 @@ _Static_assert(sizeof(SpInst) == 32, "SpInst");
 #ifndef BUSHMID1101_OLD
 #define BUSHMID1101_OLD 0
 #endif
+// №1248 (Роб, Build 97, L7 G5-2: «заехал и не могу выехать, как в яме»; принцип доводки п.4: «для кустов мягкая реакция с возможностью выехать/отскочить»): четыре куста-шара стоят на оси тупикового съезда,
+// а медленнее BUSH_PASS_V куст был стеной — машина, встав между ними, выехать не могла. Теперь у НИЗКОГО круглого куста (все объёмы типа — шар или цилиндр, коробка кусков не выше BUSH_SOFT_H; либо куст по данным ATC 10 с массой) при входе
+// медленнее порога (и при остановке) машина продавливается сквозь без выталкивания и отскока, скорость внутри куста не выше BUSH_SOFT_V (мягкое торможение, BUSH_SOFT_K за кадр). Быстрее порога правило №1101
+// не меняется (−60 % на первом, −25 % на следующих). Коробки, столбы, стволы и стены мира (COL1) не затронуты. BUSHSOFT1248_OLD=1 — прежнее (медленно куст как стена)
+#ifndef BUSHSOFT1248_OLD
+#define BUSHSOFT1248_OLD 0
+#endif
+#define BUSH_SOFT_V 3.5f
+#define BUSH_SOFT_K 0.15f
+#define BUSH_SOFT_H 1.5f
+// №1248е (Роб: L7 G5-2, «машину тормозит и застреваешь из-за решётки/барабана на полу»; дирижёр): четыре стейтпропа типа 76 в неглубокой чаше двора (−0,19 м; (−32; −297), cls 2 = неподвижный проп в оригинале) в начальном состоянии
+// не рисуют НИЧЕГО (vis = 0, окон fx нет; рисуются они только в состоянии 1, оно из данных не включается), а объёмы коллизии — два цилиндра r 0,97 и 0,36 — стоят: невидимые «барабаны» тормозили машину (куст-шар по правилу №1101, потолок 3,5 м/с с №1248б).
+// Закон Роба (1223): невидимой для игрока коллизии быть не может, твёрдость по тому же условию, что рисунок. Объёмы стейтпропа, у которого в ТЕКУЩЕМ состоянии не рисуется ни один слот (и нет окон fx), машину не трогают; включится рисунок — включится и твёрдость.
+// Исключение: состояние с событием, вызовом или автопереходом (L2 тип 5, L5 тип 9, L1 тип 9 — удар машины включает рисунок: объём и есть датчик удара) твёрдость сохраняет.
+// Семейство (pocket … invisp): отпускает только L7 тип 76 ×4. SPINVIS1248_OLD=1 — прежнее
+#ifndef SPINVIS1248_OLD
+#define SPINVIS1248_OLD 0
+#endif
+static int spBushSoftType(const StateProps *sp, const SpType *T) {
+  if (T->cls != 2 || !T->nCol || T->h[1] > BUSH_SOFT_H) return 0;
+  if (T->atc == 10 && T->mass > 0.f) return 1;   // куст по данным (звук hit_shrub, масса 5), в том числе с достроенным телом-коробкой (isBushType)
+  for (unsigned k = 0; k < T->nCol; k++) { const int kd = sp->col[T->firstCol + k].kind; if (kd != 1 && kd != 2) return 0; }
+  return 1;
+}
 #define BUSH_PASS_V 7.0f
 #define BUSH_BRAKE 0.6f
 #define BUSH_PASS_T 1.0f        // с: после прохода куста следующий в ряду (кусты стоят рядами) тоже продавливается...
@@ -160,8 +184,9 @@ int spInitResident(StateProps *sp, const void *section, unsigned size, int detac
                         nstate * 80u, nevent * 4u, ncall * 8u, ncol * 64u, nbill * 40u, ninst * 32u, ndyn, nname * 32u};
   const unsigned char *ptr[15]; unsigned off = 64;
   for (int k = 0; k < 15; k++) {
-    if (!(k == 5 && detachedKeys) && (uint64_t)off + sizes[k] > size) return -4;
-    if (k == 5 && detachedKeys) { ptr[k] = NULL; continue; }
+    int det_ = (k == 5 && (detachedKeys & 1)) || (k == 0 && (detachedKeys & 2));   // COLLSPLIT: бит 1 - ключи вне блока, бит 2 - вершины вне блока (грузятся по типу)
+    if (!det_ && (uint64_t)off + sizes[k] > size) return -4;
+    if (det_) { ptr[k] = NULL; continue; }
     ptr[k] = h + off; off = ALIGN16(off + sizes[k]);
   }
   sp->vertBase = ptr[0]; sp->idxBase = (const unsigned short *)ptr[1];
@@ -836,6 +861,7 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
   float rad = sqrtf(T->h[0] * T->h[0] + T->h[1] * T->h[1] + T->h[2] * T->h[2]) + 1.f;
   float dx = c[0] - cb->x, dz = c[2] - cb->z, rr = rad + cb->hl + cb->hw;
   if (dx * dx + dz * dz > rr * rr) return;
+  { const SpState *S0 = ST(sp, i); if (!SPINVIS1248_OLD && !T->kind && !stAny(sp, T, S0) && !S0->nFx && !S0->nEvent && !S0->nCall && S0->autoTo == 0xFF) return; }   // №1248е: в этом состоянии ничего не рисуется и оно ни во что не перейдёт (нет событий, вызовов, автоперехода) — твёрдости нет
   int touched = 0; float bn[2] = {0, 0}, bd = 0.f, bimp = 0.f;
   // круг 5 (g11, P11 Д2 / P12-12): объём типа со следованием едет за суставом (только сдвиг, без поворота): текущая позиция сустава минус позиция в кадре 0. SPFOLLOW_SV_OLD=1 — объёмы стоят
 #ifndef SPFOLLOW_SV_OLD
@@ -976,6 +1002,12 @@ static void carContact(StateProps *sp, unsigned i, const ColWorld *world, Car *c
       const int chain = car->bushPassT > 0.f;
       r->bushPass = (hypotf(car->vel[0], car->vel[2]) >= (chain ? BUSH_PASS_V_CHAIN : BUSH_PASS_V));   // по скорости машины, а не по нормальной составляющей: бортом скорость та же
       if (r->bushPass) { const float kb = chain ? BUSH_BRAKE_CHAIN : BUSH_BRAKE; car->vel[0] *= 1.f - kb; car->vel[2] *= 1.f - kb; car->v *= 1.f - kb; car->bushPassT = BUSH_PASS_T; }
+      else if (!BUSHSOFT1248_OLD && spBushSoftType(sp, T)) r->bushPass = 2;   // №1248: медленно — мягко сквозь
+    }
+    if (r->bushPass == 2) {   // №1248: потолок скорости внутри куста, без выталкивания
+      float sv = hypotf(car->vel[0], car->vel[2]);
+      if (sv > BUSH_SOFT_V) { const float k = fmaxf(BUSH_SOFT_V / sv, 1.f - BUSH_SOFT_K); car->vel[0] *= k; car->vel[2] *= k; car->v *= k; }
+      return;
     }
     if (r->bushPass) return;   // продавливает: без выталкивания и отскока
   }

@@ -215,6 +215,8 @@ static void bnsFlag(const SmokeCmd *sc) {
   else if (!strcmp(sc->name, "bonuscode")) bnsCodeOn = sc->a != 0.f;   // №1185
   else if (!strcmp(sc->name, "bonusveh")) { int n = (int)sc->a; if (n >= 0 && n < BNS_NVEH) bsel.veh = n; }   // служебное: машина игрока по номеру в списке bnsVeh
   else if (!strcmp(sc->name, "bonusfrag")) fragHeapMB = (unsigned)sc->a;   // №1167 тест: куча раздроблена до N МБ наибольшего куска перед загрузкой трассы (как у Роба после долгой игры; main_levels.h fragHeap)
+  else if (!strcmp(sc->name, "tfbonusfail")) tfFailBonus = (int)sc->a;   /* Build 96 служебно: отказ памяти на BONUS (меню бонус-игры читает флаги само) */
+  else if (!strcmp(sc->name, "tfmenufail")) tfFailMenu = (int)sc->a;   /* Build 96 служебно: отказ чтения гостиной при выходе из бонус-игры */
   else if (!strcmp(sc->name, "bonusopen")) { bonusSvcAll = 1; bonusOpenSet(bonusOpen, "scenario"); }   /* только включает: «flag bonusopen» без числа раньше выключал */   // и пункт MINI GAME главного меню включается сразу (в туре меню уже построено серым)   // №1168: все трассы открыты и из сценария (прежде — только файлом bonusopen рядом с EBOOT)
   else if (!strcmp(sc->name, "bonusagain")) bnsAgainYes = (int)sc->a;   // круг 6: сколько раз в смоуке ответить «RACE AGAIN?» — ДА (серия очков должна жить между заездами)
 }
@@ -495,7 +497,12 @@ static void bnsLoadOut(void **fbp, int ok) {   // чтение кончилос�
 }
 static int bnsLoad0(void **fbp, int fe);
 static int bnsLoad1(void **fbp);
-static int bnsLoad(void **fbp) { unsigned t0_ = sceKernelGetSystemTimeLow(); int r_ = bnsLoad1(fbp); xnEnd("bonus_load", t0_, (int)gameLevel); return r_; }   // №1206: время перехода
+static int bnsLoad(void **fbp) {   // №1206: время перехода; Build 95 П2: класс BONUS виден машине переходов (TFSM bonus ...: при отказе simplify и WATCHDOG, не только строка BONUS ev=)
+  unsigned t0_ = sceKernelGetSystemTimeLow(); Transit tb_; memset(&tb_, 0, sizeof tb_); tb_.name = "bonus"; tb_.screen = TFS_NEWS; tb_.need = 2u << 20;
+  if (!tfsm95Old) tfExtBegin(&tb_);
+  int r_ = (!tfsm95Old && tfFailBonus > 0) ? (tfFailBonus--, 0) : bnsLoad1(fbp); xnEnd("bonus_load", t0_, (int)gameLevel);
+  if (!tfsm95Old) tfExtEnd(&tb_, r_);
+  return r_; }
 static int bnsLoad1(void **fbp) {
   if (BONUSLOAD1168_OLD) return bnsLoad0(fbp, 0);
   mem1060Fade(fbp);   // меню (или «RACE AGAIN?») гаснет, не обрывается
@@ -524,8 +531,13 @@ static int bnsLoad0(void **fbp, int fe) {
   if(!BONUS_SOUND_OLD){sndShutdown();sndLevel=-1;} // track is an audio namespace, even when previous level wasL1
   levelLoad(fbp); gameLevel = keepLevel;
   if (!haveCol) { snprintf(s, sizeof s, "BONUS ev=load bad=col track=%d t=%.1f\n", bsel.track, smkT); bnsLog(s); return 0; }
+  if (bonusShrink107) {   // Лестница-96 (блокер 102, канон п.14): трасса целиком идёт в память напрямую (ниже), поэтому до чтения отцепляем пустые области Z3 (город/место/миссия), если кучи не хватает; иначе они держат ~10 МБ и бонус даёт MEMFAIL
+    unsigned need_ = 2u << 20, hf_ = heapFreeBytes(); for (unsigned i = 0; i < ncell; i++) if (!cl[i].owner && !cl[i].state) need_ += cl[i].size;
+    int g_ = 0; for (; g_ < 4 && hf_ < need_; g_++) { unsigned fr_ = zone3ShrinkX(1, "bonus"); if (!fr_) break; hf_ += fr_; }
+    if (smkOn) { char l_[140]; snprintf(l_, sizeof l_, "BONUS ev=mem track=%d need_kb=%u heap_kb=%u->%u shrink=%d t=%.1f\n", bsel.track, need_ >> 10, (unsigned)(hf_ - 0) >> 10, heapFreeBytes() >> 10, g_, smkT); bnsLog(l_); }
+  }
   float c[3] = {spawnP[0], spawnP[1], spawnP[2]}; int cells = cellsRingAt(c, ldOn ? 1 : 0, fbp);   // трасса целиком (100–250 м) — до первого кадра
-  for (unsigned i = 0; i < ncell; i++) if (!cl[i].state) { SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); loadCell(fd, i); sceIoClose(fd); cells++; if (ldOn) loadPump(); }
+  for (unsigned i = 0; i < ncell; i++) if (!cl[i].state) { cl[i].wantFar = 0; SceUID fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); loadCell(fd, i); sceIoClose(fd); cells++; if (ldOn) loadPump(); }
   snprintf(s, sizeof s, "BONUS ev=load track=%d cells=%d ncell=%u col=%d ms=%.0f heap=%u t=%.1f\n", bsel.track, cells, ncell, haveCol,
            (sceKernelGetSystemTimeLow() - t0) / 1000.f, heapFreeBytes(), smkT); bnsLog(s);
   return 1;

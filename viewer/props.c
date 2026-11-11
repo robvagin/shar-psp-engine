@@ -745,6 +745,19 @@ void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt) {
 int bench1034 = !BENCH1034_OLD;
 #define PROP_HOMER_WIDE 1.6f   // м: скамейки 1,25, баки 1,27, ящики 0,9–1,2; кроны и большие щиты шире, их тут нет (hy > 1.2 или полуширина больше)
 #define PROP_HOMER_THICK .3f
+// №1224 (Роб, TEST93, L4 E7-2: «прошли сквозь стекло»; закон: целое стекло — стена, разбитое — проход): стёкла-пропы (обломок 19, Krusty glass; L1–L7 всего 68) шире
+// PROP_HOMER_MAXHALF и выше 1,2 м, поэтому для Гомера пешком были пустыми — он шёл сквозь целое стекло. Теперь, пока стекло не разбито (hidden=0), оно твёрдое для Гомера;
+// пинок/стомп его бьют как и раньше (game.c, gamePropKick), после этого hidden=1 и проход свободен. Тонкая плоскость: меньшая из полуширин < 0,5 м.
+// GLASS1224_OLD=1 / glassSolid1224 = 0 — как было (красный контроль tools/bots/glasshit.c)
+#ifndef GLASS1224_OLD
+#define GLASS1224_OLD 0
+#endif
+int glassSolid1224 = !GLASS1224_OLD;
+static int homerSolidGlass(const Props *p, unsigned i, const PropState *st) {
+  if (!glassSolid1224 || st->hidden || fminf(st->hx, st->hz) >= .5f) return 0;
+  int part, brk; propsTypeFx(p, p->def[i].type, &part, &brk);
+  return brk == 19;
+}
 static int homerSolidSize(const PropState *st) {
   float w = fmaxf(st->hx, st->hz);
   if (st->hy > 1.2f) return 0;
@@ -770,7 +783,7 @@ int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float 
     for (unsigned i = 0; i < p->ninst; i++) {
       const PropState *st = &p->st[i];
       if (st->hidden) continue;
-      if (!homerSolidSize(st)) continue;
+      if (!homerSolidSize(st) && !homerSolidGlass(p, i, st)) continue;
       float br = sqrtf(st->hx * st->hx + st->hy * st->hy + st->hz * st->hz) + r + .3f + PS_CACHE_M, dx = *x - st->x, dz = *z - st->z;
       if (dx * dx + dz * dz > br * br) continue;
       if (cacheN >= PS_CACHE_MAX) { cacheOk = 0; break; }
@@ -782,7 +795,7 @@ int propsSolidHomer(const Props *p, float *x, float *z, float y, float r, float 
     unsigned i = useCache ? cacheList[q] : q;
     const PropState *st = &p->st[i];
     if (st->hidden) continue;
-    if (!homerSolidSize(st)) continue;   // деревья, щиты, большие знаки — их коробка шире ствола/стойки
+    if (!homerSolidSize(st) && !homerSolidGlass(p, i, st)) continue;   // деревья, щиты, большие знаки — их коробка шире ствола/стойки; целое стекло (№1224) твёрдое
     float h[3] = {st->hx, st->hy, st->hz}, br = sqrtf(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]) + r + .3f;
     float dx = *x - st->x, dz = *z - st->z;
     if (dx * dx + dz * dz > br * br) continue;

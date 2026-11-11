@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(sharview C)
-add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c watchdog.c watchdog_game.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c)
+add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c watchdog.c watchdog_game.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c zone3.c)
 
 # TEST93 (Данные-93, C2): список обязательных файлов набора для проверки полноты при старте (viewer/setcheck.h) генерируется из tools/ship_files.sh
 # (tools/gen_setfiles.sh -> viewer/setfiles.inc); пересчёт — когда изменились правила выпуска или сам скрипт. Нет bash/ошибка — остаётся закоммиченный файл
@@ -37,13 +37,15 @@ if(SHAR_OPT_COLD)
   endforeach()
 endif()
 
+# №1261: +10 КБ кода (свечение дверей, CARDGAP) возвращены без изменения вида: холодные экраны (брифинги миссий, меню сохранений) всегда -Os, это −18 КБ (замер objs: msn_view −12,0, savemenu −6,0)
+set_source_files_properties(msn_view.c savemenu.c PROPERTIES COMPILE_OPTIONS "-Os")
 foreach(v SHAR_JITTER_DEFAULT SHAR_RELEASE SHAR_RELEASE_KEEP_DIAG SHAR_RELEASE_KEEP_HUD SHAR_RELEASE_KEEP_RESET SHAR_RELEASE_KEEP_SMOKE)
   if(${v})
     target_compile_definitions(sharview PRIVATE ${v}=1)
   endif()
 endforeach()
 # правка 103: учёт отказов памяти во всех модулях (viewer/memwatch.c)
-target_link_libraries(sharview "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=free,--wrap=sceIoClose")   # sceIoClose: ловушка 05.10 (main.c __wrap_sceIoClose)
+target_link_libraries(sharview "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=free,--wrap=_malloc_r,--wrap=_calloc_r,--wrap=_realloc_r,--wrap=_memalign_r,--wrap=_free_r,--wrap=sceIoClose,--wrap=sceGuStart")   # sceIoClose: ловушка 05.10 (main.c __wrap_sceIoClose)
 # правки 269/273/276, ступень 0 (проба Media Engine): сторона игры viewer/me/meprobe.c — только по флагу сценария «meprobe»;
 # модуль ядра sharme.prx (код ME, метод MIST, viewer/me/vendor — MIT) собирается отдельно: make -C viewer/me, правило в
 # tools/ship_rules.txt — как ловушка вылетов viewer/kexc
@@ -101,4 +103,13 @@ endif()
 if(MEM_SCRIBBLE)
   target_compile_definitions(sharview PRIVATE MEM_SCRIBBLE=1)
   target_link_options(sharview PRIVATE "-Wl,--wrap=free")
+endif()
+# Коллизия-96: COL1 кольцом (viewer/colring.c). С 08.11 ВКЛЮЧЕНО в сборке игры по умолчанию (доказательства: docs/handoff/КОЛЛИЗИЯ_КОЛЬЦО_ПЛАН_2026-11-08.md §9). -DSHAR_COLRING=OFF — прежний COL1 целиком; без файла colring.shr у уровня или с файлом colringold рядом с EBOOT
+# уровень читает COL1 целиком и так. Хост-тесты и боты (tools/bots, tests/*) собираются без кольца: col.h по умолчанию COLRING_OLD=1, кольцо проверено на них отдельно (tests/colring/run2.sh, BW_COLRING=auto)
+if(NOT DEFINED SHAR_COLRING)
+  set(SHAR_COLRING ON)
+endif()
+if(SHAR_COLRING)
+  target_sources(sharview PRIVATE colring.c)
+  target_compile_definitions(sharview PRIVATE COLRING_OLD=0)
 endif()

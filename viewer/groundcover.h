@@ -13,6 +13,9 @@ static void (*groundCoverPump)(void);
 static inline void groundCoverReset(GroundCover *g, const ColWorld *w) {
   g->ready=0; g->y=0;
   float bottom=1e30f;
+#if !COLRING_OLD
+  if(w&&w->ring){float ty=colMinTriY(w);if(ty<bottom)bottom=ty;}else   // Коллизия-96: в кольце нижняя точка земли — из заголовка файла
+#endif
   if(w)for(unsigned i=0;i<w->ntri;i++) {
     const ColTri *t=&w->tri[i]; if(groundCoverPump&&!(i&8191))groundCoverPump();
     for(int k=0;k<3;k++){const float*p=k==0?t->a:k==1?t->b:t->c;if(p[1]<bottom)bottom=p[1];}

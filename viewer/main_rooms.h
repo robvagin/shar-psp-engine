@@ -11,6 +11,7 @@
 #define ROOM_FAR_OLD 0
 #endif
 #define ROOM_FAR (ROOM_FAR_OLD ? 60.f : 300.f)
+static int roomPoint96(float x, float y, float z);
 static Rooms rooms; static RoomState rs = {-1, -1, 1, 0, 1, 0}; static char roomsMsg[96]; static int roomN;   // rs: правка 41 — вход/выход по △ (needAction; смоук doorwalk — прежнее)
 typedef struct { char name[32]; unsigned off, size; } RoomGfxEnt;
 static RoomGfxEnt rgEnt[ROOMS_MAX]; static int rgN, rgBad[ROOMS_MAX];   // таблица SHG1; rgBad — блоб комнаты битый, больше не пробуем
@@ -136,6 +137,7 @@ static void roomsLoad(void) {   // один раз после уровня: SHI1
     sceIoClose(f);
   }
   snprintf(roomsMsg, sizeof roomsMsg, "ROOMS pkg=ok rooms=%d doors=%d gfx=%d\n", rooms.nroom, rooms.ndoor, rgN);
+  homerRoomPointHook = roomPoint96;   // Build 96: комнаты загружены — старт миссии в доме идёт видом roomplace, не hold
 }
 // сверка g11b-collect круг 5 (P16-11): анимация текстур комнаты (экран автомата Kwik-E-Mart, помехи телевизора Moe's, огни обсерватории) — блок ANI1 в хвосте
 // блоба комнаты (tools/interior_export.py, подвал RAN1 в последних 16 байтах). Текстура-основа заменяется по часам: кадр = время x кадров/с по кругу длины записи,
@@ -146,9 +148,10 @@ static void roomsLoad(void) {   // один раз после уровня: SHI1
 #define ROOM_ANIMS 4
 #define ROOM_ANIM_KEYS 16
 typedef struct { int base; int nk; float len, fps; unsigned short fr[ROOM_ANIM_KEYS], tx[ROOM_ANIM_KEYS]; } RoomAnim;
-static RoomAnim roomAn[ROOM_ANIMS]; static int roomAnN; static unsigned roomAnT0;
+static RoomAnim roomAn[ROOM_ANIMS]; static int roomAnN; static unsigned roomAnT0; static int roomAnLog95;   // служебно: журнал смен ключа анимации текстур комнаты
 static void roomAnimParse(const unsigned char *m, unsigned sz, unsigned ntx) {
-  roomAnN = 0; if (ROOM_ANIM_OLD || sz < 16 + 128 || memcmp(m + sz - 16, "RAN1", 4)) return;
+  roomAnN = 0; if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "ROOMANIM parse sz=%u tail=%.4s\n", sz, sz >= 16 ? (const char *)(m + sz - 16) : "----"); smkWrite(l_); }
+  if (ROOM_ANIM_OLD || sz < 16 + 128 || memcmp(m + sz - 16, "RAN1", 4)) return;
   unsigned off = rdU(m + sz - 12), n = rdU(m + sz - 8);
   if (off + 8 > sz - 16 || n > ROOM_ANIMS || memcmp(m + off, "ANI1", 4)) return;
   const unsigned char *q = m + off + 8; const unsigned char *end = m + sz - 16;
@@ -160,15 +163,18 @@ static void roomAnimParse(const unsigned char *m, unsigned sz, unsigned ntx) {
     for (unsigned k = 0; k < nk; k++, q += 4) { a->fr[k] = (unsigned short)(q[0] | q[1] << 8); a->tx[k] = (unsigned short)(q[2] | q[3] << 8); if (a->tx[k] >= ntx) { roomAnN = 0; return; } }
     roomAnN++;
   }
-  roomAnT0 = sceKernelGetSystemTimeLow();
+  roomAnT0 = gtUs95();
+  if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "ROOMANIM parsed n=%d\n", roomAnN); smkWrite(l_); }
 }
 // номер текстуры куска комнаты с учётом анимации
 static int roomAnimTex(int t) {
   if (!roomAnN || t < RTEX0) return t;
-  float sec = (float)(sceKernelGetSystemTimeLow() - roomAnT0) * 1e-6f;
+  float sec = (float)(gtUs95() - roomAnT0) * 1e-6f;
+  if (smkOn && roomAnLog95) { static unsigned calls_, last_; static int lastSec_ = -1; calls_++; if ((int)sec != lastSec_) { lastSec_ = (int)sec; char l_[200]; snprintf(l_, sizeof l_, "ROOMANIM stat sec=%.2f smkT=%.2f lag=%.2f gt=%d calls=%u (+%u) n=%d\n", sec, smkT, smkT - sec, gtOn95, calls_, calls_ - last_, roomAnN); smkWrite(l_); last_ = calls_; } }
   for (int i = 0; i < roomAnN; i++) { const RoomAnim *a = &roomAn[i];
     if (t != RTEX0 + a->base) continue;
     float f = fmodf(sec * a->fps, a->len); int k = 0; for (int j = 0; j < a->nk; j++) if (a->fr[j] <= f) k = j;
+    if (smkOn && roomAnLog95) { static int lastK[ROOM_ANIMS] = {-1, -1, -1, -1}; static unsigned lastT[ROOM_ANIMS]; if (lastK[i] != k) { unsigned now_ = sceKernelGetSystemTimeLow(); char l_[120]; snprintf(l_, sizeof l_, "ROOMANIM t=%.3f anim=%d key=%d frame=%.2f tex=%d dt_ms=%.1f\n", smkT, i, k, f, a->tx[k], lastT[i] ? (now_ - lastT[i]) / 1000.f : 0.f); smkWrite(l_); lastK[i] = k; lastT[i] = now_; } }   // №1233/Kwik L4 служебно: смены ключа и интервал, flag roomanimlog 1
     return RTEX0 + a->tx[k]; }
   return t;
 }
@@ -228,7 +234,54 @@ static int footRoom1209Old;
 #endif
 static int footLowland1209Old = FOOTLOWLAND1209_OLD;
 static int roomOpen1(void *u, int room);
-static int roomOpen(void *u, int room) { unsigned t0_ = sceKernelGetSystemTimeLow(); int r_ = roomOpen1(u, room); xnEnd("room_in", t0_, room); return r_; }   // №1206: время перехода
+// Будка-93 / правка Роба 1226 («вход — предсказуемая сцена»): раньше комната читалась (до 0,2 с на Маке, ×5 на PSP) при ещё стоящем кадре, и ирис схлопывался уже после — рывок до ириса.
+// Теперь вход как у будки №1051/№1060: ирис закрывается первым (кадры ириса не ждут чтения), чтение комнаты, предметов и персонажей идёт под закрытым экраном, ирис раскрывается, когда готово
+// (крючок держит его ещё, пока гэги комнаты дочитываются — main_state.h spawnHoldHook, причина «gag»). Не открылась — ирис снимается, Гомер остаётся на улице. DOORIRIS1226_OLD=1 / файл dooriris1226old / flag dooriris1226old 1 — как было
+#ifndef DOORIRIS1226_OLD
+#define DOORIRIS1226_OLD 0
+#endif
+static int doorIris1226Old = DOORIRIS1226_OLD;
+static void **fbpG1226;          // кадровый буфер главного цикла (ставит main_loop.h)
+static int door1226Gate;         // 1 — roomOpen зовёт roomsStep главного цикла (вход по двери); служебные вызовы ирис не трогают
+static int irisPre1226;          // ирис «room_in» уже закрыт roomOpen: главный цикл второй раз его не закрывает
+static int irisPre1226Frames;    // кадров развёртки, показанных этим закрытием (для счётчика кадров цикла)
+static int roomOpenLegacy(void *u, int room) {   // прежний путь (TFSM95_OLD=1): ирис закрывается первым, потом roomOpen1 с лестницей
+  { unsigned sz_ = 0; for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) sz_ = rgEnt[i].size;
+    transitPlan("room_in", sz_ + (64u << 10), rooms.room[room].start); }   // Будка-93 (1233): план до закрытия экрана
+  if (door1226Gate && !doorIris1226Old && fbpG1226 && transitReady() && !transitBusy()) {
+    unsigned t1_ = sceKernelGetSystemTimeLow();
+    irisPre1226Frames = transitClose(fbpG1226, "room_in"); irisPre1226 = 1;
+    if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "DOORIRIS1226 pre-close room=%s ms=%u t=%.1f\n", rooms.room[room].name, (sceKernelGetSystemTimeLow() - t1_) / 1000u, smkT); smkWrite(s_); }
+  }
+  unsigned t0_ = sceKernelGetSystemTimeLow(); int r_ = roomOpen1(u, room); xnEnd("room_in", t0_, room);
+  if (!r_ && irisPre1226) { transitDrop(); irisPre1226 = 0; irisPre1226Frames = 0; if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "DOORIRIS1226 drop t=%.1f\n", smkT); smkWrite(s_); } }   // не открылась — не оставлять закрытый экран
+  return r_;
+}   // №1206: время перехода
+// Build 95 П2 (transit_fsm.h): класс ROOM_IN идёт через ldrRun (PLAN, CLOSE, FREE, LOAD, FREE_MORE, SIMPLIFY, OPEN). Экран AUTO: ирис, если блок под комнату есть и ирис доступен; иначе прелоадер Itchy & Scratchy
+// (решение Роба 2: комната не открылась, пересборки уровня нет: запомнить место, выбросить лишнее под прелоадером, грузить только комнату). Чтение комнаты roomOpen1 то же. TFSM95_OLD=1 — roomOpenLegacy
+typedef struct { void *u; int room; } RoomLoadCtx;
+static void levelCleanReload96(void **fbp, unsigned t0);   // mem1060.h
+static int transitReload96(void *c, void **fbp) {   // Build 96: чистая перезагрузка перед SIMPLIFY — только вне миссии и вне комнаты (внутри миссии снимок не доказан)
+  (void)c; if (mvInMission() || inRoom()) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "CLEANRELOAD96 skip why=%s t=%.1f\n", mvInMission() ? "mission" : "room", smkT); smkWrite(s_); } return 0; }
+  levelCleanReload96(fbp, sceKernelGetSystemTimeLow());
+  { int r0_ = uiScrReady(); if (r0_) uiScrClose(); if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "CLEANRELOAD96 scr ready %d->%d t=%.1f\n", r0_, uiScrReady(), smkT); smkWrite(s_); } }   // пакет экрана перезагрузки (газета/LoadingFE) закрыт: его держит только переход, а лавка и гардероб открывают свой и отказывают при открытом чужом
+  if (!booth1225Old) camHold1225 = BOOTH_CAMHOLD1225_FRAMES;   // камера держится, наезда старта нет
+  return 1;   // levelCleanReload96 доводит уровень до игры; отказ чтения уровня сам по себе её не останавливает (loadedLevel проверяет вызывающий)
+}
+static int transitReloadOverlay96(void *c, void **fbp) { return transitReload96(c, fbp) ? 2 : 0; }   // лавка и гардероб: слот экрана после перезагрузки свободен для их пакета
+static int roomLoadCb(void *c) { RoomLoadCtx *x = (RoomLoadCtx *)c; return roomOpen1(x->u, x->room); }
+static int roomOpen(void *u, int room) {
+  if (tfsm95Old) return roomOpenLegacy(u, room);
+  unsigned sz_ = 0; for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) sz_ = rgEnt[i].size;
+  RoomLoadCtx cx = {u, room}; Transit t; memset(&t, 0, sizeof t);
+  t.name = "room_in"; t.screen = (door1226Gate && !doorIris1226Old) ? TFS_AUTO : TFS_NONE; t.need = sz_ + (64u << 10);
+  t.at[0] = rooms.room[room].start[0]; t.at[1] = rooms.room[room].start[1]; t.at[2] = rooms.room[room].start[2];
+  t.load = roomLoadCb; t.cleanReload = transitReload96; t.u = &cx; t.freeAllOnPreloader = 1; t.noReturn = 1; t.simplifyText = "PLEASE WAIT.";   // ближайшая строка библии оригинала (Данные-93)
+  unsigned t0_ = sceKernelGetSystemTimeLow(); int ok = ldrRun(&t, fbpG1226); xnEnd("room_in", t0_, room);
+  irisPre1226 = tfIrisClosed; irisPre1226Frames = tfIrisFrames;
+  if (!ok && irisPre1226) { transitDrop(); irisPre1226 = 0; irisPre1226Frames = 0; if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "DOORIRIS1226 drop t=%.1f\n", smkT); smkWrite(s_); } }
+  return ok;
+}
 static int roomOpen1(void *u, int room) {
   (void)u; bbOp("room+", rooms.room[room].name, 1);   // правка 103: самописец — ящик на карте ДО чтения комнаты
   unsigned t0 = sceKernelGetSystemTimeLow(), h0 = smkOn ? heapFreeBytes() : 0;
@@ -237,6 +290,7 @@ static int roomOpen1(void *u, int room) {
   int err = !g ? 1 : rgBad[room] ? 2 : 0; unsigned char *m = 0; Tex *tx = 0; Piece *pp = 0;
   unsigned sz = g ? g->size : 0, ntx = 0, np = 0, to = 0, ro = 0;
   int fromPf = 0;
+  if (zone3OnX() && smkOn) { char z_[460]; zone3StatLineX(z_, sizeof z_, smkT, "room_in"); smkWrite(z_); }   // П5 Зоны-95: свободное в областях перед входом
   if (!err && rpf.room == room && rpf.m && rpf.sz == sz && roomPfOn && !syncReadP1Old) {   // ТЕСТ90 П1: прочитано впрок (или читается — ждём здесь, под ирисом)
     unsigned w0 = sceKernelGetSystemTimeLow();
     while (rpf.state == 1 && sceKernelGetSystemTimeLow() - w0 < 400000u) {
@@ -249,9 +303,29 @@ static int roomOpen1(void *u, int room) {
     if (rpf.fd >= 0) { sceIoClose(rpf.fd); rpf.fd = -1; }
     rpf.state = 0; rpf.room = -1; rpf.sz = 0;
   }
-  if (!err && !m && !(m = memalign(16, sz))) err = 3;   // нет памяти — не «битый»: отойдёт от двери и вернётся — новая попытка
+  // TEST93 (Роб 07.11 вечер: «не могу зайти ни в дом, ни в Kwik-E-Mart» на L4 и дальше, на L1 можно): блоб комнаты брался мимо лестницы памяти (канон п.13),
+  // а лестница с 435 держит отложенный блок 448 КБ под меню — на уровнях 2–7 цельного куска под комнату не хватало, вход молча отменялся (err 3).
+  // Теперь при отказе: отложенный блок — в кучу (ляжет снова на ближайшем тике), потом ступени лестницы, потом повтор. ROOMMEM93_OLD=1 — как было
+#ifndef ROOMMEM93_OLD
+#define ROOMMEM93_OLD 0
+#endif
+#ifndef ROOMMEM93_CELLS_OLD
+#define ROOMMEM93_CELLS_OLD 0   // 1 — без ступени «выгрузить все клетки города под закрытым ирисом» (бисекция обрыва после выхода из DMV, Опора-93)
+#endif
+  if (!err && !m && !(m = zone3AllocX(Z3A_PLACE, "room", sz, 16)) && !ROOMMEM93_OLD && memLadOn) {   // П5 Зоны-95: блоб комнаты — область «место»
+    unsigned b0_ = memMaxBlock ? memMaxBlock() : 0, f0_ = heapFreeBytes();
+    memLadResTake(); m = zone3AllocX(Z3A_PLACE, "room", sz, 16);
+    if (!m && memLadderZ(LADZ_PLACE, "room", sz + (64u << 10), LAD_TOP)) m = zone3AllocX(Z3A_PLACE, "room", sz, 16);
+    // куча раздроблена (свободно мегабайты, цельного куска нет): под закрытым ирисом двери город не виден — выгрузить клетки города, как ступень 4
+    // при стоящем мире; при выходе их вернёт стриминг, а экран выхода держит Гомера, пока не будет пола (A1). Оригинал тоже грузит комнату отдельно от города
+    if (!m && !ROOMMEM93_CELLS_OLD) { memLadWaitLoader(); unsigned f1_ = heapFreeBytes(); int n_ = cellsDropBeyond(-1.f); memLadQPush("cells", heapFreeBytes() > f1_ ? heapFreeBytes() - f1_ : 0); m = zone3AllocX(Z3A_PLACE, "room", sz, 16);
+      memLadLog("WATCHDOG", "room", sz, 4, b0_, f0_, m ? "cells-ok" : "cells-none"); (void)n_; }
+    memLadLog("WATCHDOG", "room", sz, m ? 0 : 5, b0_, f0_, m ? "ok" : "fail");
+  }
+  if (!err && !m) err = 3;   // нет памяти — не «битый»: отойдёт от двери и вернётся — новая попытка
   if (!err && !fromPf) {
     char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
+    DCPRE96(m, sz);
     if (f < 0 || sceIoLseek32(f, g->off, PSP_SEEK_SET) != (int)g->off || sceIoRead(f, m, sz) != (int)sz) err = 4;
     if (f >= 0) sceIoClose(f);
   }
@@ -291,6 +365,9 @@ static int roomOpen1(void *u, int room) {
   toneBlkAdd(m, sz, TF_ROOM, g->off);   // правка 144: палитры комнаты — из interiors-lN-gfx.bin заново
   rg.room = room; rg.mem = m; rg.pc = pp; rg.npc = np; rg.size = sz; rgTex = tx; rgNtex = ntx; bound = -2;
   roomAnimParse(m, sz, ntx);   // круг 5 (P16-11)
+  if (smkOn && roomAnN) { for (int q_ = 0; q_ < roomAnN; q_++) { int cnt_ = 0, tmin_ = 1 << 30, tmax_ = -1; float bb_[6] = {0}; for (unsigned i_ = 0; i_ < rg.npc; i_++) { int tx_ = rg.pc[i_].r.tex; if (tx_ < tmin_) tmin_ = tx_; if (tx_ > tmax_) tmax_ = tx_; if (tx_ == RTEX0 + roomAn[q_].base) { if (!cnt_) memcpy(bb_, rg.pc[i_].r.bb, sizeof bb_); cnt_++; } }
+      char l_[240]; snprintf(l_, sizeof l_, "ROOMANIM pieces anim=%d base=%d key_tex=[%d %d %d %d] used_by=%d pieces_tex_range=%d..%d npc=%u bb=(%.1f %.1f %.1f)-(%.1f %.1f %.1f)\n", q_, roomAn[q_].base, roomAn[q_].tx[0], roomAn[q_].nk > 1 ? roomAn[q_].tx[1] : -1, roomAn[q_].nk > 2 ? roomAn[q_].tx[2] : -1, roomAn[q_].nk > 3 ? roomAn[q_].tx[3] : -1, cnt_, tmin_ - RTEX0, tmax_ - RTEX0, rg.npc, bb_[0], bb_[1], bb_[2], bb_[3], bb_[4], bb_[5]); smkWrite(l_);
+      { char t_[300]; int o_ = snprintf(t_, sizeof t_, "ROOMANIM keytex anim=%d", q_); for (int k_ = 0; k_ < roomAn[q_].nk && k_ < 4; k_++) { int id_ = roomAn[q_].tx[k_]; const Tex *x_ = (id_ >= 0 && (unsigned)id_ < ntx) ? &tx[id_] : 0; o_ += snprintf(t_ + o_, sizeof t_ - (size_t)o_, " [%d key@%u %dx%d lv%d t4=%d pre=%d pal=%d]", id_, roomAn[q_].fr[k_], x_ ? x_->w : -1, x_ ? x_->h : -1, x_ ? x_->levels : -1, x_ ? x_->t4 : -1, x_ ? x_->pre : -1, x_ && x_->pal); } snprintf(t_ + o_, sizeof t_ - (size_t)o_, "\n"); smkWrite(t_); } } }
   rg.clear = rdU(m + 20); rg.amb = rdU(m + 24); rg.nlit = (int)rdU(m + 28); rcs.cur = -1; rcs.in = 0; memset(rcs.inT, 0, sizeof rcs.inT); if (!CUT1085_OLD) roomCamRestart(&rcs);   /* №1085 (сверка g06): вход в помещение — первая камера срезом */ rcs.newWins = !roomCamStickyOld; rcs.switchOld = roomCamSwitchOld;   // правка 186; файл roomcamswitchold — задержка 172 до школы
   for (int i = 0; i < rg.nlit; i++) { memcpy(rg.lit[i], m + 32 + 16 * i, 12); rg.litc[i] = rdU(m + 32 + 16 * i + 12); }
   // №1076: комната читается при закрытом экране (дверь) — персонажи миссии и бонусные у её старта (Дедушка в доме L1) дочитываются здесь же, а не на глазах
@@ -332,13 +409,15 @@ static void roomPrefetchTick(void) {
   if (room == rpfFail) return;
   const RoomGfxEnt *g = 0;
   for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) g = &rgEnt[i];
-  if (!g || rgBad[room] || heapFreeBytes() < g->size + ROOM_PF_HEAP_MIN) return;
-  unsigned char *m = memalign(16, g->size); if (!m) return;
+  if (!g || rgBad[room] || (zone3AreaOnX(Z3A_PLACE) ? zone3MaxFreeX(Z3A_PLACE) < g->size : heapFreeBytes() < g->size + ROOM_PF_HEAP_MIN)) return;   // П5 Зоны-95: предчтение комнаты — в область «место», куча не нужна
+  unsigned char *m = zone3TryX(Z3A_PLACE, "roompf", g->size, 16); if (!m) return;
   char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
+  DCPRE96(m, g->size);
   if (f < 0 || sceIoLseek32(f, g->off, PSP_SEEK_SET) != (int)g->off || sceIoReadAsync(f, m, g->size) < 0) { if (f >= 0) sceIoClose(f); free(m); rpfFail = room; return; }
   rpf.room = room; rpf.m = m; rpf.sz = g->size; rpf.fd = f; rpf.state = 1; rpf.t0 = now; roomPfStarts++;
 }
 // метка этапа buyskin (viewer/rooms.c roomsSpotTarget, game_msn.c shSkinSpot): ближайший гардероб skins.txt или дверь его комнаты
+#include "dcache96.h"
 #include "wardrobe_view.h"
 static int skinTargetMain(float px, float py, float pz, float out[3]) { return roomsSpotTarget(&rooms, rs.room, wardrobeSpot, px, py, pz, out); }
 static void roomLog(int ev);
@@ -357,6 +436,7 @@ static int roomHoldActive(float dt) { if (roomHoldT <= 0.f) return 0; roomHoldT 
 // входит в эту комнату (рисование, коллизия, камеры; выход — к её двери, как после входа с улицы). Какая комната — интерьер
 // последнего SetDynaLoadData, иначе любая; «в комнате» — под точкой сценария пол этой комнаты (комнаты под городом, в стороне).
 // Перенос сценарием из комнаты в город — выход из комнаты. Зовётся на старте уровня / загрузке и после переноса сценарием
+static int roomPoint96(float x, float y, float z);
 static int roomFloorAt(int i, float x, float y, float z) { float g, n[3]; return colGround(&rooms.room[i].col, x, z, y + 1.5f, y - 3.f, &g, n); }
 // ag/loadorder: точка переноса сценария лежит в комнате -> дверь этой комнаты в городе (куда выйдет игрок; вокруг неё читается город). 1 — нашли; rk — номер комнаты
 static int roomDoorOf(const float p[3], float out[3], int *rk) {
@@ -388,7 +468,16 @@ static int svcRoomGo(const float p[3], float out[3], int interior) {
 #endif
 static int msnRoomDeep1209Old = MSNROOMDEEP1209_OLD;
 static int roomFloorAbove(int i, float x, float y, float z, float *gy) { float n[3]; return colGround(&rooms.room[i].col, x, z, y + 25.f, y - 1.f, gy, n); }
+static int roomPoint96(float x, float y, float z) {   // Build 96: точка в комнате. Комнаты лежат под городом на y около −20; старт миссии в доме ставит героя ДО загрузки таблицы комнат нового уровня (nroom 0) — тогда по высоте
+  if (!rooms.nroom) return y > -26.f && y < -14.f;
+  for (int k = 0; k < rooms.nroom; k++) { const Room *r = &rooms.room[k];
+    if (roomFloorAt(k, x, y, z)) return 1;
+    if (fabsf(y - r->start[1]) < 4.f && hypotf(x - r->start[0], z - r->start[2]) < 12.f) return 1;
+    if (fabsf(y - r->exit[1]) < 4.f && hypotf(x - r->exit[0], z - r->exit[2]) < 12.f) return 1; }
+  return 0; }   // Build 96: точка на полу какой-то комнаты (homerRoomPointHook)
+static int roomSyncOff96;   // Build 96: 1 — msnRoomSync молчит (идёт чистая перезагрузка: старт уровня ставит игрока в комнату старта, входить в неё второй раз под тем же экраном не нужно)
 static void msnRoomSync(void) {
+  if (roomSyncOff96) return;
   char s[128];
   if (!rooms.nroom || !haveHomer || !onFoot()) return;
   const char *nm = mvDynaRoom(); int i = -1; float gDeep = 0.f; int deep = 0;
@@ -520,7 +609,7 @@ static void rdlBuild(void) {
     unsigned cap = (unsigned)gn[g] * 160u + 64u; acc = (unsigned *)malloc(cap * 4); if (!acc) { fail = 1; break; }
     unsigned nw = 0;
     for (unsigned i = 0; i < rg.npc && !fail; i++) { if (rdlPOf[i] != g) continue; Piece *d = &rg.pc[i];
-      sceKernelDcacheWritebackInvalidateRange(tmpP, 4096 * 4); sceGuStart(GU_CALL, tmpP); if (!dlNoDepth) sceGuDepthRange(65535, 0); rdlEmit(d); unsigned sz = (unsigned)sceGuFinish();   // у контекста листа свои границы глубины (нули): без этого sceGuDepthOffset слоёв (setBias) в листе портил границы глубины видеочипа для всего кадра (как у листов клеток и пропов) unsigned sz = (unsigned)sceGuFinish();
+      sceKernelDcacheWritebackInvalidateRange(tmpP, 4096 * 4); sceGuStart(GU_CALL, tmpP); if (!dlNoDepth) sceGuDepthRange(65535, 0); rdlEmit(d); DCALL96(); unsigned sz = (unsigned)sceGuFinish();   // у контекста листа свои границы глубины (нули): без этого sceGuDepthOffset слоёв (setBias) в листе портил границы глубины видеочипа для всего кадра (как у листов клеток и пропов) unsigned sz = (unsigned)sceGuFinish();
       unsigned n = sz / 4u; const volatile unsigned *u = (const volatile unsigned *)((unsigned)tmpP | 0x40000000u);
       if (n < 2 || n > 4000 || (u[n - 1] >> 24) != 0x0bu || nw + n > cap) { fail = 1; break; }   // последнее слово — возврат из листа (RET)
       RdlP *P = &rdlP[rdlG[g].p0 + fill[g]++]; memset(P, 0, sizeof *P); P->pi = (unsigned short)i; P->tris = (unsigned)d->r.ni / 3u; P->mw = 0xffffffffu;
@@ -664,7 +753,7 @@ static void roomGlint(int k) {
   const GlintPanel *m = &M_[k - 1];
   enum { NX = 14, NY = 3 };
   GlintV *q = (GlintV *)sceGuGetMemory(NX * NY * 6 * sizeof(GlintV)); if (!q) return;
-  float cpos = glintPos(ggE[m->la], (m->l0 + m->l1) * .5f, ggE[m->nx], m->p, ggE[1], (m->y0 + m->y1) * .5f, (float)(sceKernelGetSystemTimeLow() & 0xFFFFFFu) * 1e-6f);
+  float cpos = glintPos(ggE[m->la], (m->l0 + m->l1) * .5f, ggE[m->nx], m->p, ggE[1], (m->y0 + m->y1) * .5f, (float)(gtUs95() & 0xFFFFFFu) * 1e-6f);
   GlintV g[(NX + 1) * (NY + 1)];
   for (int j = 0; j <= NY; j++) for (int i = 0; i <= NX; i++) {
     float u = (float)i / NX, w = (float)j / NY, h = glintH(u, w, cpos);

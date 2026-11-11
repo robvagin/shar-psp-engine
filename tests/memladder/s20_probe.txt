@@ -1,0 +1,5 @@
+flag nosave
+scene BOOT
+flag golevel 1
+wait 30
+end

@@ -48,6 +48,7 @@ extern "C" {
 #ifndef WASP_BOB_OLD
 #define WASP_BOB_OLD 0   // сверка g11b P04 W11: качание осы ±0,5 м (1 Гц) и дрейф ±0,5 м (период 1,99 с); 1 — оса неподвижна в воздухе
 #endif
+extern int collectGagReset96;   // Build 96: гэги комнаты сбрасываются на каждом входе (как в оригинале); 0 — прежнее поведение persist (flag gagreset96 0 / файл gagreset96old)
 #define COLL_LEVELS 8
 #define COLL_MAXCARD 8
 #define COLL_MAXWASP 32
@@ -119,6 +120,7 @@ typedef struct Collect {
   const CollGag *gag; unsigned ngag;
   const unsigned char *tex; unsigned ntex;  // текстуры пакета (формат SHR7), main.c строит по ним Tex
   StateProps sp; int haveSp;
+  uint8_t gagBlock[COLL_MAXGAG];   // Пропечка-96 COLLSPLIT: 1 - данные гэга (вершины, текстуры) ещё читаются: ни подсказки действия, ни запуска; ставит coll_stream.c каждый кадр
   int kickFx, shockFx, bolt0; unsigned nbolt;
   CollState st;
 } Collect;

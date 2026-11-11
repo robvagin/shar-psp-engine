@@ -1,0 +1,24 @@
+# L4 sr3 (Race 3 Checkpoint): водитель соперника (frink в frink_v) загружен и нарисован; Kearney на L4 - фоновый, не водитель
+scene SR3_L4
+flag golevel 4
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnsel 9
+wait 1.5
+press cross 0.2
+wait 6
+press cross 0.2
+wait 0.4
+goto 338.6 94.5 -0.013
+wait 0.3
+shot d0
+wait 0.5
+shot d1
+wait 0.5
+shot d2
+wait 0.5
+shot d3
+wait 10
+end

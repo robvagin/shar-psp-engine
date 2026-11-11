@@ -1,0 +1,52 @@
+scene F_L4
+flag cfgdefaults 1
+wait 4
+scene W_GO4
+flag golevel 4
+wait 40
+flag camdet 1
+flag player
+foot 214.9 175.5 3.3
+wait 3
+camrel 3.2 1.0 0.0 -1 -0.2 0
+wait 1.2
+shot body_e
+camrel -3.2 1.0 0.0 1 -0.2 0
+wait 1.2
+shot body_w
+camrel 0.0 1.0 -3.2 0 -0.2 1
+wait 1.2
+shot body_n
+camrel 0.0 1.0 3.2 0 -0.2 -1
+wait 1.2
+shot body_s
+camrel 1.0 1.55 0.0 -1 -0.05 0
+wait 1.2
+shot face_e
+camrel -1.0 1.55 0.0 1 -0.05 0
+wait 1.2
+shot face_w
+camrel 0.0 1.55 -1.0 0 -0.05 1
+wait 1.2
+shot face_n
+camrel 0.0 1.55 1.0 0 -0.05 -1
+wait 1.2
+shot face_s
+camrel 0.9 1.0 0.0 -1 -0.15 0
+wait 1.2
+shot hand_e
+camrel -0.9 1.0 0.0 1 -0.15 0
+wait 1.2
+shot hand_w
+camrel 0.0 1.0 -0.9 0 -0.15 1
+wait 1.2
+shot hand_n
+camrel 0.0 1.0 0.9 0 -0.15 -1
+wait 1.2
+shot hand_s
+cam off
+wait 2
+shot street1
+wait 6
+shot street2
+end

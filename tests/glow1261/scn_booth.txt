@@ -1,0 +1,20 @@
+# №1261: будка L1 (226,0; 153,8) с 9 м, фазы пульса
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GLOWB
+flag camdet 1
+flag stop
+goto 233.50 160.20 -2.277
+wait 4
+flag glowphase 0
+wait 0.3
+shot booth_9m_max
+flag glowphase 1.5
+wait 0.3
+shot booth_9m_mid
+flag glowphase 3.14
+wait 0.3
+shot booth_9m_min
+end

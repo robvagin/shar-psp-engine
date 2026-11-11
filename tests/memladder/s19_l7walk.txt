@@ -1,0 +1,28 @@
+# Лестница-96 (тур 101, WATCHDOG iris stuck why=teleport в F_L7_WALK, 1 из ~40 foot/goto): L7, flag footfsm 1, перед foot - flag repair / flag player 1 как в сцене. Смотрим IRIS hold дольше 1,5 с и строки WATCHDOG iris.
+flag nosave
+scene BOOT
+flag golevel 7
+wait 40
+flag footfsm 1
+foot 100 -150 0
+wait 6
+flag repair
+wait 2
+flag player 1
+foot 218 172.3 0
+wait 8
+foot 100 -150 0
+wait 6
+flag repair
+wait 2
+flag player 1
+foot 218 172.3 0
+wait 8
+foot -120 60 0
+wait 6
+flag repair
+wait 2
+flag player 1
+foot 218 172.3 0
+wait 8
+end

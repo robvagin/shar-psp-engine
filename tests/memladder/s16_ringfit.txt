@@ -1,0 +1,14 @@
+# Лестница-96 (тур 99, вопрос дирижёра): круг клеток старта брал все клетки радиуса 260 м, не глядя на область «города» (7 МБ): allocfail на входе L3 39, L5 35, L6 21-61, bad 22-60.
+# Правка (RINGFIT_OLD): круг берёт ближние клетки, пока влезают в свободное место области минус 512 КБ; остальное подгружает stream(). Гейт: входы L3, L5, L6 подряд на ballast 5 (как в туре).
+# Красный контроль: s16_ringfit_red.txt (flag ringfit 0, тот же EBOOT).
+flag nosave
+scene BOOT
+flag golevel 3
+wait 50
+flag golevel 5
+wait 50
+flag golevel 6
+wait 50
+flag golevel 3
+wait 50
+end
