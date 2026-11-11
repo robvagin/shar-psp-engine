@@ -1,10 +1,10 @@
 # Status
 
-Where the port stands against the original PS2 game, as of November 11, 2026 (build 106; the latest hardware tour was run on build 105, which build 106 matches except for the frame around the videos). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of November 11, 2026 (build 106 and its hardware tour of November 11). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
 - **Firmware:** tested on PRO-C and ARK-4. The game imports the kubridge library as a whole; ME/LME and Adrenaline were not tried.
-- **Latest hardware tour:** build 105 on November 11 ran the scripted tour of 114 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit). **The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.**
+- **Latest hardware tour:** build 106 on November 11 ran the scripted tour of 114 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit). An earlier tour of the same day on build 105 (it differs from 106 only in the videos started from the View Movies menu) is in the numbers below.
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What is new in this build
@@ -65,24 +65,24 @@ In build 104:
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | PSP-3000 untested; PSP-1000 has half the memory, untested | n/a |
 
-## Hardware numbers (PSP-2000, tour on build 105, 114 scenes, November 11)
+## Hardware numbers (PSP-2000, tour on build 106, 114 scenes, November 11)
 
-**The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.** Like the build 104 tour, it ran without the texture-table dumping switch. Definitions are the same as for builds 101 and 104: frame-time and dropped-frame figures are per scene (the 95th percentile of a scene's frames; dropped = missed the 33.3 ms deadline), the median second is over every second spent in play, and shared scenes are the ones every compared tour ran. The tour has one scene more than the build 104 tour (`F_BONUS_T4`, the level 4 bonus game). Each tour was run once.
+Like the build 104 tour, it ran without the texture-table dumping switch. Definitions are the same as for builds 101 and 104: frame-time and dropped-frame figures are per scene (the 95th percentile of a scene's frames; dropped = missed the 33.3 ms deadline), the median second is over every second spent in play, and shared scenes are the ones every compared tour ran. The build 105 tour (an earlier run of the same day, same code except for the video fix) is given for comparison. The tours have one scene more than the build 104 tour (`F_BONUS_T4`, the level 4 bonus game). Each tour was run once.
 
-| Measure | Build 105 tour | Build 104 tour |
-|---|---|---|
-| Tour finished to the end | yes; 0 faults, 0 stalls, 0 read errors, 0 memory failures, no city block that did not fit | same |
-| Frame rate, whole tour | median second 24 fps (capped at 30); 21 percent of seconds at 29 fps or more | 26 fps; 28 percent |
-| Frame time p95 by scene | median 35.5 ms (30 fps is 33.3 ms); interiors 17.5 to 24.3 ms; 14 of 114 scenes at 40.0 ms or more; the worst scene 54.3 ms (a mission scene on level 7) | 34.5 ms; 17.5 to 24.5; 11 of 113; 52.8 ms (the same scene) |
-| Dropped frames | median 21 percent per scene, 28 percent of all frames; levels 2, 6 and 5 are the weakest (34, 33 and 27 percent of frames in their scenes; level 2 has 7 scenes) | 19 and 21 percent; levels 6 and 4 (32 and 26 percent) |
-| Streaming | 3076 cells loaded, worst request-to-ready delay 1.8 s; frames with a visible, not yet loaded block: 147 over the whole tour (29 inside the scenes, 10 of them in the new bonus scene) | 3313 cells, 1.9 s; 144 (21 inside the scenes) |
-| Memory | lowest free heap 3.3 MB, lowest largest block 3.2 MB | 3.5 MB and 3.4 MB |
-| Audio | 3238 s, 0 late buffers; the second core handed 3 buffers back to the main one | 3191 s, 0 late; 2 buffers |
-| Level load | 2.9 to 3.7 s per level, 3.3 s on average | 2.9 to 3.7 s, 3.3 s |
+| Measure | Build 106 tour | Build 104 tour | Build 105 tour |
+|---|---|---|---|
+| Tour finished to the end | yes; 0 faults, 0 stalls, 0 read errors, 0 memory failures, no city block that did not fit | same | same |
+| Frame rate, whole tour | median second 24.5 fps (capped at 30); 22 percent of seconds at 29 fps or more | 26.2 fps; 28 percent | 23.6 fps; 21 percent |
+| Frame time p95 by scene | median 34.9 ms (30 fps is 33.3 ms); interiors 17.5 to 24.3 ms; 12 of 114 scenes at 40.0 ms or more; the worst scene 53.3 ms (a mission scene on level 7) | 34.5 ms; 17.5 to 24.5; 11 of 113; 52.8 ms (the same scene) | 35.5 ms; 17.5 to 24.3; 14 of 114; 54.3 ms |
+| Dropped frames | median 20 percent per scene, 26 percent of all frames; levels 6 and 5 are the weakest (32 and 31 percent of frames in their scenes) | 19 and 21 percent; levels 6 and 4 (32 and 26 percent) | 21 and 28 percent; levels 2, 6 and 5 (34, 33 and 27 percent) |
+| Streaming | 3257 cells loaded, worst request-to-ready delay 2.1 s; frames with a visible, not yet loaded block: 143 over the whole tour (27 inside the scenes, 11 of them in the new bonus scene) | 3313 cells, 1.9 s; 144 (21 inside the scenes) | 3076 cells, 1.8 s; 147 (29, 10 in the bonus scene) |
+| Memory | lowest free heap 3.3 MB, lowest largest block 3.2 MB | 3.5 MB and 3.4 MB | 3.3 MB and 3.2 MB |
+| Audio | 3173 s, 0 late buffers; the second core handed 2 buffers back to the main one | 3191 s, 0 late; 2 buffers | 3238 s, 0 late; 3 buffers |
+| Level load | 2.9 to 3.7 s per level, 3.2 s on average | 2.9 to 3.7 s, 3.3 s | 2.9 to 3.7 s, 3.3 s |
 
-On the 113 scenes both tours ran, build 105 is slower on every frame measure: median second 24 fps against 26, p95 35.5 ms against 34.5, dropped frames 20 against 19 percent per scene and 27 against 21 percent of all frames. We have not found the cause.
+On the 113 scenes that the build 104 and 106 tours both ran, build 106 is slower on most frame measures: median second 24.6 fps against 26.0, p95 34.8 ms against 34.5, dropped frames 19 against 19 percent per scene but 26 against 21 percent of all frames. It is a little better than build 105 (24.0 fps, p95 35.5 ms, 27 percent of all frames on the same scenes). Level 2, which dropped 34 percent of its frames in the build 105 tour (build 104: 20), is back to 17 percent; level 5 went from 19 (build 104) and 27 (build 105) to 31 percent. We have not found the cause of the slowdown against build 104.
 
-Compared on the 81 scenes that the build 93, 98, 101, 104 and 105 tours share: p95 36.5 to 35.8 ms (build 104: 34.8; build 101: 34.8), dropped frames 36 to 21 percent (median over scenes; build 104: 19; build 101: 14), lowest free memory 1.1 to 3.3 MB, frames with a visible, not yet loaded block 77 to 13 (build 104: 15; build 101: 10).
+Compared on the 81 scenes that the build 93, 98, 101 and 106 tours share: p95 36.5 to 35.2 ms (build 104: 34.8; build 101: 34.8), dropped frames 36 to 20 percent (median over scenes; build 104: 19; build 101: 14), lowest free memory 1.1 to 3.3 MB, frames with a visible, not yet loaded block 77 to 12 (build 104: 15; build 101: 10).
 
 ## Known problems
 
@@ -104,7 +104,7 @@ Compared on the 81 scenes that the build 93, 98, 101, 104 and 105 tours share: p
 
 ## Not verified
 
-Build 106 played by hand to the end; the hardware tour of the build 106 files themselves (the tour was run on build 105); trees and bushes hit at a slide; getting into a car in a traffic jam; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
+Build 106 played by hand to the end; trees and bushes hit at a slide; getting into a car in a traffic jam; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
 
 ## If the game stops
 

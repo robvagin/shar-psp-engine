@@ -16,9 +16,10 @@ Builds 93 to 106, November 7 to 11, 2026. Newest first.
 | 100 | Nov 9 | 109 | 34.0 | 10% | 3.0 MB | 0 |
 | 101 | Nov 9 | 113 | 33.5 | 10% | 3.0 MB | 0 |
 | 104 | Nov 11 | 113 | 34.5 | 19% | 3.5 MB | 0 |
-| 106 (tour run on build 105) | Nov 11 | 114 | 35.5 | 21% | 3.3 MB | 0 |
+| 105 (earlier tour) | Nov 11 | 114 | 35.5 | 21% | 3.3 MB | 0 |
+| 106 | Nov 11 | 114 | 34.9 | 20% | 3.3 MB | 0 |
 
-Because the scene lists differ, the fair comparison is the 81 scenes that builds 93, 94, 95, 97, 98, 100, 101, 104 and 105 all ran:
+Because the scene lists differ, the fair comparison is the 81 scenes that builds 93, 94, 95, 97, 98, 100, 101, 104, 105 and 106 all ran:
 
 | Build | p95, ms | Dropped (median over scenes) | Dropped (all frames) | Lowest free memory |
 |---|---|---|---|---|
@@ -30,15 +31,16 @@ Because the scene lists differ, the fair comparison is the 81 scenes that builds
 | 100 | 35.0 | 18% | 23% | 3.0 MB |
 | 101 | 34.8 | 14% | 21% | 3.0 MB |
 | 104 | 34.8 | 19% | 23% | 3.5 MB |
-| 106 (tour run on build 105) | 35.8 | 21% | 26% | 3.3 MB |
+| 105 (earlier tour) | 35.8 | 21% | 26% | 3.3 MB |
+| 106 | 35.2 | 20% | 24% | 3.3 MB |
 
 Build 95 was the fastest and also the one that ran out of memory 106 times in the middle of the tour: its memory zones were too greedy. Builds 97 and 98 fixed that, at the price of a slower frame than build 95, which is still not recovered.
 
 ## Build 106 (November 11)
 
-Build 106 is build 105 plus the frame around the videos. **The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.** Hardware tour (November 11): 114 scenes (build 104: 113; the new one is the level 4 bonus game, `F_BONUS_T4`), ran to the end, no stalls, 0 read errors, 0 memory failures, no city block that did not fit, 0 late audio buffers in 54 minutes. Level loads took 3.3 s on average, as in build 104. The worst wait for a city block was 1.8 s (build 104: 1.9 s).
+Build 106 is build 105 plus a fix for the videos started from the View Movies menu. Hardware tour on build 106 itself (November 11): 114 scenes (build 104: 113; the new one is the level 4 bonus game, `F_BONUS_T4`), ran to the end, no stalls, 0 read errors, 0 memory failures, no city block that did not fit, 0 late audio buffers in 53 minutes. Level loads took 3.2 s on average (build 104: 3.3 s). The worst wait for a city block was 2.1 s (build 104: 1.9 s, build 105: 1.8 s). An earlier tour on build 105 (same code except for the video fix) is in the tables above.
 
-It is slower than build 104 on every frame measure, on the 113 scenes both tours ran: median second 24 fps against 26, frame time p95 35.5 ms against 34.5, dropped frames 20 against 19 percent of scenes and 27 against 21 percent of all frames, seconds at 29 fps or more 22 against 25 percent (on all scenes of each tour: 24 against 26 fps and 21 against 28 percent). On the 81 scenes shared with builds 93 to 101: p95 35.8 ms (build 104: 34.8, build 101: 34.8), dropped frames 21 percent (build 104: 19, build 101: 14), lowest free memory 3.3 MB, frames with a visible, not yet loaded block 13 (build 104: 15, build 101: 10). Levels 2, 6 and 5 are the weakest (34, 33 and 27 percent of dropped frames in their scenes; level 2 has 7 scenes). The tour was run once and the cause of the slowdown has not been found.
+It is still slower than build 104 on most frame measures, on the 113 scenes both tours ran: median second 24.6 fps against 26.0, frame time p95 34.8 ms against 34.5, dropped frames 19 against 19 percent of scenes and 26 against 21 percent of all frames, seconds at 29 fps or more 23 against 25 percent (on all scenes of each tour: 24.5 against 26.2 fps and 22 against 28 percent). It is a little better than the build 105 tour (23.6 fps, p95 35.5 ms, 28 percent of all frames dropped). On the 81 scenes shared with builds 93 to 101: p95 35.2 ms (build 104: 34.8, build 101: 34.8), dropped frames 20 percent (build 104: 19, build 101: 14), lowest free memory 3.3 MB, frames with a visible, not yet loaded block 12 (build 104: 15, build 101: 10). Levels 6 and 5 are the weakest (32 and 31 percent of dropped frames in their scenes). Level 2, which dropped 34 percent of frames in the build 105 tour (build 104: 20), came back to 17 percent on build 106; level 5 went the other way (31 percent; builds 104 and 105: 19 and 27). Each tour was run once and the cause of the slowdown against build 104 has not been found.
 
 - **A car slides along a wall or fence again** at a shallow angle instead of stopping, as in builds 92 to 96, and still stays on four wheels in a hard hit. The stop at the wall came with the fix for flipping over in build 99. Now the car slides at angles up to about 30 degrees, as in build 92; at 45 degrees and more it still stops at the wall. The PS2 recordings lose almost all speed at 26 to 35 degrees, so on this point build 106 is further from the original than builds 99 to 104 were.
 - **Traffic cars no longer swerve out of your way.** The swerve was added in build 90; it is switched off, the code is still there. We have no PS2 recording of such a swerve.
