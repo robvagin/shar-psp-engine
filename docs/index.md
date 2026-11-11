@@ -2,6 +2,7 @@
 
 What to read about the engine, in order.
 
+- [Changelog](../CHANGELOG.md): builds 93 to 104, with numbers from the PSP tours
 - [Build 86 in pictures](slides/README.md): five slides from the build 86 post
 - [Status](status.md): what works, what is partial and what is missing against the PS2 original, with how each row was checked
 - [Using the PSP Media Engine](research/media-engine.md): sound mixing on the second CPU, the numbers from hardware, what did not work

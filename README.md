@@ -9,7 +9,7 @@ No game files are included, and none will be.
 - All 7 levels, on foot and behind the wheel: missions, traffic, pedestrians, phone booths, collectibles
 - Built for the PSP screen: 3D in true 16:9, every menu and HUD element rebuilt from the original menu files, nothing stretched
 - Cartoon mode: the look of the show's early seasons, with ink outlines, flat fills and the show's palette
-- About 28 fps on a PSP-2000 (median of a full hardware tour of all 7 levels)
+- About 26 fps on a PSP-2000 (median second of a full hardware tour of all 7 levels, build 104)
 
 ## Read next
 
@@ -17,16 +17,21 @@ No game files are included, and none will be.
 - [Using the PSP Media Engine](docs/research/media-engine.md): sound mixing on the second core, what worked and what did not
 - [How this port is built and tested](docs/process.md): the rules and the path of a fix from a playtest note to the handheld
 - [Tests](tests/README.md): how every fix is checked
+- [Changelog](CHANGELOG.md): what changed from build 93 to build 104, with the numbers from the PSP tours
 - [Build 86 in pictures](docs/slides/README.md): what was checked, what changed and how fast it runs, in five slides
 - [All documents](docs/index.md)
 
-## What's new in build 93
+## What's new in build 104
 
-- **Nobody appears before the ground under them.** At a level start, a door, a room exit or a mission move, the hero is placed only when the city block and the floor under the spot are loaded (up to 6 seconds). The screen transition stays closed until he stands on it. Traffic pedestrians and mission characters follow the same rule.
-- **A watchdog.** Every frame the game checks for a hero or a car with nothing underneath, a body below the world, or a body stuck inside a wall, and puts it back on solid ground. The player sees nothing; every case goes to the black box.
-- **A memory ladder.** When the city, a menu or a mission needs memory that is not free, the game releases it in steps (read-ahead, far blocks, a shorter draw distance for a while, a simpler menu) and brings it back later, instead of failing. When a city block on level 4 cannot fit, the ladder now runs before giving up on it. Not verified on a real PSP yet.
-- **The game checks its own files.** The builder stamps them (`set.txt`). Files from another build show "Game files are from another build. Run the builder again."; a missing level names the missing file instead of silently skipping the level or returning to the menu.
-- **Police and cars.** With the Hit & Run meter at zero the police give up after about 6 seconds; wheelies are limited, so the ATV and the red brick car no longer flip on ramps.
+Builds 94 to 104 (November 8 to 10) are described in the [changelog](CHANGELOG.md). The short version (the tour numbers are from the build 104 hardware tour of November 11):
+
+- **Doors and phone booths glow.** Entrances and phone booths pulse when you are near, drawn by the engine instead of a texture, as in the original.
+- **Memory holds up.** On the 113-scene hardware tour of build 104 there were no memory failures and no city block that did not fit; the lowest free memory was 3.5 MB (build 93: 1.1 MB). On the 81 scenes the tours share, the count of frames with a visible, not yet loaded block fell from 77 to 15 (build 101 had 10).
+- **Level loading is shorter.** The builder bakes the texture table of every level (`texbake.shr`), so the game skips about 1.5 to 2 seconds of texture analysis on each level load. It was verified key by key on the PSP; in the build 104 tour a level load took 3.3 s on average, against 5.0 s in builds 93 and 101.
+- **Mission intro cameras use the original fly-ins from the disc again,** shortened to the last 40 m before the hero and stopped in front of walls, so the camera no longer passes through buildings.
+- **You can get back into your car after it has exploded** (the wreck drives slowly), as in the original.
+- **Fewer small glitches.** A mission failure no longer leaves a black screen, bets are paid at the card, and speech bubbles slide in.
+- **Speed.** On the 81 scenes that the build 93 and build 104 hardware tours share, the 95th-percentile frame time went from 36.5 to 34.8 ms (median over scenes) and dropped frames from 36 to 19 percent (build 101: 14 percent; the median second is 26 fps against 27 in build 101).
 
 Before the first build on a Mac, accept the Xcode license (`sudo xcodebuild -license accept`) or install the Command Line Tools (`xcode-select --install`). Firmware: tested on PRO-C and ARK-4; ME/LME and Adrenaline were not tried.
 
@@ -109,7 +114,7 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About six weeks, 93 test builds and dozens of full tours on a real PSP. 1,220 playtest notes, logged and worked through one by one.
+About six weeks, 104 test builds and dozens of full tours on a real PSP. More than 1,260 playtest notes, logged and worked through one by one.
 Over 4,200 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 

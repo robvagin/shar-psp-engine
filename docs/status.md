@@ -1,19 +1,20 @@
 # Status
 
-Where the port stands against the original PS2 game, as of November 7, 2026 (build 93). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of November 10, 2026 (build 104; the latest hardware tour is build 104 of November 11). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
 - **Firmware:** tested on PRO-C and ARK-4. The game imports the kubridge library as a whole; ME/LME and Adrenaline were not tried.
-- **Latest hardware tour:** an earlier build 93 candidate on November 7 ran the scripted tour to the end with 0 stalls, 0 crashes and 0 read errors. It showed slower interiors and 4 refused allocations on level 4; both are fixed in this build and checked in the emulator only. The final build 93 has not been toured on hardware yet.
+- **Latest hardware tour:** build 104 on November 11 ran the scripted tour of 113 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit).
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What is new in this build
 
-- **Watchdog.** A small monitor in the game logs and fixes four situations: a hero or car with no ground under it (1.5 s for the hero, 2.5 s for a car), a body below the lowest point of the world (30 m), a body stuck inside geometry (1.5 s hero, 4 s car), and a placement that finds no ground. Each case writes one `WATCHDOG` line to the black box. The thresholds are the port's own rule; the original game has no fall timer because it never lets a walking character fall through. Checked in the emulator: placement without ground, 53 to 58 violations out of 60 on every level with the old code, 0 with the new; each watchdog kind is broken on purpose by a flag and repaired. Hardware: an earlier build 93 tour (November 7) had 0 falls, 0 below-world, 0 stuck.
-- **Placement by scene.** The hero is put into the world only when the ground and the city block under the point are in memory (waits up to 6 s, not drawn, not moving), then released onto the nearest ground. The screen transition (iris) stays closed until the hero stands on the ground, so the player never sees an empty street. Traffic pedestrians are not spawned over a block that is not loaded. Mission characters in the city are not drawn until the block under them is loaded. Checked in the emulator with the blocks unloaded on purpose; an earlier build 93 hardware tour (November 7) showed 49 such waits, 0.3 to 0.4 s each, no falls.
-- **Memory ladder.** When a load would not fit, the game now frees memory in steps and re-measures after each one: read-ahead models, far blocks behind the player, a shorter draw distance for a while, all blocks out of view while the world stands still (pause, menu, booth, shop), and as the last step a simpler menu. Blocks and the draw distance come back by themselves. A 448 KB block is kept free for the Mission Select pack. Checked in the emulator with a memory-starved scenario and a red control (ladder switched off). **Not checked on hardware: the cost of the 448 KB block and of the shorter draw distance.**
-- **Honest data screens.** The builder writes a stamp (`set.txt`) next to the game; if it comes from another build the game says "Game files are from another build. Run the builder again." The game also checks at start that every file of every level is there; a missing level shows "Level N files are missing" instead of quietly returning to the menu after a level. Checked in the emulator by deleting a level file and by swapping the stamp.
-- **Police and cars.** The pitch of a wheelie is limited to 15 degrees (an ATV and one other car flipped over before); Hit & Run limbo checked live in the emulator: meter at zero, police stop after 5.9 s and are removed out of view.
+The whole list from build 93 to 104 is in the [changelog](../CHANGELOG.md). In build 104:
+
+- **Mission intro cameras use the original fly-ins from the disc again,** shortened to the last 40 m before the hero and stopped in front of walls, so the camera no longer passes through buildings.
+- **You can get back into your car after it has exploded** (the wreck drives slowly), as in the original.
+- **Glow at entrances and phone booths** (a pulse, drawn by the engine) after frames of the PS2 original.
+- **No black screen after a failed mission, race bet paid at the card, speech bubble slide-in.** Checked in the emulator and by the gates in `tests/`.
 
 ## What works, what is partial, what is missing
 
@@ -24,7 +25,7 @@ Where the port stands against the original PS2 game, as of November 7, 2026 (bui
 | 16:9 3D, menus, HUD and loading screens rebuilt from the original files | works | hardware |
 | Pause, options, radar, mission select | works, one reported glitch not reproduced | hardware |
 | Save slots, SAVE, RESUME, level unlocking | works | hardware |
-| Sound and music streaming (Media Engine mixer) | works: 0 late buffers in 1014 s | hardware |
+| Sound and music streaming (Media Engine mixer) | works: 0 late buffers in 3193 s | hardware |
 | Music on every level | plays on all 7 in the tour log; listened to on level 1 only | hardware (log), ear on L1 |
 | Story missions, level 1 | works when played by hand; bots finish 7 of 13 runs, the rest hit their time limit | hardware (by hand), bots |
 | Story missions, levels 2 to 7 | partial: starts verified, full playthrough not proven | emulator, bots |
@@ -57,22 +58,30 @@ Where the port stands against the original PS2 game, as of November 7, 2026 (bui
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | PSP-3000 untested; PSP-1000 has half the memory, untested | n/a |
 
-## Hardware numbers (PSP-2000, tour build TEST62; not refreshed for build 93)
+## Hardware numbers (PSP-2000, tour build 104, 113 scenes, November 11)
+
+This tour ran without the texture-table dumping switch (the build 101 tour had it on, which adds about 0.6 s to each level load). Definitions are the same as for build 101: frame-time and dropped-frame figures are per scene (the 95th percentile of a scene's frames; dropped = missed the 33.3 ms deadline), the median second is over every second spent in play, and shared scenes are the ones every compared tour ran.
 
 | Measure | Result |
 |---|---|
-| Tour finished to the end | yes; 0 faults, 0 stalls, 0 memory failures, 0 read errors |
-| Frame rate, whole tour | median 28 fps (capped at 30) |
-| Seconds under 20 fps | 6 to 9 percent, mostly in city driving on levels 3 to 6 |
-| Frame time p95 by scene | 23 to 43 ms; driving scenes on levels 3 to 7 sit at 33.5 to 36.8 ms (30 fps is 33.3 ms) |
-| Worst single frames | 212 to 263 ms when leaving the house at the start of levels 4 and 7 (the world is set up in that frame) |
-| Streaming | 2162 cells loaded, worst request-to-ready delay 877 ms |
-| Memory | lowest free heap 3.97 MB, lowest largest block 1.00 MB |
-| Audio | 1014 s, 0 late buffers |
-| Level load | 5.3 to 6.9 s per level in the tour |
+| Tour finished to the end | yes; 0 faults, 0 stalls, 0 read errors, 0 memory failures, no city block that did not fit |
+| Frame rate, whole tour | median second 26 fps (capped at 30; build 101: 27); 28 percent of seconds at 29 fps or more (build 101: 25) |
+| Frame time p95 by scene | median 34.5 ms (build 101: 33.5; 30 fps is 33.3 ms); interiors 17.5 to 24.5 ms; the slowest 10 percent of scenes 40.0 ms or more; the worst scene 52.8 ms (a mission scene on level 7) |
+| Dropped frames | median 19 percent per scene, 21 percent of all frames (build 101: 10 and 19, so this is worse); levels 6 and 4 are the weakest (32 and 26 percent of frames in their scenes; the tour has 27 scenes on level 4 against 8 in build 101) |
+| Streaming | 3313 cells loaded, worst request-to-ready delay 1.9 s (build 101: 6.5 s); frames with a visible, not yet loaded block: 144 over the whole tour (build 101: 234), but 21 inside the scenes against 13 in build 101 |
+| Memory | lowest free heap 3.5 MB, lowest largest block 3.4 MB (build 101: 3.00 and 2.72) |
+| Audio | 3191 s, 0 late buffers; the second core handed 2 buffers back to the main one |
+| Level load | 2.9 to 3.7 s per level, 3.3 s on average (build 101: 5.0 s with the dumping switch on) |
+
+Compared on the 81 scenes that the build 93, 101 and 104 tours share: p95 36.5 to 34.8 ms (build 101: 34.8), dropped frames 36 to 19 percent (median over scenes; build 101: 14), lowest free memory 1.1 to 3.5 MB, frames with a visible, not yet loaded block 77 to 15 (build 101: 10).
 
 ## Known problems
 
+- Phone booths are off during missions that give you a car (as in the original); on levels 3 and 6 this holds from the start of the level.
+- City blocks that have not loaded yet can still show as holes for a moment, for example right after a teleport (see the streaming row above).
+- A tree or a pole that you kick can fall over as one piece and stay stuck instead of breaking apart.
+- The VENT GAS sign at the power plant can hide the hero from the camera.
+- Simplified far city blocks exist in the code but are switched off by default and the builder no longer makes their file, after a playtest of build 102 on the PSP reported map textures flickering (the cause was not confirmed).
 - Driving in the city on levels 3 to 7 does not hold 30 fps and dips under 20 fps in places. The cost is spread evenly over the whole frame.
 - Far-distance flicker is not solved. The fix for it hid the horizon on one level, so it is switched off in the final build.
 - A "go home" icon was reported once after a level change; it could not be reproduced. Every level change closes open menus and clears the previous mission icon, and the game logs the icon state for the next report.
@@ -85,7 +94,7 @@ Where the port stands against the original PS2 game, as of November 7, 2026 (bui
 
 ## Not verified
 
-Build 93 played by hand to the end; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
+Build 104 played by hand to the end; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
 
 ## If the game stops
 
