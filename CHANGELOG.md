@@ -1,6 +1,6 @@
 # Changelog
 
-Builds 93 to 104, November 7 to 10, 2026. Newest first.
+Builds 93 to 106, November 7 to 11, 2026. Newest first.
 
 **How to read the numbers.** Every number below is from the scripted tour on a real PSP-2000 unless it says *emulator*. The frame time is the 95th percentile of a scene's frames (p95), then the median over scenes; "dropped" is the share of frames that missed the 30 fps deadline (33.3 ms), also the median over scenes. The tour grew from 55 scenes (build 86) to 113 (build 101), so tours are only compared on the scenes they share. A tour that ends early or runs with debugging switches on says so.
 
@@ -16,8 +16,9 @@ Builds 93 to 104, November 7 to 10, 2026. Newest first.
 | 100 | Nov 9 | 109 | 34.0 | 10% | 3.0 MB | 0 |
 | 101 | Nov 9 | 113 | 33.5 | 10% | 3.0 MB | 0 |
 | 104 | Nov 11 | 113 | 34.5 | 19% | 3.5 MB | 0 |
+| 106 (tour run on build 105) | Nov 11 | 114 | 35.5 | 21% | 3.3 MB | 0 |
 
-Because the scene lists differ, the fair comparison is the 81 scenes that builds 93, 94, 95, 97, 98, 100, 101 and 104 all ran:
+Because the scene lists differ, the fair comparison is the 81 scenes that builds 93, 94, 95, 97, 98, 100, 101, 104 and 105 all ran:
 
 | Build | p95, ms | Dropped (median over scenes) | Dropped (all frames) | Lowest free memory |
 |---|---|---|---|---|
@@ -29,8 +30,22 @@ Because the scene lists differ, the fair comparison is the 81 scenes that builds
 | 100 | 35.0 | 18% | 23% | 3.0 MB |
 | 101 | 34.8 | 14% | 21% | 3.0 MB |
 | 104 | 34.8 | 19% | 23% | 3.5 MB |
+| 106 (tour run on build 105) | 35.8 | 21% | 26% | 3.3 MB |
 
 Build 95 was the fastest and also the one that ran out of memory 106 times in the middle of the tour: its memory zones were too greedy. Builds 97 and 98 fixed that, at the price of a slower frame than build 95, which is still not recovered.
+
+## Build 106 (November 11)
+
+Build 106 is build 105 plus the frame around the videos. **The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.** Hardware tour (November 11): 114 scenes (build 104: 113; the new one is the level 4 bonus game, `F_BONUS_T4`), ran to the end, no stalls, 0 read errors, 0 memory failures, no city block that did not fit, 0 late audio buffers in 54 minutes. Level loads took 3.3 s on average, as in build 104. The worst wait for a city block was 1.8 s (build 104: 1.9 s).
+
+It is slower than build 104 on every frame measure, on the 113 scenes both tours ran: median second 24 fps against 26, frame time p95 35.5 ms against 34.5, dropped frames 20 against 19 percent of scenes and 27 against 21 percent of all frames, seconds at 29 fps or more 22 against 25 percent (on all scenes of each tour: 24 against 26 fps and 21 against 28 percent). On the 81 scenes shared with builds 93 to 101: p95 35.8 ms (build 104: 34.8, build 101: 34.8), dropped frames 21 percent (build 104: 19, build 101: 14), lowest free memory 3.3 MB, frames with a visible, not yet loaded block 13 (build 104: 15, build 101: 10). Levels 2, 6 and 5 are the weakest (34, 33 and 27 percent of dropped frames in their scenes; level 2 has 7 scenes). The tour was run once and the cause of the slowdown has not been found.
+
+- **A car slides along a wall or fence again** at a shallow angle instead of stopping, as in builds 92 to 96, and still stays on four wheels in a hard hit. The stop at the wall came with the fix for flipping over in build 99. Now the car slides at angles up to about 30 degrees, as in build 92; at 45 degrees and more it still stops at the wall. The PS2 recordings lose almost all speed at 26 to 35 degrees, so on this point build 106 is further from the original than builds 99 to 104 were.
+- **Traffic cars no longer swerve out of your way.** The swerve was added in build 90; it is switched off, the code is still there. We have no PS2 recording of such a swerve.
+- **A hit no longer moves the car in a jump on a long frame.** The shift after a hit is capped at 0.08 m per step; in the emulator a frame of 45 to 50 ms used to move the car up to 0.33 m at once.
+- **Videos started from the View Movies menu now play inside the TV frame like the others (they were drawn over the list).** The video played while the options pack was open, and the TV drew the second screen of that pack (the list of videos) instead of the frame.
+
+Not proven: trees and bushes hit at a slide, and getting into a car in a traffic jam.
 
 ## Build 104 (November 10)
 

@@ -1,15 +1,22 @@
 # Status
 
-Where the port stands against the original PS2 game, as of November 10, 2026 (build 104; the latest hardware tour is build 104 of November 11). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of November 11, 2026 (build 106; the latest hardware tour was run on build 105, which build 106 matches except for the frame around the videos). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
 - **Firmware:** tested on PRO-C and ARK-4. The game imports the kubridge library as a whole; ME/LME and Adrenaline were not tried.
-- **Latest hardware tour:** build 104 on November 11 ran the scripted tour of 113 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit).
+- **Latest hardware tour:** build 105 on November 11 ran the scripted tour of 114 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit). **The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.**
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What is new in this build
 
-The whole list from build 93 to 104 is in the [changelog](../CHANGELOG.md). In build 104:
+The whole list from build 93 to 106 is in the [changelog](../CHANGELOG.md). In build 106 (changes since build 104):
+
+- **A car slides along a wall or fence again** at a shallow angle instead of stopping, as in builds 92 to 96, and stays on four wheels in a hard hit. At 45 degrees and more it stops at the wall. The PS2 recordings lose almost all speed at 26 to 35 degrees, so this is further from the original than the sticking of builds 99 to 104 was.
+- **Traffic cars no longer swerve out of your way** (the swerve, in since build 90, is switched off; no PS2 recording of such a swerve exists).
+- **A hit no longer moves the car in a jump on a long frame** (the shift is capped at 0.08 m per step).
+- **Videos started from the View Movies menu now play inside the TV frame like the others (they were drawn over the list).**
+
+In build 104:
 
 - **Mission intro cameras use the original fly-ins from the disc again,** shortened to the last 40 m before the hero and stopped in front of walls, so the camera no longer passes through buildings.
 - **You can get back into your car after it has exploded** (the wreck drives slowly), as in the original.
@@ -58,26 +65,29 @@ The whole list from build 93 to 104 is in the [changelog](../CHANGELOG.md). In b
 | Jumps, ramps and fences | level 5 ramp rails and fire escape, fence links on levels 2 to 7 follow PS2 recordings; not played on hardware | emulator vs PS2 recording |
 | Other PSP models, NTSC discs | PSP-3000 untested; PSP-1000 has half the memory, untested | n/a |
 
-## Hardware numbers (PSP-2000, tour build 104, 113 scenes, November 11)
+## Hardware numbers (PSP-2000, tour on build 105, 114 scenes, November 11)
 
-This tour ran without the texture-table dumping switch (the build 101 tour had it on, which adds about 0.6 s to each level load). Definitions are the same as for build 101: frame-time and dropped-frame figures are per scene (the 95th percentile of a scene's frames; dropped = missed the 33.3 ms deadline), the median second is over every second spent in play, and shared scenes are the ones every compared tour ran.
+**The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.** Like the build 104 tour, it ran without the texture-table dumping switch. Definitions are the same as for builds 101 and 104: frame-time and dropped-frame figures are per scene (the 95th percentile of a scene's frames; dropped = missed the 33.3 ms deadline), the median second is over every second spent in play, and shared scenes are the ones every compared tour ran. The tour has one scene more than the build 104 tour (`F_BONUS_T4`, the level 4 bonus game). Each tour was run once.
 
-| Measure | Result |
-|---|---|
-| Tour finished to the end | yes; 0 faults, 0 stalls, 0 read errors, 0 memory failures, no city block that did not fit |
-| Frame rate, whole tour | median second 26 fps (capped at 30; build 101: 27); 28 percent of seconds at 29 fps or more (build 101: 25) |
-| Frame time p95 by scene | median 34.5 ms (build 101: 33.5; 30 fps is 33.3 ms); interiors 17.5 to 24.5 ms; the slowest 10 percent of scenes 40.0 ms or more; the worst scene 52.8 ms (a mission scene on level 7) |
-| Dropped frames | median 19 percent per scene, 21 percent of all frames (build 101: 10 and 19, so this is worse); levels 6 and 4 are the weakest (32 and 26 percent of frames in their scenes; the tour has 27 scenes on level 4 against 8 in build 101) |
-| Streaming | 3313 cells loaded, worst request-to-ready delay 1.9 s (build 101: 6.5 s); frames with a visible, not yet loaded block: 144 over the whole tour (build 101: 234), but 21 inside the scenes against 13 in build 101 |
-| Memory | lowest free heap 3.5 MB, lowest largest block 3.4 MB (build 101: 3.00 and 2.72) |
-| Audio | 3191 s, 0 late buffers; the second core handed 2 buffers back to the main one |
-| Level load | 2.9 to 3.7 s per level, 3.3 s on average (build 101: 5.0 s with the dumping switch on) |
+| Measure | Build 105 tour | Build 104 tour |
+|---|---|---|
+| Tour finished to the end | yes; 0 faults, 0 stalls, 0 read errors, 0 memory failures, no city block that did not fit | same |
+| Frame rate, whole tour | median second 24 fps (capped at 30); 21 percent of seconds at 29 fps or more | 26 fps; 28 percent |
+| Frame time p95 by scene | median 35.5 ms (30 fps is 33.3 ms); interiors 17.5 to 24.3 ms; 14 of 114 scenes at 40.0 ms or more; the worst scene 54.3 ms (a mission scene on level 7) | 34.5 ms; 17.5 to 24.5; 11 of 113; 52.8 ms (the same scene) |
+| Dropped frames | median 21 percent per scene, 28 percent of all frames; levels 2, 6 and 5 are the weakest (34, 33 and 27 percent of frames in their scenes; level 2 has 7 scenes) | 19 and 21 percent; levels 6 and 4 (32 and 26 percent) |
+| Streaming | 3076 cells loaded, worst request-to-ready delay 1.8 s; frames with a visible, not yet loaded block: 147 over the whole tour (29 inside the scenes, 10 of them in the new bonus scene) | 3313 cells, 1.9 s; 144 (21 inside the scenes) |
+| Memory | lowest free heap 3.3 MB, lowest largest block 3.2 MB | 3.5 MB and 3.4 MB |
+| Audio | 3238 s, 0 late buffers; the second core handed 3 buffers back to the main one | 3191 s, 0 late; 2 buffers |
+| Level load | 2.9 to 3.7 s per level, 3.3 s on average | 2.9 to 3.7 s, 3.3 s |
 
-Compared on the 81 scenes that the build 93, 101 and 104 tours share: p95 36.5 to 34.8 ms (build 101: 34.8), dropped frames 36 to 19 percent (median over scenes; build 101: 14), lowest free memory 1.1 to 3.5 MB, frames with a visible, not yet loaded block 77 to 15 (build 101: 10).
+On the 113 scenes both tours ran, build 105 is slower on every frame measure: median second 24 fps against 26, p95 35.5 ms against 34.5, dropped frames 20 against 19 percent per scene and 27 against 21 percent of all frames. We have not found the cause.
+
+Compared on the 81 scenes that the build 93, 98, 101, 104 and 105 tours share: p95 36.5 to 35.8 ms (build 104: 34.8; build 101: 34.8), dropped frames 36 to 21 percent (median over scenes; build 104: 19; build 101: 14), lowest free memory 1.1 to 3.3 MB, frames with a visible, not yet loaded block 77 to 13 (build 104: 15; build 101: 10).
 
 ## Known problems
 
 - Phone booths are off during missions that give you a car (as in the original); on levels 3 and 6 this holds from the start of the level.
+- A car that hits a wall or fence at 45 degrees or more still stops at the wall; it slides only at angles up to about 30 degrees. The PS2 recordings lose almost all speed at 26 to 35 degrees, so the slide is stronger than in the original.
 - City blocks that have not loaded yet can still show as holes for a moment, for example right after a teleport (see the streaming row above).
 - A tree or a pole that you kick can fall over as one piece and stay stuck instead of breaking apart.
 - The VENT GAS sign at the power plant can hide the hero from the camera.
@@ -94,7 +104,7 @@ Compared on the 81 scenes that the build 93, 101 and 104 tours share: p95 36.5 t
 
 ## Not verified
 
-Build 104 played by hand to the end; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
+Build 106 played by hand to the end; the hardware tour of the build 106 files themselves (the tour was run on build 105); trees and bushes hit at a slide; getting into a car in a traffic jam; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
 
 ## If the game stops
 

@@ -9,7 +9,7 @@ No game files are included, and none will be.
 - All 7 levels, on foot and behind the wheel: missions, traffic, pedestrians, phone booths, collectibles
 - Built for the PSP screen: 3D in true 16:9, every menu and HUD element rebuilt from the original menu files, nothing stretched
 - Cartoon mode: the look of the show's early seasons, with ink outlines, flat fills and the show's palette
-- About 26 fps on a PSP-2000 (median second of a full hardware tour of all 7 levels, build 104)
+- About 24 fps on a PSP-2000 (median second of a full hardware tour of all 7 levels; the tour was run on build 105, which build 106 matches except for the frame around the videos; build 104: 26)
 
 ## Read next
 
@@ -17,13 +17,23 @@ No game files are included, and none will be.
 - [Using the PSP Media Engine](docs/research/media-engine.md): sound mixing on the second core, what worked and what did not
 - [How this port is built and tested](docs/process.md): the rules and the path of a fix from a playtest note to the handheld
 - [Tests](tests/README.md): how every fix is checked
-- [Changelog](CHANGELOG.md): what changed from build 93 to build 104, with the numbers from the PSP tours
+- [Changelog](CHANGELOG.md): what changed from build 93 to build 106, with the numbers from the PSP tours
 - [Build 86 in pictures](docs/slides/README.md): what was checked, what changed and how fast it runs, in five slides
 - [All documents](docs/index.md)
 
-## What's new in build 104
+## What's new in build 106
 
-Builds 94 to 104 (November 8 to 10) are described in the [changelog](CHANGELOG.md). The short version (the tour numbers are from the build 104 hardware tour of November 11):
+Changes since build 104 (the full list for builds 93 to 106 is in the [changelog](CHANGELOG.md)). **The hardware tour was run on build 105; build 106 differs from it only in the frame around the videos.**
+
+- **A car slides along a wall or fence again** at a shallow angle instead of stopping, as in builds 92 to 96, and still stays on four wheels in a hard hit. At 45 degrees and more it stops at the wall.
+- **Traffic cars no longer swerve out of your way.** The swerve (in since build 90) is switched off; the code is still there.
+- **A hit no longer moves the car in a jump on a long frame.** The shift is capped at 0.08 m per step; in the emulator a long frame (45 to 50 ms) used to move the car up to 0.33 m at once.
+- **Videos started from the View Movies menu now play inside the TV frame like the others (they were drawn over the list).**
+- **Slower than build 104, not faster.** On the 114-scene hardware tour (build 105) the median second was 24 fps against 26, frame time p95 35.5 ms against 34.5, and dropped frames 21 percent of scenes against 19 (28 percent of all frames against 21). Memory is a little tighter: lowest free memory 3.3 MB (build 104: 3.5). There were no stalls, no read errors and no memory failures. The tour was run once and the cause of the slowdown has not been found.
+
+### Build 104
+
+The tour numbers in this part are from the build 104 hardware tour of November 11:
 
 - **Doors and phone booths glow.** Entrances and phone booths pulse when you are near, drawn by the engine instead of a texture, as in the original.
 - **Memory holds up.** On the 113-scene hardware tour of build 104 there were no memory failures and no city block that did not fit; the lowest free memory was 3.5 MB (build 93: 1.1 MB). On the 81 scenes the tours share, the count of frames with a visible, not yet loaded block fell from 77 to 15 (build 101 had 10).
@@ -114,7 +124,7 @@ Comments in the code are mostly in Russian.
 
 ## How it was made
 
-About six weeks, 104 test builds and dozens of full tours on a real PSP. More than 1,260 playtest notes, logged and worked through one by one.
+About six weeks, 106 test builds and dozens of full tours on a real PSP. More than 1,260 playtest notes, logged and worked through one by one.
 Over 4,200 automated runs, with 130 recordings of the PS2 original as the reference. Fixes sit behind switches
 that restore the old behavior, and a check counts only after it fails on the old code.
 
