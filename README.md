@@ -91,7 +91,11 @@ in `PSP/GAME/SHARVIEW`. Needs custom firmware and a PSP-2000 or PSP-3000. The PS
 - Space: the game folder takes about 3.3 GB on the Memory Stick (7 levels, cutscenes, sound, four languages). Building needs about 10 GB free on the computer
   (disc image, unpacked disc, tools and the finished game) and takes roughly an hour, up to two on a slower machine
 - Computer: tested on macOS. Ubuntu 22.04/24.04 (x86_64 or arm64): the Linux path comes from noname8723, who built the game on Windows through Ubuntu;
-  we have not run it on Linux ourselves yet. On Windows use WSL (Ubuntu inside Windows)
+  we have not run it on Linux ourselves yet. Fedora (dnf) and Arch (pacman) are set up by `./setup.sh` too, but not tested by us: if it stops, the page shows the reason
+  and the path of the log (`build/app/build.log`). On Windows use WSL (Ubuntu inside Windows); the builder does not run in Windows itself
+- Python: 3.11 or 3.12 is the tested pair. On 3.13/3.14 (Fedora 41+, Arch) `setup.sh` first tries to install 3.12, otherwise it uses newer numpy/Pillow builds;
+  one tool package (`meshoptimizer`) is compiled on your computer, so the Python headers and a C++ compiler must be installed
+  (Fedora: `sudo dnf install python3-devel gcc gcc-c++`, Ubuntu: `sudo apt install python3-dev build-essential`)
 - Ubuntu notes: `./setup.sh` installs the apt packages (build-essential, cmake, 7zip or p7zip-full, ffmpeg and the libraries the PSP toolchain needs)
   and clones `hit-and-run-web` and `donut`. Then run `source tools/linux_env.sh`: it adds small `stat`/`cp`/`sed` wrappers for the macOS-style
   commands in the test scripts (`tools/ship.sh` does not need them). Python 3.11 or newer is required (Ubuntu 22.04 needs the deadsnakes PPA).

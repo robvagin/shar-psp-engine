@@ -6,6 +6,9 @@ API: GET /api/state · GET /api/events (SSE) · POST /api/disc (тело — о�
 import argparse, hashlib, http.server, json, os, queue, re, shutil, signal, subprocess, sys, threading, time, urllib.parse, webbrowser
 from pathlib import Path
 
+if sys.platform == 'win32':   # сервер и сборка — для macOS и Linux; на Windows всё идёт внутри Ubuntu (WSL), см. app/get.ps1
+    sys.exit('This builder does not run in Windows itself. On Windows it runs inside Ubuntu (WSL): in PowerShell run\n'
+             '  irm https://raw.githubusercontent.com/robvagin/shar-psp-engine/main/app/get.ps1 | iex')
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / 'app/ui'
 sys.path.insert(0, str(ROOT / 'app/core'))
@@ -35,6 +38,7 @@ class Core:
     def start(self, iso):
         if self.proc and self.proc.poll() is None: return
         LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG, 'a', encoding='utf-8') as log: log.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} build starts: {iso}\n')   # журнал есть, даже если сборка не успела ничего сказать
         self.proc = subprocess.Popen(['bash', str(ROOT / 'app/core/build.sh'), str(iso)], cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding='utf-8', errors='replace', bufsize=1, start_new_session=True)   # вывод установки не всегда UTF-8 (полосы curl)
         threading.Thread(target=self._follow, args=(self.proc,), daemon=True).start()
@@ -43,7 +47,6 @@ class Core:
         t0 = time.time(); p0 = None; err = ''
         self.set(state='build', step=1, total=5, title='Setting up the tools', pct=0, eta='')
         with open(LOG, 'a', encoding='utf-8') as log:
-            log.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} build\n')
             for line in p.stdout:   # поток не должен падать от любой строки: иначе сборка идёт, а экран стоит
                 log.write(line); log.flush()
                 if not line.startswith('@@ '): continue
@@ -58,7 +61,10 @@ class Core:
         rc = p.wait()
         if rc == 0 and self.s.get('pct', 0) >= 100: self.set(state='done', size=_size_gb(ROOT / 'build'))
         elif rc in (-signal.SIGTERM, 143) or self.s.get('state') == 'idle': self.set(state='idle')
-        else: self.set(state='error', title='The build stopped', note=err or 'See build/app/build.log for details')
+        else:   # заголовок — шаг, на котором встало; полный текст и путь — и на экране PSP, и в окне терминала, где идёт сервер
+            note = err or f'It stopped without a reason (exit code {rc})'; where = str(self.s.get('title') or 'The build')
+            self.set(state='error', kind='build', title=where, note=note, log=_home(LOG))
+            print(f'\nBUILD FAILED at "{where}": {note}\nLog: {LOG}\nLast lines:\n{_tail(LOG)}\n', flush=True)
 
     @staticmethod
     def _eta(t0, p0, pct):
@@ -81,7 +87,7 @@ class Core:
 
     def _put(self):
         man = ROOT / 'build/ship_manifest.txt'
-        if not man.exists(): self.set(state='error', title='Nothing to copy yet', note='Build the game first'); return
+        if not man.exists(): self.set(state='error', kind='copy', title='Nothing to copy yet', note='Build the game first'); return
         files = [l.split(None, 1) for l in man.read_text().splitlines()[2:] if re.match(r'^[0-9a-f]{64}\s', l)]
         self.set(state='copy', pct=0, title='Connect your PSP by USB', note='Settings › USB Connection on the PSP')
         root = None
@@ -101,7 +107,7 @@ class Core:
                 done += size; self.patch(pct=round(done * 100 / total, 1))
             for junk in dst.rglob('._*'): junk.unlink(missing_ok=True)
         except OSError as e:
-            self.set(state='error', title='Copying stopped', note=str(e)); return
+            self.set(state='error', kind='copy', title='Copying stopped', note=str(e)); return
         self.set(state='onpsp')
 
     def show(self):
@@ -109,6 +115,19 @@ class Core:
         if sys.platform == 'darwin': subprocess.Popen(['open', str(target)])
         elif 'microsoft' in os.uname().release.lower(): subprocess.Popen(['explorer.exe', subprocess.run(['wslpath', '-w', str(target)], capture_output=True, text=True).stdout.strip()])
         else: subprocess.Popen(['xdg-open', str(target)])
+
+
+def _home(p):
+    """Путь с ~ вместо домашней папки: короче на экране и понятнее человеку"""
+    p = str(p); h = str(Path.home())
+    return '~' + p[len(h):] if p.startswith(h + os.sep) else p
+
+
+def _tail(p, n=8):
+    """Последние строки журнала без служебных «@@» — то, что человек вставит в сообщение, когда просит помощи"""
+    try: lines = [l.rstrip() for l in Path(p).read_text(encoding='utf-8', errors='replace').splitlines() if l.strip() and not l.startswith('@@ ')]
+    except OSError: return ''
+    return '\n'.join(l[:200] for l in lines[-n:])
 
 
 def _sha(p):
@@ -204,7 +223,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ident = identify(dst)
         if not ident.get('ok'):
             dst.unlink(missing_ok=True)
-            CORE.set(state='error', title='This is a different game' if ident.get('exe') else 'This is not a PS2 disc image',
+            CORE.set(state='error', kind='disc', title='This is a different game' if ident.get('exe') else 'This is not a PS2 disc image',
                      note='Expected The Simpsons: Hit & Run, SLES 518.97 (PAL) or SLUS 206.24 (NTSC)')
             return self._json(ident, 400)
         CORE.set(state='check', title=f'{ident["region"]} disc found', note=ident['exe'].replace('_', ' '), pct=100)

@@ -18,7 +18,9 @@ fi
 # 1. инструменты (PSPDEV, Python-окружение, разборщик диска, donut); уже есть — пропуск
 say 1 "Setting up the tools" 1
 if [ ! -x pspdev/bin/psp-gcc ] || [ ! -x .venv/bin/python ] || [ ! -d hit-and-run-web/tools ] || [ ! -d donut ]; then
-  ./setup.sh || fail "setup.sh stopped, see the log"
+  # setup.sh сам называет причину (строка «@@ error» и build/app/setup_error.txt); общая фраза — только если он остановился молча
+  rm -f build/app/setup_error.txt
+  ./setup.sh || { [ -s build/app/setup_error.txt ] && exit 1; fail "The tool setup stopped. The reason is in the log: $ROOT/build/app/build.log"; }
 fi
 export PSPDEV="$ROOT/pspdev" PATH="$ROOT/pspdev/bin:$PATH"
 . .venv/bin/activate

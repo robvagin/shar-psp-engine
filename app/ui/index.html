@@ -145,9 +145,10 @@
       </section>
 
       <section class="state" data-state="error">
-        <p class="eyebrow" style="color: var(--accent)">Not this disc</p>
+        <p class="eyebrow" style="color: var(--accent)" id="errEye">Not this disc</p>
         <p class="title" id="errTitle">This is a different game</p>
         <p class="note" id="errNote">Expected The Simpsons: Hit &amp;&nbsp;Run, SLES 518.97 (PAL) or SLUS 206.24 (NTSC)</p>
+        <p class="note" id="errLog" hidden></p>
         <div class="actions"><button class="link" id="againBtn" type="button">Choose another image</button></div>
       </section>
     </div>
@@ -183,8 +184,18 @@ function render(s) {   // состояние сервера -> экран PSP
   else if (s.state === 'build') { progress(s); show('build'); }
   else if (s.state === 'done') { $('doneNote').textContent = [s.size, 'seven levels, movies and sound'].filter(Boolean).join(', '); show('done'); }
   else if (s.state === 'copy') { $('copyTitle').textContent = s.title; $('copyNote').textContent = s.note || ''; $('copyFill').style.width = (s.pct || 0) + '%'; $('copyPct').textContent = Math.round(s.pct || 0) + '%'; show('copy'); }
-  else if (s.state === 'error') { $('errTitle').textContent = s.title; $('errNote').textContent = s.note || ''; show('error'); }
+  else if (s.state === 'error') { showError(s); }
   else if (STATES.includes(s.state) && s.state !== 'over') show(s.state);
+}
+// надзаголовок по виду ошибки: образ не тот / сборка встала / копирование на PSP; у сборки — путь к журналу и последние строки
+const EYEBROW = {disc: 'Not this disc', build: 'Build failed', copy: 'Not copied'};
+function showError(s) {
+  $('errEye').textContent = EYEBROW[s.kind] || 'Stopped';
+  $('errTitle').textContent = s.title; $('errNote').textContent = s.note || '';
+  const log = $('errLog');
+  log.textContent = s.log ? `Log: ${s.log}` : ''; log.hidden = !s.log; log.style.userSelect = 'all'; log.style.marginTop = '1.2cqh';
+  $('againBtn').textContent = s.kind === 'build' ? 'Choose the image again' : 'Choose another image';
+  show('error');
 }
 function serverCore() {
   const post = p => fetch(p, {method: 'POST'});
@@ -211,6 +222,7 @@ $('stopBtn').addEventListener('click', ev => { ev.stopPropagation(); core.stop()
 $('putBtn').addEventListener('click', ev => { ev.stopPropagation(); core.put(); });
 $('showBtn').addEventListener('click', ev => { ev.stopPropagation(); core.show(); });
 $('againBtn').addEventListener('click', ev => { ev.stopPropagation(); pick.click(); });
+$('errLog').addEventListener('click', ev => ev.stopPropagation());   // выделить путь или строки журнала, не открывая выбор файла
 function begin(file) { $('checkTitle').textContent = 'Reading the disc'; $('checkNote').textContent = 'Looking for SLES 518.97 or SLUS 206.24'; show('check'); core.start(file); }
 
 // показ без ядра: те же события, что пришлёт ядро
