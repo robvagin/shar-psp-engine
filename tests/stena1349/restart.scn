@@ -1,0 +1,28 @@
+# 1349: Restart из паузы миссии (L1, этап 302 goto): чёрного экрана не больше ~1 с, fade-stuck нет
+scene g1349
+flag camdet 1
+flag startcam 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnmainat 302
+wait 3
+press cross
+wait 5
+press start
+wait 2
+press down
+wait 0.5
+press cross
+wait 2
+press cross
+wait 3
+shot s1
+wait 3
+shot s2
+wait 3
+shot s3
+flag msnhud
+wait 6
+end

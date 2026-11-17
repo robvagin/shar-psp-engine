@@ -90,6 +90,7 @@ static int cellThrashGive(void) { return !CELLTHRASH_OLD && cellThrashGiveT && s
 #include "farcell.h"
 static unsigned cellDoubleLoad; static int cellDblGuard = 1, cellDblProv;   // cellDblProv: flag dblprov 1 - служебная провокация: каждая клетка круга грузится дважды подряд (детерминированное красное для dblguard 0),    // отсеянные повторные загрузки уже готовой клетки; flag dblguard 0 - как было (красный контроль s25)
 static void cellFinish(int i, void *m) {
+  CELLPARSE_OPEN   // 107б: измеритель разбора клетки (smkdiag.h, только тур)
   if (i >= 0 && i < 4096) cellLt[i] = sceKernelGetSystemTimeLow() | 1u;
   Cell *c = &cl[i]; int ldLow_ = ldFinLow();
   sceKernelDcacheWritebackRange(m, c->size);
@@ -142,6 +143,7 @@ static void cellFinish(int i, void *m) {
   c->mem = m; loadedBytes += c->size; c->ldSize = c->size; c->ver = 0;
   __asm__ volatile("" ::: "memory");      // указатели кусков записаны раньше, чем state = 2
   c->state = 2; cgDirty++;   // №924: перебор клеток камеры (camgrid.h) увидит новую клетку сразу
+  CELLPARSE_CLOSE(i, (int)gameLevel)
   ldFinHigh(ldLow_);
 }
 #include "farcells.h"   // Модели-96: читатель farcells.shr, cellFinishFar, cellSwapVersion (farOk - файл принят)
@@ -196,7 +198,7 @@ static int cellsReadRuns(SceUID fd, short *idx, int n, volatile int *done) {
     for (int k = 0; k < n; k++) { if (cellWantsFar(&cl[idx[k]])) { loadCell(fd, idx[k]); ringReads++; ringBytes += cl[idx[k]].fsize; if (done) (*done)++; } else idx[w++] = idx[k]; }
     n = w; }
   if (n > 1) qsort(idx, (size_t)n, sizeof *idx, ringCmp);
-  unsigned char *tmp = (CELLRING_OLD || cellDblProv) ? 0 : zone3AllocX(Z3A_PLACE, "ring", RING_RUNMAX, 16);   // П5 Зоны-95: буфер укрупнённого чтения круга — область «место» (клетки лежат в области «город», кучу не дробить) ringReads = ringBytes = 0;
+  unsigned char *tmp = (CELLRING_OLD || cellDblProv) ? 0 : zone3AllocX(Z3A_PLACE, "ring", RING_RUNMAX, 16); ringReads = ringBytes = 0;   // П5 Зоны-95: буфер укрупнённого чтения круга — область «место» (клетки лежат в области «город», кучу не дробить)
   for (int a = 0; a < n; ) {
     int b = a + 1; unsigned s = cl[idx[a]].off, e = s + cl[idx[a]].size;
     while (tmp && b < n && cl[idx[b]].off >= e && cl[idx[b]].off - e <= RING_GAP && cl[idx[b]].off + cl[idx[b]].size - s <= RING_RUNMAX) { e = cl[idx[b]].off + cl[idx[b]].size; b++; }
@@ -221,7 +223,20 @@ static int cellsReadRuns(SceUID fd, short *idx, int n, volatile int *done) {
   return n;
 }
 static float fogSoft = 1.f;   // конец тумана города = drawDist × fogSoft (1 — как всегда; > 1 — мягкая граница, дальше HLOD: flag fogsoft, hlod.h)
-static int visBox(const float *b, float ox, float oy, float oz); static float boxD2(const float *b); static float drawDist, eyeX, eyeY, eyeZ, cfX, cfY, cfZ;
+static float cullMg; static int visBox(const float *b, float ox, float oy, float oz); static float boxD2(const float *b); static float drawDist, eyeX, eyeY, eyeZ, cfX, cfY, cfZ;
+// Т 1319б: регион клеток вокруг глаза в набор ворот добавлялся целиком (ZONENEAR1319, f7ed0b0f) — стрим брал и дальние клетки региона (дальше 150 м), очередь чтения
+// занимали они, а не видимые клетки кадра, и они же считались дырами (на железе missvis 74 против 7, куча −0,63 МБ). Теперь регион «рядом» (regNear) держит и считает
+// дырой только клетки в своём радиусе от глаза: грузим ближе ZN_LOAD, считаем дырой ближе ZN_MISS, выгружаем дальше ZN_KEEP (гистерезис без дрожи). Рисует отсечение весь регион
+// (дальние клетки региона не загружены, их не видно). ZONENEARCELL_OLD=1 / файл zonenearcellold / flag zonenearcell 0 — регион целиком, как f7ed0b0f.
+#define ZN_LOAD 80.f
+#define ZN_MISS 50.f
+#define ZN_KEEP 120.f
+static unsigned regNear;
+static inline int regCellOff(const Cell *c, unsigned base, float r) {   // 1 — клетка вне набора ворот (и не в радиусе региона «рядом»)
+  unsigned rg = CELL_REG(c); if (!zgOn || !rg || rg > 16) return 0;
+  unsigned b = 1u << (rg - 1); if (base & b) return 0;
+  if ((regNear & b) && boxD2(c->bb) < r * r) return 0;
+  return 1; }
 // очередь загрузчика (как стриминг GTA LCS / Crash): главный поток раз в кадр кладёт до LQ_N лучших клеток
 // (ближние и те, что впереди по ходу), загрузчик берёт их подряд, не дожидаясь следующего кадра.
 // state: 0 -> 1 ставит только загрузчик, 2/3 -> 0 только главный поток — гонок нет.
@@ -259,6 +274,17 @@ static unsigned stLoads, stLoadUs;   // статистика: число заг�
 // смена уровня (levelUnload / levelLoad ниже): загрузчик простаивает (loaderIdle — ждёт семафор, клеток не трогает), файл
 // уровня открывается заново, когда поменялось поколение lvGen (level.shr другого уровня)
 static volatile unsigned lvGen; static volatile int loaderIdle;
+// 107б P0 (сон и пробуждение, Роб 1273; генплан Fable §P0): файл уровня переоткрывался не больше 16 раз за запуск, а неудавшееся переоткрытие оставляло fd = −1 навсегда (город в дырах до смены уровня). Теперь предел — за эпоху питания
+// (power.h pwrEpoch: каждое пробуждение и смена уровня обнуляют счёт), эпоха изменилась или fd = −1 — файл открывается заново (при неудаче повтор через 250 мс). P0LEVEL_OLD=1 / файл p0levelold — как было
+#ifndef P0LEVEL_OLD
+#define P0LEVEL_OLD 0
+#endif
+// 108 (тур 108 на PSP: после сна colring не ожил до конца тура, 1,59 млн WATCHDOG colring ioerr): таймеры повтора сравнивались как (int)(сейчас − метка) < 0 при метке 0, а системное время PSP (мкс, 32 бита) после 2147 с работы приставки
+// само «отрицательное» — переоткрытие отказывалось вечно (сон был на 3410 с). Метка 0 теперь значит «нет ограничения»; метки ставятся с младшим битом (не 0). flag clockbias 1 — служебно: к времени этих таймеров добавляется 2^31 (как после 36 минут работы),
+// flag colringretryold 1 / файл colringretryold — прежнее сравнение (красный контроль)
+static unsigned retryClockBias109;
+static inline unsigned retryNow109(void) { return sceKernelGetSystemTimeLow() + retryClockBias109; }
+static int loaderP0 = !P0LEVEL_OLD; static volatile unsigned loaderOpenN, loaderCloseN, loaderEpoch, loaderReopenE, loaderRetryT, loaderDeadN;
 static volatile int loaderErrRun, loaderFixOld; static volatile unsigned loaderReopenN;   // подряд упавших чтений; переоткрытий файла уровня (ловушка 05.10)
 // Ловушка 05.10 (Роб: «загрузил DEV — Гомер в пустоте без текстур, карта не догрузилась, всё мигает»; чёрный ящик: rd растёт
 // ~160/с, клетки падают за 0 мс, куча 20 МБ свободна — у потока загрузки отняли файл). На PSP номер закрытого файла тут же
@@ -358,7 +384,7 @@ static int lvaOwns(const void *p) { return lvaBase && (const unsigned char *)p >
 #define LVA_LEVELBLOCK_OLD 0
 #endif
 static int memLadOn; static int memLadder(const char *who, unsigned need, int prio);   // memladder.h (включается позже)
-enum { LADZ_PLACE = 1, LADZ_MISSION = 2 }; static int memLadderZ(int zone, const char *who, unsigned need, int prio);   // memladder.h: лестница по зоне просящего (Build 95 шаг 9)
+enum { LADZ_PLACE = 1, LADZ_MISSION = 2 }; static int memLadderZ(int zone, const char *who, unsigned need, int prio); static int memLadMissionRoom(const char *who, unsigned need);   // memladder.h: лестница по зоне просящего (Build 95 шаг 9)
 static unsigned lvaBlockMiss;   // сколько раз блок уровня не нашёлся цельным (журнал LVA miss; гейт: 0 на всех уровнях)
 static int lvaFreeX(void *p);
 static void lvaInit(void) {
@@ -453,7 +479,7 @@ static PfSlot pf[PF_MAX]; static int pfOld = PFETCH_OLD;
 #define PREREAD_TAKEOVER_OLD 0
 #endif
 static volatile unsigned prDone; static volatile unsigned loaderDeafUntil;   // тест: до этого момента (мкс системных часов) загрузчик, проснувшись, ничего не делает (проспал задание); flag loaderdeaf МС — окно в мс от момента флага. Счёт пробуждений не годится: их тратят и другие сигналы (трафик, клетки)
-static volatile int prState; static unsigned prOff, prSize; static unsigned char *prBuf; static char prPath[256]; static int prereadOld = LOAD_PREREAD_OLD, prereadSum;
+static volatile int prState; static unsigned prOff, prSize, prGap; static unsigned char *prBuf; static char prPath[256]; static int prereadOld = LOAD_PREREAD_OLD, prereadSum;
 static unsigned levelPropSize(const unsigned char *ph, int pn) {   // размер секции PRP1/PRP2 по её заголовку; 0 — это не она
   if (!(pn >= 32 && (!memcmp(ph, "PRP1", 4) || (pn == 64 && !memcmp(ph, "PRP2", 4))))) return 0;
   const unsigned *pu = (const unsigned *)(ph + 4);
@@ -471,7 +497,29 @@ static void farSwapServe(SceUID fd) {   // загрузчик: читает др
     if (!m) { if (!toFar) cellFail |= 2; farSwapFail++; if (j < 4096) farBackT[j] = sceKernelGetSystemTimeLow() | 1u; c->swSt = 0; continue; }
     c->swMem = m; __asm__ volatile("" ::: "memory"); c->swSt = 2; }
 }
+// flag simsleep: kill-хук из главной нити файл НЕ закрывает — только ставит флаг «сон был»; закрывает старый и открывает новый файл одна нить загрузчика, в своей точке (гонки нет)
+static volatile int loaderSlept;
+static void loaderKill(void) { loaderSlept = 1; }
+// 1337: ресурсы миссии (картинки брифинга, модели персонажей и машин этапа) читаются раньше догрузки клеток города: пока они в чтении или в очереди (msnartIoBusy1337 или msnIoExt1337 от главного потока: персонажи
+// этапа ждут модель, предчтение моделей машин в полёте), загрузчик не начинает новую клетку — освобождает карту памяти. Не дольше MSNIOHOLD1337_US подряд (отказ чтения не вешает город); держится заново, когда
+// ресурсы были свободны полсекунды. MSNIOPRIO1337_OLD=1 / msnIoPrio1337Old (файл msnioprio1337old, flag msnioprio1337old 1) — как было (клетки вперёд)
+#ifndef MSNIOPRIO1337_OLD
+#define MSNIOPRIO1337_OLD 0
+#endif
+#ifndef MSNIOHOLD1337_US
+#define MSNIOHOLD1337_US 2000000u
+#endif
+static int msnIoPrio1337Old = MSNIOPRIO1337_OLD; static volatile int msnIoExt1337; static volatile unsigned msnIoExtT1337, msnIoHoldS1337, msnIoHoldFree1337; unsigned msnIoHoldN1337, msnIoHoldMs1337;
+static int msnIoHold1337(void) {
+  if (msnIoPrio1337Old) return 0;
+  unsigned now = sceKernelGetSystemTimeLow(); int busy = msnartIoBusy1337() || (msnIoExt1337 && (int)(now - msnIoExtT1337) < 200000);
+  if (!busy) { if (!msnIoHoldFree1337) msnIoHoldFree1337 = now | 1u; else if (msnIoHoldS1337 && now - msnIoHoldFree1337 > 500000u) msnIoHoldS1337 = 0; return 0; }
+  msnIoHoldFree1337 = 0;
+  if (!msnIoHoldS1337) msnIoHoldS1337 = now | 1u;
+  return now - msnIoHoldS1337 < MSNIOHOLD1337_US;
+}
 static int loaderThread(SceSize a, void *b) {
+  pwrKillHook("level", loaderKill);
   SceUID fd = -1; unsigned gen = ~0u; loaderTid = sceKernelGetThreadId(); fpuThreadInit();   // правка 252: ловушки FPU потока (viewer/fpuguard.h)
   for (;;) {
     loaderIdle = 1;
@@ -483,7 +531,7 @@ static int loaderThread(SceSize a, void *b) {
       if (prState == 1) {                            // №PREREAD: резидентная часть level.shr (после заголовка и lmap) в буфер главного потока
         loaderBusy = 1; SceUID pfd = sceIoOpen(prPath, PSP_O_RDONLY, 0); int ok = 0;
         if (pfd >= 0) { sceIoLseek32(pfd, prOff, PSP_SEEK_SET); unsigned o = prOff; ok = 1; prDone = o;
-          while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o, n) != (int)n) { ok = 0; break; } o += n; prDone = o; if (prState != 1) { ok = 0; break; } }   // ТЕСТ90 2Б: прочитанное публикуется; задание взято главным — выйти
+          while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o - prGap, n) != (int)n) { ok = 0; break; } o += n; prDone = o; if (prState != 1) { ok = 0; break; } }   // ТЕСТ90 2Б: прочитанное публикуется; задание взято главным — выйти
           sceIoClose(pfd); }
         __asm__ volatile("" ::: "memory"); if (prState == 1) prState = ok ? 2 : 3; loaderBusy = 0; }
       if (tailState == 1) {                          // загрузка 2 п.6: COL1 и PRP2 уровня (задание главного потока)
@@ -520,20 +568,31 @@ static int loaderThread(SceSize a, void *b) {
       if (farOk && fd >= 0 && gen == lvGen) farSwapServe(fd);   // Лестница-96: обмены версий клеток
       if (pnoReq >= 0) pano917Serve();   // №917: слот кольца-панорамы
       if (marksReqTail != marksReqHead) marksServe();   // №912: мелочь разметки ближних клеток
+      if (lqn > 0 && msnIoHold1337()) { unsigned h0_ = sceKernelGetSystemTimeLow(); if (ioSerial1337) ioDevBusy1337 = 0; sceKernelDelayThread(3000); msnIoHoldMs1337 += (sceKernelGetSystemTimeLow() - h0_) / 1000u; msnIoHoldN1337++; continue; }   // 1337: ресурсы миссии первые
       int n = lqn, i = -1;
       for (int k = 0; k < n && k < LQ_N; k++) { int j = lq[k]; if (j >= 0 && j < (int)ncell && cl[j].state == 0) { i = j; break; } }
-      if (i >= 0 && (gen != lvGen || (!loaderFixOld && (loaderFdLost || (loaderErrRun >= 2 && loaderReopenN < 16))))) {   // новый уровень,
-                                                       // файл отняли или чтения подряд падают (не больше 16 переоткрытий за запуск)
+      const unsigned ep0_ = pwrEpoch(); const int p0_ = loaderP0 && !loaderFixOld;
+      if (loaderSlept) { loaderSlept = 0; if (!p0_ && fd >= 0) loaderErrRun = 2; }   // симуляция сна: прежний путь «читает мёртвый» (два отказа подряд) и переоткрывает без закрытия — утечка; новый путь переоткрывает по смене эпохи
+      if (p0_ && ep0_ != loaderEpoch) { loaderReopenE = 0; }   // 107б P0: пробуждение или смена уровня — предел переоткрытий считается заново
+      const int p0Ch_ = p0_ && gen == lvGen && (ep0_ != loaderEpoch || (fd < 0 && (!loaderRetryT || (int)(retryNow109() - loaderRetryT) >= 0)));   // эпоха изменилась или прошлое переоткрытие не удалось
+      if (i >= 0 && (gen != lvGen || p0Ch_ || (!loaderFixOld && (loaderFdLost || (loaderErrRun >= 2 && (p0_ ? loaderReopenE < 16 : loaderReopenN < 16)))))) {   // новый уровень,
+                                                       // файл отняли или чтения подряд падают (не больше 16 переоткрытий за запуск; 107б P0: за эпоху питания)
         int healing = gen == lvGen;
-        if (fd >= 0 && !healing) { loaderSelfClose = 1; sceIoClose(fd); loaderSelfClose = 0; }   // при лечении номер, возможно, уже чужой — не закрывать
-        if (healing) loaderReopenN++;
-        loaderFdLost = 0; loaderErrRun = 0; fd = sceIoOpen(levelShr, PSP_O_RDONLY, 0); loaderFd = fd; gen = lvGen; }
+        // при лечении номер, возможно, уже чужой — не закрывать; кроме смены эпохи питания (сон): мёртвый номер закрывается, иначе место в таблице открытых файлов теряется на каждый сон
+        if (fd >= 0 && (!healing || (p0_ && ep0_ != loaderEpoch))) { loaderSelfClose = 1; sceIoClose(fd); loaderSelfClose = 0; loaderCloseN++; }
+        if (healing) { loaderReopenN++; loaderReopenE++; }
+        // simsleep: открытие отказывает N раз подряд (и в прежнем пути — красный контроль)
+        loaderFdLost = 0; loaderErrRun = 0; fd = pwrSimFault("level") ? -1 : sceIoOpen(levelShr, PSP_O_RDONLY, 0); if (fd >= 0) loaderOpenN++;
+        loaderFd = fd; gen = lvGen; loaderEpoch = ep0_;
+        if (p0_ && fd < 0) { loaderRetryT = (retryNow109() + 250000u) | 1u; loaderDeadN++; } }
       if (i < 0 || fd < 0) break;
       loaderBusy = 1; cl[i].state = 1;
       unsigned t0 = sceKernelGetSystemTimeLow();
+      if (ioSerial1337) ioDevBusy1337 = 1;   // 1337 стенд: карта занята клеткой
       if (slowIoKBs) sceKernelDelayThread(6000 + cl[i].size * 1000u / slowIoKBs);   // ~6 мс на поиск + скорость чтения
       smokeLoadHook();   // служебное: отрицательный контроль delaycell (viewer/smoke.h)
       ldQueue = 1; loadCell(fd, i); ldQueue = 0;
+      if (ioSerial1337) { ioDevBusy1337 = 0; sceKernelDelayThread(1000); }   // 1337 стенд: короткий просвет между клетками
       if (cl[i].state == 3 && (cellFail & 1)) loaderErrRun++; else if (cl[i].state == 2) loaderErrRun = 0;
       stLoadUs += sceKernelGetSystemTimeLow() - t0; stLoads++;
       if (cl[i].reqT) { unsigned lat = (sceKernelGetSystemTimeLow() - cl[i].reqT) / 1000u;   // П2: от запроса до готовности, мс
@@ -595,6 +654,7 @@ static void ldWaitLimit(LdWait *w, const char *what, unsigned limitMs) {   // з
   if (now - w->t0 > lim * 1000u) ldWaitFail(what, lim);
 }
 static int loaderWaitStep(LdWait *w, const char *what, unsigned prog, int canGiveUp) {   // 1 — выйти из ожидания (только если canGiveUp)
+  if (waitPump) waitPump();   // 1320б: кадр прелоадера из ожидания внутри чистой перезагрузки
   unsigned now = sceKernelGetSystemTimeLow();
   if (!w->init || prog != w->prog) { if (!w->init && smkOn) { char s_[80]; snprintf(s_, sizeof s_, "LWINIT %s old=%d t=%.1f\n", what, loadWaitOld, smkT); smkWrite(s_); } w->init = 1; w->prog = prog; w->last = now; return 0; }
   if (loadWaitOld || now - w->last < lwMs * 1000u) return 0;
@@ -604,7 +664,10 @@ static int loaderWaitStep(LdWait *w, const char *what, unsigned prog, int canGiv
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "LOADWAIT %s n=%d giveup=%d t=%.1f\n", what, w->n, !(w->n < 3 || !canGiveUp), smkT); smkWrite(s_); }
   return !(w->n < 3 || !canGiveUp);
 }
+static unsigned stUnl, stUnlRe;   // 108: отдач клеток; из них повторных (клетка отдана, загружена и отдана снова в пределах минуты) — признак петли
+static unsigned unlT[4096];
 static void unloadCell(Cell *c) {
+  { unsigned n_ = sceKernelGetSystemTimeLow(), i_ = (unsigned)(c - cl); stUnl++; if (i_ < 4096) { if (unlT[i_] && n_ - unlT[i_] < 60000000u) stUnlRe++; unlT[i_] = n_ | 1u; } }
   dlFree((unsigned)(c - cl)); marksCellFree((unsigned)(c - cl));   // правка 275: лист клетки ссылается на её память — уходит вместе с ней
   if (c->state == 2) {
     for(unsigned k=c->first;k<c->first+c->n;k++){cpFree(pc[k].ggBatch);pc[k].ggBatch=0;cpFree(pc[k].unr);pc[k].unr=0;}
@@ -715,6 +778,7 @@ static unsigned char memTrimSet2[MT2_MAX], memTrimCnt2[MT2_MAX]; static unsigned
 #define VISSTUCK_US 1500000u
 static int visStuckOn = !VISSTUCK_OLD, cellStuckInj; static unsigned visStuckT[MT2_MAX], visStuckN; static unsigned char visStuckF[MT2_MAX];
 static unsigned memChkT, memFreeNow = ~0u, memTrims, memTrimBytes; static int memTight;
+static int memTightForce1360;   // 1360 служебное (flag memtight1360 1): тесная куча принудительно, для гейта tests/zonenear1360 (на Маке куча свободная)
 // П5 Зоны-95: когда клетки лежат в области «город», резерв и отдача далёкого считаются по её свободному месту, а не по куче. Резерв области Z2_RESERVE (0,75 МБ) переводится в прежние пороги MEM_RESERVE/MEM_HYST сдвигом
 #define Z2_RESERVE (768u << 10)
 static unsigned strFreeNow = ~0u;
@@ -751,6 +815,37 @@ static int ringFitCmp(const void *a, const void *b) {
 #define RINGCAP_FLOOR 88.f   // ниже этого дальность под клетку, что не влезла, не опускаем
 #define RINGCAP_RISE 8.f
 static int ringCapOn = !RINGCAP_OLD; static float ringCapDd; static float cityNoFitD = 1e9f;   // cityNoFitD - край ближайшей клетки, не влезающей в область города (в кадре stream()); рост дальности под RINGCAP не заходит за неё
+// Даль-1272 (слово Роба 13.11 14:09: «рисовка устойчивая, хотя бы 150–200 метров»; сверка Fable с оригиналом: у оригинала дальность одна, район приезжает заранее, регулятора нет).
+// Два шага, оба бесплатные по памяти и кадру: (1) круг DAL72_CORE_M по ящику во ВСЕ стороны, не только в кадре, идёт в очереди загрузчика сразу за видимыми ближними: поворот камеры
+// и разворот машины не открывают дыр ближе 170 м; (2) дальность (регулятор кадра, потолок круга, рампа таблицы дали) растёт, только пока весь круг до дальности + DAL72_RING_M в памяти
+// (stMissRing = 0): город не доезжает до глаз после подъёма. Только порядок и условие подъёма, радиусы загрузки и выгрузки не меняются. DAL1272_OLD=1 / файл dal1272old / «flag dal1272 0» - как в 106.
+#ifndef DAL1272_OLD
+#define DAL1272_OLD 0
+#endif
+#define DAL72_CORE_M 200.f   // 108: было 170; на облёте L1 (45 м/с, карта 700 КБ/с, ballast 5) 170 и 200 дают те же дыры (0), те же клетки и кадр: круг все равно в запасе загрузки дальность+75
+#define DAL72_RING_M 30.f
+#ifndef DAL72_CEIL_OLD
+int rb_DAL72_CEIL_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+#define DAL72_CEIL_OLD rb_DAL72_CEIL_OLD
+#endif
+#define DAL72_CEIL 200.f   // потолок регулятора кадра, м
+static float stHoleD72 = 1e9f, stHoleAhead72 = 1e9f, beltAxisT, beltAxisNow;
+// Даль-1272б (слово Роба 13.11: «в идеале 200, как в оригинале, минимум 150»; снимок вкл/выкл шара при круге 150: +2,6k треугольников, картинка та же): шар пояса отсекал куски до 200 м по оси, но дальняя плоскость кадра
+// стояла на «круг + 10 м» и режущая GE выбрасывала их — цена платилась, картинки не было. Теперь дальняя плоскость — по оси шара (город без дымки: до плоскости рисуется всё, что в списке). BELTFAR_OLD=1 / файл beltfarold / flag beltfar 0 — как было
+#ifndef BELTFAR_OLD
+#define BELTFAR_OLD 0   // дальняя плоскость по оси шара ВКЛЮЧЕНА (без неё шар не виден, снимки 13.11); выключить: файл beltfarold / flag beltfar 0
+#endif
+static int beltFarOn = !BELTFAR_OLD; static int beltOn;   /* определение с начальным значением — main_render.h */
+// Даль-1272б (генплан Fable §2 п.5): рост дальности ждёт пустого кольца «круг + 30 м», а без запаса кучи клетки грузятся только до «круг + 20 м» — клетки полосы 20–30 м не грузятся никогда, кольцо не пустеет, рост стоит
+// (в туре 106 запаса не было 95 % времени). Теперь кольцо не шире радиуса загрузки. RINGFIX1272_OLD=1 / файл ringfixold / flag ringfix 0 — прежнее
+#ifndef RINGFIX1272_OLD
+#define RINGFIX1272_OLD 0
+#endif
+static int ringFixOn = !RINGFIX1272_OLD; static float stLoadEff72 = 1e9f;
+static float farPlaneD(void) { return (beltFarOn && beltAxisNow > drawDist) ? beltAxisNow : drawDist; }   // beltAxisNow - ось шара этого кадра для журнала (main_loop.h)
+   // stHoleAhead72 - то же для клеток впереди по взгляду; beltAxisT - цель оси шара (main_loop.h)   // расстояние (м, по ящику) до ближайшей незагруженной клетки во все стороны, прошлый кадр; дальность не выходит за её край (main_loop.h, не ниже 150)
+static float dal72Core = DAL72_CORE_M;   // 108: радиус круга-ядра, м (служебно flag dal72core N)
+static int dal72On = !DAL1272_OLD; static int stMissRing;   // stMissRing: незагруженных клеток (не вне набора ворот) в радиусе drawDist + DAL72_RING_M во все стороны, прошлый кадр
 static int ringFit(short *idx, int n, const float *c, const char *who) {   // -> сколько клеток из idx оставить (idx переставлен: ближние первыми)
   if (!ringFitOn || !zone3CityOnX() || n < 2) return n;
   unsigned fr = zone3FreeTotX(Z3A_CITY), bud = fr > RINGFIT_MARGIN ? fr - RINGFIT_MARGIN : 0, sum = 0; int k = 0;
@@ -815,7 +910,7 @@ static void jumpRush(float x, float y, float z, float moved, unsigned now) {
   ringState = 0; int n = 0; unsigned bytes = 0; float fl = sqrtf(stFx * stFx + stFz * stFz);
   for (unsigned i = 0; i < ncell && n < RING_MAX; i++) {
     Cell *c = &cl[i]; if (c->owner || c->state) continue;
-    if (zgOn && CELL_REG(c) && CELL_REG(c) <= 16 && !(((regRes | regPre) >> (CELL_REG(c) - 1)) & 1u)) continue;
+    if (regCellOff(c, regRes | regPre, ZN_LOAD)) continue;
     float dx = c->cx - x, dz = c->cz - z, d = sqrtf(dx * dx + (c->cy - y) * (c->cy - y) + dz * dz) - c->rad;
     if (d >= drawDist + 10.f) continue;
     if (fl < .5f && d > 80.f) continue;   // камера круто вниз/вверх (направления на земле нет): только ближние, остальное — обычная очередь
@@ -863,8 +958,25 @@ static void roadqLoad(const char *fn, unsigned ncell_) {
 #define MISSHIST_OLD 0
 #endif
 static unsigned char whyC[4096]; static unsigned whyFr, whyStreamFr;   // whyStreamFr — номер кадра streamMiss, когда последний раз отработал цикл stream(); отстало от whyFr — stream() кадр не считал клеток вовсе
+// Даль-1272 (кандидат дирижёра: stream() на PSP 0,89 мс в среднем): полный обход клеток раз в 2 кадра, пока всё спокойно (шаг игрока < 12 м, нет переноса, круга, отказов, нехватки памяти,
+// видимых дыр, будки, сцены под героем). Очередь загрузчика сдвигается самое большее на кадр (33 мс), на экране не видно. STREAMHALF_OLD=1 / файл streamhalfold / «flag streamhalf 0» - каждый кадр
+#ifndef STREAMHALF_OLD
+#define STREAMHALF_OLD 0
+#endif
+// Даль-1272, попытка 1 (пики stream(): главный цикл по клеткам ~0,4 мс средне, до 0,8–1,3 мс в пике): в спокойной езде цикл идёт по половине клеток (i % STREAM_CHUNK_K), очередь между кусками сохраняется;
+// любая неспокойность (см. calm72_) - полный проход и очередь с нуля. STREAMCHUNK_OLD=1 / файл streamchunkold / «flag streamchunk 0» - полный проход на каждом разе
+#ifndef STREAMCHUNK_OLD
+#define STREAMCHUNK_OLD 1   // ВЫКЛЮЧЕНО по умолчанию: гейт tests/dal1272/run_chunk.sh не взят за 3 попытки (дыры 0/0 только при куске в простое, медиана пика цикла −10 %, p99 −28 %); включить - файл streamchunkon или «flag streamchunk 1»
+#endif
+#define STREAM_CHUNK_K 2
+static int streamChunkOn = !STREAMCHUNK_OLD, stChunkPh, pnb72; static short pbest72[LQ_N]; static float pbs72[LQ_N]; static float nfAcc72 = 1e9f;
+static int streamHalfOn = !STREAMHALF_OLD, stHalfPh, stLastPending; static unsigned stHalfSkip, stHalfRun;
 static int stream(float x, float y, float z) {
   unsigned now = sceKernelGetSystemTimeLow(); farSwapApply();   // Лестница-96: готовые обмены версий клеток
+  const int calm72_ = dal72On && streamHalfOn && stInit && !oldStream && !jumpWatch && ringState == 0 && !cellFail && !memTight && !memTrimPend1060 && stMissNow == 0 && !stBoothHold1051
+      && !(sceneBoost1257 && (unsigned)(now - sceneBoostUs) < 1200000u) && hypotf(x - stPx, z - stPz) < 12.f;
+  if (calm72_) { stHalfPh ^= 1; if (stHalfPh) { stHalfSkip++; return stLastPending; } }
+  stHalfRun++;
   float jumpMoved = stInit ? hypotf(x - stPx, z - stPz) : 0.f;
   if (ringState == 2) ringState = 0;   // задание круга/прыжка выполнено и принято
   if (jumpWatch) { if (stMissNow > 0) { jumpMissFr++; if (stMissNow > jumpMissMax) jumpMissMax = stMissNow; }
@@ -889,8 +1001,9 @@ static int stream(float x, float y, float z) {
   float lkx = 0.f, lkz = 0.f, lkl = sqrtf(stFx * stFx + stFz * stFz); if (streamAhead1042 && !oldStream && lkl > 1e-3f) { lkx = stFx / lkl; lkz = stFz / lkl; }   // №1042: взгляд камеры (горизонтально)
   if (streamAhead1042 && !oldStream && spd > 4.f && al < STA1042_MINAHEAD) { ax = dirx * STA1042_MINAHEAD; az = dirz * STA1042_MINAHEAD; }   // №1042: на ходу заглядываем не ближе 40 м
   float px = x + ax, pz = z + az;
+  unsigned sq0_ = smkOn ? sceKernelGetSystemTimeLow() : 0;   // Даль-1272: разбор пиков stream() по секциям (строка STREAMSEC, только смоук)
   if (!oldStream && (now - memChkT > MEM_CHECK_US || memTrimPend1060)) {   // резерв кучи (замер железа 30.09, см. MEM_RESERVE); №1060: недоделанная выгрузка — в каждом кадре
-    memChkT = now; memFreeNow = heapFreeBytes(); strFreeNow = cityStreamFree(memFreeNow); memTight = strFreeNow < MEM_RESERVE;
+    memChkT = now; memFreeNow = heapFreeBytes(); strFreeNow = cityStreamFree(memFreeNow); memTight = strFreeNow < MEM_RESERVE || memTightForce1360;
     if (memTight || memTrimPend1060) {
       unsigned want = MEM_RESERVE + MEM_HYST, got = strFreeNow; int n = 0; const int nmax = memTrim1060 ? MEMTRIM1060_STEP : 1 << 20;
       if (memTrim2 && memTrimPend1060) got = memTrimGot2;   // №1060в: продолжение эпизода — оценка байт с его старта, куча внутри эпизода не перемеряется
@@ -914,6 +1027,7 @@ static int stream(float x, float y, float z) {
         memset(memTrimSet2, 0, sizeof memTrimSet2); memset(memTrimCnt2, 0, sizeof memTrimCnt2); memTrimAcc1060 = 0; }
     }
   }
+  unsigned sq1_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
   if (!oldStream && !cityCapOff && zone3CityOnX() && (!cityCapT || now - cityCapT > 1000000u)) {   // 100: потолок дальности по ёмкости области города (см. CITYCAP100_OLD)
     static struct { float d; unsigned sz; } cc_[2048]; unsigned nn_ = 0; cityCapT = now;
     for (unsigned i = 0; i < ncell && nn_ < 2048; i++) { Cell *c = &cl[i]; if (c->owner) continue; cc_[nn_].d = cellDist(c, x, y, z); cc_[nn_].sz = (farOk && farOn && c->fsize && cc_[nn_].d > FAR_OUT_M) ? c->fsize : c->size; nn_++; }
@@ -926,6 +1040,7 @@ static int stream(float x, float y, float z) {
     else if (tgt_ >= cityCapTgt + 20.f && now - cityCapUpT > 8000000u) { cityCapTgt = tgt_; cityCapUpT = now; }
     if (smkOn) { static unsigned ccL_; if (!cityCapInit || now - ccL_ > 5000000u) { ccL_ = now; char l_[140]; snprintf(l_, sizeof l_, "CITYCAP t=%.1f tgt=%.0f cap=%.0f dd=%.0f budget=%.2f area=%.2f\n", smkT, tgt_, cityCapDd, drawDist, bud_ / 1048576.f, tot_ / 1048576.f); smkWrite(l_); } }
   }
+  unsigned sq2_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
   if (smkOn && !oldStream) {   // П5/99: сколько нужно области «город» при текущей дальности (замер для постоянного решения по L2)
     static unsigned cmT_; if (now - cmT_ > 5000000u) { cmT_ = now; unsigned ld_ = 0, nld_ = 0, need_ = 0, nneed_ = 0, needMiss_ = 0, far_ = 0, nfar_ = 0;
       for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner) continue; float d_ = cellDist(c, x, y, z); int in_ = d_ <= drawDist + 20.f;
@@ -936,6 +1051,7 @@ static int stream(float x, float y, float z) {
     static unsigned fcT_; if (now - fcT_ > 5000000u) { fcT_ = now; unsigned nf_ = 0, nu_ = 0, kf_ = 0, ku_ = 0, nwf_ = 0, nnear_ = 0;
       for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state != 2) continue; if (c->ver) { nf_++; kf_ += c->ldSize >> 10; } else { nu_++; ku_ += c->ldSize >> 10; } if (c->wantFar) nwf_++; if (c->ver && cellDist(c, x, y, z) < FAR_IN_M) nnear_++; }
       char l_[360]; snprintf(l_, sizeof l_, "FARCELL t=%.1f far=%u/%ukb full=%u/%ukb wantfar=%u loads_far=%u loads_full=%u swaps=%u swfail=%u stale=%u thr=%u swus_max=%u swus_avg=%u tfree=%u tbind=%u tmarks=%u nearfar=%u uniq=%u rep3=%u hw=%u\n", smkT, nf_, kf_, nu_, ku_, nwf_, farLoads, farFulls, farSwaps, farSwapFail, farSwapStale, cellThrashTotal, farSwUsMax, farSwCalls ? farSwUsSum / farSwCalls : 0u, farSwCalls ? farTfree / farSwCalls : 0u, farSwCalls ? farTbind / farSwCalls : 0u, farSwCalls ? farTmarks / farSwCalls : 0u, nnear_, farSwUniq, farSwRep, farHeadWaits); smkWrite(l_); farSwUsMax = farSwUsSum = farSwCalls = 0; farTfree = farTbind = farTmarks = 0; } }
+  unsigned sq3_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
 #ifndef STREAMTIGHT99_OLD
 #define STREAMTIGHT99_OLD 0
 #endif
@@ -945,6 +1061,7 @@ static int stream(float x, float y, float z) {
   // П5 Зоны-95, корень круга «загрузил — отдал»: впрок грузили, пока свободно ≥ MEM_RESERVE, а отдавали далёкое (> дальность + 20 м), как только стало < MEM_RESERVE: клетка загружена и через секунды отдана,
   // круг повторялся десятки тысяч раз за тур (MEMTRIM). Теперь далёкое впрок — только при запасе MEM_RESERVE + 4 МБ (memRoom), в полосе между — только ближе дальности + 20 м, которую отдача не трогает
   if ((memTight || (!STREAMHYST_OLD && !memRoom)) && loadD > drawDist + 20.f) loadD = drawDist + 20.f;   // мало памяти: впрок не грузим
+  stLoadEff72 = loadD;   // Даль-1272б: радиус загрузки этого кадра — кольцо роста дальности не шире него (streamMiss)
   if (stBoothHold1051 && boothMem1051) loadD = BOOTH1051_HOLD_R;   // №1051: открыта будка — город не подгружаем, пока она закрывает экран
   // Правка Роба 103 («не прогрузился кусок карты»): клетка без памяти (state 3) раньше оставалась дырой, пока игрок не отъедет за
   // DROP_DIST (~400 м). Теперь не чаще раза в CELL_RETRY с: загруженные клетки дальше дальности + 20 м (их не видно) — в кучу,
@@ -967,7 +1084,11 @@ static int stream(float x, float y, float z) {
       if (yes) regPre |= zg[i].load; }
   }
   { static unsigned rpPrev; if (smkOn && regPre != rpPrev) { char s_[96]; snprintf(s_, sizeof s_, "REGPRE %04x->%04x res=%04x at %.0f,%.0f t=%.1f\n", rpPrev, (unsigned)regPre, (unsigned)regRes, x, z, smkT); smkWrite(s_); rpPrev = regPre; } }
+  unsigned sq4_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
   short best[LQ_N]; float bs[LQ_N]; int nb = 0; stCand = 0;
+  const int chunkK = (calm72_ && streamChunkOn && stMissRing == 0 && lqn == 0 && !loaderBusy) ? STREAM_CHUNK_K : 1;   // куски только когда весь круг до дальности + 30 м уже в памяти (иначе ближние дыры ждали бы своего куска)
+  if (chunkK > 1) { if (stChunkPh >= chunkK) stChunkPh = 0; for (int k = 0; k < pnb72; k++) { const Cell *pc = &cl[(unsigned)pbest72[k]]; if (pc->state == 0 && !pc->owner && nb < qmax) { best[nb] = pbest72[k]; bs[nb] = pbs72[k]; nb++; } } }
+  else { pnb72 = 0; stChunkPh = 0; nfAcc72 = 1e9f; }
   const unsigned cityMF = (cityFitOn && zone3CityOnX()) ? zone3MaxFreeX(Z3A_CITY) : ~0u; int cityNoFit = 0; float nfD_ = 1e9f;   // Лестница-96 (L5 тура 99): клетка не больше наибольшего свободного куска области города, иначе просьба не уходит
   const int whyOn = !MISSHIST_OLD && smkOn; if (whyOn) { memset(whyC, 0, sizeof whyC); whyStreamFr = whyFr; }
   int rqOn = 0; unsigned rqE0 = 0, rqE1 = 0;   // №864: список клеток впереди по дороге для клетки под игроком и курса хода
@@ -984,9 +1105,9 @@ static int stream(float x, float y, float z) {
       if (rqOn) { rqFrames++; rqMarked += (unsigned)rqOn; }
     }
   }
-  for (unsigned i = 0; i < ncell; i++) {
+  for (unsigned i = chunkK > 1 ? (unsigned)stChunkPh : 0u; i < ncell; i += (unsigned)chunkK) {
     Cell *c = &cl[i]; if (c->owner) continue;
-    if (zgOn && CELL_REG(c) && CELL_REG(c) <= 16 && !(((regRes | regPre) >> (CELL_REG(c) - 1)) & 1u)) {   // правка 181: регион не в наборе ворот — не держим
+    if (regCellOff(c, regRes | regPre, ZN_KEEP)) {   // правка 181: регион не в наборе ворот — не держим
       if (c->state >= 2) { unloadCell(c); zgUnloads++; } else if (c->state == 3) c->state = 0;
       if (whyOn && i < sizeof whyC) whyC[i] = 2;
       continue;
@@ -1003,13 +1124,15 @@ static int stream(float x, float y, float z) {
       if (!vf_ && memTrim2 && memTrimPend1060 && i < MT2_MAX && memTrimSet2[i]) { c->reqT = 0; if (whyOn && i < sizeof whyC) whyC[i] = 1; continue; }   // №1060в: клетку, выгруженную в этом эпизоде, загрузчик не берёт, пока эпизод идёт
       const int sboost_ = sceneBoost1257 && (int)i == sceneBoostCell && (unsigned)(now - sceneBoostUs) < 1200000u;   // 1257: под героем, который ждёт сцену
       float lim = loadD + c->rad; int rqm = rqOn && rqMk[i];
+      int beltIn_ = 0;   // 108/1272б (ревью Fable): пояс 150–200 грузится ТОЛЬКО в секторе шара (впереди по взгляду) и только при запасе памяти; при тесноте — «круг + 20», как было; отдача клеток дальше 395 м не трогает сферу, MEMTRIM при тесноте снимает её и не вернёт, пока memRoom не вернётся (+4 МБ гистерезиса) — петли «загрузил, отдал» нет
+      if (dal72On && beltFarOn && beltOn && !memTight && memRoom && !oldStream && beltAxisNow > drawDist + 2.f) { float hh_ = beltAxisNow * .5f + 20.f + c->rad, bx_ = c->cx - (eyeX + cfX * beltAxisNow * .5f), by_ = c->cy - (eyeY + cfY * beltAxisNow * .5f), bz_ = c->cz - (eyeZ + cfZ * beltAxisNow * .5f); beltIn_ = bx_ * bx_ + by_ * by_ + bz_ * bz_ < hh_ * hh_; }
       int sd1042 = lkl > 1e-3f && streamAhead1042 ? sta1042Side(c, x, z, lkx, lkz) : 0; if (sd1042 > 0) lim += 40.f;   // №1042: клетка в конусе взгляда — радиус загрузки +40 м и стоя
       const int tight99_ = !STREAMTIGHT99_OLD && !streamTight99Off && (zone3CityOnX() || streamTight99L4 || gameLevel == 4) && (memTight || !memRoom);   // когда клетки в области «город» (L2 и т.д.) и на L4 (клетки в куче; замер 09.11 длинная трасса: круг 0 против 2, дальность min 176 против 120, MISSCELL 8 против 9); streamtight99l4 - то же на любом уровне, служебно   // 99: в тесноте дорожная подгрузка дальше дальности + 20 м (RQ_REACH_M 260 при дальности 150) грузила и тут же отдавалась - не берём
       if (tight99_ && sd1042 < 0) lim -= 40.f;   // 99, КОРЕНЬ круга (TRIMDBG на L2: клетки raw 234-268 м при дальности 250, возраст 0,2 с): отдача (ниже) считает клетки ЗА спиной на 40 м дальше (sta1042Side), а загрузка брала их по сырому расстоянию - загрузил и тут же отдал; грузим по тому же счёту
       if (rqm && !tight99_ && lim < RQ_REACH_M + c->rad) lim = RQ_REACH_M + c->rad;   // №864: клетка впереди по дороге — берём дальше обычного радиуса
       // 99 (дирижёр 08.11, круги клеток на L2 при 250 м): при нехватке памяти (memTight / !memRoom) клетка у точки УПРЕЖДЕНИЯ, но дальше дальности + 20 м от игрока, грузится и тут же отдаётся (отдача считает от игрока) -
       // замер на L2: 1-2,4 МБ «далёкого» в области города при ~7 МБ всего, 412 отдач за 5 мин. В тесноте грузим только то, что от игрока ближе дальности + 20 м. STREAMTIGHT99_OLD=1 / файл streamtight99old - как было
-      if (!vf_ && !sboost_ && (tight99_ ? d2 >= lim * lim : (d2 >= lim * lim && q2 >= lim * lim))) { c->reqT = 0; if (whyOn && i < sizeof whyC) whyC[i] = 3; continue; }   // П2: ушла из радиуса — запрос снят
+      if (!vf_ && !sboost_ && !beltIn_ && (tight99_ ? d2 >= lim * lim : (d2 >= lim * lim && q2 >= lim * lim))) { c->reqT = 0; if (whyOn && i < sizeof whyC) whyC[i] = 3; continue; }   // П2: ушла из радиуса — запрос снят
       { float e_ = fminf(sqrtf(d2), sqrtf(q2)) - c->rad; farWantEdge(c, e_); }
       if (cellWSz(c) + 256u > cityMF) { cityNoFit++; { float e_ = sqrtf(d2) - c->rad; if (e_ < nfD_) nfD_ = e_; } continue; }   // не влезет: загрузчик не просим (отказ был бы allocfail раз в секунду, пока область полна); место освободит CELLRETRY (oom) ниже по кадру
       stCand++;
@@ -1018,6 +1141,7 @@ static int stream(float x, float y, float z) {
       if (rqm) { sc -= RQ_BONUS_M; rqQueued++; }
       if (vf_) sc -= 2000.f;   // сторож: застрявшая видимая клетка - в голову очереди
       if (!oldStream && d < drawDist && visBox(c->bb, 0, 0, 0)) sc -= 60.f;   // уже должна быть видна — первой
+      if (dal72On && !oldStream && d < dal72Core) sc -= 700.f - d;   // Даль-1272: круг-ядро во все стороны (за спиной тоже) раньше упреждения; внутри ядра ближние первыми, ниже головы очереди видимых и сторожа
       if (streamAhead1042 && !oldStream) { int vis_ = d < drawDist && visBox(c->bb, 0, 0, 0);
         if (vis_ && d < STA1042_HEAD) { sc -= 1000.f; sta1042Head++; }   // №1042: видимая ближе 120 м — голова очереди
         else if (sd1042 > 0) { sc -= 40.f; sta1042Cone++; } }   // №1042: в конусе взгляда — раньше остальных, и стоя
@@ -1029,15 +1153,20 @@ static int stream(float x, float y, float z) {
       bs[j] = sc; best[j] = (short)i;
     }
   }
+  unsigned sq5_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
   if (smkOn) { static unsigned dbT_; if (now - dbT_ > 5000000u) { dbT_ = now; int n0 = 0, nreg = 0, ntrim = 0, nlim = 0, nfit = 0, nok = 0, nreq = 0, nstate[4] = {0, 0, 0, 0};
       for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner) continue; float d_ = cellDist(c, x, y, z); if (d_ > drawDist + 20.f) continue; if (c->state >= 0 && c->state < 4) nstate[c->state]++; if (c->state != 0) continue; n0++;
-        if (zgOn && CELL_REG(c) && CELL_REG(c) <= 16 && !(((regRes | regPre) >> (CELL_REG(c) - 1)) & 1u)) { nreg++; continue; }
+        if (regCellOff(c, regRes | regPre, ZN_LOAD)) { nreg++; continue; }
         if (memTrim2 && memTrimPend1060 && i < MT2_MAX && memTrimSet2[i]) { ntrim++; continue; }
         float dx = c->cx - x, dz = c->cz - z, dy = c->cy - y; if (dx * dx + dy * dy + dz * dz >= (loadD + c->rad) * (loadD + c->rad)) { nlim++; continue; }
         if (cellWSz(c) + 256u > cityMF) { nfit++; continue; } nok++; if (c->reqT) nreq++; }
       char l_[240]; snprintf(l_, sizeof l_, "STREAMWHY t=%.1f at=%.0f,%.0f,%.0f in_range=%d state0=%d reg=%d trim=%d lim=%d fit=%d ok=%d reqT=%d nb=%d st=%d/%d/%d/%d loadD=%.0f tight=%d room=%d\n", smkT, x, y, z, nstate[0] + nstate[1] + nstate[2] + nstate[3], n0, nreg, ntrim, nlim, nfit, nok, nreq, nb, nstate[0], nstate[1], nstate[2], nstate[3], loadD, memTight, memRoom); smkWrite(l_); } }
+  if (smkOn) { unsigned sq6_ = sceKernelGetSystemTimeLow(); static unsigned secMax[7], secSum[7], secN, secT; unsigned d_[7] = { sq0_ - now, sq1_ - sq0_, sq2_ - sq1_, sq3_ - sq2_, sq4_ - sq3_, sq5_ - sq4_, sq6_ - sq5_ };   // 0 верх, 1 память/trim, 2 потолок области города (qsort), 3 диагностика CITYMEM/FARCELL, 4 повтор отказов/регионы, 5 главный цикл клеток, 6 диагностика STREAMWHY
+    for (int k_ = 0; k_ < 7; k_++) { secSum[k_] += d_[k_]; if (d_[k_] > secMax[k_]) secMax[k_] = d_[k_]; } secN++;
+    if (!secT) secT = sq6_; if (sq6_ - secT > 2000000u) { char l_[220]; snprintf(l_, sizeof l_, "STREAMSEC n=%u avg_us=%u,%u,%u,%u,%u,%u,%u max_us=%u,%u,%u,%u,%u,%u,%u t=%.1f\n", secN, secSum[0] / secN, secSum[1] / secN, secSum[2] / secN, secSum[3] / secN, secSum[4] / secN, secSum[5] / secN, secSum[6] / secN, secMax[0], secMax[1], secMax[2], secMax[3], secMax[4], secMax[5], secMax[6], smkT); smkWrite(l_); memset(secMax, 0, sizeof secMax); memset(secSum, 0, sizeof secSum); secN = 0; secT = sq6_; } }
   for (unsigned e = rqE0; e < rqE1; e++) rqMk[rqEnt[e]] = 0;
-  cityNoFitD = nfD_;
+  if (chunkK > 1) { if (nfD_ < nfAcc72) nfAcc72 = nfD_; if (stChunkPh == chunkK - 1) { cityNoFitD = nfAcc72; nfAcc72 = 1e9f; } for (int k = 0; k < nb; k++) { pbest72[k] = best[k]; pbs72[k] = bs[k]; } pnb72 = nb; stChunkPh = (stChunkPh + 1) % chunkK; }
+  else cityNoFitD = nfD_;
   if (cityNoFit) { cellFail |= 2; cityNoFitN += (unsigned)cityNoFit; }   // Лестница-96: ждущие клетки не влезают — тот же путь, что после отказа (CELLRETRY mem: далёкие вон, дальность ×0,6), но без отказа в аллокаторе
   lqn = 0; __asm__ volatile("" ::: "memory");
   if (whyOn) for (int k = 0; k < nb; k++) if ((unsigned)best[k] < sizeof whyC) whyC[best[k]] = 5;
@@ -1046,7 +1175,7 @@ static int stream(float x, float y, float z) {
   lqn = nb;
   if (!oldStream && jumpMoved > JUMP_RUSH_M) { jumpWatch = 1; jumpT0 = now; jumpN = jumpMissFr = 0; jumpMissMax = 0; jumpRush(x, y, z, jumpMoved, now); }
   if (nb && !loaderBusy) sceKernelSignalSema(sema, 1);
-  return nb > 0 || loaderBusy || ringState == 1;
+  return stLastPending = (nb > 0 || loaderBusy || ringState == 1);
 }
 // №637: цельный кусок под крупное одноразовое выделение (запись art миссии, комната): далёкие клетки (дальше дальности + 20 м, их не видно) уходят
 // по одной, самая дальняя первой, пока самый большой свободный кусок не станет >= need (не больше 120 клеток за вызов). Только главный поток
@@ -1192,20 +1321,79 @@ static void mhFlush(int force) {
     smkWrite(s); for (int b = 0; b < 6; b++) mhF[k][b] = mhC[k][b] = 0; for (int b = 0; b < 8; b++) mhW[k][b] = 0;
   }
 }
+// Даль-1272 (Роб 13.11 14:09: «рисовка устойчивая, хотя бы 150–200 м»): счёт дыр во ВСЕ стороны, не только в кадре. Клетка в радиусе R (по ящику), не в памяти и не вне набора ворот:
+// m150/m200 — сколько таких в этом кадре; поворот камеры или разворот машины делает их видимыми мгновенно. Только журнал (строка DAL1272 раз в 2 с), картинка и память не меняются
+static unsigned d72RxLog, d72FRx;   // d72RxLog - строк REGCOL за прогон; d72FRx - кадров с клеткой невидимого района ближе 40 м
+static unsigned d72Fax, d72F150, d72F200, d72Fr, d72Max150, d72Max200, d72FDd, d72MaxDd, d72SumDd; static float d72Near = 1e9f;
+// 108 О8 (Fable §3): streamMiss проходил ВСЕ клетки города (до 1136) каждый кадр, из них 60–85 % незагруженных дальних, и для каждой дважды считал расстояние до ящика (≈0,3 мс Мака, ≈1,8 мс PSP в туре со
+// смоуком; без смоука меньше). Клетка дальше R (по ящику с запасом cullMg) не влияет ни на счётчики кадра, ни на потолок дали (дыры дальше 200 м дальность не режут, потолок 200): теперь обход идёт по сетке
+// корзин 64 м вокруг глаза (клетка лежит во всех корзинах, которые пересекает её ящик), расстояние считается один раз на клетку. Сторож «видимые недогруженные» (visStuck): клетка с запущенным таймером,
+// не попавшая в обход (перенос глаза), сбрасывается списком vsList. MISSGRID_OLD=1 / файл missgridold / flag missgrid 0 — полный обход, как было; flag missverify 1 — каждый кадр сверка с полным чистым подсчётом (строка MISSCHK, красный контроль: flag missgridbreak 1)
+#ifndef MISSGRID_OLD
+#define MISSGRID_OLD 0
+#endif
+#define MISS_R 300.f
+#define MISS_G 64.f
+static int missGridOn = !MISSGRID_OLD, missVerify, missBreak; static unsigned missChkN, missChkBad, missFull, missCandSum, missCalls;
+static struct { Cell *cl; unsigned n; float x0, z0; int w, h; unsigned *off; unsigned short *idx; unsigned *stamp; unsigned fr; } mg;
+static unsigned short vsList[256], *missCand; static int vsN, vsOvf;
+static void missGridFree(void) { free(mg.off); free(mg.idx); free(mg.stamp); free(missCand); missCand = 0; memset(&mg, 0, sizeof mg); vsN = vsOvf = 0; }
+static void missGridBuild(void) {
+  missGridFree(); if (!ncell || ncell > 65535 || !cl) return;
+  float x0 = 1e30f, z0 = 1e30f, x1 = -1e30f, z1 = -1e30f;
+  for (unsigned i = 0; i < ncell; i++) { const float *b = cl[i].bb; if (b[0] < x0) x0 = b[0]; if (b[2] < z0) z0 = b[2]; if (b[3] > x1) x1 = b[3]; if (b[5] > z1) z1 = b[5]; }
+  if (!(x1 > x0 && z1 > z0)) return;
+  int w = (int)((x1 - x0) / MISS_G) + 1, h = (int)((z1 - z0) / MISS_G) + 1; if (w > 256 || h > 256) return;
+  unsigned *cnt = calloc((size_t)w * h + 1, sizeof *cnt); unsigned *off = calloc((size_t)w * h + 1, sizeof *off); if (!cnt || !off) { free(cnt); free(off); return; }
+  for (int pass = 0; pass < 2; pass++) {
+    if (pass == 1) { unsigned s = 0; for (int k = 0; k < w * h; k++) { off[k] = s; s += cnt[k]; cnt[k] = 0; } off[w * h] = s; mg.idx = malloc((s ? s : 1) * sizeof *mg.idx); if (!mg.idx) { free(cnt); free(off); return; } }
+    for (unsigned i = 0; i < ncell; i++) { const float *b = cl[i].bb; int bx0 = (int)((b[0] - x0) / MISS_G), bx1 = (int)((b[3] - x0) / MISS_G), bz0 = (int)((b[2] - z0) / MISS_G), bz1 = (int)((b[5] - z0) / MISS_G);
+      for (int bz = bz0; bz <= bz1; bz++) for (int bx = bx0; bx <= bx1; bx++) { int k = bz * w + bx; if (pass == 0) cnt[k]++; else mg.idx[off[k] + cnt[k]++] = (unsigned short)i; } } }
+  free(cnt); mg.off = off; mg.stamp = calloc(ncell, sizeof *mg.stamp); missCand = malloc(ncell * sizeof *missCand); if (!mg.stamp || !missCand) { missGridFree(); return; }
+  mg.cl = cl; mg.n = ncell; mg.x0 = x0; mg.z0 = z0; mg.w = w; mg.h = h;
+}
+typedef struct { int m, m150, m200, mdd, ring, rx40; float hole, holeA, near, missNear; } MissRes;
+static MissRes missPure(void) {   // чистый полный подсчёт (без побочных эффектов): то, что считал прежний обход; служебная сверка flag missverify
+  MissRes r = {0, 0, 0, 0, 0, 0, 1e9f, 1e9f, 1e9f, 1e9f};
+  for (unsigned i = 0; i < ncell; i++) { Cell *c = &cl[i]; if (c->owner || c->state == 2) continue;
+    if (regCellOff(c, regRes, ZN_MISS)) { if (boxD2(c->bb) < 40.f * 40.f) r.rx40++; continue; }
+    float d2 = boxD2(c->bb), rr = drawDist + DAL72_RING_M; if (d2 < rr * rr) r.ring++; if (d2 < r.hole * r.hole) r.hole = sqrtf(d2); if (d2 < r.holeA * r.holeA && (c->cx - eyeX) * cfX + (c->cz - eyeZ) * cfZ > 0.f) r.holeA = sqrtf(d2);
+    if (d2 < drawDist * drawDist) r.mdd++; if (d2 < 200.f * 200.f) { r.m200++; if (d2 < 150.f * 150.f) r.m150++; if (d2 < r.near * r.near) r.near = sqrtf(d2); }
+    if (!(d2 < drawDist * drawDist && visBox(c->bb, 0, 0, 0))) continue;
+    r.m++; if (d2 < r.missNear * r.missNear) r.missNear = sqrtf(d2); }
+  return r;
+}
 static void streamMiss(void) {
-  int m = 0; stMissNearD = 1e9f; const unsigned vnow_ = sceKernelGetSystemTimeLow();
+  int m = 0, m150_ = 0, m200_ = 0, ring72_ = 0, mdd_ = 0, rx40_ = 0; float hole72_ = 1e9f, holeA72_ = 1e9f; float near72_ = 1e9f; stMissNearD = 1e9f; const unsigned vnow_ = sceKernelGetSystemTimeLow();
   int mhK_ = jumpWatch ? 1 : 0, mhNear_ = 99; unsigned mhC_[6] = {0, 0, 0, 0, 0, 0}, mhW_[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-  for (unsigned i = 0; i < ncell; i++) {
-    Cell *c = &cl[i]; int vc_ = i < MT2_MAX;
+  unsigned nCand_ = ncell; const unsigned short *cand_ = 0; missCalls++;   // 108 О8: обход по сетке корзин
+  if (missGridOn && dal72On) {
+    if (mg.cl != cl || mg.n != ncell) missGridBuild();
+    if (mg.off && missCand && !vsOvf) { float R_ = fmaxf(MISS_R, drawDist + DAL72_RING_M + 10.f) + cullMg + 2.f; if (missBreak) R_ = 60.f;
+      int bx0 = (int)((eyeX - R_ - mg.x0) / MISS_G), bx1 = (int)((eyeX + R_ - mg.x0) / MISS_G), bz0 = (int)((eyeZ - R_ - mg.z0) / MISS_G), bz1 = (int)((eyeZ + R_ - mg.z0) / MISS_G);
+      if (bx0 < 0) bx0 = 0; if (bz0 < 0) bz0 = 0; if (bx1 >= mg.w) bx1 = mg.w - 1; if (bz1 >= mg.h) bz1 = mg.h - 1;
+      unsigned nc_ = 0; mg.fr++; if (!mg.fr) { memset(mg.stamp, 0, mg.n * sizeof *mg.stamp); mg.fr = 1; }
+      for (int bz = bz0; bz <= bz1; bz++) for (int bx = bx0; bx <= bx1; bx++) { int k = bz * mg.w + bx;
+        for (unsigned q = mg.off[k]; q < mg.off[k + 1]; q++) { unsigned short ci = mg.idx[q]; if (mg.stamp[ci] != mg.fr) { mg.stamp[ci] = mg.fr; missCand[nc_++] = ci; } } }
+      cand_ = missCand; nCand_ = nc_; missCandSum += nc_; }
+    else { missFull++; mg.fr++; }
+  }
+  for (unsigned kk = 0; kk < nCand_; kk++) {
+    unsigned i = cand_ ? cand_[kk] : kk; Cell *c = &cl[i]; int vc_ = i < MT2_MAX;
     if (c->owner || c->state == 2) { if (vc_) { visStuckT[i] = 0; visStuckF[i] = 0; } continue; }
-    if (zgOn && CELL_REG(c) && CELL_REG(c) <= 16 && !((regRes >> (CELL_REG(c) - 1)) & 1u)) { if (vc_) { visStuckT[i] = 0; visStuckF[i] = 0; } continue; }   // правка 181: регион вне набора ворот не рисуется — не дыра
-    if (!(boxD2(c->bb) < drawDist * drawDist && visBox(c->bb, 0, 0, 0))) { if (vc_) { visStuckT[i] = 0; visStuckF[i] = 0; } continue; }
+    if (regCellOff(c, regRes, ZN_MISS)) {   // правка 181: регион вне набора ворот не рисуется — не дыра
+      if (smkOn) { float d2r_ = boxD2(c->bb); if (d2r_ < 40.f * 40.f) { rx40_++; if (d72RxLog < 24) { d72RxLog++; char sr_[160]; snprintf(sr_, sizeof sr_, "REGCOL cell=%u reg=%u d=%.0f eye=%.0f,%.0f,%.0f res=%04x t=%.1f\n", i, (unsigned)CELL_REG(c), sqrtf(d2r_), eyeX, eyeY, eyeZ, (unsigned)regRes, smkT); smkWrite(sr_); } } }   // Даль-1272: невидимая клетка (район вне набора) рядом с глазом - там коллизия кольца есть, картинки нет
+      if (vc_) { visStuckT[i] = 0; visStuckF[i] = 0; } continue; }
+    const float d2c_ = boxD2(c->bb);   // 108 О8: расстояние до ящика — один раз на клетку (было до трёх)
+    if (dal72On) { float d2h_ = d2c_, rr_ = drawDist + DAL72_RING_M; if (ringFixOn && rr_ > stLoadEff72) rr_ = stLoadEff72 > drawDist ? stLoadEff72 : drawDist; if (d2h_ < rr_ * rr_) ring72_++; if (d2h_ < hole72_ * hole72_) hole72_ = sqrtf(d2h_); if (d2h_ < holeA72_ * holeA72_ && (c->cx - eyeX) * cfX + (c->cz - eyeZ) * cfZ > 0.f) holeA72_ = sqrtf(d2h_); }
+    if (smkOn) { float d2_ = d2c_; if (d2_ < drawDist * drawDist) mdd_++; if (d2_ < 200.f * 200.f) { m200_++; if (d2_ < 150.f * 150.f) m150_++; if (d2_ < near72_ * near72_) near72_ = sqrtf(d2_); } }
+    if (!(d2c_ < drawDist * drawDist && visBox(c->bb, 0, 0, 0))) { if (vc_) { visStuckT[i] = 0; visStuckF[i] = 0; } continue; }
     if (visStuckOn && vc_ && c->state == 0) {   // Лестница-96: сторож видимых недогруженных
-      if (!visStuckT[i]) visStuckT[i] = vnow_ | 1u;
+      if (!visStuckT[i]) { visStuckT[i] = vnow_ | 1u; if (vsN < 256) vsList[vsN++] = (unsigned short)i; else vsOvf = 1; }
       else if (!visStuckF[i] && vnow_ - visStuckT[i] > VISSTUCK_US) { visStuckF[i] = 1; visStuckN++;
         if (smkOn && visStuckN <= 40) { float dx = c->cx - eyeX, dz = c->cz - eyeZ; char s_[200]; snprintf(s_, sizeof s_, "WATCHDOG visstuck cell=%u d=%.0f rad=%.0f size_kb=%u reqT=%d lqn=%d busy=%d tight=%d free_mb=%.2f dd=%.0f fix=front n=%u t=%.2f\n", i, sqrtf(dx * dx + dz * dz), c->rad, c->size >> 10, c->reqT != 0, lqn, loaderBusy, memTight, heapFreeBytes() / 1048576.f, drawDist, visStuckN, smkT); smkWrite(s_); } } }
     {
-      { float d2_ = boxD2(c->bb); if (d2_ < stMissNearD * stMissNearD) stMissNearD = sqrtf(d2_);
+      { float d2_ = d2c_; if (d2_ < stMissNearD * stMissNearD) stMissNearD = sqrtf(d2_);
         if (!MISSHIST_OLD && smkOn) { int b_ = mhBin(sqrtf(d2_)); mhC_[b_]++; if (b_ < mhNear_) mhNear_ = b_; { int w_ = c->state ? 6 : (i < sizeof whyC ? whyC[i] : 0); if (whyStreamFr != whyFr) w_ = 0; mhW_[w_ & 7]++; } } }
       if (m < 4 && smkOn && !stMissNow && !jumpWatch) {   // служебное: первые видимые недогруженные клетки пачки — почему не загружены (строка MISSCELL)
         float dx = c->cx - eyeX, dz = c->cz - eyeZ, hl = sqrtf(dx * dx + dz * dz) + .01f, fl = sqrtf(stFx * stFx + stFz * stFz) + .001f;
@@ -1215,7 +1403,20 @@ static void streamMiss(void) {
       m++;
     }
   }
-  stMissNow = m; whyFr++;
+  if (missGridOn && dal72On) {   // 108 О8: сторож visStuck — клетки с таймером, не попавшие в обход, сбрасываются; после полного обхода список собирается заново
+    if (cand_) { int w_ = 0; for (int q_ = 0; q_ < vsN; q_++) { unsigned short x_ = vsList[q_]; if (mg.stamp[x_] != mg.fr) { visStuckT[x_] = 0; visStuckF[x_] = 0; } else if (visStuckT[x_]) vsList[w_++] = x_; } vsN = w_; }
+    else { vsN = 0; vsOvf = 0; for (unsigned q_ = 0; q_ < ncell && q_ < MT2_MAX; q_++) if (visStuckT[q_]) { if (vsN < 256) vsList[vsN++] = (unsigned short)q_; else vsOvf = 1; } }
+  }
+  if (missVerify && smkOn) { MissRes r_ = missPure(); int bad_ = r_.m != m || r_.ring != ring72_ || r_.mdd != mdd_ || r_.m150 != m150_ || r_.m200 != m200_ || r_.rx40 != rx40_ || r_.near != near72_ || r_.missNear != stMissNearD;
+    float Rq_ = fmaxf(MISS_R, drawDist + DAL72_RING_M + 10.f); if (!(hole72_ == r_.hole || (r_.hole >= Rq_ && hole72_ >= Rq_)) || !(holeA72_ == r_.holeA || (r_.holeA >= Rq_ && holeA72_ >= Rq_))) bad_ = 1;
+    missChkN++; if (bad_) { missChkBad++; if (missChkBad <= 8) { char s_[260]; snprintf(s_, sizeof s_, "MISSCHK mismatch m=%d/%d ring=%d/%d mdd=%d/%d m150=%d/%d m200=%d/%d rx40=%d/%d near=%.1f/%.1f hole=%.1f/%.1f holeA=%.1f/%.1f cand=%u t=%.1f\n", m, r_.m, ring72_, r_.ring, mdd_, r_.mdd, m150_, r_.m150, m200_, r_.m200, rx40_, r_.rx40, near72_, r_.near, hole72_, r_.hole, holeA72_, r_.holeA, nCand_, smkT); smkWrite(s_); } }
+    static unsigned mcT_; unsigned mcN_ = sceKernelGetSystemTimeLow(); if (!mcT_) mcT_ = mcN_; if (mcN_ - mcT_ > 2000000u) { char s_[160]; snprintf(s_, sizeof s_, "MISSGRID t=%.1f calls=%u verified=%u bad=%u full=%u cand_avg=%u of=%u\n", smkT, missCalls, missChkN, missChkBad, missFull, missCalls > missFull ? missCandSum / (missCalls - missFull) : 0u, ncell); smkWrite(s_); mcT_ = mcN_; } }
+  if (smkOn) { static unsigned lfT_; unsigned n_ = sceKernelGetSystemTimeLow(); if (!lfT_) lfT_ = n_; if (n_ - lfT_ > 2000000u) { lfT_ = n_; char s_[160]; snprintf(s_, sizeof s_, "LOADERFD t=%.1f fd=%d reopen=%u reopenE=%u dead=%u ep=%u loads=%u p0=%d open=%u close=%u\n", smkT, (int)loaderFd, loaderReopenN, loaderReopenE, loaderDeadN, loaderEpoch, (unsigned)stLoads, loaderP0, loaderOpenN, loaderCloseN); smkWrite(s_); } }   // 107б P0: служебно, файл уровня у загрузчика
+  stMissNow = m; stMissRing = ring72_; stHoleD72 = hole72_; stHoleAhead72 = holeA72_; whyFr++;
+  if (smkOn) { static unsigned t72_; unsigned n72_ = sceKernelGetSystemTimeLow(); if (!t72_) t72_ = n72_;
+    d72Fr++; if (holeA72_ + 2.f < beltAxisNow) d72Fax++; if (m150_) d72F150++; if (m200_) d72F200++; if (rx40_) d72FRx++; if (mdd_) d72FDd++; d72SumDd += (unsigned)mdd_; if ((unsigned)mdd_ > d72MaxDd) d72MaxDd = (unsigned)mdd_; if ((unsigned)m150_ > d72Max150) d72Max150 = (unsigned)m150_; if ((unsigned)m200_ > d72Max200) d72Max200 = (unsigned)m200_; if (near72_ < d72Near) d72Near = near72_;
+    if (n72_ - t72_ > 2000000u) { char s72_[200]; snprintf(s72_, sizeof s72_, "DAL1272 t=%.1f frames=%u f150=%u f200=%u max150=%u max200=%u fdd=%u maxdd=%u sumdd=%u rx40=%u near=%.0f dd=%.0f ax=%.0f vis=%d fax=%u unl=%u unlre=%u\n", smkT, d72Fr, d72F150, d72F200, d72Max150, d72Max200, d72FDd, d72MaxDd, d72SumDd, d72FRx, d72Near < 1e8f ? d72Near : 0.f, drawDist, beltAxisNow > drawDist ? beltAxisNow : drawDist, stMissNow, d72Fax, stUnl, stUnlRe); smkWrite(s72_);
+      d72Fax = d72Fr = d72F150 = d72F200 = d72Max150 = d72Max200 = d72FDd = d72MaxDd = d72SumDd = d72FRx = 0; d72Near = 1e9f; t72_ = n72_; } }
   if (!MISSHIST_OLD && smkOn) { if (mhNear_ < 6) { mhF[mhK_][mhNear_]++; for (int b_ = 0; b_ < 6; b_++) mhC[mhK_][b_] += mhC_[b_]; for (int b_ = 0; b_ < 8; b_++) mhW[mhK_][b_] += mhW_[b_]; mhNeed = 1; } mhFlush(0); }
 }
 // цвет тумана = цвет горизонта самого неба уровня (как в GTA: туман = нижний цвет неба). Берём вершины

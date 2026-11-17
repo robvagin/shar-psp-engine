@@ -17,6 +17,21 @@
 #define CAR_COAST_C 0.0021f   // 1/м: квадратичная часть (PS2 famil_v), у прежнего порта 2·gas/Vmax² = 0,0081
 #endif
 float carRollGain = 0.f;   // добавка к плечу крена боковой силы шины, м (файл rollps2); 0 — как было
+
+#ifndef CAR_SPR109_OLD
+#define CAR_SPR109_OLD 0   // 108: одна жёсткость пружин у всех колёс (27 047, как у оригинала); 1 — по доле веса оси (как было)
+#endif
+#ifndef CAR_COG109_OLD
+#define CAR_COG109_OLD 1   // центр масс по данным диска (по записи покоя PS2 он верный; «посередине базы» ломает 2–3 посадки twin): 0 — посередине базы, не включать
+#endif
+#ifndef CAR_COG109_BACK
+#define CAR_COG109_BACK 0.f   // доля базы позади середины
+#endif
+int carSpr109Old = CAR_SPR109_OLD, carCog109Old = CAR_COG109_OLD;
+#ifndef CAR_WHEELDRAW108_OLD
+#define CAR_WHEELDRAW108_OLD 0   // 108: 1 — колёса на экране по comp (низ на нейтрали)
+#endif
+int carWheelDraw108Old = CAR_WHEELDRAW108_OLD;
 #ifndef CAR_CURB_TOL_OLD
 #define CAR_CURB_TOL_OLD 0
 #endif
@@ -277,6 +292,29 @@ extern int colDebug;
 #ifndef SV_WEEBLEDIAG_OLD
 #define SV_WEEBLEDIAG_OLD 0     // круг 6, 4.2: «неваляшка» включается, когда оторваны ОБА колеса диагональной пары (переднее левое + заднее правое, или переднее правое + заднее левое): по именам суставов w0..w3 оригинала колёса w1 и w3 на одном борту (колёсная база = z(w3) − z(w1)), значит пары (0,3) и (1,2) — диагонали. Было: пары одного борта
 #endif
+// 1323 (сверка Fable с оригиналом): «неваляшка» — центр масс опущен, когда оба колеса пары без КОНТАКТА с землёй: пары бортовые (0,2)/(1,3) у всех машин, диагональные (0,3)/(1,2)
+// только у famil_v (по переписи суставов w0..w3 диска: у неё борта w0 и w3 не совпадают; у остальных 87 из 88 совпадают). «Оторвано» — нет контакта (hit без виртуальных), а не comp <= 0
+// (с подвеской 108 comp <= 0 — колесо растянуто ниже нейтрали, но стоит на земле: в круге у грузовика Клетуса 76–87 % кадров). В полёте (все четыре без контакта) момент тоже включён.
+// WEEBLE1323_OLD=1 / carWeeble1323Old = 1 (файл weeble1323old, flag weeble1323old 1) — прежнее правило (SV_WEEBLEDIAG, comp <= 0, в полёте момента нет)
+#ifndef WEEBLE1323_OLD
+#define WEEBLE1323_OLD 0
+#endif
+int carWeeble1323Old = WEEBLE1323_OLD;   // extern в rollback.h
+// 1330 (Роб: «в оригинале я точно не лежал перевёрнутым так долго»). Автосброс машины игрока по оригиналу: (а) вверх колёсами и ни одного колеса на земле — как только СГЛАЖЕННЫЕ скорость < 0,15 м/с и вращение < 0,3 рад/с
+// (скользящее среднее: за кадр новое = старое × 14/15 + замер / 15, начало 0,1 и 0,6, обновляется только в кадрах «вверх колёсами без касания»); (б) на боку или вверх колёсами (подъём тела < 0,2 со знаком), скорость < 1 м/с — дольше 1 с.
+// Было: (а) по мгновенным значениям — срабатывало в первом же кадре «вверх колёсами» (и в верхней точке кувырка в воздухе, где скорость почти нуль), (б) тот же. И главное: грузовик (cletu_v) после кувырка встаёт на два бортовых колеса и кузов под
+// 64° (подъём 0,43) и так лежит, ползя 0,3–0,7 м/с, 12 с и дольше — ни (а) (колёс 2), ни (б) (подъём > 0,2) не срабатывают; в оригинале такой позы нет (кузов падает на борт, дальше (б)). Теперь «лежит» и подъём < 0,5 при колёс <= 2.
+// SV_FLIPEMA1330_OLD=1 / carFlipEma1330Old (файл flipema1330old, flag flipema1330old 1) — мгновенные значения; SV_LEANREST1330_OLD=1 / carLeanRest1330Old (файл leanrest1330old, flag leanrest1330old 1) — порог 0,2 всегда
+#ifndef SV_FLIPEMA1330_OLD
+#define SV_FLIPEMA1330_OLD 0
+#endif
+#ifndef SV_LEANREST1330_OLD
+#define SV_LEANREST1330_OLD 0
+#endif
+int carFlipEma1330Old = SV_FLIPEMA1330_OLD, carLeanRest1330Old = SV_LEANREST1330_OLD;
+static inline float sideLim1330(const Car *c) { return (!carLeanRest1330Old && c->wheels <= 2) ? .5f : .2f; }
+unsigned carWeebleN;   // 1323: сколько шагов момент «неваляшки» был включён (гейт tests/weeble1323)
+static int carWeebleDiagCar(const char *nm) { return nm && !strcmp(nm, "famil_v"); }
 #ifndef SV_HITTERVEL_OLD
 #define SV_HITTERVEL_OLD 0      // круг 6, 7.2: «кто ударил» решают СКОРОСТИ, не носы: стоящая (< 0,005 м/с) — ударенная; ударяющая — та, чья скорость направлена на соседку в пределах 30°, а у соседки на неё — нет; обе навстречу — обе ударенные (множитель 1). Было: по направлению носа
 #endif
@@ -688,12 +726,15 @@ static void derive(Car *c) {
   // правка 434 (Роб 06.11, L4: «машина Мардж постоянно переворачивается»; решение: «добавь ей немного веса или привязки к дороге, минимально»): центр тяжести marge_v ниже на MARGE434_DY м
   // (в .con SetCMOffsetY +0,05, у остальных семейных −0,1…0; она высокая и ставилась на два колеса при полном руле и газе у подъёма). Только эта машина. MARGE434_OLD=1 — как было
   if (!MARGE434_OLD && !strcmp(P->name, "marge_v")) c->comBase[1] -= MARGE434_DY;
+  // 108 (Роб 14.11, сверка Fable-2 по записям PS2): центр масс посередине базы (со смещением назад на CAR_COG109_BACK долей базы); пружины у всех колёс одни (у оригинала одна жёсткость), поэтому в покое перед сжат меньше, зад больше (PS2 famil_v 0,121 / 0,1445, тангаж покоя −0,40°).
+  // CAR_COG109_OLD=1 / CAR_SPR109_OLD=1 (flag cog109old / spr109old) — прежний центр масс из данных диска и жёсткости по доле веса оси
+  if (!carCog109Old) c->comBase[2] = 0.5f * (P->wheelF - P->wheelR) - CAR_COG109_BACK * (P->wheelF + P->wheelR);
   float wb = P->wheelF + P->wheelR, zc = clampf(c->comBase[2], -P->wheelR * .9f, P->wheelF * .9f);
   float xc = clampf(c->comBase[0], -P->wheelX * .9f, P->wheelX * .9f);
   for (int i = 0; i < 4; i++) {
     float ax = i < 2 ? (zc + P->wheelR) / wb : (P->wheelF - zc) / wb;           // доля оси
     float sd = (i & 1) ? (P->wheelX - xc) / (2.f * P->wheelX) : (P->wheelX + xc) / (2.f * P->wheelX);   // доля борта (x влево)
-    float share = 4.f * ax * sd;                                              // 1 = ровно четверть веса
+    float share = carSpr109Old ? 4.f * ax * sd : 1.f;                         // 1 = ровно четверть веса; 108: у оригинала одна жёсткость на все колёса
     c->kS[i] = kb * share * CAR_SPRING_SCALE;
     c->cS[i] = P->damperC * CAR_DAMP_SCALE * 2.f * sqrtf(c->kS[i] * m);
   }
@@ -775,6 +816,35 @@ static float effMass(const Car *c, const M3 *M, V3 n, V3 r) {   // 1 / K для 
 #ifndef P1200_STOPD
 #define P1200_STOPD 2.8f
 #endif
+// 107b, правка 1278 (слово Роба 13.11 «всё как в оригинале»; сверка Fable-2 М1/М2; запись PS2: смещение колеса со знаком, пределы ±0,266 м, в покое +0,133): колесо ходит от нейтрали на один предел вверх
+// и на один вниз (у нас раньше только вверх от полного вывешивания: 0..lim, вниз от покоя 0,13 м вместо 0,39). Сила пружины = жёсткость × смещение со знаком; квадратичная добавка 5x² только выше нейтрали;
+// ниже нейтрали, пока колесо касается земли, пружина тянет кузов вниз (нижний предел силы −k·lim, правило порта: у оригинала предела нет в явном виде). Амортизатор работает в обе стороны, итог не зажимается нулём.
+// Касание земли теперь достаёт на lim глубже (колесо в ямке и на уступе остаётся на земле, не отрывается втрое раньше). Сжатие comp для всех прочих расчётов — как было (0 пока колесо в отбое), ход со знаком в xs.
+// CAR_SUSP1278_OLD=1 / carSusp1278Old = 1 (flag susp1278old 1) — прежняя подвеска побайтно
+#ifndef CAR_SUSP1278_OLD
+#define CAR_SUSP1278_OLD 0   // 108 (Роб 14.11: «подвеску тоже в 108», ход вниз 0,39 по оригиналу, пружина со знаком): 1 — прежняя подвеска
+#endif
+#ifndef CAR_SUSP1278_ZONE
+#define CAR_SUSP1278_ZONE 1   // 1 — в зоне прыжка тяга пружины ниже нейтрали выключена (оригинал); 0 — везде
+#endif
+#ifndef CAR_SUSP1278_LO
+#define CAR_SUSP1278_LO 1.f   // нижний предел силы подвески, доли k·lim
+#endif
+// 107b, правка 1278 (М3, упор подвески; сверка Fable-2): у оригинала упора с силой нет. Колесо за пределом сжатия просто перестаёт наращивать силу пружины (потолок на пределе), а перебор снимается подъёмом кузова вверх,
+// не больше половины радиуса колеса за кадр; импульс кузову не передаётся. У нас был резиновый упор 60 жёсткостей на сжатии и 4 на отбое с демпфером ×13 и потолком 6 весов. CAR_STOP1278_OLD=1 / carStop1278Old = 1 — прежний упор
+#ifndef CAR_STOP1278_OLD
+#define CAR_STOP1278_OLD 1   // КАНДИДАТ: по умолчанию выключен, пока не принят гейтом посадок (см. журнал 107б)
+#endif
+int carStop1278Old = CAR_STOP1278_OLD;
+int carSusp1278Old = CAR_SUSP1278_OLD;
+#ifndef CAR_FENCEANG1279_OLD
+#define CAR_FENCEANG1279_OLD 0   // 1279: забор тормозит правилом CAR_CRASH_ANG как раньше
+#endif
+int carFenceAng1279Old = CAR_FENCEANG1279_OLD;   // 1 — как было (rollback.txt: CAR_FENCEANG1279_OLD; flag fenceang1279old в сценарии)
+#ifndef CARHITFRIC1279_OLD
+#define CARHITFRIC1279_OLD 0   // 109: ВКЛЮЧЕНО по записям PS2 (45°/40: игрок 20 → 8 км/ч при PS2 0,7–0,9, цель 0,9 м при PS2 0,97); 1 — как было (rollback.txt: CARHITFRIC1279_OLD)
+#endif
+int carHitFric1279Old = CARHITFRIC1279_OLD;   // flag hitfric1279old в сценарии
 static float contactRestitution(const Car *c,float e) {
   // Mass already enters the contact's effective impulse. Scaling material
   // restitution a second time made a light body rebound much faster.
@@ -783,6 +853,7 @@ static float contactRestitution(const Car *c,float e) {
 static void suspensionForces(const Car *c,const M3 *M,const V3 r[4],const V3 n[4],
                              const float spring[4],const float tangent[4],const float damping[4],
                              const float freeV[4],const int active[4],float dt,float force[4]) {
+  float lo[4]={0,0,0,0};if(!carSusp1278Old)for(int i=0;i<4;i++)lo[i]=(CAR_SUSP1278_ZONE&&c->zoneIn&&c->zoneOk)?0.f:-CAR_SUSP1278_LO*c->kS[i]*c->lim;   // 1278: тяга пружины ниже нейтрали; в зоне прыжка у оригинала её нет (разбор Fable-2 по записям: демпфер/тяга снимаются в объёме JMP1)
   float A[4][4]={{0}},b[4]={0},cap=6.f*bodyMass(c)*c->p.gravity;
   for(int i=0;i<4;i++) {
     force[i]=0.f;if(!active[i])continue;
@@ -796,7 +867,7 @@ static void suspensionForces(const Car *c,const M3 *M,const V3 r[4],const V3 n[4
     float change=0.f;
     for(int i=0;i<4;i++)if(active[i]) {
       float f=b[i];for(int j=0;j<4;j++)if(j!=i)f-=A[i][j]*force[j];
-      f=clampf(f/A[i][i],0.f,cap);change=fmaxf(change,fabsf(f-force[i]));force[i]=f;
+      f=clampf(f/A[i][i],lo[i],cap);change=fmaxf(change,fabsf(f-force[i]));force[i]=f;
     }
     if(change<cap*1e-6f)break;
   }
@@ -1030,16 +1101,17 @@ void carPlace(Car *c, const ColWorld *w, float x, float y, float z, float h) {
     else if (carSpawnNearest(w, x, y, z, o)) { char l[160]; snprintf(l, sizeof l, "ring from=%.2f,%.2f,%.2f to=%.2f,%.2f,%.2f", x, y, z, o[0], o[1], o[2]); wdFire("spawn", "car", l); x = o[0]; y = o[1]; z = o[2]; c->spawnRings++; c->spawnOk = 1; }
     else if (c->spawnOk) { char l[160]; snprintf(l, sizeof l, "keep want=%.2f,%.2f,%.2f stay=%.2f,%.2f,%.2f", x, y, z, c->x, c->y, c->z); wdFire("spawn", "car", l); c->spawnKeeps++; return; }
   }
-  c->x = x; c->z = z; c->h = h; c->gx = c->gz = 0; c->steer = 0; c->slip = 0;
+  c->x = x; c->z = z; c->h = h; c->gx = c->gz = 0; c->steer = 0; c->slip = 0; c->wcon = 15;
   memset(c->vel, 0, sizeof c->vel); memset(c->w, 0, sizeof c->w);
   memcpy(c->com, c->comBase, sizeof c->com);
   quatYaw(c->q, h);
   float g;
   c->y = colGround(w, x, z, y + 2.f, -1e6f, &g, 0) ? g : y;
   c->grounded = 0; settle(c, w);
-  for (int i = 0; i < 4; i++) c->comp[i] = c->eq;
+  for (int i = 0; i < 4; i++) c->comp[i] = c->xs[i] = c->eq;
   syncOut(c);
   c->ry = c->y; c->rvy = 0; c->rpitch = c->pitch; c->rroll = c->roll;
+  c->restLin = .1f; c->restAng = .6f;   // 1330: начало сглаживания (допуски покоя по движению и по вращению, вдвое оригинала)
   c->quietSteps = 0; c->airT = c->noGroundT = c->embedT = c->bellyT = c->flipT = c->nofitT = 0; c->fallPending = 0; c->fallPendT = 0; c->fallTop = c->y; c->fallT0 = c->t;
   c->flightZone = -1;
   c->acc = 0; c->contacts = 0; c->hitSpeed = 0; c->pen = 0; c->hardV = c->foliV = c->carHitV = 0;   // телепорт: без удара
@@ -1067,7 +1139,8 @@ void carBoomHit(Car *c, const SvBoom *b, int isPlayer) {   // круг 2, P01-14
 }
 int carNeedsAutoReset(const Car *c) {   // сверка g01-cars, P01-18 / P17 Д1: условия автосброса оригинала (дорогу и вспышку ставит вызывающий)
   float up = quatM(c->q).U.y, sp = sqrtf(c->vel[0] * c->vel[0] + c->vel[1] * c->vel[1] + c->vel[2] * c->vel[2]), wl = sqrtf(c->w[0] * c->w[0] + c->w[1] * c->w[1] + c->w[2] * c->w[2]);
-  return (up < 0.f && c->wheels == 0 && sp < .15f && wl < .3f) || (sp < 1.f && (SV_SIDEINV_OLD ? fabsf(up) : up) < .2f && c->sideT > 1.f);
+  if (!carFlipEma1330Old) { sp = c->restLin; wl = c->restAng; }   // 1330: сглаженные (carUpdate обновляет в кадрах «вверх колёсами без касания»)
+  return (up < 0.f && c->wheels == 0 && sp < .15f && wl < .3f) || (sqrtf(c->vel[0] * c->vel[0] + c->vel[1] * c->vel[1] + c->vel[2] * c->vel[2]) < 1.f && (SV_SIDEINV_OLD ? fabsf(up) : up) < sideLim1330(c) && c->sideT > 1.f);
 }
 
 void carResetNearby(Car *c, const ColWorld *w) {
@@ -1283,6 +1356,20 @@ static void addDamageImp(Car *c, float D, float hitterK) {
   float d = D * hitterK / effHP(c); carDmgSrc[2] += d; dmgApply(c, d, D * 100000.f / bodyMass(c));
 }
 
+// 107б П10 (сверка физики Fable-2, закон 1276б): у оригинала любое столкновение даёт урон по нормированному импульсу (приведённая масса · скорость сближения · (1 + e) / 100000), порог 0,06 — предмет тоже, если импульс
+// достаточный: фонарь 1000 кг примерно с 9–10 м/с, ящик 100 кг никогда. У нас от предметов урона не было. Зовут props.c (удар по простому предмету) и stateprops.c (стейтпроп массой от 500 кг, не обломок и не куст).
+// CARDMGPROP107_OLD=1 / «flag cardmgprop107old 1» — урона от предметов нет, как в 106
+#ifndef CARDMGPROP107_OLD
+#define CARDMGPROP107_OLD 0
+#endif
+int carDmgProp107Old = CARDMGPROP107_OLD;
+void carDamageProp107(Car *c, float propMass, float closing) {
+  if (carDmgProp107Old || !c || propMass <= 0.f || closing <= 0.f) return;
+  float bm = bodyMass(c), mu = bm * propMass / (bm + propMass), D = fminf(mu * closing * (1.f + SV_DMG_E) / 100000.f, 1.f);
+  hitNote(c, D, 0); if (D <= .06f) return;
+  carDmgSrc[1] += D / effHP(c); dmgApply(c, D / effHP(c), closing);
+}
+
 // точка удара на прямоугольнике кузова: угол, глубже всех заходящий в препятствие; почти лобовой/боковой удар —
 // ближе к середине грани (плоский удар не крутит)
 static void hitPoint(const CarBox *b, float nx, float nz, float *px, float *pz) {
@@ -1441,8 +1528,10 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   const int airWeeble = SV_AIRSTAB_OLD && !CAR_AIR_PITCH_OLD && !CAR_WEEBLE_GROUND_OLD && P->weebleOffset < 0.f && !c->grounded && c->contacts == 0 && c->airT >= CAR_AIR_MIN_T;
   // сверка g01-cars, 4.2: «неваляшка» работает только когда два колеса одного борта оторваны от земли (на четырёх колёсах и в полёте момента нет). Борта (0,2) и (1,3) — по первому читателю
   // (второй читатель считает пары диагоналями, решает расположение w0..w3 в модели; проверить на PSP). Было: всегда на колёсах и в воздухе. -DSV_WEEBLE_OLD=1
-  const int weebleSide = c->wheels > 0 && (SV_WEEBLEDIAG_OLD ? ((c->comp[0] <= 0.f && c->comp[2] <= 0.f) || (c->comp[1] <= 0.f && c->comp[3] <= 0.f)) : ((c->comp[0] <= 0.f && c->comp[3] <= 0.f) || (c->comp[1] <= 0.f && c->comp[2] <= 0.f)));
-  if ((SV_WEEBLE_OLD ? (CAR_WEEBLE_GROUND_OLD ? P->bodyMass<=0.f : P->bodyMass<=0.f || c->wheels > 0 || airWeeble) : weebleSide) && P->weebleOffset < 0.f) Ts = add(Ts, cross(scl(M.U, P->weebleOffset), v3(0.f, -mg, 0.f)));
+  const int weebleSide0 = c->wheels > 0 && (SV_WEEBLEDIAG_OLD ? ((c->comp[0] <= 0.f && c->comp[2] <= 0.f) || (c->comp[1] <= 0.f && c->comp[3] <= 0.f)) : ((c->comp[0] <= 0.f && c->comp[3] <= 0.f) || (c->comp[1] <= 0.f && c->comp[2] <= 0.f)));
+  const unsigned wk_ = c->wcon;   // 1323: контакт колёс с прошлого шага
+  const int weebleSide = carWeeble1323Old ? weebleSide0 : (carWeebleDiagCar(P->name) ? ((!(wk_ & 1u) && !(wk_ & 8u)) || (!(wk_ & 2u) && !(wk_ & 4u))) : ((!(wk_ & 1u) && !(wk_ & 4u)) || (!(wk_ & 2u) && !(wk_ & 8u))));
+  if ((SV_WEEBLE_OLD ? (CAR_WEEBLE_GROUND_OLD ? P->bodyMass<=0.f : P->bodyMass<=0.f || c->wheels > 0 || airWeeble) : weebleSide) && P->weebleOffset < 0.f && ++carWeebleN) Ts = add(Ts, cross(scl(M.U, P->weebleOffset), v3(0.f, -mg, 0.f)));
   // сверка g01-cars, 1.1 + 1.3: множитель руля 1 − (1 − Drop)·доля (на TopSpeed остаётся Drop; famil_v 1,00/0,82/0,64/0,45/0,27), ниже 50 км/ч предел поворота на 10° больше.
   // Было: 1 − Drop·доля, 30° на любой скорости. -DSV_STEER_DROP_OLD=1 / -DSV_STEER_LOW_OLD=1
   float turnMax = (c->wheelMaxOvr > 0.f ? c->wheelMaxOvr : P->maxWheelTurn) + (!SV_STEER_LOW_OLD && speed < SV_KMH(50.f) ? 10.f * (3.14159265f / 180.f) : 0.f);
@@ -1513,11 +1602,11 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   // высоте соседних колёс: край мира — стена и пол, машина не свешивается и не опрокидывается за него
   V3 mws[4], gn[4]; float gys[4]; uint32_t groundRef[4]={~0u,~0u,~0u,~0u}; int hit[4], vd[4], wmat[4] = {0, 0, 0, 0}, onsup[4] = {0, 0, 0, 0}, nreal = 0; float gmax = -3.0e38f;
   for (int i = 0; i < 4; i++) {
-    c->comp[i] = 0.f; hit[i] = vd[i] = 0;
+    c->comp[i] = 0.f; c->xs[i] = -c->lim; hit[i] = vd[i] = 0;
     if (M.U.y < 0.3f) continue;   // на боку / на крыше колёса не достают
     float bx = (i & 1) ? -P->wheelX : P->wheelX, bz = i < 2 ? P->wheelF : -P->wheelR, n3[3], g2;
     mws[i] = add(pos, mulM(&M, v3(bx, c->mountY, bz)));
-    float reach = (c->lim + P->wheelRad) / M.U.y + 0.05f;
+    float reach = (c->lim * (carSusp1278Old ? 1.f : 2.f) + P->wheelRad) / M.U.y + 0.05f;   // 1278: ход вниз от нейтрали ещё один предел
     int got = colGroundMatId(w, mws[i].x, mws[i].z, mws[i].y + 0.05f, mws[i].y - reach, &gys[i], n3, &wmat[i], &groundRef[i]); float gs;
     if (supportAt(c, mws[i].x, mws[i].z, mws[i].y + 0.05f, mws[i].y - reach, &gs) && (!got || gs > gys[i])) {
       got = 1; groundRef[i]=~0u; gys[i] = gs; n3[0] = 0.f; n3[1] = 1.f; n3[2] = 0.f; wmat[i] = COL_MAT_HARD; onsup[i] = 1;   // крыша машины
@@ -1548,6 +1637,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       hit[i] = 1; gn[i] = v3(n3[0], n3[1], n3[2]); nreal++; if (gys[i] > gmax) gmax = gys[i];
     } else vd[i] = !colGround(w, mws[i].x, mws[i].z, mws[i].y + 0.05f, -1e6f, &g2, 0);
   }
+  { unsigned wk2_ = 0; for (int i = 0; i < 4; i++) if (hit[i] && !vd[i]) wk2_ |= 1u << i; c->wcon = (unsigned char)wk2_; }   // 1323: настоящий контакт (до виртуальных колёс)
   for (int i = 0; i < 4; i++) if (vd[i] && nreal) { hit[i] = 1; gys[i] = gmax; gn[i] = v3(0.f, 1.f, 0.f); }
 #ifndef CAR_STEPLOSS_OLD
 #define CAR_STEPLOSS_OLD 0   // №164 (L1 C7-6): 1 — прежнее, на въезде на крутой скат (ступени, трамплин) скорость не теряется на трение удара
@@ -1581,7 +1671,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
     for(int i=0;i<4;i++)if(hit[i]) {
       float un=dot(M.U,gn[i]);if(un<.4f)continue;
       float ext=suspensionExtension((mws[i].y-gys[i])*gn[i].y,un,P->wheelRad);
-      if(c->lim-ext>0.f) { compression[i]=fminf(c->lim,c->lim-ext);supported++; }
+      if(c->lim-ext>(carSusp1278Old?0.f:-c->lim)) { compression[i]=fminf(c->lim,c->lim-ext);supported++; }
     }
     om=changeBodyTensor(c,&M,compression,om);
     int wh=P->wheelieRange>0.f && thr>.99f && ratio<P->wheelieRange && supported>=2 && wheelieRoom436(c);
@@ -1605,25 +1695,27 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       uint32_t j=groundRef[i]&0x1fffffffu;const ColCyl *C=&w->cyl[j];
       float axial=hypotf(C->axis[0],C->axis[2]);float un=dot(M.U,gn[i]);
       float ext=un>.4f?suspensionExtension((mws[i].y-gys[i])*gn[i].y,un,P->wheelRad):c->lim;
-      if(ext>=c->lim||C->pad[0]==1.f||fabsf(C->axis[1])>.3f||2*C->halfLen*axial<COL_HUMP_LEN)continue;
+      if(ext>=c->lim*(carSusp1278Old?1.f:2.f)||C->pad[0]==1.f||fabsf(C->axis[1])>.3f||2*C->halfLen*axial<COL_HUMP_LEN)continue;
       int seen=0;for(int k=0;k<count;k++)seen|=keep[k]==j;
       if(!seen&&count<COL_HUMP_KEEP)keep[count++]=j;
     }
     for(int i=0;i<c->nhkeep;i++) {int seen=0;for(int k=0;k<count;k++)seen|=keep[k]==c->hkeep[i];if(!seen&&count<COL_HUMP_KEEP)keep[count++]=c->hkeep[i];}
     colHumpKeep(keep,count);
   }
+  float stopOver=0.f;   // 1278 М3: наибольший перебор хода сверх предела по колёсам, м
   float normalForce[4]={0}, cRoll=0.f;   // cRoll: Σ c·b² по колёсам с опорой (b — плечо поперёк кузова), Н·м·с/рад: демпфирование крена подвески до правки 1200
   if(!CAR_EXPLICIT_SUSPENSION_OLD) {
     V3 r[4],n[4];float spring[4]={0},tangent[4]={0},damping[4]={0},freeV[4]={0};int active[4]={0};
     V3 vfree=madd(vel,Fs,dt*im),wfree=madd(om,invIw(c,&M,Ts),dt);
     for(int i=0;i<4;i++) {
       if(!hit[i])continue;n[i]=gn[i];float un=dot(M.U,n[i]);if(un<.4f)continue;
-      float ext=suspensionExtension((mws[i].y-gys[i])*n[i].y,un,P->wheelRad),x=c->lim-ext;if(x<=0.f)continue;
+      float ext=suspensionExtension((mws[i].y-gys[i])*n[i].y,un,P->wheelRad),x=c->lim-ext;if(x<=(carSusp1278Old?0.f:-c->lim))continue;
       active[i]=1;r[i]=sub(madd(mws[i],M.U,-ext),comW);
       V3 vp=add(vfree,cross(wfree,r[i]));if(onsup[i])vp=sub(vp,v3(c->supV[0],c->supV[1],c->supV[2]));
       freeV[i]=dot(vp,n[i]);float xs=fminf(x,c->lim);
-      spring[i]=c->kS[i]*(xs+5.f*xs*xs);tangent[i]=c->kS[i]*(1.f+10.f*xs);damping[i]=c->cS[i]*(CAR_PITCH1200_OLD?1.f:P1200_DAMP);
-      if(x>c->lim) {
+      spring[i]=xs<0.f?c->kS[i]*xs:c->kS[i]*(xs+5.f*xs*xs);tangent[i]=xs<0.f?c->kS[i]:c->kS[i]*(1.f+10.f*xs);damping[i]=c->cS[i]*(CAR_PITCH1200_OLD?1.f:P1200_DAMP);
+      if(x>c->lim&&!carStop1278Old)stopOver=fmaxf(stopOver,x-c->lim);
+      else if(x>c->lim) {
         float vnI=dot(add(vel,cross(om,r[i])),n[i]),k=(vnI<0.f?(CAR_PITCH1200_OLD?60.f:P1200_STOPK):CAR_BUMPSTOP_REBOUND_OLD?8.f:CAR_BUMPSTOP_REBOUND_K)*c->kS[i];
         spring[i]+=k*(x-c->lim);tangent[i]=k>0.f?k:c->kS[i]*(1.f+10.f*c->lim);damping[i]*=CAR_PITCH1200_OLD?CAR_BUMPSTOP_DAMP:P1200_STOPD;
       }
@@ -1640,7 +1732,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
       if (!hit[i]) continue;
       V3 nn = gn[i]; float u = dot(M.U, nn); if (u < 0.4f) continue;
       float xx = c->lim - suspensionExtension((mws[i].y - gys[i]) * nn.y, u, P->wheelRad);
-      if (xx <= 0.f) continue;
+      if (xx <= (carSusp1278Old ? 0.f : -c->lim)) continue;
       cst[i] = 1; nC++; nsum = add(nsum, nn);
       if (xx > worstX) { worstX = xx; worstI = i; }
     }
@@ -1653,8 +1745,8 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
     V3 mw = mws[i], n = ghost ? airN : gn[i]; float gy = gys[i];
     float un = dot(M.U, n); if (!ghost && un < 0.4f) continue;
     float ext = ghost ? c->lim : suspensionExtension((mw.y - gy) * n.y, un, P->wheelRad), x = ghost ? 0.f : c->lim - ext;   // ход вдоль оси вверх тела
-    if (!ghost && x <= 0.f) continue;
-    if (!ghost) { c->comp[i] = x; ng++; if (!vd[i]) nw++; if (i >= 2) nd++; }
+    if (!ghost && x <= (carSusp1278Old ? 0.f : -c->lim)) continue;
+    if (!ghost) { c->comp[i] = carSusp1278Old ? x : fmaxf(x, 0.f); c->xs[i] = x; ng++; if (!vd[i]) nw++; if (i >= 2) nd++; }
     V3 pc = madd(mw, M.U, -ext);                                      // wheel centre
     // Tyre forces act at the ground patch, not at the axle. Moving along
     // the contact normal preserves spring torque but corrects tyre torque.
@@ -1906,6 +1998,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   }
   M = quatM(c->q);
   pos = sub(comW, mulM(&M, comB));
+  if(!carStop1278Old&&stopOver>0.f) { float lift=fminf(stopOver,.5f*P->wheelRad); pos.y+=lift; comW.y+=lift; }   // 1278 М3: перебор подвески снимается подъёмом кузова, без импульса
 
   // ---- 3) стены
   float pen0 = c->pen, ok = fmaxf(PEN_REVERT, pen0);
@@ -1945,7 +2038,7 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   if (colDebug) printf("  substep: move %.4f %.4f %.4f -> maxDepth %.4f pen0 %.4f behind %d revert %d tries %d n %d | box %.4f %.4f f %.4f %.4f y %.4f g %.4f %.4f\n",
                        pos.x - pos0.x, pos.y - pos0.y, pos.z - pos0.z, b.maxDepth, pen0, b.behindFence, revert, tries, b.n, bPre.x, bPre.z, bPre.fx, bPre.fz, bPre.y, bPre.gx, bPre.gz);
 #endif
-  if (carDbgOn1050 && (revert || b.n) && !carDbg1050.revert && !carDbg1050.bn) { CarDbg1050 *d = &carDbg1050; d->revert = revert; d->tries = tries; d->bn = b.n < 8 ? b.n : 8; d->bdepth = b.maxDepth;
+  if ((carDbgOn1050 || carDbgDiag108) && (revert || b.n) && !carDbg1050.revert && !carDbg1050.bn) { CarDbg1050 *d = &carDbg1050; d->revert = revert; d->tries = tries; d->bn = b.n < 8 ? b.n : 8; d->bdepth = b.maxDepth;
     for (int k = 0; k < d->bn; k++) { d->btype[k] = b.type[k]; d->bidx[k] = b.index[k]; d->bnx[k] = b.nx[k]; d->bnz[k] = b.nz[k]; d->bd[k] = b.depth[k]; } }
   c->contacts = 0;
   float wallHit = 0.f;
@@ -2117,8 +2210,15 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
           // и стоит на четырёх колёсах; у порта вдоль стены оставалось ~9 м/с, шины скользили боком и на 1 с клали машину на два колеса (крен 20–50°).
           // Потеря касательной растёт с наклоном к нормали (t = касательная / нормальная до удара): на 17° (b2_ram) остаётся 0,54 прежним правилом, к t = 0,7 (35°) — 5 %, дальше снова растёт (плита b166 L4, 26° от параллели, t ≈ 2: PS2 скользит вдоль стены и за 24 кадра теряет 82 → 18 км/ч, то есть остаётся ≈ 25 %).
           // Берём меньшее из прежнего и этого. -DCAR_CRASH_ANG_OLD=1 — как было
+          // 107b 1279 (записи PS2 забора L1 f008, окно PS2 s_ps2_c107_b1_*): забор (все контакты ColSeg) правило CAR_CRASH_ANG не тормозит: 45° на 80 км/ч у оригинала 0,56 скорости через 0,5 с и 0,69 через 1 с (у порта было 0,05 и 0,06); плита (b47/b166) тормозит как прежде. CAR_FENCEANG1279_OLD=1 — как было
+#ifndef CAR_FENCEANG1279_OLD
+#define CAR_FENCEANG1279_OLD 0
+#endif
+#ifndef CAR_FENCEANG1279_T0
+#define CAR_FENCEANG1279_T0 0.9f   // забор: правило не тормозит только круче этого отношения касательной к нормальной (≈42° от нормали); мельче — как раньше (boom_ps2: 12-й удар PS2)
+#endif
           if (!CAR_CRASH_ANG_OLD && wk < 1.f) { float t = fabsf(vn0) > 1e-3f ? tl / fabsf(vn0) : 0.f;
-            if (t > .31f && t <= CAR_CRASH_ANG_TMAX) { float keep = t < .7f ? .54f - 1.26f * (t - .31f) : .05f + .13f * (fminf(t, 2.f) - .7f); tlNew = fminf(tlNew, tl * (wk + (1.f - wk) * keep)); } }
+            if (t > .31f && t <= CAR_CRASH_ANG_TMAX && (carFenceAng1279Old || !allSeg || t <= CAR_FENCEANG1279_T0)) { float keep = t < .7f ? .54f - 1.26f * (t - .31f) : .05f + .13f * (fminf(t, 2.f) - .7f); tlNew = fminf(tlNew, tl * (wk + (1.f - wk) * keep)); } }
           if (tl > 1e-4f) { tx /= tl; tz /= tl; } else { tx = tz = 0.f; }
           vel.x = vnNew * nx + tlNew * tx; vel.z = vnNew * nz + tlNew * tz;
         } else { vel.x *= k; vel.z *= k; }
@@ -2602,11 +2702,13 @@ static void substep(Car *c, const ColWorld *w, const CarInput *in, float dt) {
   // сверка g01-cars, P01-18 + 4.3: сроки автосброса как у оригинала — (а) вверх колёсами, колёс на земле нет, скорость < 0,15 м/с и вращение < 0,3 рад/с: сразу; (б) скорость < 1 м/с и ось вверх
   // почти горизонтальна (cos < 0,2) дольше 1 с. Место и вспышка: дорога в 100 м и белая вспышка интерфейса — передано (g09a-hud / g10-flow), здесь сброс на месте, как было. Было: лежит дольше 2 с. -DSV_AUTORESET_OLD=1
   int svFlipNow = 0;
+  if (up < 0.f && c->wheels == 0) { c->restLin += (len(vel) - c->restLin) * (1.f / 15.f); c->restAng += (len(om) - c->restAng) * (1.f / 15.f); }   // 1330: скользящее среднее оригинала (1/15 за кадр), только в кадрах «вверх колёсами без касания»
   if (!SV_AUTORESET_OLD && (c->huskDrive || c->svPlayer || SV_FORCE_PLAYER)) {
-    float spd = len(vel);
-    svFlipNow = (up < 0.f && c->wheels == 0 && spd < .15f && len(om) < .3f) || (spd < 1.f && (SV_SIDEINV_OLD ? fabsf(up) : up) < .2f && c->sideT > 1.f);
+    float spd = len(vel), sl_ = spd, wl_ = len(om);
+    if (!carFlipEma1330Old) { sl_ = c->restLin; wl_ = c->restAng; }   // 1330: сглаженные значения (обновлены выше)
+    svFlipNow = (up < 0.f && c->wheels == 0 && sl_ < .15f && wl_ < .3f) || (spd < 1.f && (SV_SIDEINV_OLD ? fabsf(up) : up) < sideLim1330(c) && c->sideT > 1.f);
   }
-  c->sideT = (!SV_AUTORESET_OLD && (SV_SIDEINV_OLD ? fabsf(up) : up) < .2f && len(vel) < 1.f) ? c->sideT + dt : 0.f;
+  c->sideT = (!SV_AUTORESET_OLD && (SV_SIDEINV_OLD ? fabsf(up) : up) < sideLim1330(c) && len(vel) < 1.f) ? c->sideT + dt : 0.f;
   if (SV_AUTORESET_OLD ? c->flipT > 2.f : (svFlipNow || (!(c->huskDrive || c->svPlayer || SV_FORCE_PLAYER) && c->flipT > 2.f))) {   // лежит — ставим на колёса на том же месте (как в оригинале)
     float t = c->t; int rec = c->recoveries, rev = c->reverts, rg = c->rights; float dmg = c->damage, dt0 = c->deadT; int ds = c->destroyed;
     carPlace(c, w, c->x, c->y + 1.f, c->z, c->h);
@@ -2773,7 +2875,10 @@ static void perchEscape(Car *c, const ColWorld *w, const CarInput *in, float dt)
 }
 
 // №1050 диагностика (flag carcon1050 1): что держит машину — контакты кузова (тип, индекс, нормаль, глубина), колёсные контакты, откат подшага; строка CARCON в main_loop.h
-CarDbg1050 carDbg1050; int carDbgOn1050;
+#ifndef STUCKLOG108_OLD
+#define STUCKLOG108_OLD 0
+#endif
+CarDbg1050 carDbg1050; int carDbgOn1050; int carDbgDiag108 = !STUCKLOG108_OLD; unsigned diagFrame108, carHitN108; float diagFootWant108; CarHitRec108 carHitRec108[4];
 // №1104 (код Car Jump on Horn; против оригинала): пока гудок зажат (> 0,1) и машина не в воздухе, к скорости каждый кадр добавляется (направление вперёд + 2 по вертикали) × 5 × нажатие
 // (оригинал: вектор «вперёд», его y + 2, масштаб нажатие × 5, прибавка к линейной скорости, повторяется пока флаг воздуха не встал). Число 5 — из оригинала
 void carHornLeap(Car *c, float amount) {
@@ -2949,6 +3054,14 @@ static void stackOn(Car *t, Car *b) {
 // проныр. PS2 (объёмные тела) этого не знает. Теперь высота — вдоль общей оси «вверх» обеих машин (на склоне это поперёк склона, а не по отвесу),
 // а толчок удара — вдоль склона (нормаль без составляющей по этой оси): удар не подбрасывает въезжающую на крышу. Гейт tests/carslope (уклоны
 // 0–35 %, в горку/с горки, вдоль/поперёк). CARSLOPE879_OLD=1 — как было
+// 1333 (Роб: «на школьном автобусе на скорости хотел протаранить машину, а она вытолкнулась мне на крышу»): удар автобуса в борт седана на 75–90 км/ч кренит седан на 45° (вращение 6 рад/с, импульс выше его центра масс),
+// средняя ось «вверх» двух машин (№879, для склона) тогда наклоняется вместе с ним, и боковое расстояние между машинами (3 м) читается как высота вдоль этой оси: «цель выше таранящего на полтора метра и больше» —
+// stackOn ставит её на крышу тарана (низ цели 3,0 м над землёй, при крыше тарана 3,5 м). Средняя ось теперь только у двух машин на одном склоне (их оси «вверх» расходятся меньше 10°); накренённая цель — мировая вертикаль.
+// CARSTACK1333_OLD=1 / carStack1333Old (файл carstack1333old, flag carstack1333old 1) — как было
+#ifndef CARSTACK1333_OLD
+#define CARSTACK1333_OLD 0
+#endif
+int carStack1333Old = CARSTACK1333_OLD;
 #ifndef CARSLOPE879_OLD
 #define CARSLOPE879_OLD 0
 #endif
@@ -2964,10 +3077,16 @@ static float hitterK(const Car *x, const Car *y, float tx, float tz) {
 #ifndef CARHIT_SHIFTCAP
 #define CARHIT_SHIFTCAP 0.08f   // fiz105: включено (решение дирижёра 11.11, зависимость от длины кадра); 0.f — прежнее
 #endif
-int carHitCar(Car *a, Car *b, const ColWorld *w) {
+static int carHitCar0(Car *a, Car *b, const ColWorld *w);
+int carHitCar(Car *a, Car *b, const ColWorld *w) {   // 107b: обёртка — тот же результат, плюс запись «кто кого» для строк ящика STUCK/NEAR
+  int r = carHitCar0(a, b, w);
+  if (r && carDbgDiag108) { CarHitRec108 *h = &carHitRec108[carHitN108++ & 3]; CarBox B; carBox(b, &B); h->a = a; h->bx = b->x; h->by = b->y; h->bz = b->z; h->hl = B.hl; h->hw = B.hw; h->frame = diagFrame108; }
+  return r;
+}
+static int carHitCar0(Car *a, Car *b, const ColWorld *w) {
   V3 Uc = v3(0.f, 1.f, 0.f);
   if (!CARSLOPE879_OLD) { M3 Ma_ = quatM(a->q), Mb_ = quatM(b->q); V3 s_ = add(Ma_.U, Mb_.U); float l_ = len(s_);
-    if (l_ > 1e-3f && s_.y > .7f * l_) Uc = scl(s_, 1.f / l_); }   // перевёрнутая / на боку — ось мира
+    if (l_ > 1e-3f && s_.y > .7f * l_ && (carStack1333Old || dot(Ma_.U, Mb_.U) >= .985f)) Uc = scl(s_, 1.f / l_); }   // перевёрнутая / на боку — ось мира; 1333: средняя ось только у двух машин на одном склоне (оси расходятся < 10°)
   float sab = CARSLOPE879_OLD ? a->y - b->y : dot(v3(a->x - b->x, a->y - b->y, a->z - b->z), Uc);   // a над b поперёк склона
   if (fabsf(sab) > 2.5f) return 0;
   CarBox A, B; carBox(a, &A); carBox(b, &B);
@@ -3027,6 +3146,15 @@ int carHitCar(Car *a, Car *b, const ColWorld *w) {
     V3 J = scl(n, j);
     va = madd(va, J, 1.f / ma); wa = add(wa, invIw(a, &Ma, cross(ra, J)));
     vb = madd(vb, J, -1.f / mb); wb = sub(wb, invIw(b, &Mb, cross(rb, J)));
+    // 107b 1279 (записи PS2 тарана стоящей машины R1PC10, s_ps2_c107_v_ram_*): у оригинала касательная скорость контакта гасится (игрок под 15° к борту встаёт за 25–50 кадров, цель почти не двигается: 0,02 м на 40 км/ч, 0,2 м на 80),
+    // у порта удар машин был чисто нормальным, без трения: скользящий удар отбрасывал цель на 3–14 м. Кулоновское трение CARHIT_MU (0,3 — трение кузова оригинала) вдоль касательной контакта, предел μ·j. CARHITFRIC1279_OLD=1 — как было
+#ifndef CARHIT_MU
+#define CARHIT_MU 0.3f
+#endif
+    if (!carHitFric1279Old) {
+      V3 vr2 = sub(add(va, cross(wa, ra)), add(vb, cross(wb, rb))); V3 tv = sub(vr2, scl(n, dot(vr2, n))); tv.y = 0.f; float tl = len(tv);   // только по земле: вертикальная часть трения подбрасывала/роняла кузов и давала лишний урон о землю
+      if (tl > 1e-4f) { V3 td = scl(tv, 1.f / tl); float Kt = 1.f / effMass(a, &Ma, td, ra) + 1.f / effMass(b, &Mb, td, rb), jt = fminf(tl / Kt, CARHIT_MU * j); V3 Jt = scl(td, -jt);
+        va = madd(va, Jt, 1.f / ma); wa = add(wa, invIw(a, &Ma, cross(ra, Jt))); vb = madd(vb, Jt, -1.f / mb); wb = sub(wb, invIw(b, &Mb, cross(rb, Jt))); } }
     memcpy(a->vel, &va, sizeof a->vel); memcpy(a->w, &wa, sizeof a->w); memcpy(b->vel, &vb, sizeof b->vel); memcpy(b->w, &wb, sizeof b->w);
     // урон: скорость удара, которую «почувствовала» каждая (лёгкая меняет скорость сильнее)
     float ka = a->hitDmgK > 0.f ? a->hitDmgK : CAR_HIT_DMG_K, kb = b->hitDmgK > 0.f ? b->hitDmgK : CAR_HIT_DMG_K;   // правка 176: трафик

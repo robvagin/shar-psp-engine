@@ -9,6 +9,7 @@
 #include <math.h>
 #include "phonebusy.h"
 #include "game_msn.h"
+#include "watchdog.h"
 #include "race_onroad.h"
 #include "flowrules.h"   // подпись △: имя собеседника как в тексте задания (flowTalkName)
 
@@ -79,6 +80,7 @@
 #ifndef HNR_IMMUNE_OLD
 #define HNR_IMMUNE_OLD 0      // круг 7 (g10-flow, P03-30): 1 — взрыв цели destroy / dump двигает шкалу, как было
 #endif
+#include "mission/dumpdmg.h"
 #ifndef GAME_C2_DMG_OLD
 #define GAME_C2_DMG_OLD 0      // круг 2, СВЕРКА_МАШИНЫ:7.2, P07 Д6: цель «разбить» получает урон только от машины игрока; follow/dump — цель неуязвима; dump с несколькими — и машина игрока
 #endif
@@ -115,6 +117,13 @@ extern int mvWagerPay(int fee);   // вид (msn_view.c); в ботах вида
 #ifdef __PSP__
 #include "sound.h"   // круг 2, g08: атмосфера миссии, звук подбора, реплика Arrive, музыкальные вставки (в ботах звука нет)
 #endif
+int rb_MSN_SPAWNCLEAR_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MC_REPLAYPARK_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MSN_TRAFFICHOLD_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MSN_RESETCOUNT_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MC_ENDLEAVE_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MC_STAGEEND_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+int rb_MC_PARKED_INVULN_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
 int gameMsnCarHide;   // круг 5, P06-15: 1 — машина игрока не рисуется (диалог бонус-миссии); читает main_loop.h
 int gameMsnBoothBlocked(const GameMsn *m) { return !GAME_C5_OLD && (m->rt.status == MSN_FAILED || m->arrested); }   // круг 5, P05-25: △ у будки игнорируется при проваленной миссии и аресте
 // g07b-msnview, ps2-twin P05:25: будки выключены, пока идёт миссия с принудительной машиной (phonebusy.h); PHONEBUSY_OLD=1 — всегда включены
@@ -201,12 +210,13 @@ static void carNearHomer(Game *g) {
   g->pProps->havePreviousCar = 0;
 }
 // В окне подготовки фазы (SetMissionReset*) — только при старте/повторе миссии; AddStageCharacter (этап) — всегда
+static void trafficClearAt(float x, float z, float r);
 static void plReset(void *u, const MsnPlace *at, const MsnPlace *car, const char *name) {
   (void)name;
   if (GM->keepPlayer) { GM->skipped++; return; }
   if (GM->inSetup && !GM->startArmed) { GM->skipped++; return; }
   GM->resets++;
-  if (car) putCar(G_, car);
+  if (car) { putCar(G_, car); trafficClearAt(car->pos.x, car->pos.z, 10.f); }   // Ф2-6/A2.11: посадка игрока в свою машину на старте этапа — трафик в 10 м от неё снимается (так же в оригинале)
   if (at) putHomer(G_, at); else inCar(G_);
   if (gmResumeStart) { gmResumeStart = 0; if (GAME_CARNEAR51_OLD && !RESUME_CAR_NEAR_OLD && car && at && *G_->pHaveCol && *G_->pHaveHomer) carNearHomer(G_); }   // 5.1: в оригинале загрузка = перезапуск миссии, машина на точке данных
   TELEPORTED();
@@ -214,6 +224,7 @@ static void plReset(void *u, const MsnPlace *at, const MsnPlace *car, const char
 static Traffic *roadsT;   // дороги и трафик уровня (main.c: traffic.shr; боты: bwTraffic); NULL — без дорог
 static int gameMsnResetRoad(const Car *c, float out[4]) { return mcResetPoint(roadsT, c->x, c->y, c->z, c->h, c->vel[0], c->vel[2], out); }
 static int gameMsnResetRoadAt(const Car *c, float off, float out[4]) { return mcResetPointOff(roadsT, c->x, c->y, c->z, c->h, c->vel[0], c->vel[2], off, out); }
+float gameNpcDbg108[3];
 void gameMsnSetRoads(Traffic *t) { roadsT = t; gameResetRoad = t ? gameMsnResetRoad : 0; gameResetRoadAt = t ? gameMsnResetRoadAt : 0; }
 // ---- машина миссии у игрока: InitLevelPlayerVehicle(имя, локатор, "OTHER") + SetForcedCar (уровень 1: m6 — машина Мардж marge_v).
 // Машина игрока становится этой машиной: ходовые и кузов, сиденье, дверь, камера — блок машины CAR1 v2 из таблицы пакета msncars
@@ -240,7 +251,7 @@ static void forcedOn(GameMsn *m, const char *car, const MsnPlace *at) {
     m->forcedPt[0] = at ? at->pos.x : g->pCar->x; m->forcedPt[1] = at ? at->pos.y : g->pCar->y; m->forcedPt[2] = at ? at->pos.z : g->pCar->z;
   }
   m->jacked = 0; m->jackedName[0] = 0;   // машина миссии сменяет угнанную
-  mcRemove(&m->cars, car);
+  mcRemoveWhy1350 = "given-car"; mcRemove(&m->cars, car);
   float x = g->pCar->x, y = g->pCar->y, z = g->pCar->z, h = g->pCar->h;
   if (at && at->loc) { x = at->pos.x; y = at->pos.y; z = at->pos.z; if (at->has_heading) h = mcCarHeading(at->heading); }
   carInit(g->pCar, &P, g->pWorld, x, y + .5f, z, h); g->pProps->havePreviousCar = 0;
@@ -285,6 +296,8 @@ GameHnrConfig gameMsnHnrConfig(const MsnFile *f) {
   }
   return h;
 }
+// 1350: «машина погони Hit & Run» — по флагу police, а не только по имени модели (у машины миссии L4 m1 то же имя cPolice); hnrPolName1350Old = 1 — только по имени, как было
+#define HNRCAR1350(c, m) ((c)->on && !strcasecmp((c)->name, (m)->hnr.car) && (hnrPolName1350Old || (c)->police))
 void gameMsnHnrPolice(GameMsn *m,int on) { gameMsnPolice(m,on,m->hnr.car,m->hnr.con,m->hnr.count); }
 // №627 (запись PS2 ps2-police-after-busted.yaml): после ареста полицейская стоит на месте (скорость 0,04 м/с) 1,5 с и исчезает вместе с карточкой: стоп, а не уход
 // сверка g09b-menu круг 5 (P03-08): погоня ставится и снимается по одной машине. Проход раз в 0,7 с ставит одну (если положенных ещё нет), раз в 0,5 с каждая дальше 110 м
@@ -293,21 +306,21 @@ void gameMsnHnrPoliceAdd(GameMsn *m) { gameMsnPolice(m, 1, m->hnr.car, m->hnr.co
 int gameMsnHnrPoliceLimit(const GameMsn *m) { return m->hnr.count; }
 void gameMsnHnrPoliceFar(GameMsn *m, float px, float pz, float R) {
   for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i];
-    if (c->on && !strcasecmp(c->name, m->hnr.car) && hypotf(c->car.x - px, c->car.z - pz) > R) memset(c, 0, sizeof *c); }
+    if (HNRCAR1350(c, m) && hypotf(c->car.x - px, c->car.z - pz) > R) memset(c, 0, sizeof *c); }
 }
 // сверка g09b-menu круг 7 (P03 Д2): снять одну машину погони по номеру в списке машин миссии
 void gameMsnHnrPoliceDrop(GameMsn *m, int i) {
-  if (i >= 0 && i < m->cars.n && m->cars.c[i].on && !strcasecmp(m->cars.c[i].name, m->hnr.car)) memset(&m->cars.c[i], 0, sizeof m->cars.c[i]);
+  if (i >= 0 && i < m->cars.n && HNRCAR1350(&m->cars.c[i], m)) memset(&m->cars.c[i], 0, sizeof m->cars.c[i]);
 }
-// правка 433 (Роб 06.11, L4): аналог EnterLimbo оригинала (DisableAllActiveVehicleAIs в ChaseManager): помеченный на удаление коп бросает погоню и тормозит (режим «стоит»: ручник, тормоз при движении);
+// правка 433 (Роб 06.11, L4): у оригинала помеченный на удаление коп бросает погоню и тормозит (режим «стоит»: ручник, тормоз при движении);
 // on = 0 — вернуть погоню (шкала снова поднялась и защёлка встала до того, как коп ушёл из кадра). Исчезают они не здесь, а правилом «вне кадра 5 с / дальше 110 м» (main_frontend.h)
 void gameMsnHnrPoliceLimbo(GameMsn *m, int on) {
-  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (!c->on || strcasecmp(c->name, m->hnr.car)) continue;
+  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (!HNRCAR1350(c, m)) continue;
     if (on && c->mode == MC_CHASE) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; }
     else if (!on && c->mode == MC_PARKED) { c->mode = MC_CHASE; c->asleep = 0; c->still = 0.f; c->chaseRoad = -2; c->chaseRoadT = 0.f; } }
 }
 void gameMsnHnrPoliceHold(GameMsn *m) {
-  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (c->on && !strcasecmp(c->name, m->hnr.car)) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; } }
+  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i]; if (HNRCAR1350(c, m)) { c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f; } }
 }
 // Правка Роба 64/72: погоня Hit & Run — машина CreateChaseManager уровня (L1: cPolice, Pursuit\L1cop.con, SetNumChaseCars 1) в
 // режиме погони машин миссии (MC_CHASE: едет к игроку по полосам, таран); ставится на дорогу за спиной игрока
@@ -342,7 +355,7 @@ void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n);
 int gameMsnHnrPoliceSuspend(GameMsn *m) {
   polSaved.n = 0;
   for (int i = 0; i < m->cars.n && polSaved.n < 8; i++) { McCar *c = &m->cars.c[i];
-    if (c->on && !strcasecmp(c->name, m->hnr.car)) { int k = polSaved.n++; polSaved.p[k][0] = c->car.x; polSaved.p[k][1] = c->car.y; polSaved.p[k][2] = c->car.z; polSaved.h[k] = c->car.h; polSaved.dmg[k] = c->car.damage; memset(c, 0, sizeof *c); } }
+    if (HNRCAR1350(c, m)) { int k = polSaved.n++; polSaved.p[k][0] = c->car.x; polSaved.p[k][1] = c->car.y; polSaved.p[k][2] = c->car.z; polSaved.h[k] = c->car.h; polSaved.dmg[k] = c->car.damage; memset(c, 0, sizeof *c); } }
   return polSaved.n;
 }
 void gameMsnHnrPoliceResume(GameMsn *m) {
@@ -352,12 +365,16 @@ void gameMsnHnrPoliceResume(GameMsn *m) {
     gameMsnPolice(m, 1, m->hnr.car, m->hnr.con, 1);
     polSaved.preset = 0;
     for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i];
-      if (c->on && !strcasecmp(c->name, m->hnr.car) && fabsf(c->car.x - P[k][0]) < .5f && fabsf(c->car.z - P[k][2]) < .5f) { c->car.damage = D[k]; break; } }
+      if (HNRCAR1350(c, m) && fabsf(c->car.x - P[k][0]) < .5f && fabsf(c->car.z - P[k][2]) < .5f) { c->car.damage = D[k]; break; } }
   }
 }
 void gameMsnPolice(GameMsn *m, int on, const char *car, const char *con, int n) {
   Game *g = m->g; if (!*g->pHaveCol) return;
-  if (!on) { do { mcRemove(&m->cars, car); } while(!HNR_POOL_C3_OLD && mcFind(&m->cars, car)); polSaved.n = 0; return; }   // круг 7: снятие погони забывает и отложенные машины
+  if (!on) {
+    // 1350 (Роб: L4 m1 «Follow the police to Lard Lad's», на метке пусто): у погони Hit & Run и машины миссии одно имя модели cPolice. Этап 1.1.0 выключает Hit & Run → снятие погони убирало по ИМЕНИ все машины с этим именем,
+    // в том числе машину миссии (цель слежки), и когда игрок далеко, никто не видел, как она пропала. Теперь снимается только полиция Hit & Run (флаг police). HNRPOLNAME1350_OLD=1 / hnrPolName1350Old (файл hnrpolname1350old, flag hnrpolname1350old 1) — как было
+    if (!hnrPolName1350Old) { mcRemovePolice(&m->cars, car); polSaved.n = 0; return; }
+    do { mcRemoveWhy1350 = "hnr-off"; mcRemove(&m->cars, car); } while(!HNR_POOL_C3_OLD && mcFind(&m->cars, car)); polSaved.n = 0; return; }   // круг 7: снятие погони забывает и отложенные машины   // круг 7: снятие погони забывает и отложенные машины
   // правка 121: как в данных погони (pursuit.ts pursuitSpawns: точки дорог на окружности 100 м вокруг игрока, не ближе 8 м к другой
   // машине) — точка полосы в 100 м (90–105), сначала сзади, дальше по кругу через 22.5°; курс по полосе в сторону игрока.
   // Раньше — точка в 100 м сзади как есть: во дворе или на крыше, полицейская застревала в 70 м и не доезжала (эмулятор 30.09)
@@ -458,6 +475,13 @@ int gameMsnPhoneCar(GameMsn *m, const char *car) {
 // правка Роба 53 (30.09): машины, которые стоят в мире сами (локатор CarStart уровня, не миссии) — ракетная машина Гомера
 // rocke_v у локатора «rocke» (l1r3.p3d, запись PS2 32:35). Стоит как машина миссии (MC_PARK), после каждой миссии
 // ставится заново; △ рядом — игрок пересаживается в неё (gameMsnTakeWorld), своя остаётся стоять (main.c oldCar)
+#ifndef HNRSTAGE109_OLD
+#define HNRSTAGE109_OLD 0   // Ф2-7 (109): 1 — запрет Hit & Run держится до конца миссии (как в 107); 0 — до конца этапа, как у оригинала
+#endif
+int gameHnrStage109Old = HNRSTAGE109_OLD;   // flag hnrstage109old
+#undef HNRSTAGE109_OLD
+#define HNRSTAGE109_OLD gameHnrStage109Old
+void bbNoteDiag(const char *kind, const char *text);   // ящик/журнал (stuck108.h; слабая заглушка в traffic.c)
 static int hnrOff;   // перепроверка 96: DisableHitAndRun (sr1i/sr2i/sr3i уровня 1 — уличные гонки) — Hit & Run выключен до конца миссии
 #ifndef WORLD_CAR_FAR_R
 #define WORLD_CAR_FAR_R 200.f      // те же числа, что в worldcars.h (сверка g10b-loop круг 5): сборки ботов не включают список машин
@@ -486,10 +510,38 @@ void gameMsnWorldCar(GameMsn *m, const char *car, const float p[3], float h) {
   wcar[nwcar].h = h; wcar[nwcar].on = 1; nwcar++; worldCarsSpawn(m);
 }
 void gameMsnWorldCarsReset(void) { nwcar = 0; }
+// 1359 служебное (гейт tests/fix1359/wcar.scn, flag polat1359 D): стоящая полиция погони H&R в D м к востоку от места первой свободной машины мира — проверка, что свободная машина не уходит от копа рядом
+void gameMsnPoliceAt1359(GameMsn *m, float d) {
+  Game *g = m->g; if (!*g->pHaveCol || nwcar < 1 || !m->hnr.car) return;
+  float p[3] = {wcar[0].p[0] + d, wcar[0].p[1] - 2.f, wcar[0].p[2]};
+  int hidden[MC_MAX], nh = 0; for (int i = 0; i < m->cars.n; i++) if (m->cars.c[i].on && !strcasecmp(m->cars.c[i].name, m->hnr.car)) { hidden[nh++] = i; m->cars.c[i].name[0] = '\1'; }
+  McCar *pc = mcSpawn(&m->cars, g->pWorld, roadsT, m->hnr.car, p, 0.f, 1, "NULL", m->hnr.con, "");
+  for (int i = 0; i < nh; i++) m->cars.c[hidden[i]].name[0] = m->hnr.car[0];
+  if (pc) pc->police = 1;
+}
+
+// 1360 служебное (flag npclist1360): все записи персонажей миссий/фона — имя, вид, бонусный, место (гейт tests/npc1360)
+void gameMsnNpcList1360(const GameMsn *m, float t) {
+  for (int i = 0; i < m->nnpc; i++) { const GameNpc *n = &m->npc[i]; char l[160]; snprintf(l, sizeof l, "NPC1360 i=%d %.15s kind=%d bonus=%d at=%.0f,%.0f int=%.8s t=%.1f", i, n->name, n->kind, n->bonus, n->pos.x, n->pos.z, n->interior, t); bbNoteDiag("NPC1360", l + 8); }
+}
 // сверка g10b-loop круг 5 (P03-20): «свободная машина» уходит с выгрузкой своей зоны — игрок дальше WORLD_CAR_FAR_R (200 м) от её места, — и уходит, когда миссия ставит
 // свою машину ближе WORLD_CAR_MISSION_R (10 м) от этого места; возвращается, когда игрок снова ближе (запас 20 м) и рядом нет машины миссии. Взятая игроком (on == 0) не трогается.
 // WCAR_ZONE_OLD=1 — стоит весь уровень (прежнее)
 #include "g10b_calc.h"   // WCAR_ZONE_OLD, WCAR_STEP_COST_OLD, правило ухода/возврата
+#ifndef STAGEENDNAME1359_OLD
+#define STAGEENDNAME1359_OLD 0
+#endif
+#ifndef PARKDMGNAME1359_OLD
+#define PARKDMGNAME1359_OLD 0
+#endif
+#ifndef MSNDONEPOL1359_OLD
+#define MSNDONEPOL1359_OLD 0
+#endif
+int stageEndName1359Old = STAGEENDNAME1359_OLD, parkDmgName1359Old = PARKDMGNAME1359_OLD, msnDonePol1359Old = MSNDONEPOL1359_OLD;   // 1359: 1 — по имени модели cPolice, а не по флагу police (как было); файлы stageendname1359old, parkdmgname1359old, msndonepol1359old, flag с тем же именем; зонтик hnrpolname1350old включает все три
+#ifndef WCARPOL1359_OLD
+#define WCARPOL1359_OLD 0
+#endif
+int wcarPol1359Old = WCARPOL1359_OLD;   // 1359: 1 — свободная машина мира уходит и от копа погони рядом (как было); файл wcarpol1359old, flag wcarpol1359old 1
 void gameMsnWorldCarsStep(GameMsn *m, float px, float pz) {
   if (WCAR_ZONE_OLD) return;
   static int tick; if (!g10bEvery(&tick, 10)) return;   // круг 6 (цена): раз в 10 кадров
@@ -499,11 +551,11 @@ void gameMsnWorldCarsStep(GameMsn *m, float px, float pz) {
     float dx = wcar[i].p[0] - px, dz = wcar[i].p[2] - pz, d2 = dx * dx + dz * dz;
     int mis = 0;
     for (int k = 0; k < m->cars.n && !mis; k++) {
-      const McCar *c = &m->cars.c[k]; if (!c->on || !strcasecmp(c->name, wcar[i].name)) continue;
+      const McCar *c = &m->cars.c[k]; if (!c->on || !strcasecmp(c->name, wcar[i].name) || (!wcarPol1359Old && c->police)) continue;   // 1359: полиция погони не «машина миссии» рядом с местом свободной машины
       float ex = c->car.x - wcar[i].p[0], ez = c->car.z - wcar[i].p[2]; if (ex * ex + ez * ez < WORLD_CAR_MISSION_R * WORLD_CAR_MISSION_R) mis = 1;
     }
     int na = g10bWorldCarAway(away[i], d2, mis, WORLD_CAR_FAR_R);
-    if (na && !away[i]) { if (mcFind(&m->cars, wcar[i].name)) mcRemove(&m->cars, wcar[i].name); }
+    if (na && !away[i]) { if (mcFind(&m->cars, wcar[i].name)) { mcRemoveWhy1350 = "wcar-away"; mcRemove(&m->cars, wcar[i].name); } }
     else if (!na && away[i]) worldCarsSpawn(m);
     away[i] = (unsigned char)na;
   }
@@ -520,7 +572,7 @@ int gameMsnWorldCarNear(GameMsn *m, float x, float z, float r, float out[4]) {
 int gameMsnTakeWorld(GameMsn *m, int i) {
   if (i < 0 || i >= nwcar || !wcar[i].on) return 0;
   if (!gameMsnPhoneCar(m, wcar[i].name)) return 0;
-  mcRemove(&m->cars, wcar[i].name); wcar[i].on = 0; return 1;
+  mcRemoveWhy1350 = "wcar-off"; mcRemove(&m->cars, wcar[i].name); wcar[i].on = 0; return 1;
 }
 const char *gameMsnForcedCar(const GameMsn *m) { return m->forced ? m->forcedName : m->jacked ? m->jackedName : 0; }
 static void plVehicle(void *u, const char *car, int forced, const MsnPlace *at) {
@@ -551,7 +603,12 @@ static void plWalk(void *u, const MsnPlace *to) {   // SetInitialWalk: ориг�
   if (GM->inSetup && !GM->startArmed) { GM->skipped++; return; }
   GM->places++; putHomer(G_, to); TELEPORTED();
 }
-static void propsRaceC2(void *u, const char *name, int load) { trafficStreetRace(roadsT, load); VIEW(props, race_props, name, load); }   // StreetRacePropsLoad/Unload: на уличной гонке пешеходов нет
+extern int trfRaceHold1264Old;
+int mvRaceExitPlant;   /* int107: определение перенесено из msn_view.c (хост-сборка ботов и гейтов Стены не содержит msn_view.c) */
+static void propsRaceC2(void *u, const char *name, int load) {   // №1264: Unload стоит в той же инициализации, что и Load; признак гонки снимает уборка миссии (CLEANUP), как у оригинала (вывод пропов в конце миссии)
+  if (load || trfRaceHold1264Old) trafficStreetRace(roadsT, load);
+  VIEW(props, race_props, name, load);
+}   // StreetRacePropsLoad/Unload: на уличной гонке пешеходов нет
 static void navMarker(void *u, const MsnMarker *m) {
   GM->markerOn = m != 0; if (m) GM->marker = *m;
   if (!GAME_C2_NAV_OLD && m && !m->target && roadsT && *GM->g->pHaveCol && !gameOnFoot(GM->g) && (!GM->navOn || fabsf(GM->navTx - m->pos.x) > 1.f || fabsf(GM->navTz - m->pos.z) > 1.f)) {
@@ -569,6 +626,16 @@ static void uiFailed(void *u, int reason, const char *text, const char *hint) { 
 // Правка 180 (близнец О4 03.10, кадр f03600: Ральф гонки sr3 стоит на sr3_ralph_sd под флагом; Б2: оригинал читает louie_m у
 // школы): персонаж бонус-миссии и фоновый с тем же именем — разные люди (Ральф уровней 1, 4, 5: маршрут ambient_ralph и место
 // гонки sr3). Поиск по имени — сначала персонаж миссии, потом бонусный, потом остальные
+extern int msnBonusTwin1296Old;   // msn_run.c
+/* 1327: после запертого этапа (нужной машины или костюма нет) оригинал ставит игру на паузу и показывает окно «Prompt» с Continue и текстом, что купить, где и за сколько
+   (строки страницы GenericPrompt диска, индекс = число вопросов + номер сообщения этапа). Было: одна фанфара, окна нет — игрок не понимал, что купить. LOCKHINT1327_OLD=1 — прежнее */
+#ifndef LOCKHINT1327_OLD
+#define LOCKHINT1327_OLD 0
+#endif
+int msnLockHint1327Old = LOCKHINT1327_OLD;
+static int lockHint1327 = -1;
+int gameMsnTakeLockHint(void) { int h = lockHint1327; lockHint1327 = -1; return msnLockHint1327Old ? -1 : h; }
+
 static GameNpc *npcFind(GameMsn *m, const char *name) {
   GameNpc *best = 0; int bp = -1;
   for (int i = 0; i < m->nnpc; i++) {
@@ -577,6 +644,14 @@ static GameNpc *npcFind(GameMsn *m, const char *name) {
     if (p > bp) { bp = p; best = n; }
   }
   return best;
+}
+// 1296: тот, кого разговор двигает и возвращает на место, — собеседник миссии (или продавец), НЕ бонусный двойник с тем же именем: на конце разговора уборка миссии (CLEANUP) уже сняла миссионного, и npcFind отдавал выдавателя гонки,
+// которого talkEnd/TalkCancel переставляли на место m1 (L2: Милхаус, △ там открывала гонку sr1). Бонусного нет в ответе — возврат места пропускается. flag bonustwin1296old 1 — как было
+static GameNpc *npcFindTalk(GameMsn *m, const char *name) {
+  GameNpc *n = npcFind(m, name);
+  if (!n || !n->bonus || msnBonusTwin1296Old) return n;
+  for (int i = 0; i < m->nnpc; i++) if (!m->npc[i].bonus && msn_streq(m->npc[i].name, name)) return &m->npc[i];
+  return 0;
 }
 static GameNpc *npcFindSeller(GameMsn *m, const char *name) {   // персонаж-продавец: то же имя, но не бонус-персонаж (SELLER96_OLD=1 — npcFind, как было)
   if (!gameSeller96) return npcFind(m, name);
@@ -613,10 +688,18 @@ const GameNpc *gameMsnNpc(const GameMsn *m, const char *name) {
 }
 // кого заменяет новый: бонусный — себя же (та же миссия); персонаж миссии — бонусного только в его же миссии (вступление sr3:
 // AddNPC("ralph", "sr3_ralph_sd")), иначе не бонусного; фоновые и продавцы — не бонусного
+// 1360 (аудит 1359 п.10): AddNPC миссии с именем фонового персонажа (L1 lenny/lisa/patty, L2 moe/patty, L3 captain/cbg/teen, L4 apu/selma, L5 moe/patty/selma) занимал слот ФОНОВОГО (бонусного нет, имя то же) и стирал его;
+// после миссии (чистка kind == MSN_NPC_MISSION) фонового не было до перезагрузки уровня (L4 sr3: Сельма пропадала). Теперь миссионный персонаж занимает только слот миссионного (повтор AddNPC того же) или бонусного своей миссии,
+// иначе получает свой слот; фоновый остаётся. NPCSLOT1360_OLD=1 / файл npcslot1360old / flag npcslot1360old 1 — прежнее
+#ifndef NPCSLOT1360_OLD
+#define NPCSLOT1360_OLD 0
+#endif
+int npcSlot1360Old = NPCSLOT1360_OLD;   // extern в game_msn.h
 static GameNpc *npcSlot(GameMsn *m, const char *name, int kind, int bonus) {
   for (int pass = 0; pass < 2; pass++)
     for (int i = 0; i < m->nnpc; i++) {
       GameNpc *c = &m->npc[i]; if (!msn_streq(c->name, name)) continue;
+      if (!npcSlot1360Old && kind == MSN_NPC_MISSION && !bonus && pass == 1 && c->kind != MSN_NPC_MISSION) continue;   // 1360: фонового не трогаем
       int want = bonus ? bonus : kind == MSN_NPC_MISSION && pass == 0 ? m->rt.cur + 1 : 0;
       if (want > 0 ? c->bonus == want : !c->bonus) return c;
     }
@@ -681,10 +764,38 @@ static void npcRemove(void *u, const char *name) {
 // ------------------------------------------------------------------ машины миссии с ИИ (viewer/msncar.c)
 static void placeXYZ(const MsnPlace *at, float p[3]) { p[0] = at->pos.x; p[1] = at->pos.y; p[2] = at->pos.z; }
 static void carLoad(void *u, const char *name, const char *file, const char *slot) { VIEW(cars, load, name, file, slot); }
-static void carSpawn(void *u, const MsnCarSpawn *s) {   // AddStageVehicle: машина на локаторе (нет локатора в данных — не ставится)
+// Правка Ф2-6 (сверка Fable-2 13.11, оригинал): ставя машину этапа на точку, оригинал убирает трафик в 5 м от точки (стоящие и ездящие). Прежде машина этапа могла встать в машину трафика:
+// удар на старте, цель повреждена или заклинена. MSN_SPAWNCLEAR_OLD=1 — как было. Не сделано: машина персонажа этапа (5 м) и посадка игрока в свою машину (10 м)
+#ifndef MSN_SPAWNCLEAR_OLD
+#define MSN_SPAWNCLEAR_OLD rb_MSN_SPAWNCLEAR_OLD
+#endif
+static void trafficClearAt(float x, float z, float r) {
+  if (MSN_SPAWNCLEAR_OLD || !roadsT || !roadsT->hd) return;
+  for (int i = 0; i < TR_MAXCAR; i++) { if (roadsT->car[i].mode == TRM_OFF) continue; float dx = roadsT->car[i].car.x - x, dz = roadsT->car[i].car.z - z; if (dx * dx + dz * dz < r * r) trafficTake(roadsT, i, 0); }
+  for (int i = 0; i < roadsT->npark; i++) { const TrParked *k = &roadsT->park[i]; if (k->gone || k->lazy) continue; float dx = k->car.x - x, dz = k->car.z - z; if (dx * dx + dz * dz < r * r) trafficTake(roadsT, i, 1); }
+}
+// Правка A2.5 (сверка Fable 13.11 с поведением оригинала): при перезапуске с точки машины прежних этапов ставятся на свои места и тут же проходят «конец этапа»: ИИ выключен, машина без ИИ в очереди на уход.
+// Прежде повтор команд ставил машину сразу с её старым режимом (погоня, гонка). MC_REPLAYPARK_OLD=1 — как было
+#ifndef MC_REPLAYPARK_OLD
+#define MC_REPLAYPARK_OLD rb_MC_REPLAYPARK_OLD
+#endif
+static int stageMentions(const MsnFile *F, uint32_t si, const char *name);
+static int namedFromStage(const GameMsn *m, uint32_t from, const char *name) {   // называет ли машину этап from или любой последующий этапа текущей фазы
+  const MsnFile *F = &m->f; if (m->rt.cur < 0 || (uint32_t)m->rt.cur >= F->nmissions) return 1;
+  const MsnMission *ms = &F->missions[m->rt.cur]; unsigned pi = m->rt.phase == 0 ? ms->intro : ms->main; if (pi == MSN_NONE16) return 1;
+  const MsnPhase *ph = &F->phases[pi];
+  for (uint32_t s = ph->first_stage + from; s < (uint32_t)ph->first_stage + ph->stage_count; s++) if (stageMentions(F, s, name)) return 1;
+  return 0;
+}
+static void carSpawn(void *u, const MsnCarSpawn *s0) {   // AddStageVehicle: машина на локаторе (нет локатора в данных — не ставится)
+  MsnCarSpawn s1 = *s0; const MsnCarSpawn *s = &s1; int replayPark = !MC_REPLAYPARK_OLD && GM->rt.replaying;
+  if (replayPark) s1.ai = "NULL";
   if (s->at.loc && *G_->pHaveCol) {
     float p[3]; placeXYZ(&s->at, p);
-    if (!mcSpawn(&GM->cars, G_->pWorld, roadsT, s->name, p, mcCarHeading(s->at.heading), s->at.has_heading, s->ai, s->con, s->driver)) return;
+    McCar *mc_ = mcSpawn(&GM->cars, G_->pWorld, roadsT, s->name, p, mcCarHeading(s->at.heading), s->at.has_heading, s->ai, s->con, s->driver);
+    if (!mc_) { char t_[120]; snprintf(t_, sizeof t_, "name=%.15s slots=%d/%d fix=none", s->name, GM->cars.n, MC_MAX); wdFire("mcspawn", "car", t_); return; }   // A2.13: отказ постановки машины этапа — не молча
+    if (replayPark && !namedFromStage(GM, (uint32_t)GM->rt.stage, s->name)) mc_->leaveQ = 1;
+    trafficClearAt(p[0], p[2], 5.f);
   }
   VIEW(cars, spawn, s);
 }
@@ -694,12 +805,13 @@ static void carWaypoint(void *u, int index, const MsnPlace *at) {   // AddStageW
 }
 static void carActivate(void *u, const char *name, const MsnPlace *at, const char *ai) {
   float p[3]; if (at) placeXYZ(at, p);
+  if (at && *G_->pHaveCol) trafficClearAt(p[0], p[2], 5.f);   // Ф2-6: включение с переносом — тоже
   if (*G_->pHaveCol) mcActivate(&GM->cars, G_->pWorld, name, at ? p : 0, at ? mcCarHeading(at->heading) : 0.f, at ? at->has_heading : 0, ai);
   VIEW(cars, activate, name, at, ai);
 }
 static void carParamsCb(void *u, const char *name, int a, int b) { mcParams(&GM->cars, name, a, b); VIEW(cars, ai_params, name, a, b); }
 // сверка g03-aicars круг 2 (g11 P11-02): предметы реагируют на машины ИИ рядом с игроком, не только на машину игрока
-static void svCarTouch(void *u, Car *c) { GameMsn *m = (GameMsn *)u; propsHitCar(m->g->pProps, m->g->pWorld, c, 0); }
+static void svCarTouch(void *u, Car *c) { GameMsn *m = (GameMsn *)u; propsHitCar(m->g->pProps, m->g->pWorld, c, 0); if (m->g->pSp && m->g->pWorld) { spHitOtherWho = "mission"; spHitOther(m->g->pSp, m->g->pWorld, c); } }   // 107б П3: и стейтпропы
 static void carCatchup(void *u, const char *name, int kind, const float *p, int n) { mcCatchup(&GM->cars, name, kind, p, n); VIEW(cars, catchup, name, kind, p, n); }
 // SetMaxTraffic(n) / NoTrafficForStage (0) этапа; -1 — этап молчит (как на уровне: столько, сколько мест трафика в данных).
 // Лишние машины трафика уходят сразу (этап гонки начинается отсчётом / затемнением); у ботов — тот же трафик (снимок мира)
@@ -718,6 +830,9 @@ static void trafficClear(void *u, float r) {
   float px = foot ? g->pHomer->x : g->pCar->x, pz = foot ? g->pHomer->z : g->pCar->z;
   for (int i = 0; i < TR_MAXCAR; i++) { if (roadsT->car[i].mode == TRM_OFF) continue; float dx = roadsT->car[i].car.x - px, dz = roadsT->car[i].car.z - pz; if (dx * dx + dz * dz < r * r) roadsT->car[i].mode = TRM_OFF; }
 }
+#ifndef MSN_TRAFFICHOLD_OLD
+#define MSN_TRAFFICHOLD_OLD rb_MSN_TRAFFICHOLD_OLD
+#endif
 #ifndef HNR_HIT_MODEL_C3_OLD
 #define HNR_HIT_MODEL_C3_OLD 0
 #endif
@@ -924,6 +1039,45 @@ static int npcBlocksNpc(const GameNpc *n, float x, float z) {   // другой 
     if (dx * dx + dz * dz < rad * rad && hypotf(n->pos.x - o->pos.x, n->pos.z - o->pos.z) >= hypotf(dx, dz)) return 1; }   // уже вплотную и отходит — не держим
   return 0;
 }
+// 108 (1301, Роб: «Милхаус проходит сквозь скамейки»): персонаж миссии шёл по маршруту, не зная о предметах и стейтпропах (скамейки, урны, столбы), — как призрак. У оригинала NPC на пути держится у статики:
+// шаг на статику не делается (если под ногами нет своей плоскости земли, персонаж стоит и идёт дальше, когда путь свободен). Теперь тот же отказ, что у персонажа перед Гомером: шаг в твёрдый предмет/стейтпроп
+// считается преградой — обход как у других преград (npcSidestep) или стоит. GAME_NPC_PROPSOLID1301_OLD=1 / flag npcprop1301old 1 / rollback.txt — как было (предметы насквозь)
+#ifndef GAME_NPC_PROPSOLID1301_OLD
+#define GAME_NPC_PROPSOLID1301_OLD 0
+#endif
+int gameNpcPropSolid1301Old = GAME_NPC_PROPSOLID1301_OLD;
+// 1301b (Роб: «L2 хуже»; тур f7ed0b0f: фаза «NPC миссий» 4,2 мс против 0,27 до 1301, 3,5–5,4 мс на L2, сцены падали с 26–30 на 20 к/с): проверка предметов шла у каждого шага каждого персонажа
+// (и у каждого из четырёх углов обхода), а общие списки предметов пересобирались под каждую точку. Теперь: (1) только у персонажей ближе 40 м к игроку или к камере (дальше не видно, а предметы там
+// не твёрдые для пешего и не подгружены); (2) один пробный запрос с радиусом шага + 0,25 м, «чисто» запоминается до смены точки больше чем на 0,25 м, высоты на 0,2 м или 8 кадров (шаг 0,05 м,
+// углы обхода в пределах 0,25 м попадают в то же «чисто»); у предметов вплотную пробный запрос откладывается на 6 шагов, там проверка точная, как в 1301. Решение «не пройдёт» то же, что в 1301.
+// NPCPROP1301B_OLD=1 / flag npcprop1301bold 1 / rollback.txt — проверка у каждого шага, как в 108. GAME_NPC_PROPSOLID1301_OLD не трогаем
+#ifndef NPCPROP1301B_OLD
+#define NPCPROP1301B_OLD 0
+#endif
+int gameNpcProp1301bOld = NPCPROP1301B_OLD;
+float gameMsnEye[3]; int gameMsnEyeOn;
+static unsigned npcPropFrame1301b;   // растёт в gameMsnTick
+static int npcPropSolidR(const GameNpc *n, const Game *g, float x, float z, float r) {
+  float px = x, pz = z, top, nx, nz;
+  if (g->pProps && propsSolidHomer(g->pProps, &px, &pz, n->pos.y, r, HOMER_STEP, HOMER_HEIGHT, &top, &nx, &nz)) return 1;
+  px = x; pz = z;
+  if (g->pSp && homerSolidSprops(g->pSp, &px, &pz, n->pos.y, r, &top, &nx, &nz)) return 1;
+  return 0;
+}
+static int npcBlocksProp(GameNpc *n, const Game *g, float x, float z) {
+  if (gameNpcPropSolid1301Old || n->interior[0]) return 0;   // в комнатах мир предметов другой (нет — как было)
+  if (gameNpcProp1301bOld) return npcPropSolidR(n, g, x, z, GAME_NPC_RADIUS);
+  { int foot_ = *g->pHaveHomer && gameOnFoot(g); float ax = foot_ ? g->pHomer->x : g->pCar->x, az = foot_ ? g->pHomer->z : g->pCar->z, dx = x - ax, dz = z - az;
+    int near_ = dx * dx + dz * dz < 40.f * 40.f;
+    if (!near_ && gameMsnEyeOn) { float ex = x - gameMsnEye[0], ez = z - gameMsnEye[2]; near_ = ex * ex + ez * ez < 40.f * 40.f; }
+    if (!near_) return 0; }
+  if (n->pcOk && npcPropFrame1301b - n->pcF <= 8u && fabsf(n->pos.y - n->pcY) < .2f && (x - n->pcX) * (x - n->pcX) + (z - n->pcZ) * (z - n->pcZ) < .25f * .25f) return 0;
+  n->pcOk = 0;
+  if (n->pcCool > 0) { n->pcCool--; return npcPropSolidR(n, g, x, z, GAME_NPC_RADIUS); }
+  if (!npcPropSolidR(n, g, x, z, GAME_NPC_RADIUS + .25f)) { n->pcOk = 1; n->pcX = x; n->pcZ = z; n->pcY = n->pos.y; n->pcF = npcPropFrame1301b; return 0; }
+  n->pcCool = 6;
+  return npcPropSolidR(n, g, x, z, GAME_NPC_RADIUS);
+}
 static int npcSidestep(GameNpc *n, const Game *g, float ux, float uz, float s, float *nx, float *nz) {
   float bx = 0.f, bz = 0.f; int have = 0;
   if (*g->pHaveHomer && gameOnFoot(g)) { bx = g->pHomer->x - n->pos.x; bz = g->pHomer->z - n->pos.z; have = 1; }
@@ -935,7 +1089,7 @@ static int npcSidestep(GameNpc *n, const Game *g, float ux, float uz, float s, f
   for (int k = 0; k < 4; k++) {
     float a = ang[k] * (float)n->avoidSide * (k < 2 ? 1.f : 1.f); if (k >= 2) a = -ang[k - 2] * (float)n->avoidSide;
     float c = cosf(a), sn = sinf(a), vx = ux * c - uz * sn, vz = ux * sn + uz * c, px = n->pos.x + vx * s, pz = n->pos.z + vz * s;
-    if (npcBlocksHomer(n, g, px, pz) || npcBlocksNpc(n, px, pz)) continue;
+    if (npcBlocksHomer(n, g, px, pz) || npcBlocksNpc(n, px, pz) || npcBlocksProp(n, g, px, pz)) continue;
     const ColWorld *w = n->interior[0] && g->pHomerWorld ? g->pHomerWorld : g->pWorld; float gy;
     if (w && colCovered(w, px, pz) && !colGround(w, px, pz, n->pos.y + .6f, n->pos.y - .6f, &gy, 0)) continue;   // обрыв/пустота под ногами (вне плана кольца не проверяется, Коллизия-96)
     float want = atan2f(vx, vz), d = want - n->h; while (d > 3.14159265f) d -= 6.2831853f; while (d < -3.14159265f) d += 6.2831853f;
@@ -1020,7 +1174,7 @@ static int npcWalkTo(GameNpc *n, const Game *g, MsnVec3 t, float dt, float stop)
     if ((n->pcWaitT += dt) > NPC_PC_WAIT_T && dT < NPC_ORBIT_REACH) { n->pcWaitT = 0.f; n->blocked = 0; return 1; }
     return 0; }
   n->pcWaitT = 0.f;
-  if (npcBlocksHomer(n, g, nx, nz) || npcBlocksNpc(n, nx, nz)) {
+  if (npcBlocksHomer(n, g, nx, nz) || npcBlocksNpc(n, nx, nz) || npcBlocksProp(n, g, nx, nz)) {
     if (GAME_NPC_AVOID_OLD) return 0;
     if (!GAME_NPC_ORBIT_OLD) {   // №813: занятая точка рядом (или обход без продвижения) — пройдена; обход брошен далеко от точки — стоит
       if (dT < NPC_ORBIT_REACH && (n->avoidGive || npcSpotTaken(n, g, t.x, t.z))) { n->blocked = 0; n->avoidGive = 0; n->avoidStall = 0.f; return 1; }
@@ -1195,6 +1349,12 @@ int gameMsnKick(GameMsn *m, float x, float y, float z, float r, float dx, float 
 int gameMsnFrozen(const GameMsn *m) { return GAME_MSN_FREEZE && (m->rt.status == MSN_COUNTDOWN || m->talk.on || m->shop.open); }   // отсчёт, разговор, лавка
 // P06 Д6: на отсчёте «3 2 1» газ и тормоз машины игрока выключены, ручник включён, кнопка сброса машины заблокирована; руль и камера остаются живыми
 static int count57(const GameMsn *m) { return !GAME_COUNT57_OLD && m->rt.status == MSN_COUNTDOWN && !m->talk.on && !m->shop.open && *m->g->pHaveHomer && !gameOnFoot(m->g); }
+// Правка Ф2-11 (сверка Fable-2 13.11, оригинал): отсчёт «3 2 1» перед гонкой — газ и тормоз игрока выключены, ручник затянут, сброс машины запрещён; комментарий P06 Д6 это обещал, но кнопка сброса
+// (пункт RESET CAR паузы, START без ui.shr) на отсчёте работала: починка и перестановка машины на старте. MSN_RESETCOUNT_OLD=1 — как было
+#ifndef MSN_RESETCOUNT_OLD
+#define MSN_RESETCOUNT_OLD rb_MSN_RESETCOUNT_OLD
+#endif
+int gameMsnResetBlocked(const GameMsn *m) { return !MSN_RESETCOUNT_OLD && m->rt.status == MSN_COUNTDOWN && !m->talk.on && !m->shop.open && *m->g->pHaveHomer && !gameOnFoot(m->g); }
 void gameMsnFreezePad(const GameMsn *m, GamePad *p) {
   if (!gameMsnFrozen(m)) return;
   if (count57(m)) { p->buttons &= GP_START | GP_L | GP_R; p->hit &= GP_START | GP_L | GP_R; p->ay = 0.f; return; }   // руль (ax) и камера (L/R) живы
@@ -1226,6 +1386,7 @@ static int bonusEntity(void *u, int mission, const char *name, MsnEntity *out) {
   (void)name;
   for (int i = 0; i < GM->nnpc; i++) {
     const GameNpc *n = &GM->npc[i]; if (n->bonus != mission + 1) continue;
+    if (n->twinHide && !msnBonusTwin1296Old) return 0;   // 1296/1300: двойник скрыт — не активен
     out->pos = n->pos; out->health = 1.f; out->finished = !n->walking; out->waypoint = n->iwp - 1; return 1;
   }
   return 0;
@@ -1240,6 +1401,7 @@ static int entity(void *u, const char *name, MsnEntity *out) {   // живые �
   return GM->view.entity ? GM->view.entity(u, name, out) : 0;
 }
 static void cleanup(void *u) {   // миссия закончилась / повтор: её персонажи уходят, фоновые остаются
+  if (roadsT) roadsT->nnpc = 0;   // 107b (ревью): список персонажей миссии для трафика пуст, когда шаг миссий не идёт
   npcGen++;
   for (int i = 0; i < GM->nnpc;) if (GM->npc[i].kind == MSN_NPC_MISSION) GM->npc[i] = GM->npc[--GM->nnpc]; else i++;
 #if !defined(GAME_PLACE_NPC) || GAME_PLACE_NPC
@@ -1260,10 +1422,25 @@ static void cleanup(void *u) {   // миссия закончилась / пов
   }
 #endif
   GM->markerOn = 0;
-  mcClear(&GM->cars);   // машины миссии уходят вместе с ней (повтор ставит их заново сценарием)
+  // Правка A2.7 (сверка Fable 13.11 с поведением оригинала): после ПРОЙДЕННОЙ миссии её машины уходят через очередь (пропадают вне кадра и дальше 5 м), а не мгновенно на глазах
+  // (остов разбитой цели, соперник после MISSION COMPLETE). Провал, повтор и отмена — как было: сразу. Полиция Hit & Run снимается сразу, как прежде. MC_ENDLEAVE_OLD=1 — как было
+#ifndef MC_ENDLEAVE_OLD
+#define MC_ENDLEAVE_OLD rb_MC_ENDLEAVE_OLD
+#endif
+  if (!MC_ENDLEAVE_OLD && GM->missionDone) {
+    for (int i = 0; i < GM->cars.n; i++) { McCar *c_ = &GM->cars.c[i]; if (!c_->on) continue;
+      // 1359: погоню снимает флаг police и по указателю; машина миссии с тем же именем (cPolice) идёт в очередь ухода, как остальные (прежде mcRemove по имени сносил машину миссии, а погоня оставалась). HNRPOLNAME1350_OLD=1 — как было
+      { char t_[80]; snprintf(t_, sizeof t_, "%.15s pol=%d old=%d", c_->name, c_->police != 0, hnrPolName1350Old || msnDonePol1359Old); bbNoteDiag("MCDONE", t_); }
+      if (hnrPolName1350Old || msnDonePol1359Old ? (c_->police || !strcasecmp(c_->name, GM->hnr.car)) : c_->police != 0) {
+        if (hnrPolName1350Old || msnDonePol1359Old) { mcRemoveWhy1350 = "mission-done"; mcRemove(&GM->cars, c_->name); }
+        else { bbNoteDiag("MCREMOVE", "cPolice why=mission-done-police"); memset(c_, 0, sizeof *c_); }
+        continue; }
+      c_->mode = MC_PARKED; c_->asleep = 0; c_->still = 0.f; c_->leaveQ = 1; }
+    GM->cars.nwp = 0; GM->cars.laps = 1;
+  } else mcClear(&GM->cars);   // машины миссии уходят вместе с ней (повтор ставит их заново сценарием)
   worldCarsSpawn(GM);   // правка 53: машины мира (ракетная) остаются на местах
   hnrOff = 0;   // перепроверка 96: миссия кончилась — Hit & Run снова работает
-  trafficMax(u, -1);    // трафик — как на уровне
+  if (MSN_TRAFFICHOLD_OLD || GM->trafficStage == 0) trafficMax(u, -1);    // предел 0 (NoTrafficForStage) на свободную езду не переносится; трафик — как на уровне (правка Ф2-5: оригинал держит последний предел до следующей SetMaxTraffic; MSN_TRAFFICHOLD_OLD=1 — как было)
   trafficPedGroup(roadsT, -1);
   if (GM->forced) {
     int foot = gameOnFoot(G_);
@@ -1357,7 +1534,7 @@ static void feat(void *u, int feature, const MsnCall *c) {   // команды �
   if (!gameBoss967Old && c && c->cmd && c->cmd->op == MSN_OP_ADDFLYINGACTORBYLOCATOR) {   // №967: тарелка L7 (имя и модель — аргументы 0 и 1, место — локатор)
     const MsnLoc *l = msn_arg_loc(c->f, c->cmd, 2);
     if (l) { GM->ufoPos[0] = l->pos[0]; GM->ufoPos[1] = l->pos[1]; GM->ufoPos[2] = l->pos[2]; GM->ufoOn = 1; GM->ufoCharge = 0.f; GM->ufoSent = 0; } }
-  if (c && c->cmd && c->cmd->op == MSN_OP_DISABLEHITANDRUN) hnrOff = 1;
+  if (c && c->cmd && c->cmd->op == MSN_OP_DISABLEHITANDRUN) { hnrOff = 1; bbNoteDiag("HNROFF", "stage-start off=1"); }
   if (!GAME_HIDECHAR_OLD && c && c->cmd && c->cmd->op == MSN_OP_SHOWHUD) GM->hudHidden = msn_streq(msn_arg_s(c->f, c->cmd, 0), "false");
   if (!GAME_HIDECHAR_OLD && c && c->cmd && c->cmd->op == MSN_OP_SETCHARACTERTOHIDE && c->when == MSN_AT_STAGE) snprintf(GM->hideName, sizeof GM->hideName, "%s", msn_arg_s(c->f, c->cmd, 0));
   if (c && c->cmd && c->cmd->op == MSN_OP_ADDSAFEZONE) safeAdd(GM, c);
@@ -1460,11 +1637,11 @@ void gameMsnTalkNpcBack(GameMsn *m, int on) {
 }
 const float *gameMsnTalkNpcBase(const GameMsn *m) { return (!GAME_C7_NPCBACK_OLD && m->talk.on && m->talk.shifted) ? &m->talk.baseN.x : 0; }
 static void talkEnd(GameMsn *m) {
-  if (m->talk.shifted) { GameNpc *n0 = npcFind(m, m->talk.npc); if (n0) { n0->pos.x = m->talk.baseN.x; n0->pos.z = m->talk.baseN.z; } m->talk.shifted = 0; }
+  if (m->talk.shifted) { GameNpc *n0 = npcFindTalk(m, m->talk.npc); if (n0) { n0->pos.x = m->talk.baseN.x; n0->pos.z = m->talk.baseN.z; } m->talk.shifted = 0; }
   if (!GAME_TALKRET_OLD && m->talk.on && !m->talk.noReturn && (m->talk.hasPos || GAME_C3_GIVEN_OLD) && m->preTalk.on) {   // круг 3: только если для разговора заданы места
     // P07-14 / P06-16: по концу разговора Гомер и собеседник возвращаются на места, где стояли до него (они были не в машине — preTalk пишется только пешком);
     // в 14 разговорах (SetDialoguePositions 4-й аргумент 1) остаются на местах разговора
-    Game *g = m->g; GameNpc *n = npcFind(m, m->preTalk.npc);
+    Game *g = m->g; GameNpc *n = npcFindTalk(m, m->preTalk.npc);
     if (n) { n->pos = m->preTalk.np; n->h = m->preTalk.nh; n->walking = 0; n->iwp = n->nwp; n->homing = 0; }
     if (*g->pHaveHomer && gameOnFoot(g) && !m->preTalk.hCar) homerPlace(g->pHomer, g->pHomerWorld ? g->pHomerWorld : g->pWorld, m->preTalk.hp.x, m->preTalk.hp.y, m->preTalk.hp.z, m->preTalk.hh);   // круг 3: начавший разговор за рулём остаётся на месте разговора
     m->preTalk.on = 0;
@@ -1544,7 +1721,7 @@ void gameMsnTalkCancel(GameMsn *m) {   // В85 (game_msn.h): Cancel карточ
   gameMsnAbort(m);
   if (GAME_TALK_CANCEL_OLD) return;
   m->preTalk.on = 0;
-  Game *g = m->g; GameNpc *n = pre.on ? npcFind(m, pre.npc) : 0;
+  Game *g = m->g; GameNpc *n = pre.on ? npcFindTalk(m, pre.npc) : 0;
   if (n && *g->pHaveHomer && gameOnFoot(g)) {
     n->pos = pre.np; n->h = pre.nh; n->walking = 0; n->iwp = n->nwp; n->homing = 0;   // стоит, где стоял; маршрут не продолжает
     homerPlace(g->pHomer, g->pHomerWorld ? g->pHomerWorld : g->pWorld, pre.hp.x, pre.hp.y, pre.hp.z, pre.hh);
@@ -1577,7 +1754,8 @@ static void c2Event(GameMsn *m, const MsnEvent *e) {
     }
     if (e->type == MSN_EV_STAGE_COMPLETE && rt->st && rt->obj == MSN_OBJ_GOTO && !(rt->st->flags & MSN_SF_GOTODIALOGOFF)) sndSay(SND_SAY_ARRIVE, 0);   // g08 P07:33: цель достигнута (шанс 20 % внутри)
     if (e->type == MSN_EV_MISSION_COMPLETE && e->index == 2) { const char *tr; sndMusicEvent("Win_3Street_Races", &tr); }   // g08 P09:Д4: все три уличные гонки
-    if (!GATEDFANFARE_OLD && e->type == MSN_EV_LOCKED_HINT) { const char *tr; sndMusicEvent("Gated_Mission", &tr); }   // ТЕСТ90: запертый этап кончился, нужной машины/костюма нет — фанфара закрытого этапа
+    if (!GATEDFANFARE_OLD && e->type == MSN_EV_LOCKED_HINT) { const char *tr; sndMusicEvent("Gated_Mission", &tr); }
+    if (e->type == MSN_EV_LOCKED_HINT && e->value >= 0.f) lockHint1327 = (int)e->value;   // 1327: номер подсказки запертого этапа (0..9 — десять покупок); показывает main_loop.h окном с Continue   // ТЕСТ90: запертый этап кончился, нужной машины/костюма нет — фанфара закрытого этапа
   }
 #else
   (void)rt;
@@ -1593,13 +1771,39 @@ int gameMsnResetAlways;   // отрицательный контроль пра�
 #define RACE_RESET_OLD 0
 #endif
 int gameMsnRaceResetOld = RACE_RESET_OLD;
+// Правка A2.2 (сверка Fable 13.11 с поведением оригинала): на конце этапа ИИ машины этого этапа выключается (стоит), и если ни следующий, ни последующие
+// этапы фазы её не называют, она встаёт в очередь на уход и пропадает вне кадра дальше 5 м от героя. Прежде машины жили до уборки миссии: погоня прошлого этапа гналась дальше, машина гонки стояла у финиша.
+// Названа ли машина в командах этапа si (AddStageVehicle, ActivateVehicle, цели, условия). MC_STAGEEND_OLD=1 — как было
+#ifndef MC_STAGEEND_OLD
+#define MC_STAGEEND_OLD rb_MC_STAGEEND_OLD
+#endif
+static int stageMentions(const MsnFile *F, uint32_t si, const char *name) {
+  if (si >= F->nstages) return 0;
+  const MsnStage *s = &F->stages[si];
+  for (uint32_t i = 0; i < s->cmd_count; i++) { const MsnCmd *c = &F->cmds[s->cmd_first + i];
+    for (int a = 0; a < c->argc; a++) { const char *t = msn_arg_s(F, c, a); if (t && *t && !strcasecmp(t, name)) return 1; } }
+  return 0;
+}
+static void stageEndCars(GameMsn *m) {
+  const MsnFile *F = &m->f; const MsnRuntime *rt = &m->rt; if (MC_STAGEEND_OLD || rt->cur < 0 || !rt->st) return;
+  uint32_t cur = (uint32_t)rt->st_index, last = cur;
+  for (uint32_t p = 0; p < F->nphases; p++) { const MsnPhase *ph = &F->phases[p]; if (cur >= ph->first_stage && cur < (uint32_t)ph->first_stage + ph->stage_count) { last = ph->first_stage + ph->stage_count - 1; break; } }
+  for (int i = 0; i < m->cars.n; i++) { McCar *c = &m->cars.c[i];
+    if (!c->on || c->mode == MC_PARKED || c->police || c->leaveQ || ((hnrPolName1350Old || stageEndName1359Old) && !strcasecmp(c->name, m->hnr.car))) continue;   // 1359: машина миссии с именем погони (cPolice L4 m1/m7, L5 m6) тоже уходит после этапа; HNRPOLNAME1350_OLD=1 — как было
+    int later = 0, nextOne = 0; for (uint32_t s = cur + 1; s <= last; s++) if (stageMentions(F, s, c->name)) { later = 1; if (s == cur + 1) nextOne = 1; break; }
+    if (nextOne) continue;   // следующий этап машину называет: режим задаст он (ActivateVehicle)
+    c->mode = MC_PARKED; c->asleep = 0; c->still = 0.f;
+    if (!later) c->leaveQ = 1;
+    { char t_[96]; snprintf(t_, sizeof t_, "%.15s cur=%u last=%u later=%d leaveQ=%d", c->name, cur, last, later, c->leaveQ); bbNoteDiag("STAGEEND", t_); }   // 1350: куда делась машина этапа
+  }
+}
 static void onEvent(void *u, const MsnEvent *e) {   // окно подготовки фазы и старт/повтор (см. plReset)
   switch (e->type) {
     // Правка Роба 61 (29.09: «вышли от Апу — сразу перенесло к дому; должен быть путь домой своим ходом»): SetMissionReset* —
     // точка повтора/загрузки миссии. У m1sd первый этап — «доехать до дома» (goto m2_simpsonhouse_sd), значит после пройденной
     // миссии игрока не переносят. Ставим игрока только на старте уровня, повторе, загрузке, MISSION SELECT
     case MSN_EV_MISSION_START: GM->startArmed = gameMsnResetAlways || !(e->name2 && !strcmp(e->name2, "continue")); break;
-    case MSN_EV_CLEANUP: GM->startArmed = 1; break;
+    case MSN_EV_CLEANUP: GM->startArmed = 1; if (!trfRaceHold1264Old && !GAME_C2_STREETRACE_OLD && !mvRaceExitPlant) trafficStreetRace(roadsT, 0); break;   // №1264: пешеходы и стоящие машины возвращаются на уборке миссии
     case MSN_EV_PHASE_START: GM->inSetup = 1;   // правка 40: окно старта фазы — до второго этапа (гонки ставят игрока в этапе 0)
       if (!gameMsnRaceResetOld && e->index == 1 && GM->rt.cur >= 0 && (unsigned)GM->rt.cur < GM->f.nmissions && (GM->f.missions[GM->rt.cur].flags & MSN_MF_STREETRACE)) GM->startArmed = 1;   // правка 1205: основная фаза уличной гонки — ResetPlayer оригинала
       GM->scam.cam = 0; GM->scam.phase = e->name; GM->scam.arm = !GM->scam.quiet; GM->scam.quiet = 0; GM->scam.placed = 0;
@@ -1609,6 +1813,8 @@ static void onEvent(void *u, const MsnEvent *e) {   // окно подготов
     case MSN_EV_DIALOGUE: talkBegin(GM, e->name, e->name2); break;                        // разговор: места и лицом друг к другу
     default: break;
   }
+  if (e->type == MSN_EV_STAGE_COMPLETE) stageEndCars(GM);
+  if (e->type == MSN_EV_STAGE_COMPLETE && !HNRSTAGE109_OLD && hnrOff) { hnrOff = 0; bbNoteDiag("HNROFF", "stage-end off=0"); }   // Ф2-7 (109): запрет Hit & Run действует на этап и снимается на его конце; этап со своей командой включит заново
   c2Event(GM, e);
   if (e->type == MSN_EV_MISSION_COMPLETE) GM->missionDone = 1; else if (e->type == MSN_EV_MISSION_START) GM->missionDone = 0;
   if (e->type == MSN_EV_MISSION_START) { GM->missionClock = 0.f; gameMsnRecord(GM, 0); } else if (e->type == MSN_EV_MISSION_COMPLETE) gameMsnRecord(GM, 1);   // №1114: попытка и лучшее время
@@ -1827,6 +2033,10 @@ void gameMsnWorld(const GameMsn *m, MsnWorld *w) {
   w->vehicle_health = 1.f - g->pCar->damage; w->interior = m->interior;
   w->coins = shopCoins(&m->shop);   // кошелёк (Coins.collected; без монет мира — кошелёк лавки)
   w->transition = m->transition; w->arrested = m->arrested; w->entering = m->entering[0] ? m->entering : 0;   // сверка g07: переход в интерьер, арест
+  if (!foot && g->pCar->p.halfW > .1f && g->pCar->p.halfL > .1f) {   // A1.1: габарит кузова для входа в объём цели (оригинал: OBB машины; без данных — точка)
+    const CarParams *cp = &g->pCar->p; float hh = cp->bodyHi > cp->bodyLo ? (cp->bodyHi - cp->bodyLo) * .5f : 0.75f;
+    w->car_valid = 1; w->car_hw = cp->halfW; w->car_hl = cp->halfL; w->car_hh = hh; w->car_ofs = cp->bodyOfs; w->car_fx = sinf(g->pCar->h); w->car_fz = cosf(g->pCar->h); w->car_cy = (cp->bodyHi > cp->bodyLo ? (cp->bodyLo + cp->bodyHi) * .5f : hh);
+  }
   w->vehicle_boom = g->pCar->destroyed ? (carBoomed(g->pCar) ? 2 : 1) : 0;   // P07-13: взрыв машины игрока идёт (1) / доигран (2)
 }
 // сверка g07 (02.11.2026): main сообщает состояние мира, которого миссии не видно. transition — идёт вход в помещение или выход (от начала перехода до конца);
@@ -1964,7 +2174,15 @@ void gameMsnRecord(GameMsn *m, int kind) {
   int slot = gameMsnBestSlot(m, m->rt.cur), lv = (int)m->f.hdr->level; if (slot < 0 || lv < 1 || lv > 7) return;
   gameMsnRecordHook(lv, slot, kind, kind ? (int)m->missionClock : 0);
 }
+// 1296/1300 (Роб; сверка с оригиналом: выдаватель гонки/бонуса — отдельный персонаж «b_имя», и у оригинала он не активен, пока текущая миссия не бонусная и не гонка — менеджер персонажей подавляет его загрузку): у нас в L2 два «milhouse» —
+// собеседник сюжетной m1 и выдаватель гонки sr1 в другом месте; пока миссионный (kind MISSION, не бонусный) с тем же именем существует, бонусный двойник скрыт и △ у него ничего не открывает. msnbonustwin1296old / flag bonustwin1296old 1 — как было
+static void bonusTwinUpdate(GameMsn *m) {
+  for (int i = 0; i < m->nnpc; i++) { GameNpc *n = &m->npc[i]; n->twinHide = 0; if (!n->bonus || msnBonusTwin1296Old) continue;
+    for (int j = 0; j < m->nnpc; j++) { const GameNpc *o = &m->npc[j]; if (j == i || o->bonus || o->kind != MSN_NPC_MISSION || !msn_streq(o->name, n->name)) continue; n->twinHide = 1; break; } }
+}
 void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
+  npcPropFrame1301b++;
+  bonusTwinUpdate(m);
   if (!SAVEV3_1114_OLD && m->rt.status == MSN_RUNNING && m->rt.phase == 1 && !m->rt.paused && dt > 0.f) m->missionClock += dt;   // №1114: время основной части миссии
   unsigned pt0_ = NOWUS_(), pt1_ = pt0_, pt2_ = pt0_, pt3_ = pt0_;
   if (m->talk.on && (m->rt.status != MSN_RUNNING || m->rt.obj != MSN_OBJ_DIALOGUE)) talkEnd(m);
@@ -1988,9 +2206,10 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
     if (m->transition) gameHnrFreeze(m->g, .1f);   // СВЕРКА_С_ИСХОДНИКОМ 5.11: на входе и выходе из помещения шкала Hit & Run стоит (в разговоре — main_loop.h mvTalkActive)
   }
   if (!GAME_C2_UFOH_OLD && m->ufoOn && m->ufoPos[1] < 22.f) m->ufoPos[1] = fminf(22.f, m->ufoPos[1] + dt);   // круг 2, g07b P04:U2: тарелка не ниже Y = 22, ниже — поднимается на 1 м/с
+  msn_cargo_watch(&m->rt, m->g->pCar->destroyed, &m->cargoPrevDestroyed);   // A1.4: машина с бочкой взорвалась — бочка разбита, keepbarrel откатывает этапы (откат виден в журнале как MSN retry)
   if (!GAME_C2_DMG_OLD) {   // круг 2, g07b Д6: dump с несколькими предметами — машина игрока неуязвима
     Car *pc_ = m->g->pCar; const MsnRuntime *r_ = &m->rt;
-    if (r_->status == MSN_RUNNING && r_->obj == MSN_OBJ_DUMP && r_->nitems > 1) {
+    if (r_->status == MSN_RUNNING && r_->obj == MSN_OBJ_DUMP && dumpPlayerImmune(r_->nbind, r_->nitems)) {   // A1.2: неуязвима машина игрока без привязок предметов (бамперный режим), не по числу предметов
       if (m->dmgHoldOn && pc_->damage > m->dmgHold) { pc_->damage = m->dmgHold; if (pc_->damage < 1.f) pc_->destroyed = 0; }
       m->dmgHold = pc_->damage; m->dmgHoldOn = 1;
     } else m->dmgHoldOn = 0;
@@ -2020,6 +2239,10 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
   npcCtx = m;
   for (int i = 0; i < m->nnpc; i++) npcStep(&m->npc[i], m->g, dt, npcTalkStop(m, &m->npc[i]));
   npcCtx = 0;   // В85: stop — только записанные случаи
+  if (roadsT) {   // Т1 (107b): персонажи миссии — помеха для трафика (≤10: собеседник цели, участники диалога; стоящие и идущие, не сбитые); обычные пешеходы — нет
+    int k = 0; for (int i = 0; i < m->nnpc && k < 10; i++) { const GameNpc *n = &m->npc[i]; if (n->kind != MSN_NPC_MISSION || n->knock || n->interior[0]) continue; roadsT->npcP[k][0] = n->pos.x; roadsT->npcP[k][1] = n->pos.z; k++; }
+    if (gameNpcDbg108[2] > 0.f && k < 10) { roadsT->npcP[k][0] = gameNpcDbg108[0]; roadsT->npcP[k][1] = gameNpcDbg108[1]; k++; }   // служебно (flag trfnpc108, гейт Т1)
+    roadsT->nnpc = k; }
   // Правка Роба 288 (04.10: «Барни ходит, но не он то, с чем взаимодействуешь, а место на асфальте — △ появляется, когда идёшь по
   // асфальту»): продавец идёт по маршруту AddPurchaseCarNPCWaypoint (barney_loc -> barney_walk1), а место разговора стояло на
   // локаторе — теперь место разговора там, где сам продавец (тот же радиус данных 1,3 м + SHOP_REACH). Правило порта.
@@ -2050,9 +2273,26 @@ void gameMsnTick(GameMsn *m, const GamePad *p, float dt) {
     if (!HNR_IMMUNE_OLD) for (int i_ = 0; i_ < m->cars.n; i_++) {   // круг 7 (g10-flow, P03-30; против оригинала): взрыв машины-цели destroy или dump без привязанных предметов (бамперные машины) не двигает шкалу Hit & Run и не даёт монет
       Car *k_ = &m->cars.c[i_].car; int imm_ = rr_->status == MSN_RUNNING && rr_->target && (rr_->obj == MSN_OBJ_DESTROY || (rr_->obj == MSN_OBJ_DUMP && rr_->nbind == 0)) && !strcasecmp(m->cars.c[i_].name, rr_->target);
       if (imm_ && k_->svKind == 2) k_->svKind = 5; else if (!imm_ && k_->svKind == 5) k_->svKind = 2; }
+    // Правка Ф2-4 / A2.3 (сверка Fable 13.11 с поведением оригинала): машина этапа без ИИ (скрипт: ИИ NULL, режим «стоит») урона не получает; включается, когда этап даёт ей ИИ
+    // (ActivateVehicle). L1 m3: Смитерса можно было разбить у Квик-и-Марта до этапа «разбей». Полиция Hit & Run и уже разбитые не трогаются. MC_PARKED_INVULN_OLD=1 — как было
+    for (int i_ = 0; i_ < m->cars.n; i_++) { McCar *c_ = &m->cars.c[i_]; if (!c_->on || !c_->leaveQ || MC_STAGEEND_OLD) continue;   // очередь на уход (A2.2)
+      int gone_ = c_->leaveQ == 2;
+#ifdef SKIN_HOST
+      if (hypotf(c_->car.x - w.player.x, c_->car.z - w.player.z) > 110.f) gone_ = 1;   // боты без рисования: «вне кадра» — дальше 110 м
+#endif
+      if (gone_) { mcRemoveWhy1350 = "leaveQ"; mcRemove(&m->cars, c_->name); } }
+    float parkDmg_[MC_MAX]; unsigned char parkKeep_[MC_MAX]; memset(parkKeep_, 0, sizeof parkKeep_);
+#ifndef MC_PARKED_INVULN_OLD
+#define MC_PARKED_INVULN_OLD rb_MC_PARKED_INVULN_OLD
+#endif
+    if (!MC_PARKED_INVULN_OLD) for (int i_ = 0; i_ < m->cars.n && i_ < MC_MAX; i_++) { const McCar *c_ = &m->cars.c[i_];
+      if (c_->on && c_->mode == MC_PARKED && !c_->police && !c_->car.destroyed && c_->car.damage < 1.f && ((!hnrPolName1350Old && !parkDmgName1359Old) || strcasecmp(c_->name, m->hnr.car)) && !(rr_->status == MSN_RUNNING && rr_->target && rr_->obj == MSN_OBJ_DESTROY && !strcasecmp(c_->name, rr_->target))) {   // цель «разбей» на своём этапе бьётся всегда (без тупика)
+       parkDmg_[i_] = c_->car.damage; parkKeep_[i_] = 1; } }
     mcUpdate(&m->cars, &e, dt, carHit, m);
+    if (!MC_PARKED_INVULN_OLD) for (int i_ = 0; i_ < m->cars.n && i_ < MC_MAX; i_++) if (parkKeep_[i_]) { McCar *c_ = &m->cars.c[i_];
+      if (c_->mode == MC_PARKED && c_->car.damage > parkDmg_[i_]) { c_->car.damage = parkDmg_[i_]; c_->car.destroyed = 0; } }
     if (dmgT_ && dmgT_->car.damage > dmgB_) {   // круг 2 (g01 7.2, g07b Д6): цель «разбить» страдает только от машины игрока (окно 0,5 с после её удара); у follow и dump с несколькими предметами цель неуязвима
-      int keep = rr_->obj == MSN_OBJ_FOLLOW || (rr_->obj == MSN_OBJ_DUMP && rr_->nitems > 1) || (rr_->obj == MSN_OBJ_DESTROY && m->hitTgtT <= 0.f);
+      int keep = rr_->obj == MSN_OBJ_FOLLOW || (rr_->obj == MSN_OBJ_DUMP && dumpTargetImmune(rr_->nbind, rr_->nitems)) || (rr_->obj == MSN_OBJ_DESTROY && m->hitTgtT <= 0.f);
       if (keep) { dmgT_->car.damage = dmgB_; if (dmgB_ < 1.f) dmgT_->car.destroyed = 0; }
     }
     for (int i_ = 0; i_ < m->cars.n; i_++) if (m->cars.c[i_].waitEvt > m->aiWaitSeen[i_ < 16 ? i_ : 15]) { m->aiArrived++; m->aiWaitSeen[i_ < 16 ? i_ : 15] = m->cars.c[i_].waitEvt; }   // «ИИ добрался до цели»: waitEvt растёт раз в 20 с ожидания

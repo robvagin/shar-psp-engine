@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "../../viewer/car.c"
 int main(void) {
+  carSusp1278Old=1;   // 107b: тест проверяет решатель с нижним пределом 0 (прежняя модель); новая модель (тяга ниже нейтрали) — tests/car107b/susp1278.sh
   for(unsigned k=0;k<sizeof carBodyPhysics/sizeof *carBodyPhysics;k++)for(int pose=0;pose<3;pose++)for(int step=0;step<3;step++) {
     Car c;memset(&c,0,sizeof c);carParamsFor(carBodyPhysics[k].name,&c.p);derive(&c);
     c.q[0]=1;c.q[1]=.09f*pose;c.q[2]=-.12f*pose;c.q[3]=.06f*pose;quatNorm(c.q);M3 M=quatM(c.q);

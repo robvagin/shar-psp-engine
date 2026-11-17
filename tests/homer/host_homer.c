@@ -399,8 +399,9 @@ int main(int argc, char **argv) {
     H.irisOn = 1; seat0 = H.irisSeat; doorMax = 0; doneIn = -1;
     homerCarFrom(&hc, &car, .62f); ok = homerEnterCar(&H, &hc, &cb); t = 0.f;
     while (ok && H.state != HS_IN_CAR && t < 8.f) { HomerInput in = in0(car.h); frame(&H, &in); t += DT; }
-    check("walk around, iris: seated under the iris", (float)(H.irisSeat - seat0), 1, 1, "правка 212");
-    check("walk around, iris: at once, s", t, 0.f, .1f, "first frame of TO_DOOR");
+    // 107b 1284: правка 212 снята (в оригинале издалека всегда пешком); HOMERWALK1284_OLD=1 — прежние ожидания
+    if (homerWalk1284Old) { check("walk around, iris: seated under the iris", (float)(H.irisSeat - seat0), 1, 1, "правка 212"); check("walk around, iris: at once, s", t, 0.f, .1f, "first frame of TO_DOOR"); }
+    else { check("walk around (1284): no iris seat, walked to the door", (float)(H.irisSeat - seat0), 0, 0, "в оригинале пешком"); check("walk around (1284): takes time, s", t, 2.f, 8.f, "обход машины до двери"); }
     { float dp[3]; homerCarFrom(&hc, &car, .62f);
       dp[0] = hc.m[0] * hc.door[0] + hc.m[8] * hc.door[1] + hc.m[12]; dp[2] = hc.m[2] * hc.door[0] + hc.m[10] * hc.door[1] + hc.m[14];
       homerPlace(&H, &world, dp[0] - rx * .2f, car.y + 1.f, dp[2] - rz * .2f, car.h);   // слева, 2 м от двери водителя

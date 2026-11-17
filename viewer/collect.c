@@ -60,6 +60,15 @@ enum { WS_APPEAR = 0, WS_FLY = 1, WS_CHARGE = 2, WS_CHARGED = 3, WS_FIRE = 4, WS
 #ifndef GAG_CAR15_OLD
 #define GAG_CAR15_OLD 0        // круг 7: триггер-гэг касанием: из машины запас 1,5 м (оригинал, как у карточки). 1 — без запаса
 #endif
+// 108 (1297, Fable: «карточка на крыше дома берётся из машины»): у оригинала точка машины — низ + 0,63 м (у нас 0,9), углы кузова проверяются родным радиусом карточки (у нас радиус + 1,5 м); то же для гэга касанием.
+// CARD_CORNER108_OLD=1 / flag cardcorner108old 1 / rollback.txt — как было
+#ifndef CARD_CORNER108_OLD
+#define CARD_CORNER108_OLD 0
+#endif
+#ifndef CARD_CARPT
+#define CARD_CARPT 0.63f
+#endif
+int carCardCorner108Old = CARD_CORNER108_OLD;
 #ifndef CARD_CAR15_OLD
 #define CARD_CAR15_OLD 0       // круг 7 (P05:9): из машины карточка берётся, когда сфера 1,5 м вокруг машины касается её сферы (оригинал); круг 2 убрал запас совсем — ошибка. 1 — без запаса
 #endif
@@ -278,14 +287,14 @@ static void cardsStep(Collect *c, const CollPlayer *p, const Car *car) {
   for (unsigned i = 0; i < c->ncard; i++) {
     if (s->cardGot[i]) continue;
     const CollCard *k = &c->card[i];
-    float dx = p->x - k->x, dy = p->y + .9f - k->y, dz = p->z - k->z, r = k->r + (CARD_EXACT_OLD ? (p->onFoot ? CARD_REACH_FOOT : CARD_REACH_CAR) : (!p->onFoot && !CARD_CAR15_OLD ? 1.5f : 0.f));   // центр игрока: ступни + 0.9 м; круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы карточки (как в оригинале: сфера 1,5 м), пешком — точка строго внутри
+    float dx = p->x - k->x, dy = p->y + (!p->onFoot && !carCardCorner108Old ? CARD_CARPT : .9f) - k->y, dz = p->z - k->z, r = k->r + (CARD_EXACT_OLD ? (p->onFoot ? CARD_REACH_FOOT : CARD_REACH_CAR) : (!p->onFoot && !CARD_CAR15_OLD ? 1.5f : 0.f));   // центр игрока: ступни + 0.9 м; круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы карточки (как в оригинале: сфера 1,5 м), пешком — точка строго внутри
     int in = dx * dx + dy * dy + dz * dz <= r * r;
     if (!in && !CARD_EXACT_OLD && !p->onFoot && car && car->p.halfL > .1f) {   // круг 2, P05:9: из машины ещё четыре угла кузова — два задних нижних и два передних верхних (полуразмеры из Car)
-      float fx = sinf(car->h), fz = cosf(car->h), rx = fz, rz = -fx, hl = car->p.halfL, hw = car->p.halfW > .1f ? car->p.halfW : 1.f;
+      float fx = sinf(car->h), fz = cosf(car->h), rx = fz, rz = -fx, hl = car->p.halfL, hw = car->p.halfW > .1f ? car->p.halfW : 1.f, rc = carCardCorner108Old ? r : k->r;   // 108 (1297): углы кузова — родной радиус карточки, без запаса 1,5 м
       for (int q = 0; q < 4 && !in; q++) {
         float sd = (q & 1) ? hw : -hw, lg = (q & 2) ? hl : -hl, hy = (q & 2) ? 1.5f : .2f;
         float qx = p->x + fx * lg + rx * sd - k->x, qy = p->y + hy - k->y, qz = p->z + fz * lg + rz * sd - k->z;
-        in = qx * qx + qy * qy + qz * qz <= r * r;
+        in = qx * qx + qy * qy + qz * qz <= rc * rc;
       }
     }
     if (!in) continue;
@@ -892,7 +901,7 @@ static void gagsStep(Collect *c, const CollPlayer *p, Coins *coins, const ColWor
     }
     if (!gagHere(c, g, p)) { s->gagIn[g] = 0; continue; }
     int in = gagInside(G, p->x, p->y, p->z);
-    if (!in && !p->onFoot && !GAG_CAR15_OLD && G->trig == COLL_TOUCH) { float e_ = G->tr + 1.5f, dx_ = p->x - G->tx, dy_ = p->y - G->ty, dz_ = p->z - G->tz; in = dx_ * dx_ + dy_ * dy_ + dz_ * dz_ <= e_ * e_; }   // круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы триггера (как в оригинале: сфера 1,5 м); пешком — точка
+    if (!in && !p->onFoot && !GAG_CAR15_OLD && G->trig == COLL_TOUCH) { float e_ = G->tr + 1.5f, dx_ = p->x - G->tx, dy_ = p->y + (carCardCorner108Old ? 0.f : CARD_CARPT) - G->ty, dz_ = p->z - G->tz; in = dx_ * dx_ + dy_ * dy_ + dz_ * dz_ <= e_ * e_; }   // круг 7: из машины сфера 1,5 м вокруг центра машины касается сферы триггера (как в оригинале: сфера 1,5 м); пешком — точка
     if (G->trig == COLL_TOUCH) {
       int fresh = in && !s->gagIn[g];
       if (in && s->gagIn[g] == 2 && hypotf(p->x - gagEntX, p->z - gagEntZ) > GAG_ENTRY_MOVE) fresh = 1;   // №873: вошёл в комнату уже в сфере — сработает с первого шага

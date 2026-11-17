@@ -141,7 +141,8 @@ class Pack:
             if isinstance(data, str):
                 data = self.s(data)
             self.locs.append(dict(name=self.s(L.name), type=L.type, ntrig=len(L.triggers), first=first, file=self.s(L.file),
-                                  data=int(data) & 0xffffffff, pos=L.pos, heading=L.heading))
+                                  data=int(data) & 0xffffffff, pos=L.pos, heading=L.heading,
+                                  mhead=(math.atan2(L.mat[2], L.mat[0]) if L.heading is None and L.mat else None)))   # 1317: поворот локатора по его матрице (финишная лента гонки), engine-радианы
         return i
 
     def cmd(self, op, args, ctx, line, file, locs=None):
@@ -185,9 +186,9 @@ class Pack:
         nan = float('nan')
         locs = []
         for L in self.locs:
-            flags = 1 if L['heading'] is not None else 0
+            flags = 1 if L['heading'] is not None else (2 if L.get('mhead') is not None else 0)   # бит0 — курс CARSTART, бит1 — поворот по матрице локатора (1317)
             locs.append((L['name'], L['type'], L['ntrig'], L['first'], L['file'], L['data'], *L['pos'],
-                         L['heading'] if L['heading'] is not None else nan, flags, 0))
+                         L['heading'] if L['heading'] is not None else (L['mhead'] if L.get('mhead') is not None else nan), flags, 0))
         trigs = [(k, *c, *h, *a[0], *a[1], *a[2]) for k, c, h, a in self.trigs]
         args = []
         for t, loc, v in self.args:

@@ -1,0 +1,54 @@
+flag menu
+flag lvset 4
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=4 300
+wait 6
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag dalbelt 1
+foot 214.88 172.25 0.0
+wait 14
+camrel -6 4 0 1 -0.05 0
+flag dalbelt 1
+wait 6
+scene Sp4xpn
+shot p4xpn
+flag dalbelt 0
+wait 3
+scene Sp4xpo
+shot p4xpo
+camrel 6 4 0 -1 -0.05 0
+flag dalbelt 1
+wait 6
+scene Sp4xmn
+shot p4xmn
+flag dalbelt 0
+wait 3
+scene Sp4xmo
+shot p4xmo
+camrel 0 4 -6 0 -0.05 1
+flag dalbelt 1
+wait 6
+scene Sp4zpn
+shot p4zpn
+flag dalbelt 0
+wait 3
+scene Sp4zpo
+shot p4zpo
+camrel 0 4 6 0 -0.05 -1
+flag dalbelt 1
+wait 6
+scene Sp4zmn
+shot p4zmn
+flag dalbelt 0
+wait 3
+scene Sp4zmo
+shot p4zmo
+flag stop
+wait 2
+end

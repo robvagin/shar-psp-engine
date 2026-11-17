@@ -21,14 +21,39 @@ import uvq                                             # noqa: E402  16-битн
 from interiors import leaves as col_leaves             # noqa: E402
 import char_export as CE                               # noqa: E402
 from stateprop_dump import parse_stateprop, atc_table  # noqa: E402
-_atc_table_disc = atc_table
-def atc_table():
-    """сверка g12-data P18-15 (02.11.2026): строка 0 таблицы ATC переписывается так же, как в tools/psp_export.atc_rows (звук smash, частицы и
-    обломок eNull, масса 100, трение 1, упругость 1; на диске «WTF» и нули). tools/stateprop_dump.py — не наш файл, правим на входе сюда.
-    ATC0_OLD=1 — как было"""
-    rows = _atc_table_disc()
-    if rows and os.environ.get('ATC0_OLD') != '1': rows[0] = dict(sound='smash', particle='eNull', breakable='eNull', f=(1.0, 100.0, 1.0))
-    return rows
+
+
+GLASS_NEUTRAL = 0xFFFDFDFD   # цвет вершин стекла автомата на L1 (диск: 127/128 на канал — «без тона»)
+
+def glass_neutral(mesh_name):
+    """№1352: стекло витрины автомата с газировкой (кусок «Krusty HumanCola Glass»: картинка Красти и банки) — слот 3 типа l<N>_vending: L1 имя l1_vendingShape3, L2–L7 l<N>_vending3Shape.
+    Диск красит вершины этого стекла под время суток уровня (L2 зеленоватый (187,227,223), L3 розовый (227,187,175), L6 синий (135,145,219)…): шейдер без освещения, цвет вершин — готовый тон,
+    кожа Красти уходит в зелёный, оранжевый, серый (ΔE до 30). Роб (№1352): стекла с картинкой без тона уровня. GLASS1352_OLD=1 — как было."""
+    return os.environ.get('GLASS1352_OLD') != '1' and re.fullmatch(r'l\d_vending(Shape3|3Shape)', mesh_name) is not None
+
+
+def pick_stateprop(w):
+    """№1328: у предмета на диске может лежать несколько блоков StatePropData (L2: у каждого автомата 4 и 6 состояний); игра, читая предмет, присваивает
+    каждый следующий блок поверх прежнего, то есть работает последний (у автомата L2 это машина с ударом машиной, наступанием и снятием коллизии).
+    VEND1328_OLD=1 в окружении — первый блок, как было до №1328 (красный контроль гейта)."""
+    sps = [c for c in walk(w) if c.id == 0x8020000]
+    if not sps: return None
+    return sps[0] if os.environ.get('VEND1328_OLD') == '1' else sps[-1]
+
+
+def vis_by_index(name, slots, nprops, vis):
+    """№1328: игра включает и выключает рисунки предмета по номеру (i-я запись видимости — i-й рисунок), имена в записях — подписи автора. На диске у многих предметов
+    имена записей чужие (автомат L3 — l6_vending…, колонка L2/L5, ворота L2/L5, киоск томатов L4/L7 — имена L1), по имени ничего не находилось, и предмет не менялся при ударе.
+    Записей ровно столько же, сколько слотов — берём по номеру. Записей меньше слотов (киоск томатов L7: 14 из 16, игра читала бы за концом массива) и ни одно имя слота не нашлось —
+    по номеру, недостающие рисунки (предметы) берут значение последнего рисунка-предмета записи, последний слот-эффект — значение последней записи. Иначе None (по имени, как раньше;
+    лишняя запись у знака L5 ничего не меняет). VEND1328_OLD=1 — всегда по имени."""
+    if os.environ.get('VEND1328_OLD') == '1': return None
+    if len(vis) == len(slots): return [v for _, v in vis]
+    if len(vis) < len(slots) and not any(n in slots for n, _ in vis):
+        out = [v for _, v in vis[:-1]]
+        out += [out[-1]] * (nprops - len(out))
+        return (out + [vis[-1][1]])[:len(slots)]
+    return None
 
 MIRROR = np.diag([1.0, 1.0, -1.0, 1.0])
 N = lambda c: string(c.data)[0]
@@ -425,7 +450,7 @@ class StateProps:
                     props, _ = composite(w)
                     sp_mesh_refs |= {n for n, _, _ in props}
                     row = found.setdefault(name, dict(file=f, ent=ent, w=w, inst=[], files={}, animphys=animphys))
-                    sp = next((c for c in walk(w) if c.id == 0x8020000), None)
+                    sp = pick_stateprop(w)
                     key = json.dumps(parse_stateprop(sp), sort_keys=True) if sp else ''
                     if 'sp_key' not in row: row['sp_key'] = key
                     elif row['sp_key'] != key: self.log(f'  ВНИМАНИЕ: {name} в {f.stem} — другая машина состояний, беру из {row["file"].stem}')
@@ -452,6 +477,7 @@ class StateProps:
         for slot, (dn, joint, trans) in enumerate(props):
             if dn in meshes:
                 for t, fl, P, UV, C in self.pack(f, dn):
+                    if glass_neutral(dn): C = np.full_like(C, GLASS_NEUTRAL)   # №1352: стекло автомата с Красти без тона уровня
                     out_p.append((slot, joint, t, fl | (1 if trans else 0), P, UV, C))
             elif dn in bbs:
                 g = bbs[dn]; r = self.tex_of_shader(f, g['shader'])
@@ -512,7 +538,7 @@ class StateProps:
     def _add_stateprop(self, name, row):
         f, w = row['file'], row['w']
         T = self._base_type(name, f, w, 0)
-        sp = parse_stateprop(next(c for c in walk(w) if c.id == 0x8020000))
+        sp = parse_stateprop(pick_stateprop(w))
         eff_root = [read(f)]
         T['fx_text'] = {e: fx_text_for(e, w, eff_root) for e, _ in T['effects']}
         a = next((c for c in row['ent'].children if c.id == 0x3000600), None)
@@ -523,9 +549,9 @@ class StateProps:
         states = []
         for st in sp['states']:
             vis = 0
-            names = dict(st['vis'])
+            names = dict(st['vis']); byidx = vis_by_index(name, T['slots'], len(T['props']), st['vis'])
             for i, s in enumerate(T['slots']):
-                on = names.get(s, 1 if i < len(T['props']) else 0)
+                on = byidx[i] if byidx else names.get(s, 1 if i < len(T['props']) else 0)
                 if on: vis |= 1 << i
             pose = next((fc for fc in st['fc'] if fc['name'].startswith('PTRN_')), None)
             if pose is None: pose = next((fc for fc in st['fc'] if fc['name'].startswith('PVIS_')), None)
@@ -798,10 +824,10 @@ class StateProps:
                      f"{T['ntrack']:2d} дорожек x {T['nfr']:3d} кадров, {len(T['states'])} сост., {len(T['cols'])} объёмов, "
                      f"{len(T['bills'])} билб. {extra}")
 
-def wrap_prp2(prp1, spr, type_fx=b'', anm=b''):
+def wrap_prp2(prp1, spr, type_fx=b'', anm=b'', pvl=b''):
     """PRP1 (заголовок 32 Б) -> PRP2: заголовок 64 Б (первые 32 — как PRP1, магия PRP2), тело PRP1, SPR1 с 16-выравниванием.
     @32 смещение SPR1 от начала секции, @36 её размер, @40 полный размер секции.
-    @52/@56 смещение/размер таблицы ANM1 (tools/animobj_export.py), 0 — нет.
+    @52/@56 смещение/размер таблицы ANM1 (tools/animobj_export.py), 0 — нет. @60 смещение таблицы PVL1 (объёмы столкновения типов PRP1 из данных, tools/psp_export.py propvol_table), 0 — нет.
     @44 смещение таблицы частиц типов PRP1 (после SPR1, 0 нет), @48 число типов в ней: по 2 Б на тип —
     [частицы ATC: 0 нет, 1 искры кодом (eSpark), 2 звёзды (eStars, текстуры нет — не рисуем), 3..19 номер
     InstParticleSystem (3 куст, 4 мусор, 5 листья дуба, 6 почта)], [обломок BreakablesEnum (3 гидрант, 15 дуб…), 0xFF нет]."""
@@ -817,6 +843,9 @@ def wrap_prp2(prp1, spr, type_fx=b'', anm=b''):
     if anm:   # @52/@56: таблица ANM1 анимированных объектов (tools/animobj_export.py, viewer/animobj.c); @40 — вся секция
         out += b'\0' * (-len(out) % 16); aoff = len(out); out += anm; out += b'\0' * (-len(out) % 16)
         struct.pack_into('<I', out, 40, len(out)); struct.pack_into('<2I', out, 52, aoff, len(anm))
+    if pvl:   # @60: таблица PVL1 — объёмы столкновения типов PRP1 (107б П4)
+        out += b'\0' * (-len(out) % 16); poff = len(out); out += pvl; out += b'\0' * (-len(out) % 16)
+        struct.pack_into('<I', out, 40, len(out)); struct.pack_into('<I', out, 60, poff)
     return bytes(out)
 
 # частицы ATC (колонка «частицы») -> код таблицы частиц типов (номера систем частиц одинаковы на всех уровнях, docs/fx_spec.md §3)

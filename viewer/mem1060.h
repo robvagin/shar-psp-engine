@@ -154,31 +154,59 @@ static int boothScene1060(const char *sd, void **fbp) {
 // Миссия: сохранение держит уровень, этап и пройденные миссии; внутриэтапное (таймеры, объекты, водители) не сериализуется — этап начинается заново, как после RESUME. Строка BOOTH1060 msn — до и после
 // Build 96 («чистая перезагрузка», идея Роба): снимок состояния -> выгрузка уровня целиком -> загрузка -> восстановление из снимка, один экран, игрок там же, без наезда камеры старта. Ядро бывшей пересборки будки (boothRebuild1060 зовёт его же);
 // ступень 5 машины переходов (transit_fsm.h) перед SIMPLIFY для входа в комнату вне миссии (main_rooms.h roomReload96). Выключатель CLEANRELOAD96_OLD=1 / файл cleanreload96old / flag cleanreload96 0 — ступени нет (SIMPLIFY как был); пересборка будки от него не зависит
+// 1320б: чистая перезагрузка (выгрузка и чтение уровня, старт игры) идёт 14 с с редкими кадрами, сторож писал STALL2 на 5-й секунде штатной работы. На время перезагрузки порог сторожа +STALLGRACE1320_MS (по умолчанию 20 с: настоящая
+// остановка всё равно запишется через 25 с). STALLGRACE1320_OLD=1 / flag stallgrace1320 0 / файл stallgrace1320old / rollback.txt — как было. Служебно: flag reloadstall1320 N — N с без кадров внутри перезагрузки (проверка сторожа в гейте)
+#ifndef STALLGRACE1320_OLD
+#define STALLGRACE1320_OLD 0
+#endif
+#ifndef STALLGRACE1320_MS
+#define STALLGRACE1320_MS 20000u
+#endif
+int stallGrace1320Old = STALLGRACE1320_OLD;   // extern в rollback.h
+static float reloadStall1320, reloadWait1320;
+static void **rlFbp;
+static void rlPump(void) {   // кадр перезагрузки раз в 100 мс из ожиданий загрузчика
+  static unsigned last; unsigned n = sceKernelGetSystemTimeLow(); if (!rlFbp || n - last < 100000u) return; last = n;
+  mem1060Frame(rlFbp, mem1060Bar, 0);
+}
+#define RLS(nm_) do { bbStep = (nm_); if (smkOn) { char b_[64]; snprintf(b_, sizeof b_, "RLSTEP %s at=%u\n", (nm_), (sceKernelGetSystemTimeLow() - rlT0) / 1000u); smkWrite(b_); } } while (0)   // 1320б: метка шага со временем от начала перезагрузки
 static void levelCleanReload96(void **fbp, unsigned t0) {
+  bbGraceMs = stallGrace1320Old ? 0u : STALLGRACE1320_MS; rlTrack = 0; rlGapMax = 0; rlGapN = 0; rlBeatT = 0; rlT0 = sceKernelGetSystemTimeLow(); rlTrack = 1; bbBeatTick(); rlFbp = fbp; waitPump = stallGrace1320Old ? 0 : rlPump;
   float hx = homer.x, hy = homer.y, hz = homer.z, hh = homer.h, cx = car.x, cy = car.y, cz = car.z, ch = car.h;
   SaveGame carry; saveCapture(&carry);   // прогресс, монеты, карточки, разовые предметы — всё, что пишет сохранение
+  int mc1320_[3] = {0, 0, 0}, mcOn1320_ = !roomReload1320Old && mvResumePoint1320(&mc1320_[0], &mc1320_[1], &mc1320_[2]);   // 1320: миссия посреди основной части — вернуться на тот же этап
   char pb[160]; svProgressText(&carry, pb, sizeof pb);
   mem1060BarTo(fbp, 100, 6);
-  levelResetUi980(); uiPause(0); cellsDropAll(); mvShutdown(); mcrFreeAll(); msnartRoom = 0; uiScrWarmClear();
-  sndEngine(0.f, 0.f, 0); sndSkid(0.f, 0); sndCarAir(0); sndMusic(SND_MUS_OFF); sndMaster(0.f);
-  int fe = mem1060FeIn(fbp), gz = 0;     // перед выгрузкой уровня load.shr обычно не помещается — тогда шнур, а LoadingFE откроется сразу после выгрузки
+  RLS("rl-ui"); levelResetUi980(); uiPause(0);
+  if (reloadWait1320 > 0.f) { LdWait lw_ = {0}; unsigned t_ = sceKernelGetSystemTimeLow(), us_ = (unsigned)(reloadWait1320 * 1e6f); reloadWait1320 = 0.f; RLS("rl-testwait"); while (sceKernelGetSystemTimeLow() - t_ < us_) { loaderWaitStep(&lw_, "busy", 0, 0); sceKernelDelayThread(1000); } }   // служебно: ожидание загрузчика N с
+  RLS("rl-cells"); cellsDropAll(); RLS("rl-msn"); mvShutdown(); RLS("rl-mcr"); mcrFreeAll(); msnartRoom = 0; RLS("rl-uiwarm"); uiScrWarmClear();
+  RLS("rl-snd"); sndEngine(0.f, 0.f, 0); sndSkid(0.f, 0); sndCarAir(0); sndMusic(SND_MUS_OFF); sndMaster(0.f);
+  RLS("rl-fe"); int fe = mem1060FeIn(fbp), gz = 0;     // перед выгрузкой уровня load.shr обычно не помещается — тогда шнур, а LoadingFE откроется сразу после выгрузки
   if (!mem1060Fe) { gz = mem1060NewsIn(fbp); if (!gz) mem1060BarTo(fbp, 300, 8); }   // MEM1060FE_OLD: газета уровня, как в №1060
   else if (!fe) mem1060BarTo(fbp, 300, 8);
-  levelUnload();
+  waitPump = 0; RLS("rl-unload"); levelUnload(); RLS("rl-unloaded");
+  if (reloadStall1320 > 0.f) { unsigned us_ = (unsigned)(reloadStall1320 * 1e6f); reloadStall1320 = 0.f; sceKernelDelayThread(us_); }   // служебно: остановка без кадров внутри перезагрузки
   if (!mem1060Fe) { if (!gz) { mem1060BarTo(fbp, 400, 4); gz = mem1060NewsIn(fbp); }
     if (gz) { ldBase = LOAD_RES_SHARE; sndMaster(1.f); feStinger(sndLevelChangeStinger()); } else   /* №1128 */ { sndMaster(1.f); mem1060TransLog("rebuild-nonews", 1); } }
   else {
     if (!fe) { mem1060BarTo(fbp, 400, 4); fe = mem1060FeIn(fbp); }
     if (fe) { ldScr1060 = UI_LOAD_FE; ldBase = LOAD_RES_SHARE; loadBegin(fbp); sndMaster(1.f); mem1060TransLog("rebuild-fe", 1); }   // экран загрузки уровня на время пересборки — LoadingFE, ход чтения — loadPump
     else { sndMaster(1.f); mem1060TransLog("rebuild-cord", 1); } }
+  RLS("rl-levelload");
   levelLoad(fbp);
+  RLS("rl-loaded");
   svPending = carry; svResumeOn = 1;
   if (!booth1225Old) { menuRingAt1225[0] = hx; menuRingAt1225[1] = hy; menuRingAt1225[2] = hz; menuRingAt1225On = 1; }   // Будка-93 (1225): город читается там, где игрок и будка
-  roomSyncOff96 = 1; menuStartGame(fbp, t0, 1); roomSyncOff96 = 0;   // комнаты и камеры уровня, круг клеток вокруг старта, экран загрузки закрыт внутри (Build 96: без повторного входа в комнату старта)
+  RLS("rl-start");
+  roomSyncOff96 = 1; menuStartGame(fbp, t0, 1); roomSyncOff96 = 0;
+  RLS("rl-started");   // комнаты и камеры уровня, круг клеток вокруг старта, экран загрузки закрыт внутри (Build 96: без повторного входа в комнату старта)
   ldScr1060 = UI_LOAD_LEVEL; mem1060FeOpen = 0; menuRingAt1225On = 0;
   if (!booth1225Old && inRoom()) { roomLeave(); if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "BOOTH1225 room-leave t=%.1f\n", smkT); smkWrite(s_); } }   // старт миссии мог поставить игрока в комнату (дом): он у будки, в городе
   homerPlace(&homer, &world, hx, hy, hz, hh); carPlace(&car, &world, cx, cy, cz, ch); chase.init = 0;
   if (smkOn) { char s_[200]; snprintf(s_, sizeof s_, "CLEANRELOAD96 ms=%u homer=%.2f,%.2f,%.2f->%.2f,%.2f,%.2f dxz=%.2f t=%.1f\n", (sceKernelGetSystemTimeLow() - t0) / 1000u, hx, hy, hz, homer.x, homer.y, homer.z, sqrtf((homer.x - hx) * (homer.x - hx) + (homer.z - hz) * (homer.z - hz)), smkT); smkWrite(s_); }
+  bbGraceMs = 0; waitPump = 0; bbBeatTick(); rlTrack = 0;
+  { char s_[140]; snprintf(s_, sizeof s_, "RELOADGAP total ms=%u max_ms=%u n500=%u max_after=%s t=%.1f\n", (sceKernelGetSystemTimeLow() - rlT0) / 1000u, rlGapMax / 1000u, rlGapN, rlGapAt, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
+  if (mcOn1320_) mvResumeAt1320(mc1320_[0], mc1320_[1], mc1320_[2]);   // 1320: после старта игры из снимка — миссия на прежнем этапе (чекпоинт)
   { SaveGame now; saveCapture(&now); char pa[160]; svProgressText(&now, pa, sizeof pa);
     char s_[400]; snprintf(s_, sizeof s_, "BOOTH1060 msn same=%d before=[%s] after=[%s] t=%.1f\n", !strcmp(pb, pa), pb, pa, smkT); if (smkOn) smkWrite(s_); bbNote(s_); }
 }

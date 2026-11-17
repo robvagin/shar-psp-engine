@@ -7,6 +7,7 @@
 // Иначе — модуль ядра через kubridge ARK-4 (как sharexc.prx, viewer/main.c kexcBoot), проба в нём, итог строкой:
 //   «ME probe ok=… rt_us_min/avg/max=… sum_ok=… mode=mist …»; нет ответа ME за 50 мс — строка начинается «ME timeout».
 // Проба одна на запуск: повторный флаг отдаёт прежнюю строку (модуль уже в памяти, ME второй раз не перезапускаем).
+#include "../power.h"   // 107б: pwrSimAt
 #include <pspkernel.h>
 #include <pspiofilemgr.h>
 #include <kubridge.h>
@@ -23,6 +24,12 @@ static int meHave(const char *dir, const char *name) {
   char fn[256]; snprintf(fn, sizeof fn, "%s%s", dir, name);
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0;
   sceIoClose(f); return 1;
+}
+static int meWantsOldMod(const char *dir) {   // 1 — откат модуля: файл sharmeold или SHARME_STALE107B_OLD в rollback.txt (107б)
+  char t_[256]; SceIoStat st_; snprintf(t_, sizeof t_, "%ssharmeold", dir); if (sceIoGetstat(t_, &st_) >= 0) return 1;
+  snprintf(t_, sizeof t_, "%srollback.txt", dir); SceUID rf_ = sceIoOpen(t_, PSP_O_RDONLY, 0); int r = 0;
+  if (rf_ >= 0) { static char rb_[8192]; int n_ = sceIoRead(rf_, rb_, sizeof rb_ - 1); sceIoClose(rf_); if (n_ > 0) { rb_[n_] = 0; if (strstr(rb_, "SHARME_STALE107B_OLD")) r = 1; } }
+  return r;
 }
 
 // dir — папка игры с «/» в конце; prx — имя модуля рядом с EBOOT; emu — 1 в эмуляторе (smokeIsEmu), 0 — железо или красный
@@ -154,6 +161,7 @@ static int fkThread(SceSize a, void *b) {
     if (sceKernelWaitSema(fkSema, 1, NULL) < 0) return 0;
     volatile MeBox *x = (volatile MeBox *)fkBox;
     if (!x || fkMute) continue;          // «4»: ME молчит — ответа нет никогда
+    if (pwrSimAt && (unsigned)(sceKernelGetSystemTimeLow() - pwrSimAt) < 5000000u) continue;   // 107б: flag simsleep — ME 5 с после сна не отвечает (как перезапущенный), игра должна вернуть его сама (audio.c ME WAKE)
     fkOne(x);
     if (!ME_SCHEME_KBOX(sv.scheme) && !ME_CHAIN_OLD) {   // очередь, как me_gametask.c: следом — прицепленный ящик
       unsigned n = meChainClose(x);
@@ -163,8 +171,9 @@ static int fkThread(SceSize a, void *b) {
     fkRun = 0;
   }
 }
+static unsigned fkRunAt; static int fkStaleOld;   // 107б: параллель правки модуля sharme.prx (устаревшее «занято» > 500 мс = свободно); fkStaleOld — прежний модуль (откат)
 static unsigned fkKick(unsigned a1, unsigned a2, unsigned a3) {
-  if (fkRun) return (unsigned)ME_SVC_BUSY;
+  if (fkRun) { if (!fkStaleOld && (unsigned)(sceKernelGetSystemTimeLow() - fkRunAt) > 500000u) fkRun = 0; else return (unsigned)ME_SVC_BUSY; }
   volatile MeBox *x; unsigned r;
   if (!ME_SCHEME_KBOX(sv.scheme)) { x = (volatile MeBox *)a1; r = x->sent; }
   else {
@@ -178,7 +187,7 @@ static unsigned fkKick(unsigned a1, unsigned a2, unsigned a3) {
     x->pad[0] = a2;                     // адрес задания игры — для переноса итога обратно (схема k)
     x->kind = kind; x->job = job; x->words = a3; x->sum = 0; x->sent = ++fkSeq[c]; r = x->sent;
   }
-  fkRun = !fkMute; fkBox = (unsigned)x; sceKernelSignalSema(fkSema, 1);
+  fkRun = !fkMute; fkRunAt = sceKernelGetSystemTimeLow(); fkBox = (unsigned)x; sceKernelSignalSema(fkSema, 1);
   return r;
 }
 static unsigned fkPoll(unsigned c, unsigned b, unsigned d) {
@@ -215,7 +224,7 @@ static int svBoot(const char *dir, int emu, char mode, const char *who, char *ou
     char m2 = 0; char fn[256]; snprintf(fn, sizeof fn, "%smescheme", dir);   // схема пустышки — файл mescheme (u/b/c/k), иначе ME_MEM
     SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { sceIoRead(f, &m2, 1); sceIoClose(f); }
     sv.scheme = meSchemeFromChar(m2, ME_MEM);
-    fkMute = mode == '4'; fkSema = sceKernelCreateSema("fake_me", 0, 0, 1000, NULL);
+    fkMute = mode == '4'; fkStaleOld = meWantsOldMod(dir); fkSema = sceKernelCreateSema("fake_me", 0, 0, 1000, NULL);
     if ((sv.scheme & 3) == ME_MEM_KERN) fkKjob = memalign(64, sizeof(MixJob));
     SceUID t = sceKernelCreateThread("fake_me", fkThread, 0x14, 0x4000, PSP_THREAD_ATTR_USER, NULL);
     if (fkSema < 0 || t < 0 || ((sv.scheme & 3) == ME_MEM_KERN && !fkKjob)) { snprintf(out, outN, "ME %s off: fake\n", who); return -1; }
@@ -232,10 +241,14 @@ static int svBoot(const char *dir, int emu, char mode, const char *who, char *ou
   MeSvcArgs a; memset(&a, 0, sizeof a); a.magic = ME_SVC_MAGIC; a.res = (unsigned)mem; a.scheme = scheme; snprintf(a.dir, sizeof a.dir, "%s", dir);
   { int meGameTask(int, void *); a.gameFn = (unsigned)meGameTask; sceKernelDcacheWritebackAll(); }   // 04.10: функция ME в памяти игры (ядро ME не видит)
   sceKernelDcacheWritebackInvalidateRange(mem, 128);
-  char fn[256]; snprintf(fn, sizeof fn, "%ssharme.prx", dir);
+  // 107б (Fable §P0, Роб 1273): новый модуль (устаревшее «ME занят» дольше 500 мс = свободно) — sharme.prx; прежний лежит рядом как sharme_old.prx и берётся, если есть файл sharmeold
+  // или в rollback.txt названо SHARME_STALE107B_OLD (откат без пересборки). В строку ME пишутся имя и размер загруженного файла.
+  char fn[256]; const char *mod = "sharme.prx";
+  if (meWantsOldMod(dir) && meHave(dir, "sharme_old.prx")) mod = "sharme_old.prx";
+  snprintf(fn, sizeof fn, "%s%s", dir, mod); unsigned modSz = 0; { SceIoStat st_; if (sceIoGetstat(fn, &st_) >= 0) modSz = (unsigned)st_.st_size; }
   unsigned t0 = sceKernelGetSystemTimeLow();
   SceUID m = kuKernelLoadModule(fn, 0, 0);
-  if (m < 0) { snprintf(out, outN, "ME %s off: load:%08x\n", who, (unsigned)m); free(mem); return -1; }
+  if (m < 0) { snprintf(out, outN, "ME %s off: load:%08x module=%s\n", who, (unsigned)m, mod); free(mem); return -1; }
   int st = 0, rc = sceKernelStartModule(m, sizeof a, &a, &st, 0);
   unsigned ms = (sceKernelGetSystemTimeLow() - t0) / 1000u;
   sceKernelDcacheInvalidateRange(mem, 128);
@@ -248,7 +261,7 @@ static int svBoot(const char *dir, int emu, char mode, const char *who, char *ou
   meSvc = 1; sv.kick = R->kick; sv.poll = R->poll; sv.quiesce = R->quiesce; sv.scheme = scheme; sv.on = 1;
   SceUID t = sceKernelCreateThread("me_svc_pwr", svPwrThread, 0x11, 0x1000, PSP_THREAD_ATTR_USER, NULL);
   if (t >= 0) sceKernelStartThread(t, 0, NULL);
-  snprintf(out, outN, "ME %s on table=%d evf=%d/%d st0=%x scheme=%d kbox=%x ms=%u\n", who, R->table, R->evfFound, R->evfPre, R->st0, scheme, R->kbox, ms);
+  snprintf(out, outN, "ME %s on table=%d evf=%d/%d st0=%x scheme=%d kbox=%x ms=%u module=%s size=%u\n", who, R->table, R->evfFound, R->evfPre, R->st0, scheme, R->kbox, ms, mod, modSz);
   return 0;
 }
 static int svFlag(const char *dir, const char *name, char *mode) {   // флаг-файл рядом с EBOOT: есть ли и первый байт

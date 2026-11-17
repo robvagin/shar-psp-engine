@@ -1,0 +1,14 @@
+# P0 шаг 1 (107b, Стена): сон и пробуждение (flag simsleep N — N отказов долгих файлов подряд, pwrSimFault("mcr") среди них) в начале этапа с smith_v: после пробуждения отказы заново, своя модель встаёт
+scene mcrsleep
+wait 3
+flag msn
+wait 2
+flag simsleep 4
+wait 2
+flag msnmain 3
+wait 3
+press cross
+wait 3
+goto 214 281 1.57
+wait 30
+end

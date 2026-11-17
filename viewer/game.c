@@ -440,6 +440,7 @@ void gameAfterCar(Game *g, const GamePad *p, float dt) {
     drvDmg = car.damage; memset(&drvIn, 0, sizeof drvIn);
     XS_LAP(13, xt_, xw_);
     homerSetIndoor(&homer, g->pHomerWorld != NULL);   // сверка g04-homer P02-6: в комнате (мир интерьера) бег и прыжок отключены, удар не бьёт по предметам
+    diagFootWant108 = hypotf(hi.mx, hi.my);   // 107b: сколько тянут стик пешком (строка ящика STUCK)
     homerUpdate(&homer, g->pHomerWorld ? g->pHomerWorld : &world, &hc, &hi, dt); XS_LAP(5, xt_, xw_);
     if (g->hk.afterHomer) g->hk.afterHomer(g->hk.u, &hc); XS_LAP(6, xt_, xw_);
     HomerEvent e;
@@ -483,15 +484,15 @@ void gameAfterCar(Game *g, const GamePad *p, float dt) {
           float point[3] = {e.x, e.y, e.z}, closest[3]; propsClosestPoint(&props, i, point, closest);
           if (!homerHitTest(&e, closest[0], closest[1], closest[2], 0.f)) continue;
           float dx = e.dx, dz = e.dz; if (e.type == HOMER_EV_STOMP) { dx = st->x - e.x; dz = st->z - e.z; float l = sqrtf(dx * dx + dz * dz) + 1e-3f; dx /= l; dz /= l; }
-          if (gamePropKick(g, i, dx, dz)) { st->hidden = 1; st->asleep = 1; continue; }   // обломок (дерево, знак, гидрант)
+          if (gamePropKick(g, i, dx, dz)) { st->hidden = 1; st->asleep = 1; propsHotSync(&props, i); continue; }   // обломок (дерево, знак, гидрант)
           float k = 6.f * 100.f / (100.f + ty->mass);                         // лёгкое летит, тяжёлое едва сдвигается
           if (!PROP_KICK400_OLD) {   // P11-11 (сверка g10-flow): скорость = сила 400 / масса (кг) по направлению пинка, 45° вверх: 100 кг — 4 м/с, 1000 кг — 0,4, 20 кг — 20
             float dl = sqrtf(dx * dx + dz * dz); if (dl > 1e-4f) { dx /= dl; dz /= dl; }
-            float v = 400.f / (ty->mass > 0.f ? ty->mass : 100.f), h45 = v * .70710678f;
+            float v = propsHomerKickSpeed(e.type == HOMER_EV_STOMP, ty->mass), h45 = v * .70710678f;   // 107б П12: пинок 400 / масса, стомп 800 / масса
             st->vel[0] = dx * h45; st->vel[2] = dz * h45; st->vel[1] = h45; k = h45;
           } else {
           st->vel[0] = dx * k; st->vel[2] = dz * k; st->vel[1] = fminf(k * .4f, 3.f); }
-          st->w[0] = dz * k; st->w[2] = -dx * k; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1;
+          st->w[0] = dz * k; st->w[2] = -dx * k; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; propsHotSync(&props, i);
         }
       }
       if (g->pColl) {

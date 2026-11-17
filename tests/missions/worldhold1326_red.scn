@@ -1,0 +1,30 @@
+# 1326: L5 m7, после ✕ карточки чёрный слой на 4 с (как на PSP: интерфейс виден, мир чёрный); снимки через 0,5 с
+scene g1326
+flag worldhold1326old 1
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+flag worldblack 4
+wait 0.5
+shot w1
+wait 0.5
+shot w2
+wait 0.5
+shot w3
+wait 0.5
+shot w4
+wait 0.5
+shot w5
+wait 0.5
+shot w6
+wait 0.5
+shot w7
+wait 0.5
+shot w8
+wait 0.5
+shot w9
+wait 1.5
+shot w10
+end

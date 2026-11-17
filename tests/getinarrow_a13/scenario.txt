@@ -1,0 +1,14 @@
+# A1.3 (сверка Fable 13.11): на этапе getin над машиной стрелка «arrow». L1 m0: разговор с Мардж, карточка, ✕, этап «сядь в машину» (Гомер пешком у машины).
+# Ожидание: строка MSN getin-arrow drawn (при -DMVGETINARROW_OLD=1 её нет). tests/getinarrow_a13/run.sh DIR
+scene m0
+wait 3
+flag msn
+wait 4
+flag msngo
+wait 2
+press triangle
+wait 22
+press cross
+wait 8
+shot getin
+end

@@ -1,0 +1,13 @@
+# 1344: вход в moe, модели персонажей читаются медленно (flag npcdelay 1800)
+scene g13442
+flag golevel 2
+wait 25
+flag msn
+wait 10
+flag npcdelay 1800
+foot -173.6 -24.5 0.0 7.1
+wait 8
+press triangle 0.3
+wait 14
+shot r1
+end

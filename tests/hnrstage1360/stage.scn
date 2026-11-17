@@ -1,0 +1,29 @@
+# 1360 (Fable Ж4): L4 m1 с этапа 1.1.2, шкала H&R полная (flag hnr 100, арест выключен), этапы засчитываются подряд (msnpass). Новое: «HNR msnreset» только на старте миссии (1 строка), шкала держится; прежнее: пара win/start на каждой смене этапа.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO4_L4
+flag golevel 4
+wait 25
+flag msnbot 1
+flag msnbotpass 0
+flag msnmainat 2
+wait 8
+flag nobust 1
+flag hnr 100
+wait 6
+flag hnr 100
+wait 5
+scene P0
+flag msnpass
+wait 4
+scene P1
+flag hnr 100
+wait 3
+flag msnpass
+wait 5
+scene P2
+flag msnpass
+wait 5
+end

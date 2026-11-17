@@ -1,0 +1,15 @@
+# №1269 (видео Роба 13.11): после ролика на карточке миссии нет картинки (память не нашлась за 3 повтора, карточка вышла без неё).
+# Нехватка памяти ставится служебно: flag msnartfail 20 (первые 20 запусков чтения записей миссии «нет памяти», как после ролика, пока не освободится куча).
+# Ожидание: MSN briefing-loaded ... pic=mis01_00 lost=0 (картинка ждёт на LOADING и приходит); при -DBRIEFPIC1269_OLD=1 lost=1. tests/briefpic1269/run.sh
+scene m0
+wait 3
+flag msn
+wait 4
+flag msngo
+wait 2
+flag msnartfail 20
+wait 1
+press triangle
+wait 45
+shot brief_card
+end

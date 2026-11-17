@@ -1,0 +1,27 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 4
+scene R_door
+foot 213.97 301.70 0.0000 5.56
+wait 1.5
+flag simsleep 6
+press triangle 0.3
+wait 9
+scene R_retry
+foot 230 330 0.0000 5.56
+wait 4
+foot 213.97 301.70 0.0000 5.56
+wait 8
+wait 1.5
+press triangle 0.3
+wait 12
+scene R_end
+flag stop
+wait 2
+end

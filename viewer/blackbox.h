@@ -30,5 +30,7 @@
 #define SHAR_BLACKBOX_H
 void bbOp(const char *op, const char *arg, int sync);
 void bbBeatTick(void);
+void bbNoteDiag(const char *kind, const char *text);   // 107b: долгоживущие строки STUCK/NEAR/PAUSE/MSNEND в хвост ящика (8 записей, по образцу ICON)
+void bbNoteMsnEnd(const char *why);   // 107b: конец миссии (причина) — строка MSNEND: этап, позиция игрока, машины миссии (msn_view.c)
 void bbNoteIcon(const char *line);   // №958б: строка события в кольцо ящика без записи на карту и без смены «последнего действия» (смена значка/облачка цели)
 #endif

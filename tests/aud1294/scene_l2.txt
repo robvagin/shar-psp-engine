@@ -1,0 +1,13 @@
+flag menu
+flag lvset 2
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=2 300
+wait 12
+scene L2_START
+wait 8
+scene L2_END
+flag stop
+wait 2
+end

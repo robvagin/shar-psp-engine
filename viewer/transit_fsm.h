@@ -40,6 +40,7 @@ static int tfFailBonus, tfFailMsn, tfFailMenu;   // служебное (Build 96
 static int cleanReload96 = !CLEANRELOAD96_OLD;   // Build 96: файл cleanreload96old / flag cleanreload96 0 — ступени нет, после лестницы сразу SIMPLIFY
 static int tfFailTest;                 // служебное flag tffail N: следующие N попыток LOAD отказывают (красный/зелёный контроль ступеней)
 static int ldrRun(const Transit *t, void **fbp);   // ниже (TFSM_IMPL, после mem1060.h)
+void bbNoteDiag(const char *kind, const char *text);   // blackbox.h: 1320 — отказ перехода в ящик
 static void tfExtBegin(const Transit *t); static void tfExtEnd(const Transit *t, int ok);   // ниже (TFSM_IMPL)
 #endif
 
@@ -109,6 +110,7 @@ static int ldrRun(const Transit *t, void **fbp) {
   if (!ok) {   // SIMPLIFY: честный путь, тишины нет
     tfState = TF_SIMPLIFY; if (t->simplify) t->simplify(t->u); tfLog(t, "simplify", 0, 0);
     if (smkOn) { char s_[140]; snprintf(s_, sizeof s_, "WATCHDOG mem who=%s size=%u step=5 simplify blk=%u free=%u fsm t=%.1f\n", t->name, t->need, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), smkT); smkWrite(s_); }
+    { char b_[100]; snprintf(b_, sizeof b_, "%s need=%u blk=%u free=%u steps=%d reload=%d", t->name, t->need, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), step, t->cleanReload && cleanReload96 ? 1 : 0); bbNoteDiag("XITFAIL", b_); }   // 1320: отказ перехода виден в ящике выпуска (без smkOn), хвост на 8 записей
     if (uiReady && t->simplifyText && *t->simplifyText) uiMessage(t->simplifyText, -1, 2.f);   // надпись из библии оригинала (ТЕКСТЫ_SIMPLIFY_94.md Данных); пустая строка: без надписи, но WATCHDOG для ботов остаётся
     if (preloader && fe) mem1060FeOut();
     if (preloader && mem1060Back && !t->deferReturn) { if (t->noReturn) mem1060Back = 0; else mem1060Return(fbp); }

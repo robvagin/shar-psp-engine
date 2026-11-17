@@ -122,7 +122,11 @@ static void logf_(const char *fmt, ...) {   // строка PHONEV ... t=.. в s
   snprintf(line, sizeof line, "PHONEV %s t=%.2f\n", body, t); logFn(line);
 }
 void phoneViewSetLog(void (*log)(const char *)) { logFn = log; }
-static void snd(int id) { if (id >= 0) sndPlay2D(id, 1.f); }
+static void snd(int id) {
+  if (id < 0) return;
+  if (BOOTHSND1266_OLD) sndPlay2D(id, 1.f); else sndPlayUi(id, 1.f);   // №1266: звуки меню будки на шине меню, мир при этом молчит (№1135)
+  if (logFn) { char line[96]; snprintf(line, sizeof line, "PHONEV click id=%d bus=%s lvl=%.2f t=%.2f\n", id, BOOTHSND1266_OLD ? "sfx" : "ui", sndBusLevelUi(!BOOTHSND1266_OLD), t); logFn(line); }
+}
 // №682: игра пройдена — машины пройденных уровней открыты. Прогресс сохранения (до какого уровня дошла игра) главный цикл ставит перед открытием
 // (phoneViewSetProgress): своя машина уровня открыта, если уровень открыт в сохранении (не только текущий); награда — если куплена/взята (Coins.owned)
 // или её уровень пройден целиком (ниже достигнутого). PHONE_UNLOCK_OLD=1 — прежнее (по текущему уровню и Coins.owned)

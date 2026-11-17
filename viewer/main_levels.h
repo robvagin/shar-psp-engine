@@ -19,12 +19,13 @@ void svSurfaceBind(const ColWorld *w, const void *section, unsigned size); void 
 #include "svdata.h"   // сверка g12-data круг 6 (P12-08): объёмы «смена света» из svdata-l<N>.shr
 static unsigned char *svSideBuf;   // файл surf-l<N>.shr (читает svSurfaceSideLoad ниже)
 int svSurfaceSide(const void *side, unsigned n); int svSurfaceHave(void);   // сверка g12-data круг 4: тип поверхности из файла surf-l<N>.shr рядом с уровнем
+#include "power.h"   // 107б P0: эпоха питания
 #include "lmap.h"   // загрузка 2 п.2: сжатая карта высот и стен (lmap.shr)
 static void lspReset(void);   // lightsprite.h подключается позже (main.c): сброс таблицы света при выгрузке уровня
 static void coinSprPreload(void);   // coinspr.h (позже): лента монеты — с карты под газетой загрузки, а не на первой монете в кадре (проверка 17.10: заминка ~25 мс)
 static int loadedLevel;                 // чей набор сейчас в памяти (0 — ничей)
 static int uiLevel = 1, sndLevel = 1;   // чей ui.shr / audio/ открыт (на заставке — уровня 1, как раньше)
-static unsigned char *levelData; static void *colMem; static float carLift;
+static unsigned char *levelData, *levelDataV; static unsigned p1GapLast; static void *colMem; static float carLift;
 static int loaderUp;                    // загрузчик клеток запущен (levelUnload ждёт его простоя)
 static void slLightReset(void);   // spritelight.h (Build 95: сброс таблицы света в levelUnload)
 static int lvLeak;                      // отрицательный контроль гейта («flag lvleak»): выгрузка забывает PVS и коллизию
@@ -67,20 +68,34 @@ static inline unsigned latTexel(const Tex *x, int px, int py) {   // индек�
   return x->t4 ? ((px & 1) ? v >> 4 : v & 15) : v;
 }
 static void latticeApply(void) { for (unsigned i = 0; i < ntex; i++) { Tex *x = &tex[i]; if (x->lat) x->levels = latticeOn && x->levelsAll > LATTICE_LEVELS ? LATTICE_LEVELS : x->levelsAll; } }
+// 109 З8 (запекание: «таблица текстур при загрузке: решётки», LOADPH3 textab.lattice 122 мс эмулятора, на PSP ≈0,7 с): признак решётки — функция только от текстуры (палитра после тона, размеры, пиксели верхнего мипа), считается
+// при печи (texbakedump, тот же код движка) и лежит в записи texbake.shr: fl[12] 0 неизвестно / 1 нет / 2 решётка, fl[13] — ключ констант правила (LATTICE_LEVELS, LATTICE_THICK): другой ключ — считаем сами.
+// Запись берётся вместе с остальной записью (ключ входа и хеш записи уже сошлись), пиксели не обходятся. LATBAKE_OLD=1 / файл latbakeold рядом с EBOOT — всегда считать самим. texbakecheck: считает само и сверяет (LATBAKE bad=)
+#ifndef LATBAKE_OLD
+#define LATBAKE_OLD 0
+#endif
+#define LATKEY ((unsigned char)(LATTICE_LEVELS * 16 + (int)(LATTICE_THICK * 1000.f + .5f) % 16 + 1))
+static int latBakeOld = LATBAKE_OLD; static unsigned latBaked, latLive, latBad;
+static int latticeEval(const Tex *x, float *thickOut) {   // 1 — решётка (правило №904); levels — мипов в файле
+  if (x->levels <= LATTICE_LEVELS || !x->pal || !x->lv[0] || x->w < 16 || x->h < 16 || x->w > 256 || x->h > 256) return 0;
+  const unsigned *pal = (const unsigned *)x->pal; int lo = 0, hi = 0, mid = 0; for (int c = 0; c < (x->t4 ? 16 : 256); c++) { unsigned a = pal[c] >> 24; lo += a <= 0x40; hi += a >= 200; mid += a > 8 && a < 247; }
+  if (!lo || !hi) return 0;   // нет и прозрачного, и плотного — не вырезка
+  unsigned area = 0, per = 0, midpx = 0;
+  for (int y = 0; y < x->h; y++) for (int px = 0; px < x->w; px++) { unsigned a = pal[latTexel(x, px, y)] >> 24; midpx += a > 8 && a < 247; if (a <= 0x40) continue; area++;
+    if (px == 0 || y == 0 || px == x->w - 1 || y == x->h - 1 || (pal[latTexel(x, px - 1, y)] >> 24) <= 0x40 || (pal[latTexel(x, px + 1, y)] >> 24) <= 0x40 || (pal[latTexel(x, px, y - 1)] >> 24) <= 0x40 || (pal[latTexel(x, px, y + 1)] >> 24) <= 0x40) per++; }
+  if (!area || !per || midpx * 50u > (unsigned)(x->w * x->h)) return 0;
+  float thick = 2.f * (float)area / (float)per / (float)(x->w > x->h ? x->w : x->h); if (thickOut) *thickOut = thick;
+  return thick < LATTICE_THICK;
+}
 static void latticeScan(void) {
-  latticeN = 0;
-  for (unsigned i = 0; i < ntex; i++) { Tex *x = &tex[i]; x->levelsAll = x->levels; x->lat = 0;
-    if (x->levels <= LATTICE_LEVELS || !x->pal || !x->lv[0] || x->w < 16 || x->h < 16 || x->w > 256 || x->h > 256) continue;
-    const unsigned *pal = (const unsigned *)x->pal; int lo = 0, hi = 0, mid = 0; for (int c = 0; c < (x->t4 ? 16 : 256); c++) { unsigned a = pal[c] >> 24; lo += a <= 0x40; hi += a >= 200; mid += a > 8 && a < 247; }
-    if (!lo || !hi) continue;   // нет и прозрачного, и плотного — не вырезка
-    unsigned area = 0, per = 0, midpx = 0;
-    for (int y = 0; y < x->h; y++) for (int px = 0; px < x->w; px++) { unsigned a = pal[latTexel(x, px, y)] >> 24; midpx += a > 8 && a < 247; if (a <= 0x40) continue; area++;
-      if (px == 0 || y == 0 || px == x->w - 1 || y == x->h - 1 || (pal[latTexel(x, px - 1, y)] >> 24) <= 0x40 || (pal[latTexel(x, px + 1, y)] >> 24) <= 0x40 || (pal[latTexel(x, px, y - 1)] >> 24) <= 0x40 || (pal[latTexel(x, px, y + 1)] >> 24) <= 0x40) per++; }
-    if (!area || !per || midpx * 50u > (unsigned)(x->w * x->h)) continue;
-    float thick = 2.f * (float)area / (float)per / (float)(x->w > x->h ? x->w : x->h);
-    if (thick < LATTICE_THICK) { x->lat = 1; latticeN++; if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "LATTICE tex=%u %dx%d thick=%.3f levels=%d->%d\n", i, x->w, x->h, thick, x->levels, LATTICE_LEVELS); smkWrite(s_); } } }
+  latticeN = 0; latBaked = latLive = latBad = 0;
+  for (unsigned i = 0; i < ntex; i++) { Tex *x = &tex[i]; x->levelsAll = x->levels; x->lat = 0; float thick = 0.f; int r;
+    if (x->latB && !latBakeOld) { r = x->latB == 2; latBaked++; }   // из записи texbake.shr
+    else { r = latticeEval(x, &thick); latLive++; if (x->latC && (x->latC == 2) != r) latBad++; }   // latC — что сказал файл при сверке (texbakecheck)
+    if (r) { x->lat = 1; latticeN++; if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "LATTICE tex=%u %dx%d thick=%.3f levels=%d->%d\n", i, x->w, x->h, thick, x->levels, LATTICE_LEVELS); smkWrite(s_); } } }
   latticeApply();
-  if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "LATTICES level=%d n=%u on=%d\n", gameLevel, latticeN, latticeOn); smkWrite(s_); }
+  if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "LATTICES level=%d n=%u on=%d\n", gameLevel, latticeN, latticeOn); smkWrite(s_);
+    snprintf(s_, sizeof s_, "LATBAKE level=%d baked=%u live=%u bad=%u old=%d\n", gameLevel, latBaked, latLive, latBad, latBakeOld); smkWrite(s_); }
 }
 // №907 (Роб 23.10, снимок TEST53: у синего автомата с газировкой у АЭС «нормали смотрят внутрь» — стенки не видно, видна изнанка задней и тёмный низ): у предметов диска
 // (пропы PRP1, стейтпропы SPR1: автоматы, будки, ящики, колонки) материал помечен translucent (флаг 2), хотя текстура целиком непрозрачна (альфа 255) и у вершин альфа 255 —
@@ -212,7 +227,8 @@ static unsigned lvMx0;   // №696: крупнейший блок кучи в м
 static void levelLog(const char *what, unsigned t0, unsigned h0) {   // smoke.txt: строка LEVEL (гейт tests/levels/switch.sh)
   if (!smkOn) return;
   { extern unsigned smallPoolPages(void), smallPoolLive(void), smallPoolLiveMax(void), smallPoolOver(void); char sp_[96]; snprintf(sp_, sizeof sp_, "SMALLPOOL %s pages=%u live=%u livemax=%u over=%u\n", what, smallPoolPages(), smallPoolLive(), smallPoolLiveMax(), smallPoolOver()); smkWrite(sp_); }
-  if (!strcmp(what, "free") || !strcmp(what, "load")) { memmapDump(smkWrite, what); if (!strcmp(what, "free")) memmapFreeMap(smkWrite, what); }   // Опора-93: живые блоки >= 128 КБ по адресам в момент выгрузки и после загрузки
+  if (rlTrack) bbStep = "rl-levellog";   // 1320б: тур 73015bd8 на железе: 9 с без кадров внутри выгрузки, где пишется ~1900 строк MEMLIVE; метка шага + дамп живых блоков (только смоук) в перезагрузке пропущен
+  if ((!strcmp(what, "free") || !strcmp(what, "load")) && !rlTrack) { memmapDump(smkWrite, what); if (!strcmp(what, "free")) memmapFreeMap(smkWrite, what); }   // Опора-93: живые блоки >= 128 КБ по адресам в момент выгрузки и после загрузки
   char s[440];
   snprintf(s, sizeof s, "LEVEL ev=%s n=%d loaded=%d ms=%.0f heap0=%u heap=%u mx0=%u mx=%u spawn=%.2f,%.2f,%.2f,%.3f cells=%u tex=%u col=%d props=%d sp=%d "
            "traffic=%d msn=%d clt=%d rooms=%d fx=%d ui=%d/%d snd=%d/%d t=%.1f\n", what, gameLevel, loadedLevel,
@@ -542,7 +558,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   pvsEnt = 0; pvsPool = 0; pvsW = pvsH = 0; pvsRange = PVS_RANGE;
   if (pvbOn) { for (int i_ = 0; i_ < 3; i_++) { free(pvbBuf[i_]); pvbBuf[i_] = 0; pvbKey[i_] = -1; } pvbOn = 0; pvbIdx = 0; pvbMask = 0; pvbGrp = 0; }   // П3: буферы разворота PVB1 (сам блок — lvaFree(pvsEnt) выше)
   free(regMask); regMask = 0; regW = regH = 0; regEye = 0xFFFFu;   // правка 95: маска регионов уровня
-  free(zg); free(zp); zg = 0; zp = 0; nzg = nzp = zgOn = zgInit = zgStart = 0; regRes = 0xFFFFu; regNn = 0;   // правка 181
+  free(zg); free(zp); zg = 0; zp = 0; nzg = nzp = zgOn = zgInit = zgStart = 0; regRes = 0xFFFFu; regNear = 0; regNn = 0;   // правка 181
   for (unsigned i = 0; i < ntex; i++) if (!tex[i].pre && tex[i].slv[0] && tex[i].slv[0] != tex[i].lv[0]) free(tex[i].slv[0]);   // swizzleAll
   skinToonFlush();   // правка 428: оболочки персонажей прежнего уровня (модели уходят вместе с ним)
   road934Free();   // №934: дальние дороги и мосты прежнего уровня
@@ -551,7 +567,7 @@ static void levelUnload(void) {   // всё, что держит набор ур
   free(cdl); cdl = 0; free(cdlMark); cdlMark = 0;
   cgGen++; camLevelGen++; csNearPrevOk = 0; peOk = 0; nfAge = 99; phPrevOk = 0; phHold = 0;   // №654: кэши камеры не переживают уровень
   roadqFree();   // №864
-  slLightResetReq = 1; toneJobCancel(); toneBlkDel(levelData); free(cl); cl = 0; free(cellBigF); cellBigF = 0; ncell = 0; lvaFree(levelData); levelData = 0; hm = wl = 0;
+  slLightResetReq = 1; toneJobCancel(); toneBlkDel(levelDataV); levelDataV = 0; lmPgOn = 0; missGridFree(); free(cl); cl = 0; free(cellBigF); cellBigF = 0; ncell = 0; lvaFree(levelData); levelData = 0; hm = wl = 0;
   if (!LVA_WIDE_OLD) { fxFree(); hlodFree(); }   // Build 96 шаг 6: blob fx и hlod лежат в блоке уровня - свободить до lvaRelease (свободить после отдачи блока нельзя: указатель висит)
   lvaReset();   // №775: участок уровня пуст — следующий уровень кладёт резидентную часть, COL1 и PRP2 туда же
   if (!lvLeak) lvaRelease();   // Z1 (Build 95): блок уровня отдан целиком, куча сливается в один кусок до следующей загрузки
@@ -680,7 +696,7 @@ static void playerLoad(void) {
     if (!ok) { if (m) skinFree(m); sibling(fn, "homer.shr"); m = skinLoadKeep(fn); ok = m && homerInit(&homer, m) == 0;   // запасной — Гомер
       if (!ok && !PLAYER_RETRY_OLD) playerFailNote("homer.shr", m ? 5 : skinLoadErr); }
     if (!ok) { if (m) skinFree(m); m = 0; haveHomer = 0; pcPath[0] = 0; }
-    else { snprintf(pcPath, sizeof pcPath, "%s", fn); skinWorn = 0; homer.solid = homerSolidAll; homer.solidUser = 0; }
+    else { snprintf(pcPath, sizeof pcPath, "%s", fn); skinWorn = 0; homer.solid = homerSolidAll; homerRideFn = homerRideAll; homer.solidUser = 0; }
     homerM = m;
   }
   if (smkOn) { const char *b2 = strncmp(pcPath, base, bl) ? pcPath : pcPath + bl;
@@ -785,10 +801,13 @@ static void propFlatMark1167(void) {
 static void levelPropAdopt(void *m, unsigned sz) {   // PRP1/PRP2 прочитан в m
   if (propsInit(&props, m, sz) == 0) {
     haveProps = 1; propSec = m; propSecN = sz;   // 12а: секция живёт до выхода, NEW GAME берёт состояние из неё заново
+    { unsigned nt_ = 0; if (props.volIdx) for (unsigned t_ = 0; t_ < props.ntype; t_++) nt_ += props.volIdx[2 * t_ + 1] != 0;   // 109/П4: есть ли в уровне объёмы столкновения предметов (PVL1); нет — контакт идёт прежним путём (props.c volContact107)
+      if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "PROPVOL107 table=%d types=%u/%u volumes=%u old=%d\n", props.vol ? 1 : 0, nt_, props.ntype, props.nvol, propsVol107Old); smkWrite(l_); }
+      bbNote(props.vol ? "PROPVOL107 table=1\n" : "PROPVOL107 table=0 (уровень без PVL1, контакт предметов прежний)\n"); }
     if (props.coinType >= 0 && props.ncoin && coinsInit(&coins, props.coinPos, props.ncoin) == 0) { haveCoins = 1; coins.dropAuto = 1; }   // пока игрок всегда в машине
     props.onKick = propKickLog946; props.kickUser = &G;   // шкала, обломки SPR1 (viewer/game.c) + звук и частицы ATC (onPropKickFx)
     rfSpReset();   // render_fast О2: радиусы типов — от нового SPR1
-    if (props.spr && spInit(&sprops, props.spr, props.sprSize) == 0) haveSP = 1;
+    if (props.spr && spInit(&sprops, props.spr, props.sprSize) == 0) { haveSP = 1; spLogFn = spLog1305; }
     if (haveSP) boothBase1052(&sprops);   // №1052
     if (BONUSPRP1167_OLD || tex) propFlatMark1167(); else propFlatPending1167 = 1;   // №1167: таблицы текстур ещё нет (бонус-трасса без хвоста) — пометка после calloc
     aoBind();
@@ -829,7 +848,7 @@ static void prereadTakeover(unsigned char *data) {
   unsigned o = prDone ? prDone : prOff; int ok = 1; char a[48]; unsigned t0 = sceKernelGetSystemTimeLow();
   SceUID pfd = sceIoOpen(prPath, PSP_O_RDONLY, 0);
   if (pfd < 0) ok = 0; else { sceIoLseek32(pfd, o, PSP_SEEK_SET);
-    while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o, n) != (int)n) { ok = 0; break; } o += n; if (ldOn) loadPump(); }
+    while (o < prSize) { unsigned n = prSize - o; if (n > (512u << 10)) n = 512u << 10; if (sceIoRead(pfd, prBuf + o - prGap, n) != (int)n) { ok = 0; break; } o += n; if (ldOn) loadPump(); }
     sceIoClose(pfd); }
   snprintf(a, sizeof a, "preread_takeover_ok%d", ok); bbOp("loadwait", a, 0);
   if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "PREREAD takeover ok=%d from=%u size=%u ms=%u t=%.1f\n", ok, prDone, prSize, (sceKernelGetSystemTimeLow() - t0) / 1000u, smkT); smkWrite(s_); }
@@ -843,6 +862,24 @@ static void prereadTakeover(unsigned char *data) {
 #ifndef LVA_SOFT_KB
 #define LVA_SOFT_KB 2560u
 #endif
+// 108 П1: карта высот и стен страницами (viewer/lmappage.h). lmap.shr версии 2 несёт готовое хранилище; блок уровня теряет «дыру» = плотный массив минус хранилище, чтение уровня идёт от виртуальной базы
+// (файловое смещение ≥ dend ложится в блок со сдвигом −gap). gap = 0 — плотный массив в блоке, как раньше (P1PAGES_OLD=1 / файл p1pagesold рядом с EBOOT / нет lmap.shr версии 2 / ключ не тот)
+#ifndef P1PAGES_OLD
+int rb_P1PAGES_OLD __attribute__((weak));   // 107б rollback.txt (rollback.h)
+#define P1PAGES_OLD rb_P1PAGES_OLD
+#endif
+#define LMP_STORE_OFF 112u   // хранилище лежит в блоке с этого смещения (заголовок 104 Б, выравнивание 16), остаток уровня — следом, с 16-байтным выравниванием файлового смещения
+static unsigned lmapV2Gap(const unsigned char *hdr, unsigned fsz, unsigned hw_, unsigned hh_, unsigned resident, unsigned *store) {
+  if (P1PAGES_OLD || LMAP_OLD) return 0;
+  { char fo_[256]; SceIoStat so_; sibling(fo_, "p1pagesold"); if (sceIoGetstat(fo_, &so_) >= 0) return 0; }
+  { char fo_[256]; SceIoStat so_; sibling(fo_, "dalbeltoff"); if (sceIoGetstat(fo_, &so_) >= 0) return 0; }   // решение дирижёра: шар пояса и П1 (страницы карты высот) включаются и выключаются вместе — файл dalbeltoff выключает и страницы
+  unsigned dend = lmapDenseEnd(hw_, hh_); if (dend >= resident) return 0;
+  char fn[256]; levelFile(fn, "lmap.shr"); SceUID lf = sceIoOpen(fn, PSP_O_RDONLY, 0); if (lf < 0) return 0;
+  LmapHead lh; int ok = sceIoRead(lf, &lh, sizeof lh) == (int)sizeof lh; sceIoClose(lf);
+  if (!ok || memcmp(lh.magic, LMAP_MAGIC, 4) || lh.ver != 2 || lh.key != lmapKey(hdr, fsz) || lh.pad[0] != dend - 104 || !lh.denseBytes || !lh.compBytes || lh.compBytes >= (16u << 20)) return 0;
+  unsigned s16 = (lh.denseBytes + 15u) & ~15u; if (LMP_STORE_OFF + s16 >= dend) return 0;
+  if (store) *store = lh.denseBytes; return dend - LMP_STORE_OFF - s16;
+}
 static unsigned lvaFileSize(const char *name) { char fn[256]; levelFile(fn, name); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0; int s = sceIoLseek32(f, 0, PSP_SEEK_END); sceIoClose(f); return s > 0 && s < (8 << 20) ? (unsigned)s : 0; }
 #if !COLRING_OLD
 // Коллизия-96: COL1 кольцом (viewer/colring.c, tools/col_ring_build.py, docs/handoff/КОЛЛИЗИЯ_КОЛЬЦО_ПЛАН_2026-11-08.md). Файл colring.shr рядом с level.shr (сборщик кладёт его на L1 и L4, где COL1 ≈ 6 МБ);
@@ -852,7 +889,39 @@ static unsigned lvaFileSize(const char *name) { char fn[256]; levelFile(fn, name
 #endif
 static ColRing *colRingG; static SceUID colRingFd = -1; static unsigned colRingPoolB; static char colRingPath[256]; static int colRingHave;
 static float colRingLx, colRingLz; static unsigned colRingFrames, colRingEnsures;
-static int colRingIoRead(void *u, unsigned off, void *dst, unsigned n) { (void)u; if (colRingFd < 0) return -1; if (sceIoLseek32(colRingFd, off, PSP_SEEK_SET) != (int)off) return -1; return sceIoRead(colRingFd, dst, n) == (int)n ? 0 : -1; }
+// 107б P0 (сон и пробуждение, Роб 1273; генплан Fable §P0): после сна дескриптор colring.shr мёртв, а кольцо повторяло чтение каждый тик на нём до смены уровня — в новых местах не было стен. Теперь: эпоха питания (power.h) изменилась или
+// чтение упало — дескриптор бросается (закрывать нельзя: номер после сна мог отойти другому файлу), файл открывается заново (не чаще раза в 250 мс) и чтение повторяется. P0COLRING_OLD=1 / файл p0colringold — как было
+#ifndef P0COLRING_OLD
+#define P0COLRING_OLD 0
+#endif
+static int colRingRetryOld, colRingRetryMid; static unsigned colRingLastT, colRingEp, colRingRetryT, colRingReopenN, colRingReopenFail, colRingOpenN, colRingCloseN; static int colRingP0 = !P0COLRING_OLD;
+static volatile int colRingSlept;   // kill-хук файл не закрывает, только флаг «сон был» (закрывает и открывает один поток — тот, что читает)
+static void colRingKill(void) { colRingSlept = 1; }   // flag simsleep: файл закрыт, переменная с номером остаётся (мёртвый, как после сна)
+static int colRingReopen(const char *why) {
+  // 108 (Fable-2): пауза между попытками меряется БЕССРОЧНО — беззнаковой разностью от времени ПРОШЛОЙ попытки (colRingLastT), а не «сроком в будущем»: срок после успешного переоткрытия оставался в colRingRetryT, и через 2147–4295 с второй сон на том же уровне снова глушился.
+  // colringretryold 1 — прежнее сравнение тура 108 (красный), colringretrymid 1 — сравнение 74fa310e с защитой от нуля (красный для второго сна)
+  unsigned now = retryNow109();
+  if (colRingRetryOld ? (int)(now - colRingRetryT) < 0 : colRingRetryMid ? (colRingRetryT && (int)(now - colRingRetryT) < 0) : (colRingLastT && (unsigned)(now - colRingLastT) < 250000u)) return 0;
+  colRingLastT = now | 1u;
+  // мёртвый номер закрывается (после сна он уже недействителен, закрытие вернёт ошибку — безвредно); иначе место в таблице открытых файлов терялось на каждый сон
+  if (colRingFd >= 0) { loaderSelfClose = 1; sceIoClose(colRingFd); loaderSelfClose = 0; colRingCloseN++; }
+  colRingSlept = 0; colRingFd = -1; colRingRetryT = (now + 250000u) | 1u; colRingReopenN++;
+  colRingFd = pwrSimFault("colring") ? -1 : sceIoOpen(colRingPath, PSP_O_RDONLY, 0); colRingEp = pwrEpoch(); if (colRingFd >= 0) colRingOpenN++;
+  if (colRingFd < 0) { colRingReopenFail++; if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "WATCHDOG colring reopen-fail why=%s n=%u t=%.1f\n", why, colRingReopenN, smkT); smkWrite(l_); } return 0; }
+  if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "COLRING reopen ok why=%s n=%u epoch=%u open=%u close=%u t=%.1f\n", why, colRingReopenN, colRingEp, colRingOpenN, colRingCloseN, smkT); smkWrite(l_); }
+  return 1;
+}
+static int colRingIoRead(void *u, unsigned off, void *dst, unsigned n) {
+  (void)u;
+  if (!colRingP0) { if (colRingSlept) return -1;   /* симуляция сна: прежний путь читает мёртвый номер */
+    if (colRingFd < 0) return -1; if (sceIoLseek32(colRingFd, off, PSP_SEEK_SET) != (int)off) return -1; return sceIoRead(colRingFd, dst, n) == (int)n ? 0 : -1; }
+  if (colRingFd < 0 || colRingEp != pwrEpoch() || colRingSlept) { if (!colRingReopen(colRingFd < 0 ? "dead" : "epoch")) return -1; }
+  for (int pass = 0; pass < 2; pass++) {
+    if (!pwrSimFault("colring") && sceIoLseek32(colRingFd, off, PSP_SEEK_SET) == (int)off && sceIoRead(colRingFd, dst, n) == (int)n) return 0;
+    if (pass == 0 && !colRingReopen("readfail")) return -1;
+  }
+  return -1;
+}
 static void colRingLogLine(const char *s_) { if (smkOn) { char l_[220]; snprintf(l_, sizeof l_, "%s t=%.1f\n", s_, smkT); smkWrite(l_); } }
 static int colRingProbe(unsigned colSz) {   // 1 — для этого уровня есть годный colring.shr; colRingPoolB — байт под страницы (кольцо 250 м с запасом и кэшем вне кольца)
   colRingPoolB = 0; if (COLRING_LEVEL_OLD || bonusTrack || !colSz) return 0;
@@ -871,6 +940,7 @@ static void colRingClean(void) {
 }
 static int levelColRingAdopt(void) {   // 1 — мир коллизии поднят из кольца; 0 — не вышло (всё убрано), вызывающий читает COL1 целиком
   colRingFd = sceIoOpen(colRingPath, PSP_O_RDONLY, 0); if (colRingFd < 0) return 0;
+  colRingEp = pwrEpoch(); colRingRetryT = 0; colRingLastT = 0; colRingSlept = 0; pwrKillHook("colring", colRingKill);   // 108: флаг «сон был» от прошлого уровня не переходит на новый (тур 108: L1 без кольца, open_err=-2)
   void *pool_ = colRingPoolB ? lvaAlloc(colRingPoolB) : 0; ColRingIO io_ = { colRingIoRead, 0, colRingLogLine }; int err_ = 0;
   colRingG = colRingOpen(&io_, pool_, pool_ ? colRingPoolB : 0, &err_);
   int ok_ = colRingG != 0, ci_ = -99;
@@ -910,9 +980,11 @@ static void lvaSizeForLevel(void) {
   char fn[256]; levelFile(fn, "level.shr"); SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0); if (fd < 0) return;
   unsigned char hdr[104]; int ok = sceIoRead(fd, hdr, 104) == 104 && !memcmp(hdr, "SHR7", 4);
   unsigned ncell = *(unsigned *)(hdr + 80), cellOff = *(unsigned *)(hdr + 84), resident = cellOff + 48 * ncell, pvsOff = *(unsigned *)(hdr + 88), colOff = *(unsigned *)(hdr + 92), propOff = *(unsigned *)(hdr + 96);
-  unsigned colSz = 0, propSz = 0;
+  unsigned colSz = 0, propSz = 0, p1g_ = 0;
   if (ok) {
     if (!LEVEL_TAIL_OLD && *(unsigned *)(hdr + 76) > 104 && *(unsigned *)(hdr + 76) < resident) resident = *(unsigned *)(hdr + 76);
+    { SceIoStat st_; char lf_[256]; levelFile(lf_, "level.shr"); if (sceIoGetstat(lf_, &st_) >= 0) { float *hd_ = (float *)(hdr + 12); unsigned g_ = lmapV2Gap(hdr, (unsigned)st_.st_size, (unsigned)*(int *)(hd_ + 14), (unsigned)*(int *)(hd_ + 15), resident, 0); if (g_) { resident -= g_; p1g_ = g_; } } }
+    p1GapLast = p1g_;   // 108 П1: блок без дыры под плотную карту
     unsigned end = 0; if (pvsOff && (!end || pvsOff < end)) end = pvsOff; if (propOff && (!end || propOff < end)) end = propOff; if (colOff && end > colOff) colSz = end - colOff;
     if (propOff) { unsigned char ph[64]; sceIoLseek32(fd, propOff, PSP_SEEK_SET); int pn = sceIoRead(fd, ph, 64); propSz = levelPropSize(ph, pn); } }
   sceIoClose(fd);
@@ -920,7 +992,7 @@ static void lvaSizeForLevel(void) {
 #if !COLRING_OLD
   if (colSz && colRingProbe(colSz)) colSz = colRingPoolB;   // Коллизия-96: COL1 в блок уровня не кладётся, вместо него пул страниц кольца
 #endif
-  static unsigned lvaBytesDef; if (!lvaBytesDef) lvaBytesDef = lvaBytes;   // прежний постоянный размер (17,96 МБ): потолок запаса
+  static unsigned lvaBytesDef0, lvaBytesDef; if (!lvaBytesDef0) lvaBytesDef0 = lvaBytes; lvaBytesDef = lvaBytesDef0 > p1g_ ? lvaBytesDef0 - p1g_ : lvaBytesDef0;   // прежний постоянный размер (17,96 МБ): потолок запаса; 108 П1: на ту же «дыру» меньше (то же содержимое без плотной карты)
   unsigned core = resident + colSz + propSz + (128u << 10), full = core + (LVA_SOFT_KB << 10);
   lvaBytes = ((full <= lvaBytesDef ? full : (core > lvaBytesDef ? core : lvaBytesDef)) + 63u) & ~63u;   // L2-L7: точный размер + запас под PVS/гэги (меньше прежнего); L1/L4: без запаса сверх прежних 17,96 МБ (запас блока не добавляет памяти, только переносит PVS из кучи)
   lvaWideB = 0;
@@ -946,10 +1018,11 @@ static void levelPreread(void) {
   if (!LEVEL_TAIL_OLD && *(unsigned *)(hdr + 76) > 104 && *(unsigned *)(hdr + 76) < resident) resident = *(unsigned *)(hdr + 76);   // таблицы кусков и клеток (хвост) в участок не читаются: levelLoad берёт их отдельно
   unsigned dend = lmapDenseEnd((unsigned)hw_, (unsigned)hh_); SceIoStat st; levelFile(lf, "lmap.shr");
   unsigned start = (!LMAP_OLD && dend < resident && sceIoGetstat(lf, &st) >= 0) ? dend : 0;
+  unsigned gap_ = 0; { SceIoStat ls_; if (start && sceIoGetstat(fn, &ls_) >= 0) gap_ = lmapV2Gap(hdr, (unsigned)ls_.st_size, (unsigned)hw_, (unsigned)hh_, resident, 0); }   // 108 П1: блок без дыры под плотную карту
   lvaSizeForLevel();
   if (!ZONE3_EARLY_OLD && !LVA_LEVELBLOCK_OLD) { zone3Boot(); z3FitLvaB = lvaBase ? 0u : (unsigned)LVA_BYTES; zone3FitLevel(); z3FitLvaB = 0; }   // шаг 9в: области - до первого блока уровня, и сверка с уровнем - ДО блока: предчтение берёт блок раньше levelLoad и садился на домашний адрес отцепленной области (regrow-miss на каждом уровне)
-  lvaInit(); prBuf = lvaAlloc(resident); if (!prBuf) return;
-  snprintf(prPath, sizeof prPath, "%s", fn); prOff = start; prSize = resident; prDone = 0; __asm__ volatile("" ::: "memory"); prState = 1; ldSignal();
+  lvaInit(); prBuf = lvaAlloc(resident - gap_); if (!prBuf) return;
+  snprintf(prPath, sizeof prPath, "%s", fn); prOff = start; prSize = resident; prGap = gap_; prDone = 0; __asm__ volatile("" ::: "memory"); prState = 1; ldSignal();
   if (smkOn) { char s_[112]; snprintf(s_, sizeof s_, "PREREAD start off=%u size=%u t=%.1f\n", start, resident, smkT); smkWrite(s_); }
 }
 static void tailReadSync(void) {   // №LOADWAIT: тот же хвост COL1/PRP2, что читает загрузчик (main_stream.h), но в главном потоке
@@ -1075,6 +1148,9 @@ static void txbBegin(unsigned ntexLevel) {
     levelFile(fn, "texbake.shr"); txb.rd = sceIoOpen(fn, PSP_O_RDONLY, 0);
     if (txb.rd >= 0) { TxbHead h; if (sceIoRead(txb.rd, &h, sizeof h) == (int)sizeof h && !memcmp(h.magic, "TXB1", 4) && h.rev == TXB_REV && h.ntex == ntexLevel && h.tkey == txb.tk && h.tpct == txb.tp &&
         (txb.buf = memalign(64, sizeof(TxbRec) * TXB_CH))) txb.ok = 1; else { sceIoClose(txb.rd); txb.rd = -1; } } }
+  skyTailOk = 0;   // 109 З8: хвост SKY1 после записей текстур (небо: суммы полос и цвет горизонта)
+  if (txb.ok && !skyBakeOld) { SkyTail t_; if (sceIoLseek32(txb.rd, (int)(sizeof(TxbHead) + (size_t)ntexLevel * sizeof(TxbRec)), PSP_SEEK_SET) >= 0 && sceIoRead(txb.rd, &t_, sizeof t_) == (int)sizeof t_ && !memcmp(t_.magic, "SKY1", 4) && t_.out == txbFnv(&t_, 44, 2166136261u)) { skyTail = t_; skyTailOk = 1; }
+    sceIoLseek32(txb.rd, (int)sizeof(TxbHead), PSP_SEEK_SET); }
   if (texBakeDump) { char nm[40]; snprintf(nm, sizeof nm, "texbake_L%d.out", gameLevel); sibling(fn, nm); txb.wr = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
     if (txb.wr >= 0) { TxbHead h; memset(&h, 0, sizeof h); memcpy(h.magic, "TXB1", 4); h.rev = TXB_REV; h.ntex = ntexLevel; h.tkey = txb.tk; h.tpct = txb.tp; sceIoWrite(txb.wr, &h, sizeof h); if (!txb.buf) txb.buf = memalign(64, sizeof(TxbRec) * TXB_CH); } }
 }
@@ -1099,12 +1175,20 @@ static void txbDiag(unsigned i, unsigned ink, const Tex *t) {   // texbakediag: 
 }
 static void txbPut(unsigned i, unsigned ink, const Tex *t) {
   if (txb.wr < 0 || !txb.buf) return;
-  TxbRec *r = &txb.buf[i % TXB_CH]; memset(r, 0, sizeof *r); r->in = ink; memcpy(r->ts, t->tstat, 5); r->ts[5] = t->tstatOk; txbFlGet(t, r->fl); memcpy(r->pal, t->pal, 1024); r->out = txbOut(r);
+  TxbRec *r = &txb.buf[i % TXB_CH]; memset(r, 0, sizeof *r); r->in = ink; memcpy(r->ts, t->tstat, 5); r->ts[5] = t->tstatOk; txbFlGet(t, r->fl); memcpy(r->pal, t->pal, 1024);
+  r->fl[12] = (unsigned char)(latticeEval(t, 0) ? 2 : 1); r->fl[13] = LATKEY;   // 109 З8: признак решётки (запись только в режиме печи)
+  r->out = txbOut(r);
   if (i % TXB_CH == TXB_CH - 1 || i + 1 == txb.n) sceIoWrite(txb.wr, txb.buf, (i % TXB_CH + 1) * sizeof(TxbRec));
 }
 static void txbCompare(unsigned i, const TxbRec *r, const Tex *t) {   // сверка: живое против печёного (режим texbakecheck)
-  txb.cmp++; unsigned char f_[16] = {0}; txbFlGet(t, f_); int bad = memcmp(r->fl, f_, 16) || memcmp(r->ts, t->tstat, 5) || r->ts[5] != t->tstatOk || memcmp(r->pal, t->pal, 1024);
+  txb.cmp++; unsigned char f_[16] = {0}; txbFlGet(t, f_); int bad = memcmp(r->fl, f_, 12) || memcmp(r->ts, t->tstat, 5) || r->ts[5] != t->tstatOk || memcmp(r->pal, t->pal, 1024);
   if (bad) { if (!txb.mismatch++) txb.firstBad = i; }
+}
+static void skyBakeDumpHook(unsigned key, const float *acc, unsigned hz) {   // печь (texbakedump): хвост SKY1 в конец texbake_L<N>.out (записи текстур уже дописаны и файл закрыт)
+  if (!texBakeDump) return; char nm[40], fn[256]; snprintf(nm, sizeof nm, "texbake_L%d.out", gameLevel); sibling(fn, nm);
+  SceUID f = sceIoOpen(fn, PSP_O_WRONLY | PSP_O_APPEND, 0777); if (f < 0) return;
+  SkyTail t; memset(&t, 0, sizeof t); memcpy(t.magic, "SKY1", 4); t.key = key; memcpy(t.acc, acc, sizeof t.acc); t.hz = hz; t.out = txbFnv(&t, 44, 2166136261u);
+  sceIoWrite(f, &t, sizeof t); sceIoClose(f);
 }
 static void txbEnd(unsigned t0) {
   if (txb.rd >= 0) sceIoClose(txb.rd);
@@ -1268,7 +1352,7 @@ static void zone3Boot(void) {
 #if ZONE3_OLD
   return;
 #endif
-  char fn[256]; SceIoStat st_; unsigned kb[3] = { 3072, 3072, 7168 };
+  char fn[256]; SceIoStat st_; unsigned kb[3] = { 3072, 3072, p1GapLast ? 10240u : 7168u };   // 108 П1: блок уровня без плотной карты высот (−3,1…−5,7 МБ) — область города 10 МБ (Fable §5.3), иначе 7 МБ душат город (cell-cap, дальность 145)
   sibling(fn, "zone3old"); if (sceIoGetstat(fn, &st_) >= 0) { if (smkOn) smkWrite("ZONE3CFG off=file\n"); return; }
   sibling(fn, "zone3sz"); { SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f >= 0) { char b[40] = {0}; sceIoRead(f, b, 39); sceIoClose(f); unsigned a = 0, c = 0, d = 0; for (char *q = b; *q; q++) if (*q == '_' || *q == ',') *q = ' '; int k = sscanf(b, "%u %u %u", &a, &c, &d); if (k >= 2 && a >= 256 && c >= 256) { kb[0] = a; kb[1] = c; if (k == 3) kb[2] = d; } } }   // «миссия_КБ место_КБ город_КБ» (город 0 — без области города)
   sibling(fn, "zone3fitold"); z3FitOld = sceIoGetstat(fn, &st_) >= 0;
@@ -1432,6 +1516,7 @@ static void ownerWatch(float dt) {   // раз в секунду: не гото�
   sceIoClose(fd);
 }
 static void levelLoad(void **fbp) {
+  pwrBump("level");   // 107б P0: смена уровня — эпоха питания растёт, пометки «битое» всех владельцев сбрасываются (power.h)
   cellThrashCeilReset(); cityCapReset();
   cpFlagRead();
   if (!LVA_LEVELBLOCK_OLD) { collStreamAllocHook = collPackAlloc; collStreamFreeHook = collPackFree; }   // Опора-93 шаг 4a: пакет гэгов уровня в блок уровня
@@ -1475,15 +1560,43 @@ static void levelLoad(void **fbp) {
   ncell = *(unsigned *)(hdr + 80); unsigned cellOff = *(unsigned *)(hdr + 84), pvsOff = *(unsigned *)(hdr + 88);
   unsigned residentFull = cellOff + 48 * ncell, residentSize = (!LEVEL_TAIL_OLD && tableOff > 104 && tableOff < residentFull) ? tableOff : residentFull;   // residentSize — то, что остаётся в памяти (до таблицы кусков)
   unsigned char *data;
-  if (prBuf && prSize == residentSize) { data = prBuf; }   // №PREREAD: буфер уже выделен и читается загрузчиком
-  else { if (prBuf) { LdWait lw_ = {0}; while (prState == 1) { ldWaitLimit(&lw_, "prbuf", WAITLIMIT_UNLOAD_MS); sceKernelDelayThread(1000); } lvaFree(prBuf); } prBuf = 0; prState = 0; data = lvaAlloc(residentSize); }
+  unsigned p1Store = 0, p1Gap = 0; { unsigned fsz_ = (unsigned)sceIoLseek32(fd, 0, PSP_SEEK_END); p1Gap = lmapV2Gap(hdr, fsz_, (unsigned)hw, (unsigned)hh, residentSize, &p1Store); }   // 108 П1: lmap.shr версии 2 годен — блок без дыры под плотную карту
+  if (prBuf && prSize == residentSize && prGap == p1Gap) { data = prBuf; }   // №PREREAD: буфер уже выделен и читается загрузчиком
+  else { if (prBuf) { LdWait lw_ = {0}; while (prState == 1) { ldWaitLimit(&lw_, "prbuf", WAITLIMIT_UNLOAD_MS); sceKernelDelayThread(1000); } lvaFree(prBuf); } prBuf = 0; prState = 0; data = lvaAlloc(residentSize - p1Gap); }
   levelData = data;
   if (!data) {
     char m[160]; snprintf(m, sizeof m, "Not enough memory: %.1f MB needed, %.1f MB free.",
       residentSize / 1048576.f, sceKernelMaxFreeMemSize() / 1048576.f); fail(m);
   }
   unsigned off0 = 0, lmapMs = 0;   // загрузка 2 п.2: карта высот и стены из lmap.shr (сжатые), плотный массив в level.shr пропускается
-  if (!LMAP_OLD) {
+  unsigned char *dv = data;   // 108 П1: виртуальная база файловых смещений ≥ dend (data − gap при страницах, иначе data)
+  lmPgOn = 0; hm = wl = 0;
+  if (p1Gap) {   // 108 П1: хранилище страниц из lmap.shr версии 2 прямо в блок; плотный массив не читается и в памяти не лежит
+    unsigned dend = lmapDenseEnd((unsigned)hw, (unsigned)hh), lt = sceKernelGetSystemTimeLow(); int ok = 0; unsigned verMs = 0, bad = 0, wbad = 0;
+    char fn[256]; levelFile(fn, "lmap.shr"); SceUID lf = sceIoOpen(fn, PSP_O_RDONLY, 0);
+    if (lf >= 0) { LmapHead lh; unsigned char *cb = 0;
+      if (sceIoRead(lf, &lh, sizeof lh) == (int)sizeof lh && lh.denseBytes == p1Store && (cb = memalign(16, lh.compBytes)) && sceIoRead(lf, cb, lh.compBytes) == (int)lh.compBytes &&
+          lmapUnpack(cb, lh.compBytes, data + LMP_STORE_OFF, lh.denseBytes) == 0 && ((LMAPHASH_SKIP && !lmapHashOld) || lmapHash(data + LMP_STORE_OFF, lh.denseBytes) == lh.denseHash) &&
+          lmpOpen(&lmPg, data + LMP_STORE_OFF, lh.denseBytes, (unsigned)hw, (unsigned)hh) == 0) ok = 1;
+      free(cb); sceIoClose(lf); }
+    lmapMs = (sceKernelGetSystemTimeLow() - lt) / 1000;
+    if (ok) { memcpy(data, hdr, 104); off0 = dend; lmPgOn = 1; dv = data + LMP_STORE_OFF + ((p1Store + 15u) & ~15u) - dend;
+      { char fo_[256]; SceIoStat so_; sibling(fo_, "lmapbreak"); if (sceIoGetstat(fo_, &so_) >= 0 && lmPg.p0 && lmPg.t0) { for (unsigned i = 0; i < (unsigned)lmPg.w8 * (unsigned)((hh + 7) / 8); i++) if (lmPg.t0[i]) { ((short *)lmPg.p0)[(lmPg.t0[i] - 1) * 64] ^= 1; break; } } }   // красный контроль гейта: одна высота испорчена
+      { char fo_[256]; SceIoStat so_; sibling(fo_, "lmapverify"); if (sceIoGetstat(fo_, &so_) >= 0) {   // гейт: все ячейки сетки — читатель страниц против плотного массива level.shr (временно, 6 МБ)
+          unsigned dn_ = dend - 104; unsigned char *dn = malloc(dn_); unsigned vt0 = sceKernelGetSystemTimeLow();
+          if (dn && sceIoLseek32(fd, 104, PSP_SEEK_SET) == 104 && sceIoRead(fd, dn, dn_) == (int)dn_) {
+            const short *hm_ = (const short *)dn; unsigned pp = ((104u + (unsigned)hw * (unsigned)hh * 4u * 2u + 15u) & ~15u) - 104u; const short *wl_ = (const short *)(dn + pp); short tmp[4];
+            for (int z = 0; z < hh; z++) for (int x = 0; x < hw; x++) { const short *a = lmpHm(&lmPg, x, z, tmp), *b = hm_ + ((size_t)z * hw + x) * 4; if (memcmp(a, b, 8)) bad++;
+              const short *wa = lmpWl(&lmPg, x, z), *wb = wl_ + ((size_t)z * hw + x) * 2; if ((wa[0] > wa[1]) != (wb[0] > wb[1]) || (wb[0] <= wb[1] && memcmp(wa, wb, 4))) wbad++; }
+            verMs = (sceKernelGetSystemTimeLow() - vt0) / 1000; if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "LMAPVERIFY level=%d cells=%d hm_bad=%u wall_bad=%u ms=%u\n", gameLevel, hw * hh, bad, wbad, verMs); smkWrite(s_); } }
+          free(dn); } } }
+    else { p1Gap = 0;   // файл не годится: блок целиком, плотный массив из level.shr, как раньше
+      if (prBuf == data) { LdWait lw_ = {0}; while (prState == 1) { ldWaitLimit(&lw_, "prbuf", WAITLIMIT_UNLOAD_MS); sceKernelDelayThread(1000); } }
+      lvaFree(data); prBuf = 0; prState = 0; data = lvaAlloc(residentSize); levelData = data; dv = data;
+      if (!data) { char m[160]; snprintf(m, sizeof m, "Not enough memory: %.1f MB needed, %.1f MB free.", residentSize / 1048576.f, sceKernelMaxFreeMemSize() / 1048576.f); fail(m); } }
+    if (smkOn) { char s[160]; snprintf(s, sizeof s, "LMAPPG level=%d used=%d gap_kb=%u store_kb=%u ms=%u\n", gameLevel, ok, p1Gap >> 10, p1Store >> 10, lmapMs); smkWrite(s); }
+  }
+  if (!LMAP_OLD && !lmPgOn) {
     unsigned dend = lmapDenseEnd((unsigned)hw, (unsigned)hh), lt = sceKernelGetSystemTimeLow();
     char fn[256]; levelFile(fn, "lmap.shr"); SceUID lf = dend < residentSize ? sceIoOpen(fn, PSP_O_RDONLY, 0) : -1;
     if (lf >= 0) {
@@ -1503,18 +1616,18 @@ static void levelLoad(void **fbp) {
   if (prBuf == data) { unsigned pt_ = sceKernelGetSystemTimeLow(); LdWait lw_ = {0}; while (prState == 1) { if (!PREREAD_TAKEOVER_OLD && !loadWaitOld && loaderWaitStep(&lw_, "preread", prDone, 1)) { prereadTakeover(data); if (prState != 1) break; } else if (PREREAD_TAKEOVER_OLD || loadWaitOld) loaderWaitStep(&lw_, "preread", 0, 0); ldWaitLimit(&lw_, "preread", 8000u + (prSize >> 20) * 1000u); if (ldOn) loadPump(); sceKernelDelayThread(1000); } preMs = (sceKernelGetSystemTimeLow() - pt_) / 1000u;
     preUsed = prState == 2 && off0 == prOff; prBuf = 0; prState = 0; }   // готово и то же начало, что у главного (lmap принят) — читать не надо
   if (smkOn) { char s_[128]; snprintf(s_, sizeof s_, "PREREAD use=%d wait_ms=%u off0=%u t=%.1f\n", preUsed, preMs, off0, smkT); smkWrite(s_);
-    if (preUsed && prereadSum) { char l_[96]; snprintf(l_, sizeof l_, "PREREAD sum off=%u size=%u sum=%08x\n", off0, residentSize - off0, pfCrc(data + off0, residentSize - off0)); smkWrite(l_); } }
+    if (preUsed && prereadSum) { char l_[96]; snprintf(l_, sizeof l_, "PREREAD sum off=%u size=%u sum=%08x\n", off0, residentSize - off0, pfCrc(dv + off0, residentSize - off0)); smkWrite(l_); } }
   sceIoLseek32(fd, off0, PSP_SEEK_SET);
   if (preUsed) { if (ldOn) loadFrame(1 * LOAD_RES_SHARE / 6, fbp); }
   else
   for (unsigned off = off0; off < residentSize; ) {   // кусками по 512 КБ: между ними кадр экрана загрузки (огонь и кадры не стоят)
     unsigned n = residentSize - off; if (n > (512u << 10)) n = 512u << 10;
-    if (ldRead1206(&fd, levelShr, data + off, n, off, "resident") != (int)n) fail("Read error.");
+    if (ldRead1206(&fd, levelShr, dv + off, n, off, "resident") != (int)n) fail("Read error.");
     off += n; if (ldOn) loadFrame((int)((unsigned long long)off * (LOAD_RES_SHARE / 6) / residentSize), fbp);
   }
   phMark("resident");
   const unsigned char *tab, *cellTab; unsigned char *tabBuf = 0;   // таблица кусков и таблица клеток: во временном буфере (или в участке, LEVEL_TAIL_OLD)
-  if (residentSize == residentFull) { tab = data + tableOff; cellTab = data + cellOff; }
+  if (residentSize == residentFull) { tab = dv + tableOff; cellTab = dv + cellOff; }
   else { unsigned tabSz = residentFull - tableOff;
     unsigned co_ = *(unsigned *)(hdr + 92), pr_ = *(unsigned *)(hdr + 96), en_ = pvsOff && (!pr_ || pvsOff < pr_) ? pvsOff : pr_, colSz_ = (co_ && en_ > co_) ? en_ - co_ : 0;
     tabBuf = (unsigned char *)(lvaRoom(tabSz + colSz_ + (2u << 20)) ? lvaAlloc(tabSz) : memalign(16, tabSz));   // L2, L3, L5–L7: в участке на 4–5 МБ больше нужного место есть — хвост в него, куча не дробится; L1/L4 — в кучу на время загрузки
@@ -1670,10 +1783,12 @@ static void levelLoad(void **fbp) {
     if (cv.hinge[i].joint < cv.njoint && !strncmp(cv.joint[cv.hinge[i].joint].name, "DoorDRot", 8)) doorHinge = i;
   sceIoClose(fd);
   ldStep("pre-tone");
-  toneBlkAdd(data, residentSize, TF_LEVEL, 0);   // правка 144: резидентная часть = level.shr с нуля, палитры — заново из файла
+  levelDataV = dv; toneBlkAdd(dv, residentSize, TF_LEVEL, 0);   // правка 144: резидентная часть = level.shr с нуля, палитры — заново из файла
   size_t p = 104;
-  hm = (short *)(data + p); p += (size_t)hw * hh * 4 * 2; p = (p + 15) & ~15;
-  wl = (short *)(data + p); p += (size_t)hw * hh * 2 * 2; p = (p + 15) & ~15;
+  if (!lmPgOn) hm = (short *)(data + p);
+  p += (size_t)hw * hh * 4 * 2; p = (p + 15) & ~15;
+  if (!lmPgOn) wl = (short *)(data + p);
+  p += (size_t)hw * hh * 2 * 2; p = (p + 15) & ~15;
   tex = calloc(ntex ? ntex : 1, sizeof(Tex)); groundTexN = 0; fdReset();
   if (propFlatPending1167) { propFlatPending1167 = 0; if (haveProps && tex) propFlatMark1167(); }   // №1167
   // №786 (Роб 18.10 после TEST34: «дым — облачка, тучки — стал контрастнее и не такой красивый; вернуть прежний, по умолчанию для обоих режимов он красивый»): текстуры
@@ -1707,25 +1822,27 @@ static void levelLoad(void **fbp) {
   ph3T = ph3Now(); memset(ph3Acc, 0, sizeof ph3Acc);
   unsigned txT0 = sceKernelGetSystemTimeLow(); txbBegin(ntex);
   for (unsigned i = 0; i < ntex; i++) {
-    unsigned short *t2 = (unsigned short *)(data + p);
+    unsigned short *t2 = (unsigned short *)(dv + p);
     tex[i].w = t2[0]; tex[i].h = t2[1]; tex[i].levels = t2[2];
     tex[i].pre = ((unsigned char *)t2)[7] == 1;   // байт 7 = 1: уровни уже в swizzle, высота добита до кратной 8
     tex[i].t4 = ((unsigned char *)t2)[6] == 4;    // байт 6 = 4: 4 бита на тексел (правка 129, tools/texq.py CLUT4; всегда в swizzle)
     if (tex[i].t4 && !tex[i].pre) fail("level.shr: 4-bit texture without swizzle. Run the export again.");
-    memcpy(&tex[i].slope, data + p + 12, 4); if (!(tex[i].slope > 0.f && tex[i].slope < 10.f)) tex[i].slope = 0.f;   // правка 77/88
+    memcpy(&tex[i].slope, dv + p + 12, 4); if (!(tex[i].slope > 0.f && tex[i].slope < 10.f)) tex[i].slope = 0.f;   // правка 77/88
     tex[i].ground = ((unsigned char *)t2)[9] == 1; if (tex[i].ground) tex[i].tstat[4] |= 4;   // №865: земля — в мультике с рисунком (tone.c)
     groundTexN += tex[i].ground && tex[i].slope > 0.f;   // метка земли (tools/psp_export.py, байт 9 заголовка): множитель groundbias действует только на неё
-    tex[i].pal = data + p + 16; p += 16 + 1024; ph3Add(0); if (!(i & 15)) { loadPump(); ph3Add(4); }
+    tex[i].pal = dv + p + 16; p += 16 + 1024; ph3Add(0); if (!(i & 15)) { loadPump(); ph3Add(4); }
     int lw = tex[i].w, lh = tex[i].h;
     for (int l = 0; l < tex[i].levels; l++) {
-      tex[i].lv[l] = data + p; if (tex[i].pre) tex[i].slv[l] = data + p;
+      tex[i].lv[l] = dv + p; if (tex[i].pre) tex[i].slv[l] = dv + p;
       p += texRowBytes(tex[i].t4, tex[i].pre, lw) * (tex[i].pre ? (lh + 7) & ~7 : lh); p = (p + 15) & ~15; lw >>= 1; lh = lh > 1 ? lh >> 1 : 1;   // Ф2: мип < 16 px — строка 16 Б (байт 8 = 1)
     }
     ph3Add(0);
     const TxbRec *br = 0; unsigned ink = 0;   // №bake-3А: запечённые tstat и палитра после тона
+    tex[i].latB = tex[i].latC = 0;   // 109 З8: признак решётки из записи (ниже), иначе считает latticeScan
     if (txb.ok || txb.wr >= 0) { ink = txbIn(&tex[i], txb.tk, txb.tp); unsigned m0_ = txb.miss; br = txbRec(i, ink); if (!br && txb.miss > m0_ && txb.miss <= 3 && texBakeDiag) txbDiag(i, ink, &tex[i]); if (texBakeDump) br = 0; }
     if (br && !texBakeCheck) {
       memcpy(tex[i].tstat, br->ts, 4); tex[i].tstatOk = br->ts[5]; if (!flatFromFile) txbFlSet(&tex[i], br->fl); ph3Add(1);
+      tex[i].latB = br->fl[13] == LATKEY ? br->fl[12] : 0;
       if (sky954Need && sky954Need[i]) sky954Build(i, &tex[i]);   // читает исходную палитру: до подмены
       ph3Add(2);
       memcpy(tex[i].pal, br->pal, 1024); sceKernelDcacheWritebackRange(tex[i].pal, 1024); txb.used++;
@@ -1737,7 +1854,7 @@ static void levelLoad(void **fbp) {
     ph3Add(2);
     toneSetStat(tex[i].tstatOk ? tex[i].tstat : 0); palTone(tex[i].pal); toneSetStat(0);
     ph3Add(3);
-    txb.live++; if (br) txbCompare(i, br, &tex[i]); if (txb.wr >= 0) txbPut(i, ink, &tex[i]);
+    txb.live++; if (br) { txbCompare(i, br, &tex[i]); tex[i].latC = br->fl[13] == LATKEY ? br->fl[12] : 0; } if (txb.wr >= 0) txbPut(i, ink, &tex[i]);
     }
   }
   txbEnd(txT0);

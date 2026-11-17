@@ -1,0 +1,9 @@
+scene g1362b
+flag loadwait1362old 1
+flag golevel 5
+wait 25
+flag golevel 6
+wait 25
+flag golevel 7
+wait 25
+end

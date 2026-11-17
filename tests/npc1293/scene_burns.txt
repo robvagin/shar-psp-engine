@@ -1,0 +1,20 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=1 300
+wait 8
+flag player
+flag msn
+wait 3
+scene B_NEAR
+foot -170.0 84.7 0.0
+wait 14
+flag npcscenetest -197.6 84.7
+scene B_TEST
+wait 12
+scene B_END
+flag stop
+wait 2
+end

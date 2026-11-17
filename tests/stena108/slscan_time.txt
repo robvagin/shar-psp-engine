@@ -1,0 +1,16 @@
+# О12 (108, Стена): цена обхода клеток света до и после, строки LIGHTSPR (build_us за сцену), одинаковый путь по L1
+flag nosave
+scene SLT_NEW
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+flag stop
+scene SLT_OLD
+flag slscan108old 1
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+flag stop
+end

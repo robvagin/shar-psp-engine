@@ -1,0 +1,14 @@
+# 1359 п. 6: L4, свободная машина мира atv_v стоит на (410,-481). Игрок рядом; стоящая полиция погони H&R ставится служебным flag polat1359 в 5 м от места машины (ближе 10 м).
+# Строки MCREMOVE atv_v why=wcar-away ПОСЛЕ телепорта игрока: новое — 0, прежнее — машина мира уходит от копа и возвращается.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO4_L4
+flag golevel 4
+wait 25
+foot 410.1 -470 0
+wait 10
+flag polat1359 5
+wait 8
+end

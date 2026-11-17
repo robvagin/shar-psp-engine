@@ -1,0 +1,38 @@
+# Уворот трафика по оригиналу (107b, Стена): встречная машина в 90 м, игрок разгоняется (газ 7 с): уворот должен быть
+flag nosave
+scene DG_oncoming
+goto 215 155.13 1.5708
+wait 3
+flag trfoncoming108 90
+wait 0.5
+press cross 7
+wait 3.2
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+flag trfprobeall
+wait 1
+end

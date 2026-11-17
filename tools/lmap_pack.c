@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define LMP_BUILD 1
 #include "lmap.h"
+#include "lmappage.h"
 static unsigned char *readFile(const char *p, unsigned *n) {
   FILE *f = fopen(p, "rb"); if (!f) return 0;
   fseek(f, 0, SEEK_END); long s = ftell(f); fseek(f, 0, SEEK_SET);
@@ -32,17 +34,36 @@ static unsigned lz4Enc(const unsigned char *s, unsigned n, unsigned char *d) {
   if (ll >= 15) { unsigned r = ll - 15; while (r >= 255) { *dp++ = 255; r -= 255; } *dp++ = (unsigned char)r; }
   memcpy(dp, s + anchor, ll); dp += ll; return (unsigned)(dp - d);
 }
+// 108 П1: версия 2 — готовое хранилище страниц (viewer/lmappage.h) вместо плотного массива; level.shr не меняется.
+//   lmap_pack LEVEL.shr OUT.shr [--v1]     по умолчанию версия 2 (--v1 — прежний плотный блок)
+//   lmap_pack LEVEL.shr --check FILE       0 — файл совпадает с тем, что получилось бы сейчас (той же версии)
+//   каждый запуск версии 2 сверяет ВСЕ ячейки сетки: читатель страниц (lmpHm / lmpWl) против плотного массива level.shr (строка LMAPGRID, ненулевое расхождение — выход 3)
 int main(int argc, char **argv) {
-  if (argc < 3) { fprintf(stderr, "usage: lmap_pack LEVEL.shr OUT.shr | --check FILE\n"); return 2; }
+  if (argc < 3) { fprintf(stderr, "usage: lmap_pack LEVEL.shr OUT.shr [--v1] | --check FILE\n"); return 2; }
   unsigned n; unsigned char *lvl = readFile(argv[1], &n);
   if (!lvl || n < 104 || memcmp(lvl, "SHR7", 4)) { fprintf(stderr, "lmap_pack: нет level.shr (SHR7)\n"); return 2; }
   const int *hd = (const int *)(lvl + 12); unsigned hw = (unsigned)hd[14], hh = (unsigned)hd[15];
   unsigned dend = lmapDenseEnd(hw, hh); if (!hw || !hh || dend > n) { fprintf(stderr, "lmap_pack: сетка %ux%u не из этого файла\n", hw, hh); return 2; }
-  unsigned dn = dend - 104; unsigned char *buf = malloc(dn + dn / 255 + 64); unsigned cn = lz4Enc(lvl + 104, dn, buf);
-  unsigned char *chk = malloc(dn); if (lmapUnpack(buf, cn, chk, dn) || memcmp(chk, lvl + 104, dn)) { fprintf(stderr, "lmap_pack: распаковка не даёт исходное\n"); return 2; }
-  LmapHead h; memset(&h, 0, sizeof h); memcpy(h.magic, LMAP_MAGIC, 4); h.ver = 1; h.key = lmapKey(lvl, n); h.denseBytes = dn; h.compBytes = cn; h.denseHash = lmapHash(lvl + 104, dn);
+  int v1 = 0; for (int i = 2; i < argc; i++) if (!strcmp(argv[i], "--v1")) v1 = 1;
+  unsigned dn = dend - 104; unsigned char *src = lvl + 104; unsigned sn = dn; unsigned char *store = 0;
+  LmapHead h; memset(&h, 0, sizeof h); memcpy(h.magic, LMAP_MAGIC, 4); h.ver = v1 ? 1 : 2; h.key = lmapKey(lvl, n);
+  if (!v1) {
+    const short *hm = (const short *)(lvl + 104); unsigned p = 104 + hw * hh * 4 * 2; p = (p + 15) & ~15u; const short *wl = (const short *)(lvl + p);
+    store = malloc(dn + 8192); sn = lmpBuild(hm, wl, hw, hh, store); src = store;
+    LmPg g; int er = lmpOpen(&g, store, sn, hw, hh); if (er) { fprintf(stderr, "lmap_pack: хранилище не открывается (%d)\n", er); return 2; }
+    unsigned long bad = 0, cells = 0, wallbad = 0; short tmp[4];
+    for (unsigned z = 0; z < hh; z++) for (unsigned x = 0; x < hw; x++) { cells++;
+      const short *a = lmpHm(&g, (int)x, (int)z, tmp), *b = hm + ((size_t)z * hw + x) * 4; if (memcmp(a, b, 8)) bad++;
+      const short *wa = lmpWl(&g, (int)x, (int)z), *wb = wl + ((size_t)z * hw + x) * 2; if ((wa[0] > wa[1]) != (wb[0] > wb[1]) || (wb[0] <= wb[1] && memcmp(wa, wb, 4))) wallbad++; }
+    printf("LMAPGRID cells=%lu hm_bad=%lu wall_bad=%lu store=%u dense=%u\n", cells, bad, wallbad, sn, dn);
+    if (bad || wallbad) return 3;
+    h.pad[0] = dn;
+  }
+  unsigned char *buf = malloc(sn + sn / 255 + 64); unsigned cn = lz4Enc(src, sn, buf);
+  unsigned char *chk = malloc(sn); if (lmapUnpack(buf, cn, chk, sn) || memcmp(chk, src, sn)) { fprintf(stderr, "lmap_pack: распаковка не даёт исходное\n"); return 2; }
+  h.denseBytes = sn; h.compBytes = cn; h.denseHash = lmapHash(src, sn);
   unsigned total = (unsigned)sizeof h + cn; unsigned char *out = malloc(total); memcpy(out, &h, sizeof h); memcpy(out + sizeof h, buf, cn);
-  printf("LMAP dense=%u comp=%u ratio=%.3f\n", dn, cn, (double)cn / dn);
+  printf("LMAP v%d dense=%u store=%u comp=%u ratio=%.3f\n", (int)h.ver, dn, sn, cn, (double)cn / sn);
   if (!strcmp(argv[2], "--check")) { unsigned m; unsigned char *old = argc > 3 ? readFile(argv[3], &m) : 0; int same = old && m == total && !memcmp(old, out, total); printf("LMAPCHECK %s\n", same ? "same" : "DIFFERENT"); return same ? 0 : 1; }
   FILE *f = fopen(argv[2], "wb"); if (!f || fwrite(out, 1, total, f) != total) { fprintf(stderr, "lmap_pack: не записать\n"); return 2; } fclose(f); return 0;
 }

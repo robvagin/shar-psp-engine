@@ -47,3 +47,7 @@ int main(int argc, char **argv) {
   unsigned char *bad2 = malloc(fn); memcpy(bad2, file, fn); int vb = colBakeVerify(&w, key, bad1, fn); printf("контроль 3 (сверка видит испорченный файл): %s\n", vb ? "OK (РАЗНО)" : "НЕ СРАБОТАЛ"); bad |= vb == 0; (void)bad2;
   printf("COLBAKE_CHECK %s\n", bad ? "FAIL" : "PASS"); return bad;
 }
+
+// 107b (Гомер П7/П8): homer.c ссылается на правила объёмов предметов из stateprops.c; запекание их не вызывает (см. tools/mcp_bake.c)
+int spNoSolid(const void *sp, unsigned i) { (void)sp; (void)i; return 0; }
+int spVolumeShift(void *sp, unsigned i, float offOld[3], float offW[3]) { (void)sp; (void)i; (void)offOld; (void)offW; return 0; }

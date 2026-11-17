@@ -1,0 +1,20 @@
+scene g1331b
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+wait 3
+flag testboom
+wait 6
+shot b0_fail
+flag msnhud
+press cross
+wait 5
+flag msnhud
+press cross
+wait 6
+shot b1_run
+flag msnhud
+wait 2
+end

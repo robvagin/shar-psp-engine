@@ -1,0 +1,11 @@
+# №1271: ролик гэга/билета при ЧУЖОМ втором пакете (flag gagmovie 1 открывает shop.shr прямо перед роликом, как билет или пауза) идёт в нашей рамке-телевизоре.
+# Строка MOVIETV1271 who=gag ... frame=1 и кадр середины ролика: тёмно-фиолетовая рамка по периметру. tests/movietv1271/run.sh DIR
+scene SW_1_0
+wait 5
+
+wait 1
+flag gagmovie 1
+wait 4
+shot mid
+wait 3
+end

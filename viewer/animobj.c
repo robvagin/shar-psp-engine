@@ -127,6 +127,22 @@ static void placeVols(AnimObjs *a, StateProps *sp, ColWorld *w, unsigned k) {
   }
 }
 
+int aoRide1274Old = RIDE1274_OLD;
+// ящик под ступнями: верх ±0,25 м, по плоскости внутри ящика +0,3 м (как standsOnLift); возврат — номер объёма или -1; c0 — центр, ax0 — самая горизонтальная ось (x, z), до перестановки
+static int rideProbe(const AnimObjs *a, const ColWorld *w, unsigned k, const float f[3], float c0[3], float ax0[2]) {
+  const AoObj *o = &a->obj[k];
+  for (unsigned v = o->firstVol; v < (unsigned)o->firstVol + o->nVol; v++) {
+    const AoVol *V = &a->vol[v]; if (V->kind != 0 || V->col >= w->nbox) continue;
+    const ColBox *b = &w->box[V->col]; float top = b->c[1] + fabsf(b->ax[1]) * b->h[0] + fabsf(b->ay[1]) * b->h[1] + fabsf(b->az[1]) * b->h[2];
+    if (f[1] - top > .1f || top - f[1] > .25f) continue;   // 107б Г1 (оригинал): ступни не выше 0,1 м над поверхностью опоры (ниже до 0,25 м — посадка в опору)
+    float d[3] = {f[0] - b->c[0], f[1] - b->c[1], f[2] - b->c[2]}; int ok = 1;
+    const float *ax[3] = {b->ax, b->ay, b->az}; int hk = 0;
+    for (int q = 0; q < 3; q++) { if (fabsf(ax[q][1]) > .7f) continue; float s = d[0] * ax[q][0] + d[1] * ax[q][1] + d[2] * ax[q][2]; if (fabsf(s) > b->h[q] + .3f) ok = 0; }
+    for (int q = 1; q < 3; q++) if (fabsf(ax[q][1]) < fabsf(ax[hk][1])) hk = q;
+    if (ok) { memcpy(c0, b->c, 12); ax0[0] = ax[hk][0]; ax0[1] = ax[hk][2]; (void)hk; return (int)v; }
+  }
+  return -1;
+}
 static int nearObj(const StateProps *sp, const AoObj *o, float px, float pz) { const SpRun *s = &sp->run[o->firstInst]; float dx = s->x - px, dz = s->z - pz; return dx * dx + dz * dz < 40.f * 40.f; }   // проба клипа — когда игрок ближе 40 м
 static float boxTop(const ColBox *b) { return b->c[1] + fabsf(b->ax[1]) * b->h[0] + fabsf(b->ay[1]) * b->h[1] + fabsf(b->az[1]) * b->h[2]; }
 // Проба клипа объекта с живыми ящиками (поза в нескольких кадрах; поза и ящики потом возвращаются на текущий кадр): 1 — подъёмник (ящик поднимается больше LIFT_MIN_RISE),
@@ -234,6 +250,7 @@ static void birdsStep(AnimObjs *a, StateProps *sp, const float feet[3], int onFo
 void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float pz, int onFoot, int action, float dt) {
   if (!a->obj || !sp || !sp->run) return;
   float feet[3] = {px, py, pz}, body[3] = {px, py + 0.9f, pz};   // в объёме триггера — ступни или середина тела игрока
+  a->rideOn = 0; a->rideD[0] = a->rideD[1] = a->rideD[2] = 0.f; a->rideYaw = 0.f;
   birdsStep(a, sp, feet, onFoot, dt);   // круг 5 (g11): голуби
   int press = action ? a->want : -1;
   if (press >= 0) a->presses++;
@@ -310,12 +327,24 @@ void aoStep(AnimObjs *a, StateProps *sp, ColWorld *w, float px, float py, float 
       const SpRun *f0 = &sp->run[o->firstInst];
       for (unsigned i = o->firstInst + 1; i < (unsigned)o->firstInst + o->nInst; i++) { SpRun *s = &sp->run[i]; if (s->t != f0->t || s->poseF != f0->poseF) { s->t = f0->t; s->poseF = f0->poseF; s->poseValid = 0; } }
     }
+    float rc0_[3] = {0, 0, 0}, rax0_[2] = {0, 0}; int rideV_ = -1;
+    if (!aoRide1274Old && onFoot && !a->rideOn && o->nVol && w) rideV_ = rideProbe(a, w, k, feet, rc0_, rax0_);   // №1274: ящик под ступнями до перестановки
     if (o->nVol && w) {
       const SpRun *s = &sp->run[o->firstInst];
       float dx = s->x - px, dz = s->z - pz;
       // All parts share the animated pose, including remote clusters of long objects.
       // The first drawable origin is not a bound for the collision volumes.
       if (!ANIM_COL_POSE_OLD || dx * dx + dz * dz < AO_NEAR * AO_NEAR || !r->pad[0]) { placeVols(a, sp, w, k); r->pad[0] = 1; }
+    }
+    if (rideV_ >= 0) {   // №1274: куда ящик унёс точку ступней: поворот вокруг центра ящика (ψ = atan2(x, z) оси) и сдвиг центра
+      const ColBox *b = &w->box[a->vol[rideV_].col]; float a1x = 0.f, a1z = 0.f, best = 2.f; const float *axs[3] = {b->ax, b->ay, b->az};
+      for (int q = 0; q < 3; q++) { float dd = rax0_[0] * axs[q][0] + rax0_[1] * axs[q][2]; if (fabsf(axs[q][1]) < best && fabsf(dd) > .5f * (rax0_[0] * rax0_[0] + rax0_[1] * rax0_[1])) { best = fabsf(axs[q][1]); a1x = axs[q][0]; a1z = axs[q][2]; } }
+      float dyaw = 0.f; if ((a1x * a1x + a1z * a1z) > 1e-6f && (rax0_[0] * rax0_[0] + rax0_[1] * rax0_[1]) > 1e-6f) {
+        float s0 = a1x * rax0_[1] - a1z * rax0_[0], c0 = rax0_[0] * a1x + rax0_[1] * a1z; dyaw = atan2f(s0, c0);   // угол от старой оси к новой в плоскости (x, z) со знаком ψ = atan2(x, z)
+        if (dyaw > 1.5707963f) dyaw -= 3.1415927f; else if (dyaw < -1.5707963f) dyaw += 3.1415927f; }   // ось без знака: поворот в пределах ±90°
+      float cy = cosf(dyaw), sy = sinf(dyaw), rx = px - rc0_[0], rz = pz - rc0_[2];
+      float nx = b->c[0] + rx * cy + rz * sy, nz = b->c[2] - rx * sy + rz * cy;
+      a->rideD[0] = nx - px; a->rideD[2] = nz - pz; a->rideYaw = dyaw; a->rideOn = 1; a->rideObj = k;
     }
   }
 }

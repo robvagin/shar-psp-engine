@@ -61,6 +61,9 @@ int  sndReady(void);
 void sndFrame(float dt, float camX, float camY, float camZ, float rightX, float rightZ, float px, float py, float pz);
 // start of the level / teleport: pick the ambience zone of this point without waiting for a gate
 void sndLevelStart(float px, float py, float pz);
+// 1336: служебная строка чёрного ящика: сколько раз менялась атмосфера и что было последним (зона ворот или -1, дорожка, положение игрока)
+unsigned sndAmbChanges(void);
+const char *sndAmbLast(int *zone, float pos[3]);
 
 // generic effects: script resource names ("car_hit_hydrant", "coin_collect_01", ...). Positional: full volume
 // within minDist 4 m, silent past 60 m (the original's collision sounds are 3D with similar ranges).
@@ -214,6 +217,7 @@ extern int sndSusLoopOld;   // правка 303: 1 — концовка get_out_
 int  sndMusicEvent(const char *event, const char **track);
 void sndMusicMission(int own);
 int  sndMusicOwned(void);
+void sndMusicQueueFreeroam(void);   // 108 правка 1294: музыка езды после стингера старта уровня
 int  sndVoiceBusy(void);   // идёт реплика разговора миссии (гэг её не перебивает)
 void sndOnFoot(int on);   // Гомер пешком/в машине: музыка после миссии и погони возвращается к своей (ONFOOT / FREEROAM)
 // голос реплики разговора миссии: дорожка music.sap в потоке диалогов (-1 — стоп); 1 — эта дорожка ещё звучит
@@ -267,6 +271,13 @@ int sndVariantPick(int n, unsigned clockUs);
 
 // №1135: пока открыта телефонная будка (sndStore(1)), шина мировых эффектов в нуле (оригинал: набор «Store» оставляет эффекты 0,8, но в будке мир стоит; по слову Роба оса и прочее не звучат),
 // остальное по строке «Store» диска: музыка Muzak 1,0, голос 1,0, машина 0, фон 0; на выходе шина возвращается за 750 мс, а петля осы, если она ещё рядом, звучит дальше. BOOTHMUTE1135_OLD=1 — прежнее (эффекты 0,8)
+// №1266: щелчки будки (листание, выбор, отказ, назад) идут на шину меню AUDIO_BUS_UI, а не на шину эффектов, которую №1135 держит на нуле, пока открыта будка.
+// BOOTHSND1266_OLD=1 — прежнее (шина эффектов, щелчков не слышно)
+#ifndef BOOTHSND1266_OLD
+int rb_BOOTHSND1266_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+#define BOOTHSND1266_OLD rb_BOOTHSND1266_OLD
+#endif
+float sndBusLevelUi(int ui);   // уровень шины меню (1) или эффектов (0)
 #ifndef BOOTHMUTE1135_OLD
 #define BOOTHMUTE1135_OLD 0
 #endif

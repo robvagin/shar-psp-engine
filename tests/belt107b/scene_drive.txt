@@ -1,0 +1,64 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+scene BD
+flag drive 150
+wait 4
+shot d00
+wait 4
+shot d01
+wait 4
+shot d02
+wait 4
+shot d03
+wait 4
+shot d04
+wait 4
+shot d05
+wait 4
+shot d06
+wait 4
+shot d07
+wait 4
+shot d08
+wait 4
+shot d09
+wait 4
+shot d10
+wait 4
+shot d11
+wait 4
+shot d12
+wait 4
+shot d13
+wait 4
+shot d14
+wait 4
+shot d15
+wait 4
+shot d16
+wait 4
+shot d17
+wait 4
+shot d18
+wait 4
+shot d19
+wait 4
+shot d20
+wait 4
+shot d21
+wait 4
+shot d22
+wait 4
+shot d23
+flag stop
+wait 2
+end

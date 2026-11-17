@@ -394,6 +394,7 @@ int sndPlay2D(int id, float vol) {
   return audioPlay(id, clampf(vol, 0, 1), 0, 1.f);
 }
 int sndPlayUi(int id, float vol) { return ready && id >= 0 ? audioPlayBus(id, clampf(vol, 0, 1), 0, 1.f, AUDIO_BUS_UI) : 0; }   // правка 114
+float sndBusLevelUi(int ui) { return ready ? audioBusLevel(ui ? AUDIO_BUS_UI : AUDIO_BUS_SFX) : 0.f; }   // №1266
 void sndStop(int h) { if (ready) audioStop(h); }
 
 // ---------------------------------------------------------------- car
@@ -1040,6 +1041,12 @@ void sndStreetStop(void) {
 // ---------------------------------------------------------------- music / mode
 static float musicFadeOver = -1.f;   // правка 593: выход из клуба — своё затухание (PS2 ~4 с)
 static void music(int t, float fade) { audioMusic(t >= 0 ? tId[t] : -1, musicFadeOver >= 0.f ? musicFadeOver : fade); }
+// 108 правка 1294: после стингера «вступление уровня» в машине — музыка езды (вступление Sunday_Drive или петля) следом, без обрыва: ставится в очередь трека (audioMusicNext), состояние — свободная езда
+void sndMusicQueueFreeroam(void) {
+  if (!ready || mOwned) return;
+  int t = tId[T_SD_INTRO] >= 0 ? T_SD_INTRO : T_SD; if (tId[t] < 0) return;
+  mState = SND_MUS_FREEROAM; mReturn = -1; audioMusicNext(tId[t]);
+}
 void sndMusic(int st) {
   if (!ready || st < 0 || st >= SND_MUS_COUNT) return;
   if (mOwned && st != SND_MUS_OFF) return;   // музыку ведёт миссия (sndMusicEvent): пешком/в машине решает она
@@ -1276,9 +1283,10 @@ static void ambGainApply(void) {
   float g = (roomAmb ? 1.f : powf(10.f, AMB_OUT_DB / 20.f)) * (SV_AMBFOOT_OLD ? 1.f : ambFootG);
   audioStreamSet(AUDIO_ST_AMBIENCE, g, 0.f);
 }
+static unsigned ambSeq; static int ambLogZone = -1, ambLogTrack = -1; static float ambLogPos[3];   // служебная строка ящика (1336): последняя смена атмосферы
 static void setAmbience(int zone, int track, float fade) {
   ambZone = zone;
-  if (track != ambTrack) { ambTrack = track; audioAmbience(track, fade); }
+  if (track != ambTrack) { ambTrack = track; audioAmbience(track, fade); ambSeq++; ambLogZone = zone; ambLogTrack = track; ambLogPos[0] = ppx; ambLogPos[1] = ppy; ambLogPos[2] = ppz; }
   ambGainApply();   // 422: улица −3 дБ, комната как была
 }
 
@@ -1325,6 +1333,10 @@ void sndMissionAmbience(int level, int mission, int onFoot) {
   if (!roomAmb) { roomOutZone = ambZone; roomOutTrack = ambTrack; roomAmb = 1; }
   setAmbience(-1, t, 0.5f);
 }
+
+// 1336: служебная строка чёрного ящика «amb»: смена атмосферы (зона, дорожка, координаты игрока). Счётчик растёт на каждую смену; main читает его раз в кадр
+unsigned sndAmbChanges(void) { return ambSeq; }
+const char *sndAmbLast(int *zone, float pos[3]) { if (zone) *zone = ambLogZone; if (pos) { pos[0] = ambLogPos[0]; pos[1] = ambLogPos[1]; pos[2] = ambLogPos[2]; } return ambLogTrack >= 0 ? audioTrackName(ambLogTrack) : "-"; }
 
 void sndLevelStart(float px, float py, float pz) {
   if (!ready) return;

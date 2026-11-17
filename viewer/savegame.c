@@ -219,7 +219,7 @@ void svOnceCapture(SvOnce *o, const StateProps *sp) {
   unsigned n; o->sig = (uint16_t)svOnceSig(sp, &n); o->n = (uint16_t)(n < SV_ONCE_MAX ? n : SV_ONCE_MAX);
   for (unsigned i = 0, k = 0; sp && i < sp->ninst && k < o->n; i++) {
     if (!spOnce(sp, i)) continue;
-    unsigned st = sp->run[i].state;                            // 0 — цел (машины состояний диска в s0 не возвращаются)
+    unsigned st = (!spOnceOther1305Old && sp->run[i].byOther) ? 0u : sp->run[i].state;   // 0 — цел (машины состояний диска в s0 не возвращаются); 108: разбитый чужой машиной не пишется
     if (st > 15) st = 15;
     o->st[k >> 1] |= (uint8_t)(st << ((k & 1) * 4)); k++;
   }

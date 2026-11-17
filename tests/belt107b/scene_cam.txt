@@ -1,0 +1,56 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag dalbelt 1
+wait 8
+camrel 0 9 0 1 -0.04 0
+wait 6
+scene Ce1
+wait 2
+shot ce1
+flag dalbelt 0
+wait 4
+scene Ce0
+shot ce0
+flag dalbelt 1
+camrel 0 9 0 -1 -0.04 0
+wait 6
+scene Cw1
+wait 2
+shot cw1
+flag dalbelt 0
+wait 4
+scene Cw0
+shot cw0
+flag dalbelt 1
+camrel 0 9 0 0 -0.04 1
+wait 6
+scene Cn1
+wait 2
+shot cn1
+flag dalbelt 0
+wait 4
+scene Cn0
+shot cn0
+flag dalbelt 1
+camrel 0 9 0 0 -0.04 -1
+wait 6
+scene Cs1
+wait 2
+shot cs1
+flag dalbelt 0
+wait 4
+scene Cs0
+shot cs0
+flag dalbelt 1
+flag stop
+wait 2
+end

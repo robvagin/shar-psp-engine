@@ -1,0 +1,6 @@
+# строка TRF: счётчик сбитых пешеходов pedhit=трафик/игрок
+flag nosave
+scene TC_new
+flag trflog 1
+wait 4
+end

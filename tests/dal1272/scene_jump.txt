@@ -1,0 +1,36 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+scene JUMP_A
+goto -300 200 0
+wait 8
+scene JUMP_B
+goto -300 -250 0
+wait 8
+scene JUMP_C
+goto 350 -150 1.57
+wait 8
+scene JUMP_D
+goto 300 500 3.14
+wait 8
+scene JUMP_E
+goto -50 550 0
+wait 8
+scene JUMP_F
+goto 220 172 0
+wait 8
+scene JUMP_G
+goto 350 -550 0
+wait 8
+flag workmix -1
+flag stop
+wait 2
+end

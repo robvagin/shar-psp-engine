@@ -1,3 +1,4 @@
+#include "power.h"   // 107б P0: pwrEpoch(), pwrSimFault(), pwrKillHook()
 #ifndef GEVB_COLLECT_OLD
 #define GEVB_COLLECT_OLD 0   // -DGEVB_COLLECT_OLD=1 — билборды сборного и кольца выключателей в список GE, как раньше
 #endif
@@ -14,17 +15,51 @@ static int collReadAt(void *user,unsigned off,void *data,unsigned size) {
 static SceUID collAsyncFd=-1;   // syncReadP1Old — в main_rooms.h (подключён раньше)
 static unsigned collAsyncWant;
 static int collAsyncStart(void *user,unsigned off,void *data,unsigned size){
-  (void)user; if(collAsyncFd<0)return -1;
+  (void)user; if(collAsyncFd<0||pwrSimFault("collect"))return -1;
   if(sceIoLseek32(collAsyncFd,off,PSP_SEEK_SET)!=(int)off)return -1;
   collAsyncWant=size; return sceIoReadAsync(collAsyncFd,data,size)<0?-1:0;
 }
+int collStall107,collCancelHang107,collCancelOld107; unsigned collCancelTimeouts107;   // 107в: служебно (flag collstall107 / collcancelhang107): чтение «висит», отмена не возвращается; COLLCANCELOLD107_OLD — прежнее неограниченное ожидание
+extern int collCancelDead107;
 static int collAsyncPoll(void *user){   // 1 — прочитано целиком, 0 — идёт, -1 — ошибка
-  (void)user; SceInt64 res=-1; int r=sceIoPollAsync(collAsyncFd,&res);
+  (void)user; if(collStall107)return 0; SceInt64 res=-1; int r=sceIoPollAsync(collAsyncFd,&res);
   if(r>0)return 0; if(r<0)return -1; return res==(SceInt64)collAsyncWant?1:-1;
 }
-static void collAsyncCancel(void *user){(void)user; SceInt64 res; if(collAsyncFd<0)return; sceIoCancel(collAsyncFd); sceIoWaitAsync(collAsyncFd,&res);}   // как load_fuse_io.c: отмена, потом ожидание конца (после отмены оно не вечное)
+// 107в (ревью Fable): отмена чтения гэга шла sceIoCancel + sceIoWaitAsync без предела; на умершем после сна дескрипторе ожидание могло не вернуться и игра стояла бы на первом кадре после пробуждения. Теперь после отмены
+// опрос не дольше 200 мс (как у msnart.c waitBusy); не кончилось — дескриптор бросается (collAsyncFd = −1, его заново откроет лечение), буфер чтения НЕ освобождается (ядро могло ещё писать), collCancelDead107 = 1 говорит об этом
+// coll_stream.c jobCancel. COLLCANCEL107_OLD (flag collcancelold107 1) — прежнее ожидание без предела
+static void collAsyncCancel(void *user){(void)user; SceInt64 res; if(collAsyncFd<0)return; sceIoCancel(collAsyncFd);
+  if(collCancelOld107){sceIoWaitAsync(collAsyncFd,&res);return;}
+  unsigned t0=sceKernelGetSystemTimeLow();int done=0;
+  while((unsigned)(sceKernelGetSystemTimeLow()-t0)<200000u){if(!collCancelHang107&&sceIoPollAsync(collAsyncFd,&res)!=1){done=1;break;}sceKernelDelayThread(1000);}
+  if(!done){collCancelTimeouts107++;collCancelDead107=1;collAsyncFd=-1;if(smkOn){char l_[100];snprintf(l_,sizeof l_,"COLLCANCEL timeout (descriptor abandoned) n=%u t=%.1f\n",collCancelTimeouts107,smkT);smkWrite(l_);}}
+}
+// 107б P0 (Роб 1273): дескрипторы пакета гэгов (collStreamFd — синхронные чтения, collAsyncFd — фон) после сна мертвы; открываются заново по pwrEpoch() и при лечении отказов (coll_stream.c collStreamHeal107)
+static char collPath107[256]; static unsigned collEpoch107, collReopenAt107; static int collHook107; int collPwr107Old;
+static void collKill107(void){if(collStreamFd>=0)sceIoClose(collStreamFd);if(collAsyncFd>=0)sceIoClose(collAsyncFd);collStreamFd=-1;collAsyncFd=-1;}   // убийца дескрипторов для simsleep (power.h): закрыть и записать −1
+static void collReopen107(void){
+  if(!collPath107[0])return;
+  if(collStreamFd>=0){sceIoClose(collStreamFd);collStreamFd=-1;}
+  if(collAsyncFd>=0){sceIoClose(collAsyncFd);collAsyncFd=-1;}
+  if(pwrSimFault("collect"))return;   // simsleep N: открытие отказало, дескрипторы −1, повтор через паузу
+  collStreamFd=sceIoOpen(collPath107,PSP_O_RDONLY,0);
+  if(!syncReadP1Old&&!SYNCREAD_P1_OLD)collAsyncFd=sceIoOpen(collPath107,PSP_O_RDONLY,0);
+  if(smkOn){char l_[120];snprintf(l_,sizeof l_,"COLLREOPEN sync=%d async=%d t=%.1f\n",(int)collStreamFd,(int)collAsyncFd,smkT);smkWrite(l_);}
+}
+void collKillAsync107(void){if(collAsyncFd>=0)sceIoClose(collAsyncFd);collAsyncFd=-1;}   // служебно (flag collkillasync107): умер только фоновый дескриптор
+static void collPwrPoll107(void){   // раз в кадр до collStreamPrepare: пробуждение — отменить чтение в полёте, снять пометки, дескрипторы заново
+  if(!collPath107[0])return;
+  if(!collHook107){collHook107=1;pwrKillHook("collect",collKill107);}
+  if(!collPwr107Old&&(collStreamFd<0||(!syncReadP1Old&&!SYNCREAD_P1_OLD&&collAsyncFd<0))){unsigned n_=sceKernelGetSystemTimeLow();if(!collReopenAt107||(int)(n_-collReopenAt107)>=0){collReopenAt107=n_+1000000u;if(!collReopenAt107)collReopenAt107=1;collReopen107();}}   // после сна не открылись — раз в секунду заново
+  unsigned e=pwrEpoch();if(e==collEpoch107)return;
+  collEpoch107=e;if(collPwr107Old)return;
+  collStreamHeal107(1);
+}
 static unsigned collAsyncNow(void *user){(void)user; return sceKernelGetSystemTimeLow()/1000u;}
-static const CollectAsync collAsyncTab={collAsyncStart,collAsyncPoll,collAsyncCancel,collAsyncNow,0};
+static unsigned collAsyncNowUs(void *user){(void)user; return sceKernelGetSystemTimeLow();}
+static void collAsyncSleepUs(void *user,unsigned us){(void)user; sceKernelDelayThread(us);}
+static const CollectAsync collAsyncTab={collAsyncStart,collAsyncPoll,collAsyncCancel,collAsyncNow,0,collAsyncNowUs,collAsyncSleepUs};
+void cardFlash1342(const float p[3]);   // №1342: spritelight.h — вспышка подбора карточки
 static void *collPak;   // Collect coll, haveColl — выше (правка 338: камера видит гэги)
 enum { STREET_SOURCE_NONE,STREET_SOURCE_PED,STREET_SOURCE_NPC,STREET_SOURCE_DRIVER };
 static int streetSource,streetSlot;static char streetWho[24];
@@ -330,6 +365,7 @@ static void cxTexBind(unsigned k, unsigned char *b, unsigned size) {
 static void cxTexUnbind(unsigned k) { if (cxTex && k < cxNtex) memset(&cxTex[k], 0, sizeof cxTex[k]); bound = -2; }
 static void collLoad(void) {   // один раз после fxInit и sndInit: пакет целиком, текстуры, частицы EFX — к fx.shr
   char fn[256]; levelFile(fn, "collect-l%d.shr");
+  snprintf(collPath107,sizeof collPath107,"%s",fn); collEpoch107=pwrEpoch(); collStreamReopen107=collReopen107;   // 107б P0
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return;   // нет пакета — уровень без карточек, ос и гэгов
   unsigned n = (unsigned)sceIoLseek32(f, 0, PSP_SEEK_END); sceIoLseek32(f, 0, PSP_SEEK_SET);
   unsigned char *b; int e=0;
@@ -579,7 +615,43 @@ static Movie *movieOpen1239Legacy(const char *fn, int *err, void **fbp, const ch
   if (!m) { if (uiReady) uiMessage("MOVIE SKIPPED", -1, 1.5f); if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "MOVIE1239 skipped who=%s t=%.1f\n", who, smkT); smkWrite(s_); } }
   return m;
 }
-static void movieReturn1239(void **fbp, int freed) { if (freed && (!movie1239Old || !tfsm95Old)) mem1060Return(fbp); }   // клетки города обратно под прелоадером (стрим дальше сам)
+static int tvFreed1271;   // №1271б: клетки в кучу отдал открытый рамки (последняя ступень), вернуть после ролика
+static void movieReturn1239(void **fbp, int freed) { if ((freed || tvFreed1271) && (!movie1239Old || !tfsm95Old)) mem1060Return(fbp); tvFreed1271 = 0; }   // клетки города обратно под прелоадером (стрим дальше сам)
+// №1271 (Роб 13.11: «в некоторых местах нет рамки, на тесте посмотрел — там нет видео с рамкой»): в 106 рамку-телевизор получили только ролики VIEW MOVIES (msnMovie1, №105).
+// Ролик гэга и билета (gagMovie: карточка, билет, гэг мира) рисовал рамку экраном 3 ТОГО пакета, что открыт (билет, пауза и т. п.), либо не открывал boot.shr вовсе.
+// Теперь и он закрывает чужой второй пакет, открывает boot.shr, а после ролика возвращает прежний (общая пара tvIn1271/tvOut1271; строка MOVIETV1271 who=… pack=… frame=0|1 в журнал).
+// MOVIETV1271_OLD=1 / flag movietv1271 0 — как было (красный контроль)
+#ifndef MOVIETV1271_OLD
+#define MOVIETV1271_OLD 0
+#endif
+static int movieTv1271 = !MOVIETV1271_OLD;
+// №1271б (Роб 13.11: «видео в конце 5-го левела, Барт и Гомер в машине — там не было рамки»): ролик цели конца уровня (fmv3/5/6/7 из переходной миссии m8) идёт путём msnMovie1.
+// Чистый прогон в эмуляторе рамку рисует, у Роба на PSP её не было: подозрение на отказ чтения boot.shr при тесной куче после долгой игры (без повтора и без лестницы).
+// Теперь открытие рамки у ролика миссии, гэга и билета идёт общей функцией: отказ — лестница памяти (канон п.13, цельный кусок 1 МБ) и второй заход; не вышло — строка WATCHDOG и ролик без рамки, не молча.
+// MOVIETV1271B_OLD=1 / flag movietv1271b 0 — как было (один заход); flag tvfail1271 N — следующие N открытий рамки отказывают (проверка пути, красный контроль)
+#ifndef MOVIETV1271B_OLD
+#define MOVIETV1271B_OLD 0
+#endif
+static int movieTv1271b = !MOVIETV1271B_OLD, tvFail1271;
+static int tvOpen1271(const char *who, const char *bf) {
+  int rc = tvFail1271 > 0 ? (tvFail1271--, uiScrClose(), -3) : uiScrOpen(bf);
+  if (rc == 0 || !movieTv1271b) return rc;
+  unsigned b0 = memMaxBlock ? memMaxBlock() : 0; int lad = memLadder("tvframe", 1024u << 10, LAD_TOP);
+  int rc2 = tvFail1271 > 0 ? (tvFail1271--, uiScrClose(), -3) : uiScrOpen(bf), fr = 0;
+  if (rc2 && !mem1060Back) { int n = mem1060Free(); mem1060Back = 1; tvFreed1271 = 1; fr = n; rc2 = uiScrOpen(bf); }   // последняя ступень: клетки и пакеты про запас в кучу (мир ролика не виден), вернуть после ролика
+  if (smkOn) { char l_[220]; snprintf(l_, sizeof l_, "MOVIETV1271B who=%s rc=%d blk=%u ladder=%d freed=%d rc2=%d t=%.1f\n", who, rc, b0, lad, fr, rc2, smkT); smkWrite(l_); }
+  if (rc2) { char l_[120]; snprintf(l_, sizeof l_, "WATCHDOG tvframe %s no-frame rc=%d blk=%u t=%.1f\n", who, rc2, memMaxBlock ? memMaxBlock() : 0, smkT); if (smkOn) smkWrite(l_); bbNote(l_); }
+  return rc2;
+}
+static int tvIn1271(const char *who, char *keep, unsigned kn) {   // 1 — boot.shr открыт этим вызовом (закрыть через tvOut1271)
+  keep[0] = 0; int opened = 0, rc = 0; char bf[256]; sibling(bf, "boot.shr"); const char *p = uiScrReady() ? uiScrPath() : 0; const char *was = p ? (strrchr(p, '/') ? strrchr(p, '/') + 1 : p) : "-";
+  if (!tvFrameOn) return 0;
+  if (p && strcmp(p, bf)) { snprintf(keep, kn, "%s", p); uiScrClose(); scrTvOver = 0; p = 0; }
+  if (!p) { rc = tvOpen1271(who, bf); opened = rc == 0; }
+  if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "MOVIETV1271 who=%s was=%s rc=%d frame=%d t=%.1f\n", who, was, rc, uiScrReady() && !strcmp(uiScrPath() ? uiScrPath() : "", bf), smkT); smkWrite(l_); }
+  return opened;
+}
+static void tvOut1271(int opened, const char *keep) { if (opened) SCR_CLOSE(); if (keep[0]) uiScrOpen(keep); }
 static void gagMovie(int g, void **fbp) {
   GE_NEST_GUARD("gagMovie");   // №1186/№1188
   char fn[256], rel[64]; snprintf(rel, sizeof rel, "movies/%s.smv", coll.gag[g].fmv); sibling(fn, rel);
@@ -589,7 +661,9 @@ static void gagMovie(int g, void **fbp) {
   sndMaster(0.f);
   if (zone3OnX() && smkOn) { char z_[460]; zone3StatLineX(z_, sizeof z_, smkT, "movie_in"); smkWrite(z_); }   // П5 Зоны-95
   int err = 0, shot = 0, freed1239 = 0; movieVolSync(); Movie *m = movieOpen1239(fn, &err, fbp, "movie", &freed1239);   // Будка-93 (1239): результат памяти обязателен, прелоадер вместо тишины (включает прежний mem1060Pre)
-  int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
+  char keep1271[320]; keep1271[0] = 0; int tvPak = 0;
+  if (movieTv1271) tvPak = tvIn1271("gag", keep1271, sizeof keep1271);   // №1271: рамка и при чужом открытом пакете
+  else { tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); } }   // как было (до 1271)
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
   unsigned last = sceKernelGetSystemTimeLow(); char s[160]; unsigned t00 = last; int skipping = 0; float skipT = 0.f;
   while (m && movieUpdate(m)) {
@@ -609,7 +683,7 @@ static void gagMovie(int g, void **fbp) {
     sceGuStart(GU_DIRECT, list); movieDrawTv(m); if (skipping) movieVeil(skipT / MOVIE_SKIPFADE_S); sceGuFinish(); sceGuSync(0, 0);
     sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
-  if (tvPak) SCR_CLOSE();
+  if (movieTv1271) tvOut1271(tvPak, keep1271); else if (tvPak) SCR_CLOSE();
   MovieStats st; memset(&st, 0, sizeof st); if (m) movieClose(m, &st); else st.err = err;
   if (!MOVIE_RULES_OLD) movieBlackTail(fbp);   // P15 Д1: 10 кадров сплошного чёрного
 #if !TICKET_CONTENT_C3_OLD
@@ -659,7 +733,8 @@ static void msnMovie1(const char *rmv, void **fbp) {
   if (movieTv105 && tvFrameOn && uiScrReady()) { char bf_[256]; sibling(bf_, "boot.shr"); const char *p_ = uiScrPath(); if (p_ && strcmp(p_, bf_)) { snprintf(keepPak, sizeof keepPak, "%s", p_); uiScrClose(); scrTvOver = 0;
     if (smkOn) { char l_[200]; snprintf(l_, sizeof l_, "MOVIETV105 swap clip=%s kept=%s t=%.1f\n", nm, strrchr(p_, '/') ? strrchr(p_, '/') + 1 : p_, smkT); smkWrite(l_); } } }   // чужой пакет — на время ролика долой
   int err = 0, shot = 0, freed1239 = 0; movieVolSync(); Movie *m = movieOpen1239(fn, &err, fbp, nm, &freed1239);   // Будка-93 (1239): у ролика миссии памяти не проверяли вовсе
-  int tvPak = tvFrameOn && !uiScrReady(); if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); uiScrOpen(bf); }   // только отрицательный контроль (рамка правки 32)
+  int tvPak = tvFrameOn && !uiScrReady(); int tvRc1271 = 0; if (tvPak) { char bf[256]; sibling(bf, "boot.shr"); tvRc1271 = tvOpen1271(nm, bf); }   // только отрицательный контроль (рамка правки 32)
+  if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "MOVIETV1271 who=%s opened=%d rc=%d frame=%d t=%.1f\n", nm, tvPak, tvRc1271, tvFrameOn && uiScrReady(), smkT); smkWrite(l_); }   // №1271: рамка у этого ролика есть?
   SceCtrlData pad; sceCtrlPeekBufferPositive(&pad, 1); unsigned prev = pad.Buttons | smokePad();
   unsigned last = sceKernelGetSystemTimeLow(), t00 = last; int skipped = 0, skipping = 0; float skipT = 0.f;
   while (m && movieUpdate(m)) {
@@ -701,7 +776,7 @@ static void collFrame(float dt, void **fbp) {
   while (collectPop(&coll, &e)) {
     float p[3] = {e.x, e.y, e.z};
     switch (e.type) {
-      case CE_CARD: sndCardFound(e.x, e.y, e.z);   /* сверка g08-sound (P09 Д3): card_collect — в машине, пешком вставка OF_found_card */ fxBurst(fxFind("card_collect_psShape"), p, NULL); tutEvent(TUT_CARD);
+      case CE_CARD: cardFlash1342(p); sndCardFound(e.x, e.y, e.z);   /* сверка g08-sound (P09 Д3): card_collect — в машине, пешком вставка OF_found_card */ fxBurst(fxFind("card_collect_psShape"), p, NULL); tutEvent(TUT_CARD);
         sndSay(SND_SAY_CARD, 0);   // аудит 09.10: W_Card («I can sell this on the internet»)
         if (!CARD_CELEBRATE_OLD && haveHomer && onFoot()) homerCelebrate(&homer, 1);   // круг 2, g04-homer P05:1: большая радость hom_victory_large при карточке (за рулём клипа нет: 0)
         cardHudT = COLL_HUD_OLD ? COLL_HUD_S : COLL_HUD_CARD_S; if (uiReady) uiHudSet(UI_F_CARD_TITLE, coll.card[e.idx].title);
@@ -1087,6 +1162,7 @@ static void shopFailNote1233(const char *what) { if (smkOn) { char s_[120]; snpr
 // Build 95 П2: класс SHOP через ldrRun. Пакет лавки 0,3 МБ: экран нет (блок есть) или прелоадер; ступени только лестница (город виден за лавкой, «все клетки» пропущена); SIMPLIFY «STORE UNAVAILABLE» + WATCHDOG
 static int shopPackCb(void *u) { const char *fn = (const char *)u; int rc = shopViewFailTest > 0 ? (shopViewFailTest--, uiScrClose(), -3) : uiScrOpen(fn); return rc == 0; }
 static int shopOpenFsm(const char *fn) {
+  bbOp("shop+", "-", 0);   // 1320: ящик выпуска — лавка начала открываться
   Transit t; memset(&t, 0, sizeof t);
   t.name = "shop"; t.need = 512u << 10; t.at[0] = homer.x; t.at[1] = homer.y; t.at[2] = homer.z;
   t.screen = (memMaxBlock && memMaxBlock() >= t.need && !transitNoFit) ? TFS_NONE : TFS_PRELOADER;
@@ -1111,6 +1187,7 @@ static int wardrobeOpen1233Legacy(const char *sd, int worn) {   // 1233 (г): с
 static int wardrobeOpen1233(const char *sd, int worn) {
   if (tfsm95Old || shopHeal1233Old) return wardrobeOpen1233Legacy(sd, worn);
   if (wardrobeOn()) return wardrobeOpen(mvShop(), sd, worn);   // уже открыт: прежний отказ
+  bbOp("ward+", "-", 0);   // 1320: ящик выпуска — гардероб начал открываться
   WardCtx cx = {sd, worn}; Transit t; memset(&t, 0, sizeof t);
   t.name = "wardrobe"; t.need = 1u << 20; t.at[0] = homer.x; t.at[1] = homer.y; t.at[2] = homer.z;
   t.screen = (memMaxBlock && memMaxBlock() >= t.need && !transitNoFit) ? TFS_NONE : TFS_PRELOADER;

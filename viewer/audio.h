@@ -68,6 +68,7 @@ int  audioTrackCount(void);  const char *audioTrackName(int id);
 // Resident sounds. Random variant and random pitch range come from the original script; vol 0..1,
 // pan -1..1, pitch multiplier. Looping resources loop until audioStop. Returns a handle (0 = not started).
 int  audioPlay(int id, float vol, float pan, float pitch);
+float audioBusLevel(int bus);   // текущий уровень шины (тюнер × громкость игрока)
 int  audioPlayBus(int id, float vol, float pan, float pitch, int bus);   // то же на заданной шине (AUDIO_BUS_UI — меню)
 void audioSet(int h, float vol, float pan, float pitch);
 void audioStop(int h);                     // ~12 ms fade, no click

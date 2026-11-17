@@ -1,0 +1,17 @@
+# Т1 (107b, Стена): трафик и обычный пешеход на полосе. Машина трафика 0 едет по полосе вперёд, стоящий пешеход в 28 м от игрока на её пути. Новое: не тормозит перед ним; _OLD: встаёт перед ним
+flag nosave
+flag trfpedobs108old 1
+scene TP_old
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 10
+flag pedahead 28
+wait 0.5
+flag trfprobe
+wait 4
+flag trfprobe
+wait 4
+flag trfprobe
+wait 4
+flag trfprobe
+end

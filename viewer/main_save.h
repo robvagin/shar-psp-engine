@@ -356,6 +356,7 @@ static void saveLog(const char *src) {   // smoke.txt: прогресс игры
   SaveGame g; saveCapture(&g); char p[256], s[320]; svProgressText(&g, p, sizeof p);
   snprintf(s, sizeof s, "SVPROG src=%s %s t=%.1f\n", src, p, smkT); smkWrite(s);
 }
+static int lockHintOpen(int idx) { SaveGame g; saveCapture(&g); return svmOpen(SVM_SAVE, &g, 0, 16 | ((idx & 255) << 8)); }   // 1327: окно подсказки запертого этапа (savemenu.c hintNotice), как вопрос паузы
 static int savePauseOpen(int askQuit) { SaveGame g; saveCapture(&g); return svmOpen(SVM_SAVE, &g, 0, askQuit); }
 unsigned svmDialogFrame(float dt, int start) {   // правка 309 (savemenu.h): окно утилиты сохранения PSP на экране — сценарий смоука идёт
   // (press/wait/shot; goto и флаги в окне не действуют), нажатия сценария, начатые при окне, — в контроллер эмулятора строкой TWPAD
@@ -383,6 +384,9 @@ static void saveService(const char *f) {   // служебные флаги ге
   else if (!strcmp(f, "svdialog")) svmDialog(1);       // правка 309: окно утилиты сохранения PSP и в служебном запуске
   else if (!strcmp(f, "svquiet")) svmDialog(0);        // правка 309: прежний тихий путь без окна (красный контроль tests/savegame/dialog/run.py)
   else if (!strcmp(f, "svpickempty")) svmPickEmpty(1);   // тур финала L7 для железа: занятый слот (сейв Роба) не перезаписывается
+  else if (!strcmp(f, "svdlgfake")) svmDlgFake1339(1, -1);   // 1339 стенд: окно «показано», ответ — отмена (без запуска утилиты)
+  else if (!strcmp(f, "svdlgphantom")) svmDlgFake1339(-1, 1);   // 1339 стенд: ✕ в отсчётах пульта сразу после окна
+  else if (!strcmp(f, "dlgpad1339old")) { svDlgPad1339Old = 1; if (smkOn) smkWrite("DLGPAD1339 old=1\n"); }   // 1339: как было
   else if (!strcmp(f, "svdlgfail")) svmDialogFail(1);  // правка 309: окно отвергает все варианты — запись тихим путём
   else if (!strcmp(f, "svlog")) saveLog("now");
   else if (!strcmp(f, "svmark")) {   // m0 пройдена, карточка 1, +7 монет, монета мира 0 собрана, музыка 300

@@ -11,6 +11,7 @@
 #include "blackbox.h"   // правка 306: открытие лавки — в чёрный ящик
 #include "frontend3d.h"
 #include "sound.h"
+#include "audio.h"
 
 // метки и поля экрана purchase (tools/shop_export.py, шапка): те же номера, что в пакете shop.shr
 enum { SV_T_LOCKED = UI_T_GAMBLE, SV_T_STATS = UI_T_STREETRACE, SV_T_ARROWS = UI_T_SKIP };
@@ -47,7 +48,16 @@ static void logf_(const char *fmt, ...) {   // строка SHOPV ... t=.. в sm
   char line[200], body[160]; va_list ap; va_start(ap, fmt); vsnprintf(body, sizeof body, fmt, ap); va_end(ap);
   snprintf(line, sizeof line, "SHOPV %s t=%.2f\n", body, t); logFn(line);
 }
-static void snd(int id) { if (id >= 0) sndPlay2D(id, 1.f); }
+// 1329 (Роб, 108 на PSP: «только что купил школьный автобус, не было звука покупки»). Оригинал: на ✕ меню покупки играет один звук «accept» (выбор пункта), отдельного «кассового» нет, листание «scroll», отказ «locked_out», назад «back».
+// У нас на время лавки машин включён режим «Store» с шиной эффектов в нуле (№1135), а звуки лавки шли на шину эффектов, поэтому accept/scroll/back/locked_out молчали. Как у будки (№1266), они идут на шину меню.
+// SHOPSND1329_OLD=1 / файл shopsnd1329old / flag shopsnd1329old 1 — как было. Строка SHOPV snd имя bus=ui|sfx lvl=<уровень той шины> t=..
+int shopSnd1329Old = 0;
+static void snd(int id) {
+  if (id < 0) return;
+  if (shopSnd1329Old) sndPlay2D(id, 1.f); else sndPlayUi(id, 1.f);
+  const char *nm = audioSoundName(id);
+  logf_("snd %s bus=%s lvl=%.2f", nm ? nm : "?", shopSnd1329Old ? "sfx" : "ui", sndBusLevelUi(!shopSnd1329Old));
+}
 static void sounds(void) {
   if (sndRes || !sndReady()) return;
   sScroll = sndId("scroll"); sAccept = sndId("accept"); sBack = sndId("back"); sLocked = sndId("locked_out");   // frontend.spt

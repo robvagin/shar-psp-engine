@@ -1,0 +1,160 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag dalbelt 1
+wait 8
+camrel 0 12 0 1.000 -0.06 0.000
+flag beltfar 1
+wait 5
+scene R00n
+shot r00n
+flag beltfar 0
+wait 3
+scene R00o
+shot r00o
+camrel 0 12 0 0.924 -0.06 0.383
+flag beltfar 1
+wait 5
+scene R01n
+shot r01n
+flag beltfar 0
+wait 3
+scene R01o
+shot r01o
+camrel 0 12 0 0.707 -0.06 0.707
+flag beltfar 1
+wait 5
+scene R02n
+shot r02n
+flag beltfar 0
+wait 3
+scene R02o
+shot r02o
+camrel 0 12 0 0.383 -0.06 0.924
+flag beltfar 1
+wait 5
+scene R03n
+shot r03n
+flag beltfar 0
+wait 3
+scene R03o
+shot r03o
+camrel 0 12 0 0.000 -0.06 1.000
+flag beltfar 1
+wait 5
+scene R04n
+shot r04n
+flag beltfar 0
+wait 3
+scene R04o
+shot r04o
+camrel 0 12 0 -0.383 -0.06 0.924
+flag beltfar 1
+wait 5
+scene R05n
+shot r05n
+flag beltfar 0
+wait 3
+scene R05o
+shot r05o
+camrel 0 12 0 -0.707 -0.06 0.707
+flag beltfar 1
+wait 5
+scene R06n
+shot r06n
+flag beltfar 0
+wait 3
+scene R06o
+shot r06o
+camrel 0 12 0 -0.924 -0.06 0.383
+flag beltfar 1
+wait 5
+scene R07n
+shot r07n
+flag beltfar 0
+wait 3
+scene R07o
+shot r07o
+camrel 0 12 0 -1.000 -0.06 0.000
+flag beltfar 1
+wait 5
+scene R08n
+shot r08n
+flag beltfar 0
+wait 3
+scene R08o
+shot r08o
+camrel 0 12 0 -0.924 -0.06 -0.383
+flag beltfar 1
+wait 5
+scene R09n
+shot r09n
+flag beltfar 0
+wait 3
+scene R09o
+shot r09o
+camrel 0 12 0 -0.707 -0.06 -0.707
+flag beltfar 1
+wait 5
+scene R10n
+shot r10n
+flag beltfar 0
+wait 3
+scene R10o
+shot r10o
+camrel 0 12 0 -0.383 -0.06 -0.924
+flag beltfar 1
+wait 5
+scene R11n
+shot r11n
+flag beltfar 0
+wait 3
+scene R11o
+shot r11o
+camrel 0 12 0 -0.000 -0.06 -1.000
+flag beltfar 1
+wait 5
+scene R12n
+shot r12n
+flag beltfar 0
+wait 3
+scene R12o
+shot r12o
+camrel 0 12 0 0.383 -0.06 -0.924
+flag beltfar 1
+wait 5
+scene R13n
+shot r13n
+flag beltfar 0
+wait 3
+scene R13o
+shot r13o
+camrel 0 12 0 0.707 -0.06 -0.707
+flag beltfar 1
+wait 5
+scene R14n
+shot r14n
+flag beltfar 0
+wait 3
+scene R14o
+shot r14o
+camrel 0 12 0 0.924 -0.06 -0.383
+flag beltfar 1
+wait 5
+scene R15n
+shot r15n
+flag beltfar 0
+wait 3
+scene R15o
+shot r15o
+flag stop
+wait 2
+end

@@ -1,0 +1,40 @@
+# К1/К2 (108, Стена): состояние тура F_L7_WALK. L7, после m3 «тарелка» (машина осталась у тарелки в 540 м от стартового дома), Гомер переносится к дому и идёт пешком. Журнал тура 106: CAMSUB safe=154 мс, CAMIN jmax=896
+flag nosave
+scene BOOT
+flag golevel 7
+wait 40
+flag cfgdefaults 1
+flag footfsm 1
+flag streameye 1
+flag repair
+wait 3
+flag msnmainat 202
+wait 0.8
+press cross 0.2
+wait 1.5
+flag msnufo
+goto -121.5 601.8 0.0
+wait 1
+cam -121.5 62 575 0 -0.75 0.66 70
+wait 1
+cam off
+wait 1.4
+press triangle 0.2
+wait 0.3
+flag msnhud 1
+wait 2.2
+flag msnufo
+flag msnhud 1
+wait 1
+flag repair
+wait 2
+flag player 1
+foot 218 172.3 0
+wait 3
+flag camin 1
+flag walk 12
+wait 14
+flag camin
+flag stop
+wait 1
+end

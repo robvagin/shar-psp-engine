@@ -1,0 +1,31 @@
+# 1359 пп. 1 и 3: L4 m1 с этапа 1.1.2 (cPolice миссии стоит у Lard Lad), этапы засчитываются по одному до конца миссии. Бот только снимает вступительные экраны (msnbotpass 0).
+# Смотрим строки STAGEEND cPolice (п. 1: машина уходит после этапа) и MCREMOVE cPolice why=mission-done (п. 3: в конце миссии машина миссии не сносится по имени на глазах).
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO4_L4
+flag golevel 4
+wait 25
+flag msnbot 1
+flag msnbotpass 0
+flag msnmainat 2
+wait 10
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 4
+flag msnpass
+wait 6
+flag msnaudit
+end

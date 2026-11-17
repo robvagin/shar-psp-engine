@@ -1,0 +1,13 @@
+# 109 (в/г, Стена): L1 m1, этап 0 засчитан служебно, следующий этап (1) приводит skinn_v. Чтение модели отказывает 14 раз подряд (flag mcrfail 14, до старта миссии): новое — этап 1 стартует после того, как модель прочиталась (мир идёт), old
+flag nosave
+flag msnloadwait109old 1
+scene LW_old
+wait 3
+flag msn
+wait 2
+flag mcrfail 14
+flag msnmainat 100
+wait 1.5
+flag msnpass
+wait 22
+end

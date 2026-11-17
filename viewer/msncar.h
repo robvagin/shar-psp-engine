@@ -152,12 +152,14 @@ typedef struct {
   float vdes, catchT;               // желаемая скорость, м/с, и таймер пересчёта (2 с)
   int turning;                      // подготовка к повороту (руль по дальней точке, ручник)
   int stkOn, stopHold, direct;      // застревание: идёт счёт; после заднего хода ручник до остановки; погоня едет напрямую
+  float lastRd[4], lastRdT; int lastRdOk;   // 1325б: последняя точка оси полосы под соперником гонки (x, y, z, курс), таймер записи, есть ли
   float stkT, ramT, slipT, baseGrip, flipHoldT, waitT, offT;   // счёт застревания; пауза после тарана; потеря управления; сцепление .con; наклон 75°; ожидание игрока; вне звеньев пути
   float dbgNear[3], dbgFar[3];     // ближняя и дальняя точка руля последнего кадра (проверки)
   float catchF;                     // коэффициент догонялки последнего расчёта −1…1 (гонка), −1…0 (цель), 0…1 (уход): добавка к броску умения срезать
   float backLen, stkThr; int noPlace;   // круг 3: время заднего хода (0,3 с старт), порог застревания, не ставить на дорогу на 7-м застревании (цель уничтожения; ставит game_msn.c)
   int waitEvt, waiting, chaseRoad, losOk; float chaseRoadT, losT;   // losT/losOk: прямая видимость полиции до игрока, пересчёт раз в 0,1 с   // событий «ИИ добрался до цели» (читает миссия); сейчас ждёт; дорога под целью погони
   float dbgGap, dbgSwerve; int dbgKind;   // служебное: зазоры этого кадра и чья машина впереди (гейт, журнал)   // бот-игрок (mcBotInput): точка, к которой проложен путь; машина-цель тарана
+  int leaveQ;                       // правка A2.2 (Стена 107): 1 — после своего этапа стоит в очереди на уход (ИИ выключен); 2 — вне кадра дальше 5 м, пора убрать (ставит рисование; боты — по дальности)
 } McCar;
 
 typedef struct {
@@ -199,6 +201,9 @@ void mcWaypoint(MsnCars *m, int index, const float p[3], int laps);   // AddStag
 void mcParams(MsnCars *m, const char *name, int lo, int hi);           // SetVehicleAIParams
 void mcCatchup(MsnCars *m, const char *name, int kind, const float *p, int n);   // 0 — гонка (4 числа), 1 — цель (2)
 void mcClear(MsnCars *m);
+int mcRemovePolice(MsnCars *m, const char *name);   // 1350: снять только полицию H&R по имени модели
+extern int hnrPolName1350Old;   // 1350: 1 — поиск и постановка машин по имени без различия погони H&R и машины миссии (как было)
+extern const char *mcRemoveWhy1350;   // 1350: причина снятия машины (для строки MCREMOVE)
 void mcRemove(MsnCars *m, const char *name);   // машина миссии уходит (игрок сел в машину этого имени: SetForcedCar)                                             // конец миссии / повтор: машины уходят
 int mcMode(const char *ai);
 // кадр: после машины игрока и Гомера, до трафика. hit(u, имя) — игрок ударил машину миссии (скорость удара > 1 м/с)
@@ -254,6 +259,9 @@ int mcRacePlaceRob(MsnCars *m, const float (*pts)[3], int n, int laps, int pk, c
 extern int mcRacePos300;   // 1 — место по остатку метров (правка 300; красный контроль 326: flag racepos300 1 / -DRACEPOS_300=1)
 extern int mcLedgeOld;   // правка 347: 1 — путь ИИ и вверх по уступам срезов (прежнее; flag ledgeold 1 / -DMC_LEDGE_OLD=1)
 extern int mcRaceJamOld;   // правка 1205: 1 — заклинивший соперник гонки не возвращается на свой путь (прежнее; RACE_JAM_OLD / flag racejamold 1)
+extern int mcAiReset1325Old;   // 1325: 1 — у машин ИИ миссии нет зон DEATH, перевёрнутая встаёт на месте (MC_AIRESET1325_OLD / flag airesetold1325 1)
+extern int mcAiReset1325BOld; extern unsigned mcAiResetLastN, mcAiResetClearN;   // 1325б: 1 — сброс на ближайшую полосу и без очистки трафика (MC_AIRESET1325B_OLD / flag airesetoldb1325 1)
+extern unsigned mcAiResetDeathN, mcAiResetFlipN; extern float mcAiResetLast[6];   // 1325: счётчики и последняя точка сброса
 extern int mcLedgeFwdOld;   // правка 486: 1 — по ходу дороги уступ не судить (прежнее правило 347; -DMC_LEDGE_FWD_OLD=1)
 extern int mcBotPassOld;   // правка 347: 1 — бот careful не обгоняет соперника (прежнее; MISSIONER_PASS_OLD=1)
 extern int mcBotRamOld;   // правка 347: 1 — бот-таран тормозит и под машины ДАЛЬШЕ цели в коридоре (прежнее; MISSIONER_RAM_OLD=1)
@@ -267,6 +275,7 @@ int mcPlanFor(const MsnCars *m, const McEnv *e, McCar *c, const float g[3], floa
 int mcPlan(const Traffic *tr, float x, float y, float z, float h, const float g[3], int shortcuts, float out[][3], int cap, int *offroad);
 int mcResetPoint(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float out[4]);   // RESET CAR по дорогам: точка и курс на оси ближней полосы по ходу; 0 — нет
 int mcResetPointOff(const Traffic *t, float x, float y, float z, float h, float vx, float vz, float off, float out[4]);   // №1248ж: то же со сдвигом по полосе (м; < 0 — назад)
+int mcResetPointNear(const Traffic *t, float x, float y, float z, float h, float out[4]);   // 1325: ближайшая точка осей полос до 100 м, курс вдоль неё в сторону курса машины; 0 — нет
 float mcLaneDist(const Traffic *tr, float x, float z);   // до оси ближней полосы (любой дороги), м; 1e9 — дорог нет
 // дороги, чью ось перекрывает коллизия уровня (путь ИИ — в объезд): проверить все сразу при загрузке уровня (иначе — по требованию
 // в первом пути через дорогу: на PSP до 70 мс за кадр). -> сколько перекрыто

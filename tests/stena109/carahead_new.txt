@@ -1,0 +1,13 @@
+# 109 (в, Fable-2): L1 m3 при ballast 9 (куча почти пуста): чтение вперёд машин фазы под лестницей car-ahead — только ступени 1–2, клетки города не выбрасываются (ступень 3)
+flag nosave
+scene carahead_new
+wait 3
+flag msn
+wait 2
+flag msnmain 3
+wait 3
+press cross
+wait 3
+goto 214 281 1.57
+wait 60
+end

@@ -1,0 +1,14 @@
+# красный
+scene g1362bo
+flag fadeclk1362bold 1
+flag camdet 1
+flag startcam 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnmainat 302
+wait 3
+flag fadeout 1
+wait 4
+end

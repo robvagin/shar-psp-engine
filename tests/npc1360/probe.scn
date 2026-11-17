@@ -1,0 +1,21 @@
+# 1360 п.10, разведка: L4, записи персонажей до миссии, во время и после (apu и selma — и фоновые, и в миссиях)
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO4_L4
+flag golevel 4
+wait 25
+scene N0
+flag npclist1360
+flag msnbot 1
+flag msnbotpass 0
+flag msnmainat 900
+wait 8
+scene N1
+flag npclist1360
+flag msnmainat 1000
+wait 8
+scene N2
+flag npclist1360
+end

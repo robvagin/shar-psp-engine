@@ -1,0 +1,11 @@
+# Уворот трафика по оригиналу (107b, Стена): встречная машина, игрок стоит (быстрее 40 км/ч нет): уворота нет
+flag nosave
+scene DG_slow
+goto 215 155.13 1.5708
+wait 3
+flag trfoncoming108 45
+wait 0.5
+wait 1
+wait 8
+flag trfprobe
+end

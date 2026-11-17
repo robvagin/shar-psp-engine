@@ -11,6 +11,7 @@ void gagSkinTrim(const unsigned char *wanted);
 int gagSkinNext(const unsigned char *wanted,unsigned *idx,unsigned *off,unsigned *size);
 int gagSkinAdopt(unsigned idx,unsigned char *buf);
 int gagSkinGagOf(unsigned idx);        // номер гэга записи (для проверки «ещё нужен»)
+void gagSkinClearBad(void);     // 107б P0: снять все пометки «чтение не вышло»
 void gagSkinMarkBad(unsigned idx);     // чтение не вышло (тайм-аут, ошибка): до выгрузки уровня не повторять — гэг просто не играет
 extern unsigned gagSkinResidentBytes;
 void gagSkinFree(void);

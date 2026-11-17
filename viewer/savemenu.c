@@ -73,6 +73,9 @@ static unsigned svvFail;                     // служебное «savefail»:
 #ifndef SVM_QUITASK_OLD
 #define SVM_QUITASK_OLD 0   // g09b-menu: М2 Д2 / P13-1: QUIT GAME в паузе сначала спрашивает «Are you sure you want to quit?» (Yes/No, No — в паузу); было: сразу «сохранить?» (свободная езда) или выход
 #endif
+#ifndef SVM_NOHINT1327_OLD
+#define SVM_NOHINT1327_OLD 0   // 1327: svmOpen с битом 16 — окно подсказки запертого этапа (Continue); 1 — бит игнорируется (прежнее: окна не было)
+#endif
 #ifndef SVM_NOBACK_OLD
 #define SVM_NOBACK_OLD 0    // g09b-menu: P14-7: на запросах Yes/No, на «сохранить?» и на сообщениях △ и ○ не действуют, выйти можно только ответом; было: назад = No / закрыть
 #endif
@@ -195,6 +198,14 @@ void svmInit(const char *ebootPath, int enabled) {
 void svmDialog(int v) { svDlg = v; logf_("SVDLGMODE on=%d src=flag\n", v); }
 void svmPickEmpty(int v) { svPick = !SVPICK_OLD && v; logf_("SVPICK on=%d\n", svPick); }
 void svmDialogFail(int v) { svDlgFail = v; logf_("SVDLGFAIL on=%d\n", v); }
+// 1339 (Роб, 108 на PSP: «нельзя отменить перезапись сейва: жму No, потом Yes на "cancel save", а оно опять открывает запись на тот же слот»). Ящик Роба: после SVIO res=cancel тут же SVSEL sel=0 r=0 и снова окно, три раза подряд.
+// Причина: кадр собирает нажатия по последним 16 отсчётам пульта (padbuf.h), а окно PSP закрылось только что: ✕ «Да» ещё в этих отсчётах, главный цикл видит его как новое нажатие ✕ на слоте и открывает окно снова.
+// Теперь после любого окна утилиты (запись и загрузка) главный цикл берёт пульт с нынешнего состояния (padResync, как после ролика). SVDLGPAD1339_OLD=1 / файл dlgpad1339old / flag dlgpad1339old 1 — как было.
+// Стенд: flag svdlgfake N — окно «показано» и вернуло код (1 — отмена; без запуска утилиты), flag svdlgphantom 1 — главный цикл получает в отсчёте пульта ✕ сразу после окна (как кольцо отсчётов на железе).
+int svDlgPad1339Old = 0; static int svEnded1339, svFake1339, svPhantom1339;
+int svmTakeDialogEnd(void) { int e = svEnded1339; svEnded1339 = 0; return e; }
+unsigned svmPhantom1339(void) { return svPhantom1339 ? PSP_CTRL_CROSS : 0u; }
+void svmDlgFake1339(int code, int phantom) { if (code >= 0) svFake1339 = code; if (phantom >= 0) svPhantom1339 = phantom; logf_("SVDLGFAKE code=%d phantom=%d\n", svFake1339, svPhantom1339); }
 
 // ---- правка 309: окно утилиты на экране (режимы SAVE / LOAD). Кадр за кадром: фон (застывший кадр меню) в буфер рисования, список
 // закончен (sceGuSync), GetStatus/Update — окно рисует себя поверх в тот же буфер (свой список GE, состояние GE возвращает сама),
@@ -263,6 +274,7 @@ static int utilVar(int var, int mode, const char *saveName, void *buf, unsigned 
   if (svBlock && mode != PSP_UTILITY_SAVEDATA_LOAD && mode != PSP_UTILITY_SAVEDATA_AUTOLOAD && mode != PSP_UTILITY_SAVEDATA_LISTLOAD) { logf_("SAVEBLOCK util mode=%d\n", mode); return (int)0x80110300u; }
   if (svvFail && var == SVV_STD && (mode == PSP_UTILITY_SAVEDATA_AUTOSAVE || mode == PSP_UTILITY_SAVEDATA_SAVE)) return (int)svvFail;   // «savefail»: как железо, ничего не пишется
   if (dlg && svDlgFail) return (int)0x80110388u;   // 309 «svdlgfail»: окно отвергает параметры, ничего не показано
+  if (dlg && svFake1339) { D.vis = 3; D.frames = 3; svEnded1339 = 1; return svFake1339 == 1 ? 1 : (int)(0x80110000u | (unsigned)svFake1339); }   // 1339 стенд: окно «показано», ответ задан флагом (1 — отмена)
   static SceUtilitySavedataParam p;              // 1536 Б, не на стеке
   memset(&p, 0, sizeof p);
   p.base.size = var == SVV_S1500 ? 1500 : var == SVV_S1480 ? 1480 : sizeof p;   // 1500 = до поля key, 1480 = до поля focus
@@ -295,7 +307,7 @@ static int utilVar(int var, int mode, const char *saveName, void *buf, unsigned 
   if (var == SVV_KEY) memcpy(p.key, svvKey, sizeof p.key);
   int r = sceUtilitySavedataInitStart(&p);
   if (r < 0) return r;
-  if (dlg) return dlgRun(&p);   // 309: окно PSP — каждый кадр Update, фон — застывший кадр меню
+  if (dlg) { int rr = dlgRun(&p); svEnded1339 = 1; return rr; }   // 309: окно PSP — каждый кадр Update, фон — застывший кадр меню; 1339: окно закрылось — пульт заново
   int shut = 0, seen = 0;
   for (int k = 0; k < 60 * 20; k++) {             // не дольше 20 с: зависшая утилита — ошибка, а не зависшая игра
     int s = sceUtilitySavedataGetStatus();
@@ -558,6 +570,7 @@ static struct {
 
 static const char *str(int k) { return uiScrRowLabel(SCR_STRINGS, k); }
 static void setMsg(int m, int slot, int error) {   // текст сообщения: строка библии из пакета, «$» -> номер слота (с 1)
+  uiScrMsgScale(1.f, 0.f);
   S.msg = m; S.msgSlot = slot; S.error = error;
   const char *a = str(SVS_MSG + m); int n = 0;
   for (; *a && n < (int)sizeof S.msgText - 4; a++) {
@@ -571,6 +584,7 @@ static void setMsg(int m, int slot, int error) {   // текст сообщен�
 }
 // g09b-menu: вопрос с готовым текстом (английские строки с диска: подтверждение выхода и подтверждение новой игры; ключа в пакете нет)
 static void setMsgRaw(const char *text, const char *key) {
+  uiScrMsgScale(1.f, 0.f);
   S.msg = -1; S.msgSlot = 0; S.error = 0;
   snprintf(S.msgText, sizeof S.msgText, "%s", text);
   uiScrRowText(SCR_PROMPT, ROW_MSG, S.msgText); uiScrShow(SCR_PROMPT, UI_T_MISSION_FAILED, 0);
@@ -592,6 +606,32 @@ static const char *promptText(int idx, const char *eng) {
       if (n > 0) { b[n] = 0; char *q = b; for (int i = 0; i < 4 && *q; i++) { char *e = strchr(q, '\n'); if (e) *e = 0; snprintf(ptxt[i], sizeof ptxt[i], "%s", q); q = e ? e + 1 : q + strlen(q); } } }
   }
   return ptxt[idx][0] ? ptxt[idx] : eng;
+}
+static const char *const lockHintTxt[10] = {   // 1327: строки 49..58 страницы GenericPrompt диска (английские; другие языки — как у вопросов выхода: английский из кода)
+  "To complete this mission, you will need the PLOW KING.  Purchase it from Barney at the Gasoline Station for 150 coins.  IMPORTANT: Use phone booths to access vehicles you already own.",
+  "To complete this mission, you will need the MR. PLOW truck. Purchase it from Homer in the Hospital parking lot for 200 coins.  REMEMBER: Use phone booths to access vehicles you already own.",
+  "To complete this mission, you will need the SCHOOL BUS. Purchase it from Otto at Kamp Krusty for 300 coins.  REMEMBER: Use phone booths to access vehicles you already own.",
+  "You need a disguise. Purchase Lisa's \"COOL\" CLOTHES at the Android's Dungeon or the Observatory for 250 coins. ",
+  "Don't get your clothes dirty.  Purchase Marge's \"INMATE\" CLOTHES at the Kwik-E-Mart, Bart's Room, or Springfield Elementary School for 300 coins.",
+  "Serve and protect.  Purchase Marge's POLICE UNIFORM at the Kwik-E-Mart, Bart's Room, or Springfield Elementary School for 400 coins.",
+  "To complete this mission, you will need Homer's \"CUSTOM BUILT CAR.\" Purchase it from Homer in the Hospital parking lot for 500 coins, or call it from a phone booth if you already own it.",
+  "You need a disguise.  Purchase Apu's AMERICAN CLOTHES at Moe's or the DMV for 425 coins.",
+  "To complete this mission, you will need the GLOBEX SUPER VILLAIN CAR. Purchase it from Kearney at the Krustylu Entrance for 600 coins, or call it from a phone booth if you already own it.",
+  "To complete this mission, you will need the ZOMBIE CAR. Purchase it from the Zombie at the Springfield Cemetery for 500 coins, or call it from a phone booth if you already own it."
+};
+// 1327: подсказка запертого этапа — окно с одним ответом Continue (✕), текст «что купить, где и за сколько»; закрылось — SVM_R_BACK, игра идёт дальше
+#ifndef HINT_DY1327
+#define HINT_DY1327 (-26.f)   // 1327: текст подсказки поднят в рамке, чтобы Continue не налезал на последнюю строку
+#endif
+#ifndef HINT_K1327
+#define HINT_K1327 0.70f   // 1327: масштаб текста длинной подсказки (наша грань крупнее оригинальной: иначе 8 строк не помещаются над Continue)
+#endif
+static void hintNotice(int idx) {
+  if (idx < 0 || idx > 9) idx = 0;
+  S.st = ST_NOTICE; S.psel = 0; S.after = AFTER_CLOSE; S.result = SVM_R_BACK; S.msg = -1; S.msgSlot = 0; S.error = 0;
+  snprintf(S.msgText, sizeof S.msgText, "%s", lockHintTxt[idx]);
+  uiScrRowText(SCR_NOTICE, ROW_MSG, S.msgText); uiScrShow(SCR_NOTICE, UI_T_MISSION_FAILED, 0); uiScrMsgScale(HINT_K1327, HINT_DY1327);
+  logf_("SVMSG key=lockhint slot=%d error=0 text=%.60s\n", idx, S.msgText);
 }
 static void yesNo(int kind) {   // kind: SVM_ASK_QUIT / SVM_ASK_NEWGAME; курсор на «No» (SVM_DEFNO_OLD=1 — на «Yes»)
   S.st = ST_YESNO; S.ask = kind; S.psel = mrYesNoCursor();
@@ -639,7 +679,7 @@ static void busy(int op, int slot) {
 }
 static void closeWith(int r) {
   logf_("SVCLOSE r=%d\n", r);
-  uiScrClose(); S.st = ST_OFF; S.result = r;
+  uiScrMsgScale(1.f, 0.f); uiScrClose(); S.st = ST_OFF; S.result = r;
 }
 // 309: окно PSP для слота — два кадра экрана слотов (оба буфера: фон окна), потом doOp; загрузка окном — если слот читается записью
 // утилиты (решён файлом — тихо, как раньше)
@@ -663,6 +703,7 @@ int svmOpen(int mode, const SaveGame *game, int confirmLoad, int askQuit) {
         "OED"[slotSt[0]], "OED"[slotSt[1]], "OED"[slotSt[2]], "OED"[slotSt[3]]);
   if (SVM_QUITASK_OLD) S.askQuit = askQuit &= 1;
   if (!SVM_LOADASK_OLD && mode == SVM_LOAD) S.confirmLoad = 1;   // M3 Д7: подтверждение загрузки слота — всегда
+  if ((askQuit & 16) && !SVM_NOHINT1327_OLD) { hintNotice((askQuit >> 8) & 255); return 0; }   // 1327: подсказка запертого этапа (бит 16, номер — со 2-го байта)
   if (askQuit & 12) { yesNo(askQuit & 4 ? SVM_ASK_RESTART : SVM_ASK_ABORT); return 0; }   // сверка g09a-hud круг 5: Restart / Abort Mission из паузы миссии
   if (askQuit & 2) { yesNo(SVM_ASK_QUIT); return 0; }            // М2 Д2 / P13-1: сначала «выйти?»
   if (askQuit) { S.st = ST_ASK; S.psel = 0; setMsg(SVM_MSG_SAVE_BEFORE_QUIT, 0, 0); return 0; }

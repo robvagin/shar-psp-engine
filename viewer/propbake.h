@@ -45,14 +45,26 @@ typedef struct {
   unsigned *act; unsigned nact; unsigned char *inAct;   // №915: активные клетки (лист или грязная)
   unsigned *nearL; unsigned nearN, nearFr; unsigned char *nearMark; float nearE[3]; int nearOk;   // №915: ближние экземпляры
   unsigned *dynBase; unsigned ndynBase; int dynBaseDirty; unsigned *visL; unsigned nvis;   // №915: базовый динамический список; видимые клетки кадра
+  unsigned short *sc; unsigned *hd, *nxt;   // 109 З2: клетка экземпляра по положению последней проверки (px, pz) и списки экземпляров по клеткам (hd[клетка] → nxt[экземпляр] → …, ~0u — конец): пересборка листа не обходит все n
+  unsigned short *ver;   // 108 О7: версия записи горячего массива предмета (props.hot[i].fl >> 16) при последнем чтении подписи; только kind 0
   float *px, *pz; float maxRad; unsigned wx0, wx1, wz0, wz1, fr, scanned, skipped;   // PROP_FAST: положение при последней проверке подписи; кадр набора; сколько проверено / пропущено (вдали) за кадр
 } PbSet;
 static void *pbGarbage[48]; static unsigned pbGarbageN;   // старые листы клеток освобождаются только в начале следующего кадра (после sceGuSync)
 static unsigned pbChkFrames, pbChkDyn, pbChkVis, pbChkForce; static int pbChkOn;   // №915: сверка списков (смоук, строка PBCHK)
 static PbSet pbP, pbS; static unsigned pbBigForce; static unsigned pbBytes, pbBuilt, pbCalls, pbFallback; static int pbTried;
+// 109 З2 (запекание, замер baking109 шаг 0: 127 сборок листов предметов в эмуляторе = 34 мс, из них 30 мс — обход ВСЕХ экземпляров (475 предметов + 197 стейтпропов, чтение PropState по 184 Б мимо кэша PSP) на каждую пересборку,
+// запись листа 3,4 мс, сбор кусков 3,5 мс; рывок сборки до 1,7 мс эмулятора (≈10 мс PSP) даже для одного экземпляра). Теперь пересборка клетки берёт кандидатов из списка экземпляров клетки (по положению последней проверки: pbScanOne
+// ведёт списки при смене положения) и из членов прежнего листа клетки, в порядке номеров, как прежний обход; остальное то же. Экземпляр, сдвинувшийся после последней проверки (раз в 8–16 кадров вдали) и ещё не замеченный,
+// в список клетки не попадает (прежний обход мог взять его по живому положению): картинка та же, он рисуется динамически, пока проверка его не заметит. Сверка в смоуке (flag pbchk 1): полный обход рядом, расхождения — pbIdxBad
+// (строка PBCHK idx_bad). PBIDX109_OLD=1 / «flag pbidx109old 1» / файл pbidx109old — прежний полный обход
+#ifndef PBIDX109_OLD
+#define PBIDX109_OLD 0
+#endif
+int pbIdx109Old = PBIDX109_OLD, pbIdxBreak; static unsigned pbIdxBad, pbIdxCalls, pbIdxCand, pbIdxFull;
 static void pbFreeSet(PbSet *s) {
+  free(s->sc); free(s->hd); free(s->nxt);
   for (unsigned c = 0; c < s->nc; c++) { if (s->cell[c].buf) { pbBytes -= s->cell[c].bytes; free(s->cell[c].buf); } free(s->cell[c].mem); }
-  free(s->act); free(s->inAct); free(s->nearL); free(s->nearMark); free(s->dynBase); free(s->visL); free(s->px); free(s->pz); free(s->cell); free(s->baked); free(s->sig); free(s->still); free(s->inel); free(s->hasTr); free(s->dyn); memset(s, 0, sizeof *s);
+  free(s->ver); free(s->act); free(s->inAct); free(s->nearL); free(s->nearMark); free(s->dynBase); free(s->visL); free(s->px); free(s->pz); free(s->cell); free(s->baked); free(s->sig); free(s->still); free(s->inel); free(s->hasTr); free(s->dyn); memset(s, 0, sizeof *s);
 }
 static void pbGarbageFlush(void);
 static void pbReset(void) { pbFreeSet(&pbP); pbFreeSet(&pbS); pbGarbageFlush(); pbBytes = 0; pbTried = 0; memset(bigTab, 0, sizeof bigTab); }   // bigTab — кэш границ кусков (№640): после смены уровня адреса вершин другие
@@ -75,11 +87,14 @@ static int pbInit(PbSet *s, int kind) {
   s->nx = nx; s->nz = nz; s->nc = nx * nz;
   s->cell = (PbCell *)calloc(s->nc, sizeof(PbCell)); s->baked = (unsigned short *)calloc(n, sizeof(unsigned short)); s->sig = (PbSig *)calloc(n, sizeof(PbSig));
   s->still = (unsigned char *)calloc(n, 1); s->inel = (unsigned char *)calloc(n, 1); s->hasTr = (unsigned char *)calloc(n, 1); s->dyn = (unsigned *)malloc(n * sizeof(unsigned));
-  s->px = (float *)calloc(n, sizeof(float)); s->pz = (float *)calloc(n, sizeof(float));
+  s->px = (float *)calloc(n, sizeof(float)); s->pz = (float *)calloc(n, sizeof(float)); s->ver = (unsigned short *)calloc(n, sizeof(unsigned short));
   s->act = (unsigned *)malloc(s->nc * sizeof(unsigned)); s->inAct = (unsigned char *)calloc(s->nc, 1); s->nearL = (unsigned *)malloc(n * sizeof(unsigned)); s->nearMark = (unsigned char *)calloc(n, 1);
   s->dynBase = (unsigned *)malloc(n * sizeof(unsigned)); s->visL = (unsigned *)malloc(s->nc * sizeof(unsigned)); s->dynBaseDirty = 1;
-  if (!s->cell || !s->baked || !s->sig || !s->still || !s->inel || !s->hasTr || !s->dyn || !s->px || !s->pz || !s->act || !s->inAct || !s->nearL || !s->nearMark || !s->dynBase || !s->visL) { pbFreeSet(s); return 0; }
+  s->sc = (unsigned short *)calloc(n, sizeof(unsigned short)); s->hd = (unsigned *)malloc(s->nc * sizeof(unsigned)); s->nxt = (unsigned *)malloc(n * sizeof(unsigned));
+  if (!s->sc || !s->hd || !s->nxt || !s->cell || !s->baked || !s->sig || !s->still || !s->inel || !s->hasTr || !s->dyn || !s->px || !s->pz || !s->ver || !s->act || !s->inAct || !s->nearL || !s->nearMark || !s->dynBase || !s->visL) { pbFreeSet(s); return 0; }
   for (unsigned i = 0; i < n; i++) { pbSigOf(s, i, &s->sig[i]); s->px[i] = s->sig[i].v[0]; s->pz[i] = s->sig[i].v[2]; }
+  for (unsigned c = 0; c < s->nc; c++) s->hd[c] = ~0u;
+  for (unsigned i = n; i-- > 0; ) { unsigned c = pbCellOf(s, s->px[i], s->pz[i]); s->sc[i] = (unsigned short)c; s->nxt[i] = s->hd[c]; s->hd[c] = i; }   // 109 З2: списки по клеткам
   s->on = 1; return 1;
 }
 // №639 (аудит): запечённая клетка рисовалась листом, и clip-guard (объект ближе 0,3 м к глазу не рисуется, по взгляду ближе 1,8 м) на неё не действовал: клетка с экземпляром у глаза идёт прежним путём,
@@ -99,18 +114,34 @@ static int pbCmpPiece(const void *a, const void *b) {
 #define PB_MAXP 1536
 static PbPiece pbBuf[PB_MAXP]; static PbMem pbMemBuf[1024];
 // пересборка листа клетки c: члены — экземпляры, чьё текущее положение в клетке c, годные и спокойные (или уже запечённые тут); -> 1 собрано, 0 нечего, -1 не вышло
+static unsigned pbDiagCollectUs, pbDiagEmitUs, pbDiagPieces, pbDiagBigUs, pbDiagCallUs;   // 109: разбор цены сборки листа (только журнал смоука): сбор кусков / запись листа
 static int pbRebuild(PbSet *s, unsigned c) {
-  PbCell *C = &s->cell[c]; unsigned np = 0, nm = 0;
+  unsigned pbT0_ = smkOn ? sceKernelGetSystemTimeLow() : 0, pbB0_ = bigInfoMissUs; pbDiagCallUs = 0; PbCell *C = &s->cell[c]; unsigned np = 0, nm = 0;
   unsigned short tag = (unsigned short)(c + 1); s->dynBaseDirty = 1;
-  for (unsigned i = 0; i < s->n && nm < 1024; i++) {
+  static unsigned pbCandBuf[2048]; unsigned ncand = 0; int useIdx = !pbIdx109Old && s->hd && s->n <= 2048;
+  if (useIdx) {   // 109 З2: кандидаты — экземпляры клетки по положению последней проверки и члены прежнего листа (их тег baked == tag), по возрастанию номера
+    for (unsigned i = s->hd[c]; i != ~0u && ncand < 2048; i = s->nxt[i]) pbCandBuf[ncand++] = i;
+    for (unsigned q = 0; q < C->nmem && ncand < 2048; q++) { unsigned id = C->mem[q].id; if (id < s->n && s->sc[id] != c) pbCandBuf[ncand++] = id; }
+    for (unsigned a = 1; a < ncand; a++) { unsigned v = pbCandBuf[a], b = a; while (b > 0 && pbCandBuf[b - 1] > v) { pbCandBuf[b] = pbCandBuf[b - 1]; b--; } pbCandBuf[b] = v; }
+    if (pbIdxBreak) ncand = 0;   // красный контроль гейта tests/pbidx109 («flag pbidxbreak 1»): список кандидатов пуст, сверка idx_bad обязана покраснеть там, где у клетки есть члены листа
+    pbIdxCalls++; pbIdxCand += ncand; pbIdxFull += s->n;
+    if (pbChkOn) for (unsigned i = 0; i < s->n; i++) {   // сверка (только смоук): всё, что взял бы полный обход, есть среди кандидатов
+      float x, z; pbPos(s, i, &x, &z); if (pbCellOf(s, x, z) != c) continue; PbSig g; pbSigOf(s, i, &g);
+      int was = s->baked[i] == tag && !memcmp(&g, &s->sig[i], sizeof g); if (!was && (s->still[i] < PB_STILL || s->inel[i])) continue;
+      int in = 0; for (unsigned u = 0; u < ncand; u++) if (pbCandBuf[u] == i) { in = 1; break; } if (!in) pbIdxBad++; }
+  }
+  for (unsigned u = 0; ; u++) {
+    unsigned i; if (useIdx) { if (u >= ncand) break; i = pbCandBuf[u]; } else { if (u >= s->n) break; i = u; }
+    if (nm >= 1024) break;
     float x, z; pbPos(s, i, &x, &z); if (pbCellOf(s, x, z) != c) { if (s->baked[i] == tag) s->baked[i] = 0; continue; }
     PbSig g; pbSigOf(s, i, &g);
     int was = s->baked[i] == tag && !memcmp(&g, &s->sig[i], sizeof g);
     if (!was && (s->still[i] < PB_STILL || s->inel[i])) { if (s->baked[i] == tag) s->baked[i] = 0; continue; }
-    PbMem mm; int k = pbCollect(s, i, pbBuf + np, PB_MAXP - (int)np, &mm);
+    unsigned pbC0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; PbMem mm; int k = pbCollect(s, i, pbBuf + np, PB_MAXP - (int)np, &mm); if (smkOn) pbDiagCallUs += sceKernelGetSystemTimeLow() - pbC0_;
     if (k < 0) { s->inel[i] = 1; if (s->baked[i] == tag) s->baked[i] = 0; continue; }
     np += (unsigned)k; pbMemBuf[nm++] = mm; s->baked[i] = tag; s->sig[i] = g; s->hasTr[i] = mm.hasTr;
   }
+  if (smkOn) { pbDiagCollectUs = sceKernelGetSystemTimeLow() - pbT0_; pbDiagPieces = np; pbDiagBigUs = bigInfoMissUs - pbB0_; }
   if (C->buf) { pbBytes -= C->bytes; if (pbGarbageN < 48) pbGarbage[pbGarbageN++] = C->buf; else free(C->buf); C->buf = 0; C->bytes = 0; }
   free(C->mem); C->mem = 0; C->nmem = 0; C->tris = C->draws = 0;
   if (!nm) return 0;
@@ -138,6 +169,7 @@ static int pbRebuild(PbSet *s, unsigned c) {
   flatOff(); flatInList = 0; flatNoSuppress = 0;
   DCALL96(); unsigned sz = (unsigned)sceGuFinish(); dlLost();
   if (sz > bytes) { smkGeBad++; free(b); for (unsigned i = 0; i < s->n; i++) if (s->baked[i] == tag) s->baked[i] = 0; free(C->mem); C->mem = 0; C->nmem = 0; return -1; }
+  if (smkOn) pbDiagEmitUs = sceKernelGetSystemTimeLow() - pbT0_ - pbDiagCollectUs;
   C->buf = b; C->bytes = bytes; C->tris = tris; C->draws = dr; C->nb = (unsigned short)(binds + flatBinds - nb0_); pbBytes += bytes; pbBuilt++;
   return 1;
 }
@@ -152,9 +184,32 @@ static void pbWindow(PbSet *s, float ex, float ez, float maxD) {
 }
 #define PB_WIN_FOR(s, c) for (unsigned wz_ = (s)->wz0; wz_ <= (s)->wz1; wz_++) for (unsigned wx_ = (s)->wx0, c = wx_ + wz_ * (s)->nx; wx_ <= (s)->wx1; wx_++, c++)
 // кадр набора: скан подписей, пересборка видимых грязных клеток, список динамических экземпляров. cull — клетка видима (дальность + пирамида)
+// 108 О7 (Бабл; документ Fable «опрос подписей 63 экземпляров каждый кадр», 0,95 мс): запечённый предмет уровня, в который с прошлого чтения подписи не писали (версия записи горячего массива props.hot
+// та же), подпись не изменит — прежний код читал PropState (184 Б), собирал подпись и сравнивал, чтобы увидеть «то же» и ничего не сделать (px, pz те же). Версию растят все записи в предмет (props.c
+// propsHotSync). Сверка в смоуке (flag pbchk 1): при пропуске подпись всё равно считается и сравнивается, расхождения — pbVerBad (строка PBCHK ver_bad). Стейтпропы не затронуты: у SpRun записей в десятках мест.
+// PBVER108_OLD=1 / «flag pbver108old 1» — читать всегда, как было
+#ifndef PBVER108_OLD
+#define PBVER108_OLD 0
+#endif
+int pbVer108Old = PBVER108_OLD; static unsigned pbVerSkip, pbVerBad;
+static void pbListMove(PbSet *s, unsigned i) {   // экземпляр сменил клетку: из списка прежней — в список новой (списки короткие)
+  unsigned c = pbCellOf(s, s->px[i], s->pz[i]), o = s->sc[i]; if (c == o) return;
+  unsigned *pp = &s->hd[o]; while (*pp != ~0u && *pp != i) pp = &s->nxt[*pp]; if (*pp == i) *pp = s->nxt[i];
+  s->sc[i] = (unsigned short)c; s->nxt[i] = s->hd[c]; s->hd[c] = i;
+}
 static void pbScanOne(PbSet *s, unsigned i) {
     s->scanned++;
-    PbSig g; pbSigOf(s, i, &g); int same = !memcmp(&g, &s->sig[i], sizeof g); s->px[i] = g.v[0]; s->pz[i] = g.v[2];
+    if (s->kind == 0 && !pbVer108Old && s->baked[i] && props.hot) {
+      unsigned v = props.hot[i].fl >> 16;
+      if (s->ver[i] == (unsigned short)v) {
+        pbVerSkip++;
+        if (pbChkOn) { PbSig g2; pbSigOf(s, i, &g2); if (memcmp(&g2, &s->sig[i], sizeof g2) || s->px[i] != g2.v[0] || s->pz[i] != g2.v[2]) pbVerBad++; }
+        return;
+      }
+    }
+    if (s->kind == 0 && props.hot) s->ver[i] = (unsigned short)(props.hot[i].fl >> 16);
+    PbSig g; pbSigOf(s, i, &g); int same = !memcmp(&g, &s->sig[i], sizeof g);
+    if (g.v[0] != s->px[i] || g.v[2] != s->pz[i]) { s->px[i] = g.v[0]; s->pz[i] = g.v[2]; pbListMove(s, i); }   // 109 З2: клетка по новому положению
     if (s->baked[i]) { if (!same) { { unsigned cb_ = s->baked[i] - 1u; s->cell[cb_].dirty = 1; pbActAdd(s, cb_); s->dynBaseDirty = 1; } s->baked[i] = 0; s->sig[i] = g; s->still[i] = 0; s->inel[i] = 0; } }
     else if (same) { if (s->still[i] < 255) s->still[i]++;
       if (s->still[i] == PB_STILL && !s->inel[i]) { float x, z; pbPos(s, i, &x, &z); { unsigned cc_ = pbCellOf(s, x, z); s->cell[cc_].dirty = 1; pbActAdd(s, cc_); } } }
@@ -170,7 +225,7 @@ static void pbCellStep(PbSet *s, unsigned c, float ex, float ey, float ez, float
     if (C->dirty) {
       int stale = C->nmem != 0;
       if (stale ? builds[0] < PB_BUILD_MAX : builds[1] < 1) { builds[stale ? 0 : 1]++; unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0; int rc = pbRebuild(s, c); C->dirty = 0;
-        if (smkOn) { char l[120]; snprintf(l, sizeof l, "PBAKE k=%d cell=%u rc=%d mem=%u bytes=%u ms=%.2f t=%.1f\n", s->kind, c, rc, C->nmem, C->bytes, (sceKernelGetSystemTimeLow() - t0) / 1000.0, smkT); smkWrite(l); } }
+        if (smkOn) { char l[180]; snprintf(l, sizeof l, "PBAKE k=%d cell=%u rc=%d mem=%u bytes=%u ms=%.2f t=%.1f coll_us=%u emit_us=%u pieces=%u big_us=%u call_us=%u\n", s->kind, c, rc, C->nmem, C->bytes, (sceKernelGetSystemTimeLow() - t0) / 1000.0, smkT, pbDiagCollectUs, pbDiagEmitUs, pbDiagPieces, pbDiagBigUs, pbDiagCallUs); smkWrite(l); } }
       else { if (stale) { C->force = 1; pbFallback++; } return; }
     }
     // №640: крупный кусок (10–150 м) у глаза режется ggCut только в динамическом пути (drawPieceM, BIG_CUT_OLD=1 — без среза): пока глаз ближе размера куска к его центру, клетка рисуется прежним путём

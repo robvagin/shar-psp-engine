@@ -113,7 +113,7 @@ static void flatNoiseBuild(void) {
 // заливка множится на неё; газон — 6 / 10 м. Тротуар и бордюр всегда на фрагменте асфальта (нет асфальта на уровне — «бумага»). На каждый кусок свой вариант: зеркало по u и v, масштаб 1 / 1,25 / 1,6, сдвиг —
 // выбирается хэшем начала куска (детерминированно), две команды GE на кусок. Класс текстуры — по тону заливки (зелёный — газон; светлый нейтральный — тротуар); остальная земля с общим шумом.
 // Пилот: только уровень 1 («flag ground969all 1» — все уровни). GROUND969_OLD=1 / файл ground969old рядом с EBOOT / «flag ground969 0» — прежний шум
-static int gdStyle = GROUND969_OLD ? 0 : GROUND969_STYLE, gdAll = 1, gdBuiltStyle, gdSrc = -1; static unsigned gdBuiltGen = ~0u, gdBuiltSum;   // gdAll: на всех уровнях (flag ground969all 0 — только L1) static unsigned gdBuiltGen = ~0u, gdBuiltSum;
+static int gdStyle = GROUND969_OLD ? 0 : GROUND969_STYLE, gdAll = 1, gdBuiltStyle, gdSrc = -1; static unsigned gdBuiltGen = ~0u, gdBuiltSum;   // gdAll: на всех уровнях (flag ground969all 0 — только L1)
 static Tex gdTex[GD_NCLS + 1]; static unsigned char gdBuf[GD_NCLS + 1][GD_BYTES] __attribute__((aligned(64))), gdAsPal[GD_NCLS + 1][1024] __attribute__((aligned(64)));
 static int gdReady[GD_NCLS + 1], gdAsp[GD_NCLS + 1]; static float gdPitch[GD_NCLS + 1], gdMean[GD_NCLS + 1];
 static unsigned char flatGd[1024];   // класс земли по номеру текстуры (0 — общий шум)

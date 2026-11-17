@@ -1,0 +1,11 @@
+# О12 (108, Стена): пропуск обхода клеток света == прежний обход. L1, автопилот 40 с по городу (клетки подгружаются): flag slscancheck 1 обходит и при пропуске и считает расхождения (строка SLSCANCHECK, нужно 0)
+flag nosave
+scene SLC_CHECK
+flag slscancheck 1
+goto 220 172 1.5708
+wait 3
+flag drive 40
+wait 41
+flag slscancheck 1
+flag stop
+end

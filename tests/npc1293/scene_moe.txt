@@ -1,0 +1,22 @@
+flag menu
+flag lvset 2
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=2 300
+wait 10
+flag player
+flag msn
+wait 3
+scene M_door
+foot -173.6 -24.5 0.0 7.1
+wait 6
+press triangle 0.3
+wait 10
+scene M_in
+shot moe_in
+wait 5
+scene M_end
+flag stop
+wait 2
+end

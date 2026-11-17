@@ -1,0 +1,19 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag rfold 5
+scene CITY
+flag drive 100
+wait 60
+scene CITY_END
+flag stop
+wait 2
+end

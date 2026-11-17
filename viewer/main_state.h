@@ -310,6 +310,10 @@ static int geRoomHard(unsigned bytes) {   // персонажи (skin.c skinDraw
 // сам пишет ящик «STALL … phase=…»: завис ли GE (gesync), логика (car, msn, traffic …) или сборка списка (city, npc3d …)
 // (enum BBP_* перенесён в smoke.h: таймеры фаз PHSEC)
 static volatile unsigned bbBeat; static volatile int bbPhase;
+// 1320б: срок, который сторож добавляет к BB_STALL_MS на штатной долгой работе без кадров (чистая перезагрузка уровня 14 с, STALL2 на 5-й секунде в туре срочного); 0 — как было. Не отключает сторож: через BB_STALL_MS + этот срок отчёт всё равно пишется
+static volatile unsigned bbGraceMs;
+// 1320б: крючок «кадр из ожидания»: пока чистая перезагрузка стоит в ожидании загрузчика (loaderWaitStep), он рисует кадр прелоадера раз в 100 мс (кадры = честные удары сторожа); вне перезагрузки 0
+static void (*volatile waitPump)(void);
 // №775 (STALL op=player на PSP: TEST27 L6, TEST33 L5; эмулятор не повторяет): op остаётся «player» всю загрузку уровня — после модели игрока bbOp нет.
 // bbStep — последний законченный шаг загрузки (ldStep, phMark и шаги внутри levelUiSnd/playerLoad), только указатель: сторож пишет его в ящик и на экран
 // вместе с тем, чего ждёт каждый поток (вид ожидания и имя объекта). ldSlowUs — служебное «flag ldslow N»: каждое чтение главного на экране загрузки
@@ -359,7 +363,12 @@ static inline void gePkPh(void) {
   gePkMark = w;
 }
 #define BBP(n) (gePkPh(), flatOff(), rbldTick(n), smkBbp(n, draws, drawnTris, binds, (int)sceGuCheckList()), bbPhase = (n), trLeft > 0 ? trPhase(n) : (void)0)   // RBLD (подфазы сборки) + PHDRAW (вызовы по фазам)
-void bbBeatTick(void) { bbBeat++; }
+// 1320б: промежутки между кадрами (ударами сторожа) внутри чистой перезагрузки: rlTrack включает levelCleanReload96; промежуток > 500 мс — строка RELOADGAP в smoke, наибольший — в итоговой
+static int rlTrack; static unsigned rlBeatT, rlGapMax, rlGapN, rlT0; static const char *rlGapAt = "-";
+void bbBeatTick(void) { bbBeat++;
+  if (rlTrack) { unsigned n = sceKernelGetSystemTimeLow(); if (rlBeatT && n - rlBeatT > rlGapMax) { rlGapMax = n - rlBeatT; rlGapAt = bbStep; }
+    if (rlBeatT && n - rlBeatT > 500000u) { rlGapN++; if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "RELOADGAP ms=%u at=%u after=%s t=%.1f\n", (n - rlBeatT) / 1000u, (n - rlT0) / 1000u, bbStep, smkT); smkWrite(s_); } }
+    rlBeatT = n; } }
 // Правка Роба 293 (04.10, «в самом начале наезда к газете мигает пол»; повторы 244, 265 — каждый раз в другой момент перелёта).
 // Смена буфера кадра должна попасть в обратный ход луча: sceGuSwapBuffers ставит новый буфер «со следующего кадрового импульса»
 // (PSP_DISPLAY_SETBUF_NEXTFRAME). Если главный поток опоздал (его может вытеснить поток повыше: звук 0x12, загрузчик 0x18), экран,
@@ -389,7 +398,7 @@ static void framesheetTick(void) {
   char nm[32]; snprintf(nm, sizeof nm, "fs%02d_%05u", fsN++, (now - fsT0) / 1000u); fsLast = now; smokeShotNow(nm);
 }
 static void *swapBufG(int guard) {
-  bbBeat++;
+  bbBeatTick();
   if (swapDelayUs && guard > 0) sceKernelDelayThread(swapDelayUs);
   void *r = sceGuSwapBuffers();
   int vb = sceDisplayIsVblank(); swapLine = sceDisplayGetCurrentHcount(); swapLate = !vb; swapWait = 0; swapGuard = guard; swapN++;
@@ -431,7 +440,7 @@ static int seamsOld;          // служебный файл seamsold: горо�
 static int seamChk;           // служебный файл seamchk (с clearchk): город без альфа-теста и полупрозрачного — пурпур остаётся только
                               // в щелях между непрозрачными поверхностями (правки 224/237/251, tools/seams_emu.py; листва иначе — тысячи «швов»)
 static int ccViews, ccMax; static long ccTot;
-typedef struct { int w, h, levels; void *pal; void *lv[8]; void *slv[8]; int pre; float slope; int ground; int t4; const void *opqPal; int opq; unsigned char tstat[5], tstatOk; int levelsAll; unsigned char lat; unsigned flatC; unsigned char flatK, flatE, flatS, flatR, flatEd, flatDone, curb, asph; unsigned short xdon; } Tex;   // №904: levelsAll — уровней мипа в файле, lat — решётка (latticeScan, main_levels.h)   // tstat[4] (№786): 1 — текстура без шагов мультика (облака неба)   // t4: правка 129 — 4 бита (байт 6 = 4); opq/opqPal — правка 413 (carGlass)
+typedef struct { int w, h, levels; void *pal; void *lv[8]; void *slv[8]; int pre; float slope; int ground; int t4; const void *opqPal; int opq; unsigned char tstat[5], tstatOk; int levelsAll; unsigned char lat, latB, latC; unsigned flatC; unsigned char flatK, flatE, flatS, flatR, flatEd, flatDone, curb, asph; unsigned short xdon; } Tex;   // №904: levelsAll — уровней мипа в файле, lat — решётка (latticeScan, main_levels.h)   // tstat[4] (№786): 1 — текстура без шагов мультика (облака неба)   // t4: правка 129 — 4 бита (байт 6 = 4); opq/opqPal — правка 413 (carGlass)
 // строка уровня в файле, байт: T8 — ширина (в swizzle не меньше 16 Б, Ф2); T4 (правка 129, только в swizzle) — полширины, не меньше 16 Б
 static inline int texRowBytes(int t4, int pre, int lw) { return t4 ? ((lw + 1) >> 1 < 16 ? 16 : (lw + 1) >> 1) : (pre && lw < 16 ? 16 : lw); }
 // ширина буфера GE (TBW) в текселах: T8 не меньше 16, T4 не меньше 32 (блок swizzle 16 Б = 32 тексела по 4 бита)
@@ -511,6 +520,10 @@ static void dlFree(unsigned ci) {
 }
 static unsigned short *carP, *skyP; static int ncarP, nskyP;
 static short *hm, *wl; static float hox, hoz, hcell; static int hw, hh;
+#include "lmappage.h"   // 108 П1: карта высот и стен страницами (lmap.shr версии 2)
+static LmPg lmPg; static int lmPgOn;   // lmPgOn — читатели берут ячейки из страниц, hm/wl = 0; иначе плотные hm/wl в блоке уровня, как раньше
+static inline const short *hmAt(int gx, int gz, short *tmp) { return lmPgOn ? lmpHm(&lmPg, gx, gz, tmp) : hm + ((size_t)gz * hw + gx) * 4; }
+static inline const short *wlAt(int gx, int gz) { return lmPgOn ? lmpWl(&lmPg, gx, gz) : wl + ((size_t)gz * hw + gx) * 2; }
 static Car oldCar; static int oldCarOn;   // правка 63: своя машина осталась стоять, пока игрок на угнанной
 // Правка Роба 497 (L2 на PSP: 51 тыс. треугольников и 22 мс сборки списка против 30 тыс. и 12,6 на L1): PVS считался только до 115 м, за ними
 // (в режиме 30 FPS город до 250 м) куски брались по пирамиде обзора, без закрытия домами — это 60 % треугольников кадра. Дальность списков
@@ -715,13 +728,17 @@ static int trLog; static float trLogT = .5f;   // служебное (flag trflo
 static unsigned trSpawnPend;   // правка 328 (flag trflog): машины трафика, рождённые в этот кадр — строка TRFSPAWN по камере кадра
 // твёрдые тела для Гомера вне COL1 — цепочка: стейтпропы, трафик (новые системы добавляются сюда же)
 static int propsSoftHomer;   // правка 290: служебное «flag propsoftold 1» — пропы насквозь, как было (красный контроль)
+static int homerSrc108; static unsigned homerSrcF108; static float homerSrcAt108[2];   // 107b: кто последним остановил Гомера (1 стейтпроп, 2 предмет, 3 трафик/персонажи) и когда (кадр diagFrame108), для строки ящика STUCK
 static int homerSolidAll(void *u, float *x, float *z, float y, float r, float *top, float *nx, float *nz) {
-  (void)u; int hit = 0;
-  if (haveSP) hit |= homerSolidSprops(&sprops, x, z, y, r, top, nx, nz);
-  if (haveProps && !propsSoftHomer) hit |= propsSolidHomer(&props, x, z, y, r, HOMER_STEP, HOMER_HEIGHT, top, nx, nz);   // правка 290: ящики, гидранты
-  if (haveTraffic) hit |= trafficSolid(&traffic, x, z, y, r, top, nx, nz);
+  (void)u; int hit = 0, h1 = 0;
+  if (haveSP) { h1 = homerSolidSprops(&sprops, x, z, y, r, top, nx, nz); if (h1) { homerSrc108 = 1; homerSrcF108 = diagFrame108; homerSrcAt108[0] = *x; homerSrcAt108[1] = *z; } hit |= h1; }
+  if (haveProps && !propsSoftHomer) { h1 = propsSolidHomer(&props, x, z, y, r, HOMER_STEP, HOMER_HEIGHT, top, nx, nz); if (h1) { homerSrc108 = 2; homerSrcF108 = diagFrame108; homerSrcAt108[0] = *x; homerSrcAt108[1] = *z; } hit |= h1; }   // правка 290: ящики, гидранты
+  if (haveTraffic) { h1 = trafficSolid(&traffic, x, z, y, r, top, nx, nz); if (h1) { homerSrc108 = 3; homerSrcF108 = diagFrame108; homerSrcAt108[0] = *x; homerSrcAt108[1] = *z; } hit |= h1; }
   return hit;
 }
+static void spLog1305(const char *line) { if (smkOn) smkWrite(line); bbNote(line); }   // 108 1305: строка о разовом предмете, разбитом чужой машиной
+static int roofTidG = -1;   // 107b служебное: номер машины трафика, на крышу которой флаг homerroof поставил Гомера (-1 — своя)
+static int homerRideAll(void *u, int id, float x, float y, float z, HomerRide *o) { (void)u; return haveTraffic ? trafficRide(&traffic, id, x, y, z, o) : 0; }   // 107b Г4: крыша машины трафика едет вместе с Гомером
 static void homerDoor(void *u, float open) {   // дверь водителя из анимации Гомера (шарнир CAR1, пока замок цел)
   (void)u; if (doorHinge >= 0 && cv.latched[doorHinge]) cv.th[doorHinge] = open * cv.hinge[doorHinge].max;
 }
@@ -761,6 +778,7 @@ static void spFxOut(void *u, const SpFxOut *o0) {   // частицы стейт
 }
 static void spChangeSnd(void *u, unsigned i, float speed) { (void)u; sndObjectHit(SND_SET_SPROPS, i, sprops.run[i].x, sprops.run[i].y, sprops.run[i].z, speed); }
 static unsigned hmHits, hmStomps, hmJumps; static float hmVmax;   // служебное: удары, стомпы, прыжки, скорость (flag homerv, tests/controls)
+static int platLog1274; int aoRideInh107Old;   // 107б Г1: 1 — прыжок с платформы скорость опоры не наследует (flag rideinh1274old)   // №1274 служебно (flag platlog)
 static void homerEvFx(void *u, const HomerEvent *ep) {   // звук событий Гомера (ревью Codex §14), пыль
   (void)u; HomerEvent e = *ep;
   if (e.type == HOMER_EV_HIT) hmHits++; else if (e.type == HOMER_EV_STOMP) hmStomps++; else if (e.type == HOMER_EV_JUMP) hmJumps++;

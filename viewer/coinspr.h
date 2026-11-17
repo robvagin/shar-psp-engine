@@ -79,6 +79,8 @@ static void coinSprFlush(int ctex) {
 // будка, лавка, гардероб — все через hudCoin3D) — тот же кадр ленты coinspr.bin и те же часы, что у монет мира; квадрат на месте значка: монета ростом
 // со значок (как 3D-монета hudCoin3D: k = h / 0,62 пикс на метр, центр монеты 0,31 м над низом — в центр значка), прозрачность значка. Квадрат до 40 пикс —
 // уровень 1 ленты (кадр 32 пикс), крупнее — уровень 0. Нет ленты — 3D-монета, как было. HUD_COIN_SPRITE_OLD=1 — 3D-монета
+// 1299 (Роб, 14.11: «в меню монетка не крутится»): кадр оборота у счёта брался из игровых часов gtUs95(), в паузе и меню они стоят — монета замирала. Теперь у счёта часы стенные (крутится всегда, как у оригинала). COINSPIN1299_OLD=1 / файл coinspin1299old / flag coinspin1299old 1 — прежнее
+static int hudCoinSpin1299Old;
 #ifndef HUD_COIN_SPRITE_OLD
 #define HUD_COIN_SPRITE_OLD 0
 #endif
@@ -88,7 +90,7 @@ static int coinSprHud(float cx, float cy, float hh, float al) {
   if (!csState) csLoad();
   if (csState < 0 || hh < 2.f) return 0;
   float k = hh / .62f, hs = csH.half * k, ccy = cy - (csH.cy - .31f) * k;
-  unsigned fr = (gtUs95() / (unsigned)(1e6f / csH.fps)) % csH.frames;
+  unsigned fr = ((hudCoinSpin1299Old ? gtUs95() : sceKernelGetSystemTimeLow()) / (unsigned)(1e6f / csH.fps)) % csH.frames;
   int lv = hs * 2.f <= 40.f ? 1 : 0; unsigned px = lv ? csH.px / 2u : csH.px, w = lv ? csH.w / 2u : csH.w, h = lv ? csH.h / 2u : csH.h;
   float u0 = (float)((fr % csH.cols) * px), v0 = (float)((fr / csH.cols) * px);
   typedef struct { float u, v; unsigned c; float x, y, z; } HV;

@@ -66,6 +66,19 @@ static SV vb[SKID_QUADS * 4] __attribute__((aligned(16)));
 static unsigned short qown[SKID_QUADS];   // метка следа-хозяина, 0 — пусто
 static unsigned char qlive[SKID_QUADS];   // квад тянется за колесом (его не затираем)
 static float qlen[SKID_QUADS];
+// 108 О13 (Бабл; документ Fable: «два обхода кольца 384 квадов по 96 байт — 36 КБ при кэше данных 16 КБ»): рисование дважды обходило кольцо (сосчитать квады в радиусе, потом записать их индексы) и каждый раз читало
+// вершины квадов, qown и qlen из трёх массивов. Теперь плотный массив qc по 16 байт (положение первой вершины и признак «квад есть и длиннее шага»), 6 КБ на всё кольцо, и один обход со списком sel.
+// qc пересчитывается везде, где пишутся вершины, qown или qlen. Набор квадов и порядок индексов те же (по возрастанию номера). SKIDDENSE108_OLD=1 / «flag skiddense108old 1» — два обхода, как было;
+// SKIDDENSE_RED=1 — красный контроль стенда: qlen не обновляет qc
+#ifndef SKIDDENSE108_OLD
+#define SKIDDENSE108_OLD 0
+#endif
+#ifndef SKIDDENSE_RED
+#define SKIDDENSE_RED 0
+#endif
+int skidDense108Old = SKIDDENSE108_OLD;
+typedef struct { float x, y, z; unsigned ok; } SkQc;
+static SkQc qc[SKID_QUADS];
 static int head, used, dirty, made, skipped, drawnLast, curSlot, madeAi;
 // №1159 (сверка тура TEST85 на PSP, g12-data): «тени и следы» в x_car3d выросли 0,4 → 1,5 мс в сценах с ездой и скольжением (проспект L5, стекло L1). Каждый кадр скольжения писал в кольцо следов один-два квада,
 // а на GE отдавалась ВСЯ записанная часть кольца (до 384 квадов × 96 Б = 36 КБ — больше кэша данных 16 КБ: сброс кэша целиком). Теперь сбрасывается только промежуток квадов, тронутых после прошлого рисования
@@ -75,6 +88,7 @@ static int head, used, dirty, made, skipped, drawnLast, curSlot, madeAi;
 #endif
 static int dLo = 1 << 30, dHi = -1;
 static inline void dmark(int q) { if (q < dLo) dLo = q; if (q > dHi) dHi = q; dirty = 1; }
+static inline void qcSet(int q) { const SV *v = &vb[q * 4]; qc[q].x = v->x; qc[q].y = v->y; qc[q].z = v->z; qc[q].ok = qown[q] && qlen[q] >= SKID_MIN; }
 static float lvlLast, usLast, usCar;
 // Правка Роба 500 (машины в кадре, «следы»): машины миссии с ИИ дальше SKID_DRAW_DIST + 40 м от глаза (прошлый кадр) следов не оставляют — раньше каждый кадр
 // считали уровень скольжения и по лучу земли на каждое из 4 колёс (colGroundMat), хотя квадраты дальше 90 м не рисуются. След начинается заново, когда машина
@@ -116,7 +130,7 @@ void skidSetGeRoom(int (*room)(unsigned)) { geRoomFn = room; }
 void skidEnable(int on) { svcOn = on; }
 
 void skidClear(int on) {
-  memset(vb, 0, sizeof vb); memset(qown, 0, sizeof qown); memset(qlive, 0, sizeof qlive); memset(qlen, 0, sizeof qlen);
+  memset(qc, 0, sizeof qc); memset(vb, 0, sizeof vb); memset(qown, 0, sizeof qown); memset(qlive, 0, sizeof qlive); memset(qlen, 0, sizeof qlen);
   memset(tr, 0, sizeof tr);
   for (int s = 0; s < SKID_CARS; s++) for (int i = 0; i < 4; i++) tr[s][i].q = -1;
   head = used = made = skipped = drawnLast = madeAi = 0; dirty = 1; dLo = 0; dHi = SKID_QUADS - 1; levelOn = on; lvlLast = 0.f; skidTex = -2;
@@ -237,10 +251,12 @@ static int ringAlloc(unsigned short tag) {
     if (qlive[q]) continue;                       // чужой тянущийся квад не трогаем
     if (used < SKID_QUADS) used++;
     qown[q] = tag; qlive[q] = 1; qlen[q] = 0.f; made++; if (curSlot > 0) madeAi++;
+    qcSet(q);
     return q;
   }
   return -1;
 }
+static inline void qcSet(int q);
 static void quadWrite(int q, const float *al, const float *ar, float va, unsigned char aa,
                       const float *bl, const float *br, float vbv, unsigned char ab) {
   SV *v = &vb[q * 4];
@@ -248,7 +264,7 @@ static void quadWrite(int q, const float *al, const float *ar, float va, unsigne
   v[1] = (SV){1.f, va, col(aa), ar[0], ar[1], ar[2]};
   v[2] = (SV){1.f, vbv, col(ab), br[0], br[1], br[2]};
   v[3] = (SV){0.f, vbv, col(ab), bl[0], bl[1], bl[2]};
-  dmark(q);
+  dmark(q); qcSet(q);
 }
 static inline unsigned char alphaOf(int q, int end) { return alphaRaw(vb[q * 4 + (end ? 2 : 0)].c); }
 static void alphaSet(int q, int end, unsigned char a) {
@@ -263,7 +279,7 @@ static void trailEnd(Trail *t) {
     qlive[t->q] = 0;
     if (qlen[t->q] >= SKID_MIN && t->nh < SKID_HIST) t->hist[t->nh++] = t->q;
     else if (qlen[t->q] >= SKID_MIN) { memmove(t->hist, t->hist + 1, sizeof(int) * (SKID_HIST - 1)); t->hist[SKID_HIST - 1] = t->q; }
-    else { qown[t->q] = 0; if (SKIDWB1159_OLD) dirty = 1; }   // короче шага — не след (qown — список ЦП, на GE не уходит; №1159: сброс кэша не нужен)
+    else { qown[t->q] = 0; qcSet(t->q); if (SKIDWB1159_OLD) dirty = 1; }   // короче шага — не след (qown — список ЦП, на GE не уходит; №1159: сброс кэша не нужен)
   }
   float dEnd = 0.f;
   for (int k = t->nh - 1; k >= 0 && dEnd < SKID_FADE; k--) {
@@ -308,7 +324,7 @@ static void trailPoint(Trail *t, const float *p, const float *n, const float *vd
   if (t->q < 0 && (t->q = ringAlloc(t->tag)) < 0) return;
   float v1 = t->sv + L * SKID_VPM;
   quadWrite(t->q, t->sl, t->sr, t->sv, t->sa, el, er, v1, a);
-  qlen[t->q] = L;
+  qlen[t->q] = L; if (!SKIDDENSE_RED) qcSet(t->q);
   if (L >= SKID_STEP) {                                                         // участок закреплён, дальше — новый квад
     qlive[t->q] = 0;
     if (t->nh == SKID_HIST) memmove(t->hist, t->hist + 1, sizeof(int) * (SKID_HIST - 1)), t->nh--;
@@ -355,7 +371,7 @@ void skidCar(int slot, const Car *c, const CarInput *in, const ColWorld *w) {
     unsigned char a = (unsigned char)(lvl * .5f * 255.f);                     // 0x205368 × 0,5; 0x2062e8 × 255
     for (int i = 0; i < 4; i++) {
       int rear = i >= 2;                                                        // ведущие у порта — задние (car.c)
-      if ((burn > 0.f && !rear) || c->comp[i] <= 0.f) { trailEnd(&T[i]); continue; }   // 0x2884f8: пробуксовка — ведущие; 0x288518: колесо на земле
+      if ((burn > 0.f && !rear) || !carWheelGround(c, i)) { trailEnd(&T[i]); continue; }   // 0x2884f8: пробуксовка — ведущие; 0x288518: колесо на земле
       float bx = (i & 1) ? -P->wheelX : P->wheelX, bz = i < 2 ? P->wheelF : -P->wheelR, my = c->mountY;
       float wx = c->x + L[0] * bx + U[0] * my + F[0] * bz, wy = c->y + L[1] * bx + U[1] * my + F[1] * bz,
             wz = c->z + L[2] * bx + U[2] * my + F[2] * bz;
@@ -386,6 +402,52 @@ int skidQuadAt(int i, float p[4][3], unsigned char a[4]) {
   return 1;
 }
 
+// квады кольца в радиусе рисования от глаза, номера по возрастанию в sel; возврат — сколько. Прежний вариант (два обхода) нужен красному контролю и сверке
+unsigned skidSelect108(float ex, float ey, float ez, unsigned short *sel) {
+  const float R2 = SKID_DRAW_DIST * SKID_DRAW_DIST; unsigned n = 0;
+  if (!skidDense108Old) {
+    for (int q = 0; q < used; q++) { const SkQc *c = &qc[q]; if (!c->ok) continue;
+      float dx = c->x - ex, dy = c->y - ey, dz = c->z - ez; if (dx * dx + dy * dy + dz * dz < R2) sel[n++] = (unsigned short)q; }
+    return n;
+  }
+  unsigned cnt = 0;
+  for (int q = 0; q < used; q++) {
+    if (!qown[q] || qlen[q] < SKID_MIN) continue;
+    const SV *v = &vb[q * 4]; float dx = v->x - ex, dy = v->y - ey, dz = v->z - ez;
+    if (dx * dx + dy * dy + dz * dz < R2) cnt++;
+  }
+  for (int q = 0; q < used; q++) {
+    if (!qown[q] || qlen[q] < SKID_MIN) continue;
+    const SV *v = &vb[q * 4]; float dx = v->x - ex, dy = v->y - ey, dz = v->z - ez;
+    if (dx * dx + dy * dy + dz * dz >= R2) continue;
+    sel[n++] = (unsigned short)q;
+  }
+  (void)cnt; return n;
+}
+// сверка qc с исходными массивами (стенд, смоук): сколько квадов описано неверно
+unsigned skidCheck108(void) {
+  unsigned bad = 0;
+  for (int q = 0; q < SKID_QUADS; q++) { const SV *v = &vb[q * 4]; unsigned ok = qown[q] && qlen[q] >= SKID_MIN;
+    if (qc[q].ok != ok || (ok && (qc[q].x != v->x || qc[q].y != v->y || qc[q].z != v->z))) bad++; }
+  return bad;
+}
+// модель кэша PSP (строка 64 Б, холодный): сколько разных строк затронул выбор при выбранном пути (стенд)
+unsigned skidLines108(void) {
+  static unsigned long long ln[SKID_QUADS * 8 + 8]; unsigned m = 0;
+  for (int pass = 0; pass < (skidDense108Old ? 2 : 1); pass++) for (int q = 0; q < used; q++) {
+    if (!skidDense108Old) { ln[m++] = (unsigned long long)(uintptr_t)&qc[q] >> 6; continue; }
+    ln[m++] = (unsigned long long)(uintptr_t)&qown[q] >> 6;
+    if (!qown[q]) continue;
+    ln[m++] = (unsigned long long)(uintptr_t)&qlen[q] >> 6;
+    if (qlen[q] >= SKID_MIN) ln[m++] = (unsigned long long)(uintptr_t)&vb[q * 4].x >> 6;
+  }
+  // разные строки; второй обход старого пути строки вытеснил бы из кэша 16 КБ, если выбор больше кэша — считаем его заново
+  unsigned long long seen[SKID_QUADS * 8 + 8]; unsigned ns = 0, total = 0;
+  for (unsigned k = 0; k < m; k++) { int f = 0; for (unsigned j = 0; j < ns; j++) if (seen[j] == ln[k]) { f = 1; break; } if (!f) seen[ns++] = ln[k]; }
+  total = ns; if (skidDense108Old && ns * 64u > 16384u) total = ns * 2;
+  return total;
+}
+
 #ifndef SKID_HOST
 void skidDraw(float ex, float ey, float ez) {
   unsigned t0 = sceKernelGetSystemTimeLow();
@@ -394,21 +456,14 @@ void skidDraw(float ex, float ey, float ez) {
   if (!SKID_MARKS || !levelOn || !svcOn || !used) { usLast = usCar; return; }
   if (skidTex == -2 && fxReady()) skidTex = fxTexFind("skid.bmp");   // после загрузки пакета уровня (skidClear сбрасывает)
   if (skidTex < 0 && SKID_TINT_OLD) { usLast = usCar; return; }
-  int n = 0; float R2 = SKID_DRAW_DIST * SKID_DRAW_DIST;
-  for (int q = 0; q < used; q++) {
-    if (!qown[q] || qlen[q] < SKID_MIN) continue;
-    const SV *v = &vb[q * 4]; float dx = v->x - ex, dy = v->y - ey, dz = v->z - ez;
-    if (dx * dx + dy * dy + dz * dz < R2) n++;
-  }
+  static unsigned short sel[SKID_QUADS];
+  int n = (int)skidSelect108(ex, ey, ez, sel);
   if (!n) { usLast = usCar + (sceKernelGetSystemTimeLow() - t0); return; }
   unsigned bytes = (unsigned)n * 6u * sizeof(unsigned short);
   if (geRoomFn && !geRoomFn(bytes + 256u)) { skipped++; usLast = usCar; return; }   // правка 103: список GE полон
   unsigned short *ix = (unsigned short *)geVbAlloc((bytes + 3u) & ~3u, GEVB_SKID_OLD), *o = ix;
-  for (int q = 0; q < used; q++) {
-    if (!qown[q] || qlen[q] < SKID_MIN) continue;
-    const SV *v = &vb[q * 4]; float dx = v->x - ex, dy = v->y - ey, dz = v->z - ez;
-    if (dx * dx + dy * dy + dz * dz >= R2) continue;
-    unsigned short b = (unsigned short)(q * 4);
+  for (int k = 0; k < n; k++) {
+    unsigned short b = (unsigned short)(sel[k] * 4);
     o[0] = b; o[1] = b + 1; o[2] = b + 2; o[3] = b; o[4] = b + 2; o[5] = b + 3; o += 6;
   }
   if (dirty) {

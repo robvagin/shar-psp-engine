@@ -1,0 +1,22 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=1 300
+wait 8
+flag player 0
+flag vehdestroyed1315 FLAGVAL
+scene V_FIRST
+wait 3
+flag testboom
+wait 8
+flag repair
+wait 2
+scene V_SECOND
+flag testboom
+wait 8
+scene V_END
+flag stop
+wait 2
+end

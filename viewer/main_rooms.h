@@ -1,3 +1,4 @@
+#include "power.h"   // 107б P0: эпоха питания
 // ---------- 11.2: комнаты. Коллизия и переходы — пакет SHI1 (viewer/rooms.c, тот же код у ботов), рисование — SHG1
 // (tools/interior_export.py): блоб комнаты (текстуры + куски в формате города) читается одним чтением при входе и
 // освобождается при выходе. В комнате город не рисуется и не подгружается (клетки остаются в памяти: выход без дыр),
@@ -14,7 +15,18 @@
 static int roomPoint96(float x, float y, float z);
 static Rooms rooms; static RoomState rs = {-1, -1, 1, 0, 1, 0}; static char roomsMsg[96]; static int roomN;   // rs: правка 41 — вход/выход по △ (needAction; смоук doorwalk — прежнее)
 typedef struct { char name[32]; unsigned off, size; } RoomGfxEnt;
-static RoomGfxEnt rgEnt[ROOMS_MAX]; static int rgN, rgBad[ROOMS_MAX];   // таблица SHG1; rgBad — блоб комнаты битый, больше не пробуем
+// 107б P0 (сон и пробуждение, Роб 1273; генплан Fable §P0.3): rgBad — «блоб комнаты битый, больше не пробуем» до смены уровня; после сна первое же неудачное чтение закрывало дверь насовсем. Теперь пометка помнит эпоху питания и время:
+// другая эпоха или прошло 10 с — комната пробуется заново. P0ROOM_OLD=1 / файл p0roomold — как было
+#ifndef P0ROOM_OLD
+#define P0ROOM_OLD 0
+#endif
+static int p0RoomOn = !P0ROOM_OLD;
+static RoomGfxEnt rgEnt[ROOMS_MAX]; static int rgN, rgBad[ROOMS_MAX]; static unsigned rgBadEp[ROOMS_MAX], rgBadT[ROOMS_MAX];
+static int rgBadNow(int room) {
+  if (!rgBad[room]) return 0;
+  if (p0RoomOn && (rgBadEp[room] != pwrEpoch() || (int)(sceKernelGetSystemTimeLow() - rgBadT[room]) > 10000000)) { rgBad[room] = 0; if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "ROOM retry room=%d epoch=%u t=%.1f\n", room, pwrEpoch(), smkT); smkWrite(l_); } return 0; }
+  return 1;
+}   // таблица SHG1; rgBad — блоб комнаты битый, больше не пробуем
 static RoomCam rcam[ROOM_CAMS]; static int nrcam, roomCamOn, roomCamStickyOld, roomCamSwitchOld; static RoomCamState rcs = {-1}; static float roomFovY;   // камеры комнаты из данных (viewer/roomcam.h)
 static struct { int room; unsigned char *mem; Piece *pc; unsigned npc, size, clear, amb, heap0, heap1; int nlit; float lit[4][3], ms; unsigned litc[4]; } rg = {-1};
 static const char *roomName(void) { return roomsName(&rooms, &rs); }   // текущая комната для миссий (GameMsn.interior); NULL — город
@@ -61,8 +73,30 @@ static unsigned zoneMsnMask(const char *fl) {
   }
   return m;
 }
+#ifndef ZONE_BODY_OLD
+#define ZONE_BODY_OLD 0
+#endif
+static int zoneBodyOn = 1;   // flag zonebody 0 / файл zonebodyold — прежнее
 static int zgRoomGap;
-static void zoneGatesFrame(void) {
+// 1326 (см. msn_view.c): ожидание раскрытия мира после ✕ карточки. Состояние и проверка раз в кадр из главного цикла (до обнуления dt)
+static int wbHold1326, wbLow1326, wbDone1326; static float wbT1326; static unsigned wbCont1326;
+static int wbHold1326Eval(float dt) {
+  if (mvWorldHold1326Old || !mvContUs1326) { wbHold1326 = 0; return 0; }
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (mvContUs1326 != wbCont1326) { wbCont1326 = mvContUs1326; wbDone1326 = 0; wbT1326 = 0.f; wbLow1326 = 0; wbHold1326 = 0; }
+  if (wbDone1326 || (unsigned)(now - mvContUs1326) > 10000000u || uiPaused() || inRoom() || mvBriefing()) { wbHold1326 = 0; return 0; }
+  wbLow1326 = drawnTris < 2000 ? wbLow1326 + 1 : 0;   // нормальный город 15–30 тыс. треугольников; пустой мир (клеток нет) — единицы
+  int black = wbLow1326 >= 12 || mvFadeCover1326();
+  if (black) {
+    wbT1326 += dt;
+    if (wbT1326 < 5.f) { if (!wbHold1326) { wbHold1326 = 1; char l_[96]; snprintf(l_, sizeof l_, "WORLDHOLD1326 start tris=%u fade=%d t=%.1f\n", (unsigned)drawnTris, mvFadeCover1326(), smkOn ? smkT : 0.f); if (smkOn) smkWrite(l_); bbOp("worldhold", "start", 0); } return 1; }
+    wbDone1326 = 1; { char l_[96]; snprintf(l_, sizeof l_, "WORLDHOLD1326 cap waited=%dms tris=%u t=%.1f\n", (int)(wbT1326 * 1000.f), (unsigned)drawnTris, smkOn ? smkT : 0.f); if (smkOn) smkWrite(l_); bbOp("worldhold", "cap", 0); }
+    wbHold1326 = 0; return 0;
+  }
+  if (wbHold1326) { wbHold1326 = 0; wbDone1326 = 1; char l_[96]; snprintf(l_, sizeof l_, "WORLDHOLD1326 waited=%dms tris=%u t=%.1f\n", (int)(wbT1326 * 1000.f), (unsigned)drawnTris, smkOn ? smkT : 0.f); if (smkOn) smkWrite(l_); bbOp("worldhold", "open", 0); }
+  return 0;
+}
+static void zoneGatesFrame0(void) {
   if (!zgOn || !haveCol) return;
   if (inRoom()) { zgInit = 0; zgRoomGap = 1; return; }   // в комнате набор не меняется (вход — своя логика комнат по △, правило порта)
   int foot = onFoot(); float px = foot ? homer.x : car.x, py = foot ? homer.y : car.y, pz = foot ? homer.z : car.z;
@@ -89,10 +123,56 @@ static void zoneGatesFrame(void) {
     zgInit = 1; zgPx = px; zgPz = pz; return;
   }
   int fired = -1; unsigned b = regRes;
-  regRes = zoneGatesStep(zg, nzg, zgWas, regRes, px, py, pz, (foot && !ZONE_FOOT_EXACT_OLD) ? 0.f : 1.5f, &fired);   // сверка g11b P12-05: Гомер пешком — точка строго внутри объёма, запаса нет; у машины запас 1,5 м заменяет четыре угла кузова (нужна проверка по точкам в zonegate.h, передано)
+  if (!foot && zoneBodyOn && !ZONE_BODY_OLD) { CarBox cb_; memset(&cb_, 0, sizeof cb_); carBox(&car, &cb_); regRes = zoneGatesStepBody(zg, nzg, zgWas, regRes, cb_.x, py, cb_.z, cb_.fx, cb_.fz, cb_.hw, cb_.hl, &fired); }   // 108 Б.10: кузов четырьмя углами
+  else regRes = zoneGatesStep(zg, nzg, zgWas, regRes, px, py, pz, (foot && !ZONE_FOOT_EXACT_OLD) ? 0.f : 1.5f, &fired);   // сверка g11b P12-05: Гомер пешком — точка строго внутри объёма, запаса нет; у машины запас 1,5 м заменяет четыре угла кузова (нужна проверка по точкам в zonegate.h, передано)
   zgPx = px; zgPz = pz;
   if (regRes != b) { zgFired++;
     if (smkOn) { char s[96]; snprintf(s, sizeof s, "ZONE gate %d res %04x -> %04x at %.0f %.0f t=%.1f\n", fired, b, regRes, px, pz, smkT); smkWrite(s); } }
+}
+// 108 правка 1319 (Роб: после миссии «нет текстур города, вдали только фонари и ящики»): набор регионов ворот (regRes) после переноса (конец гонки, этап миссии, телепорт) или миссионной команды зон мог не включать регион клеток
+// ВОКРУГ глаза: стрим и рисование отбрасывали все клетки региона вне набора, и в 40 м от машины города не было (журнал DAL1272 rx40 = 38..60 клеток). Правило порта: регионы клеток города в 40 м от игрока всегда в наборе (раз в 6 кадров
+// и сразу после смены набора); строка ZONENEAR. ZONENEAR1319_OLD=1 / файл zonenear1319old / flag zonenear1319 0 — прежнее
+#ifndef ZONENEAR1319_OLD
+#define ZONENEAR1319_OLD 0
+#endif
+int zoneNear1319Old = ZONENEAR1319_OLD;   // extern в rollback.h
+#ifndef ZONENEARCELL_OLD
+#define ZONENEARCELL_OLD 0
+#endif
+int zoneNearCellOld = ZONENEARCELL_OLD;   // 1319б: 1 — регион «рядом» целиком в regRes (f7ed0b0f); extern в rollback.h
+// 108 правка 1354 (Роб, набор 73015bd8: «L4 F10-4, лечу с трамплина, текстура листвы, которая должна быть вдалеке, прямо здесь, я лечу в ней»): правило «рядом» (1319/1319б) брало ЛЮБОЙ регион клеток в радиусе от
+// игрока, в том числе регион «декораций издали» (L4: l4r1 — холм, дома и стена деревьев соседнего района, 95б на L1 той же болезни), которого оригинал с этой земли не держит; в полёте над L4 F10-4 клетки l4r1 попадали
+// камере внутрь (весь экран зелёный). Теперь «рядом» (по клеткам, основной путь) берёт только регионы из маски REG1 клетки игрока (те, что оригинал держит вместе с землёй под ним; маска включает и сам регион земли, ради которого сделано 1319);
+// нет REG1 / игрок за сеткой — маска полная, как было. ZONENEARMASK1354_OLD=1 / файл zonenearmask1354old / flag zonenearmask1354 0 — прежнее
+#ifndef ZONENEARMASK1354_OLD
+#define ZONENEARMASK1354_OLD 0
+#endif
+int zoneNearMask1354Old = ZONENEARMASK1354_OLD;   // extern в rollback.h
+#ifndef ZONENEARTIGHT1360_OLD
+#define ZONENEARTIGHT1360_OLD 0
+#endif
+int zoneNearTight1360Old = ZONENEARTIGHT1360_OLD;   // 1360: 1 — при тесной куче регион «рядом» новых не берёт (как было); extern в rollback.h
+static void zoneGatesFrame(void) {
+  unsigned b_ = regRes; zoneGatesFrame0();
+  if (zoneNear1319Old || !zgOn || !haveCol || inRoom() || !cl || !ncell) { regNear = 0; return; }
+  if (!zoneNearCellOld) {   // 1319б: набор «рядом» по клеткам в ZN_KEEP от глаза, в regRes ничего не добавляется
+    static unsigned nf2_; static float ex2_, ez2_; float mx_ = eyeX - ex2_, mz_ = eyeZ - ez2_; int jmp_ = mx_ * mx_ + mz_ * mz_ > 15.f * 15.f;   // перенос (телепорт, смена этапа): набор считаем сразу
+    if ((nf2_++ % 6u) && regRes == b_ && !jmp_) return;
+    ex2_ = eyeX; ez2_ = eyeZ;
+    int footm_ = onFoot(); unsigned okm_ = zoneNearMask1354Old ? 0xFFFFu : regAt(footm_ ? homer.x : car.x, footm_ ? homer.z : car.z);   // 1354: только регионы маски REG1 под игроком
+    unsigned nn = 0, nc_ = 0; for (unsigned i = 0; i < ncell; i++) { const Cell *c = &cl[i]; if (c->owner) continue; unsigned r = CELL_REG(c); if (!r || r > 16 || ((regRes >> (r - 1)) & 1u) || !((okm_ >> (r - 1)) & 1u)) continue;
+      float d2_ = boxD2(c->bb); if (d2_ < ZN_KEEP * ZN_KEEP) nn |= 1u << (r - 1); if (d2_ < ZN_MISS * ZN_MISS) nc_ |= 1u << (r - 1); }
+    // 1360 (оценка Fable, Ж2): при тесной куче «рядом» не брал новых регионов никогда (nn &= regNear: после переноса прежний набор пуст, пересечение пустое) — «нет текстур города» возвращалось именно на PSP. Теперь и при тесной куче берутся регионы клеток, которые уже считаются дырой (ближе ZN_MISS): без них рядом с игроком пусто. Остальное, что дальше ZN_MISS, как раньше не берётся. ZONENEARTIGHT1360_OLD=1 — прежнее
+    if (memTight) nn &= regNear | (zoneNearTight1360Old ? 0u : nc_);   // памяти мало — регионы дальше ZN_MISS не берём
+    if (nn != regNear) { if (smkOn) { char s_[110]; snprintf(s_, sizeof s_, "ZONENEAR cell near %04x -> %04x res=%04x at %.0f %.0f t=%.1f\n", regNear, nn, regRes, eyeX, eyeZ, smkT); smkWrite(s_); } regNear = nn; }
+    return; }
+  regNear = 0;
+  static unsigned nf_; if ((nf_++ % 6u) && regRes == b_) return;
+  int foot = onFoot(); float px = foot ? homer.x : car.x, pz = foot ? homer.z : car.z; unsigned add = 0;   // прежний путь «регион целиком» (ZONENEARCELL_OLD, красный контроль 1319б) без маски 1354: он и есть «как было»
+  for (unsigned i = 0; i < ncell; i++) { const Cell *c = &cl[i]; if (c->owner) continue; unsigned r = CELL_REG(c); if (!r || r > 16 || ((regRes >> (r - 1)) & 1u)) continue;
+    float dx = px < c->bb[0] ? c->bb[0] - px : px > c->bb[3] ? px - c->bb[3] : 0.f, dz = pz < c->bb[2] ? c->bb[2] - pz : pz > c->bb[5] ? pz - c->bb[5] : 0.f;
+    if (dx * dx + dz * dz < 40.f * 40.f) add |= 1u << (r - 1); }
+  if (add) { unsigned b2 = regRes; regRes |= add; if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "ZONENEAR res %04x -> %04x at %.0f %.0f t=%.1f\n", b2, regRes, px, pz, smkT); smkWrite(s_); } }
 }
 // Правка Роба (запись PS2 ps2_m0_kwik_exit, ответ В77, 10.10): выход из интерьера ставит Гомера ровно в точку дверных ворот зоны — у Kwik-E-Mart
 // (213,905; 4,93; 300,918 осей порта), ворота KwikEMart (213,91; 5,16; 300,92) загружают l1i01. Порт ставил его в локатор двери (213,905; 5,157;
@@ -221,6 +301,13 @@ static void roomLeave(void) { roomClose(); roomStateInit(&rs); G.pHomerWorld = 0
 #define NPC_WAIT1076_OLD 0
 #endif
 static int npcWaitOld;
+// 1344 (Роб, обновление 108: «при входе в дом дедушка подгружается уже после того, как мы появились; пусть все модели грузятся во время loading, а прелоадер уходит ирисом и показывает всё сразу»): под закрытым экраном двери комната ждала
+// персонажей (№1076) не дольше 1,5 с, а на PSP чтение модели Дедушки длиннее — ирис раскрывался без него, и он вставал на глазах. Теперь предел 5 с (канон 14: раскрытие одно, когда готовы и свои ресурсы), потом как раньше.
+// Строка ROOMREADY room= waited=Nms npc=число-ждали left=сколько-не-дошло в смоук и ящик. ROOMREADY1344_OLD=1 / flag roomready1344old 1 / файл-флаг через rollback.h — предел 1,5 с, как было
+#ifndef ROOMREADY1344_OLD
+#define ROOMREADY1344_OLD 0
+#endif
+static int roomReady1344Old = ROOMREADY1344_OLD;
 // №1209 (тур TEST90 на PSP): «foot X Z H Y» с Y под городом, когда Гомер ещё не в комнате, ставил его в город под землю — падение без конца. Теперь пропуск.
 // FOOTROOM1209_OLD=1 / flag footroom1209old 1 — как было
 #ifndef FOOTROOM1209_OLD
@@ -261,13 +348,22 @@ static int roomOpenLegacy(void *u, int room) {   // прежний путь (TFS
 // (решение Роба 2: комната не открылась, пересборки уровня нет: запомнить место, выбросить лишнее под прелоадером, грузить только комнату). Чтение комнаты roomOpen1 то же. TFSM95_OLD=1 — roomOpenLegacy
 typedef struct { void *u; int room; } RoomLoadCtx;
 static void levelCleanReload96(void **fbp, unsigned t0);   // mem1060.h
-static int transitReload96(void *c, void **fbp) {   // Build 96: чистая перезагрузка перед SIMPLIFY — только вне миссии и вне комнаты (внутри миссии снимок не доказан)
-  (void)c; if (mvInMission() || inRoom()) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "CLEANRELOAD96 skip why=%s t=%.1f\n", mvInMission() ? "mission" : "room", smkT); smkWrite(s_); } return 0; }
+// 1320 (Роб: «такая же выгрузка, как на будке, для всех взаимодействий»): у будки чистая перезагрузка в миссии есть (BOOTH1060 msn same=1, tests/mem1060), а вход в помещение в миссии при отказе памяти
+// упирался в SIMPLIFY «PLEASE WAIT.». Теперь room_in в миссии идёт той же перезагрузкой (снимок и возврат прогресса те же, что у будки). Лавка и гардероб: в миссии по оригиналу закрыты, внутри комнаты
+// перезагрузка уровня не делается — прежнее. ROOMRELOAD1320_OLD=1 / файл roomreload1320old / flag roomreload1320 0 — как было
+#ifndef ROOMRELOAD1320_OLD
+#define ROOMRELOAD1320_OLD 1   // public build: the new path stays off until it is checked on hardware
+#endif
+int roomReload1320Old = ROOMRELOAD1320_OLD;   // extern в rollback.h
+static int transitReload96x(void *c, void **fbp, int allowMission) {   // Build 96: чистая перезагрузка перед SIMPLIFY — вне комнаты; в миссии только для room_in (1320)
+  (void)c; if ((mvInMission() && !allowMission) || inRoom()) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "CLEANRELOAD96 skip why=%s t=%.1f\n", mvInMission() ? "mission" : "room", smkT); smkWrite(s_); } return 0; }
   levelCleanReload96(fbp, sceKernelGetSystemTimeLow());
   { int r0_ = uiScrReady(); if (r0_) uiScrClose(); if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "CLEANRELOAD96 scr ready %d->%d t=%.1f\n", r0_, uiScrReady(), smkT); smkWrite(s_); } }   // пакет экрана перезагрузки (газета/LoadingFE) закрыт: его держит только переход, а лавка и гардероб открывают свой и отказывают при открытом чужом
   if (!booth1225Old) camHold1225 = BOOTH_CAMHOLD1225_FRAMES;   // камера держится, наезда старта нет
   return 1;   // levelCleanReload96 доводит уровень до игры; отказ чтения уровня сам по себе её не останавливает (loadedLevel проверяет вызывающий)
 }
+static int transitReload96(void *c, void **fbp) { return transitReload96x(c, fbp, 0); }
+static int transitReloadRoom1320(void *c, void **fbp) { return transitReload96x(c, fbp, !roomReload1320Old); }
 static int transitReloadOverlay96(void *c, void **fbp) { return transitReload96(c, fbp) ? 2 : 0; }   // лавка и гардероб: слот экрана после перезагрузки свободен для их пакета
 static int roomLoadCb(void *c) { RoomLoadCtx *x = (RoomLoadCtx *)c; return roomOpen1(x->u, x->room); }
 static int roomOpen(void *u, int room) {
@@ -276,7 +372,7 @@ static int roomOpen(void *u, int room) {
   RoomLoadCtx cx = {u, room}; Transit t; memset(&t, 0, sizeof t);
   t.name = "room_in"; t.screen = (door1226Gate && !doorIris1226Old) ? TFS_AUTO : TFS_NONE; t.need = sz_ + (64u << 10);
   t.at[0] = rooms.room[room].start[0]; t.at[1] = rooms.room[room].start[1]; t.at[2] = rooms.room[room].start[2];
-  t.load = roomLoadCb; t.cleanReload = transitReload96; t.u = &cx; t.freeAllOnPreloader = 1; t.noReturn = 1; t.simplifyText = "PLEASE WAIT.";   // ближайшая строка библии оригинала (Данные-93)
+  t.load = roomLoadCb; t.cleanReload = transitReloadRoom1320; t.u = &cx; t.freeAllOnPreloader = 1; t.noReturn = 1; t.simplifyText = "PLEASE WAIT.";   // ближайшая строка библии оригинала (Данные-93)
   unsigned t0_ = sceKernelGetSystemTimeLow(); int ok = ldrRun(&t, fbpG1226); xnEnd("room_in", t0_, room);
   irisPre1226 = tfIrisClosed; irisPre1226Frames = tfIrisFrames;
   if (!ok && irisPre1226) { transitDrop(); irisPre1226 = 0; irisPre1226Frames = 0; if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "DOORIRIS1226 drop t=%.1f\n", smkT); smkWrite(s_); } }
@@ -287,7 +383,8 @@ static int roomOpen1(void *u, int room) {
   unsigned t0 = sceKernelGetSystemTimeLow(), h0 = smkOn ? heapFreeBytes() : 0;
   const RoomGfxEnt *g = 0;
   for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) g = &rgEnt[i];
-  int err = !g ? 1 : rgBad[room] ? 2 : 0; unsigned char *m = 0; Tex *tx = 0; Piece *pp = 0;
+  int err = !g ? 1 : rgBadNow(room) ? 2 : 0; unsigned char *m = 0; Tex *tx = 0; Piece *pp = 0;
+  if (!err && pwrSimFault("room")) err = 4;   // flag simsleep: чтение комнаты отказывает (даже прочитанное впрок)
   unsigned sz = g ? g->size : 0, ntx = 0, np = 0, to = 0, ro = 0;
   int fromPf = 0;
   if (zone3OnX() && smkOn) { char z_[460]; zone3StatLineX(z_, sizeof z_, smkT, "room_in"); smkWrite(z_); }   // П5 Зоны-95: свободное в областях перед входом
@@ -324,7 +421,7 @@ static int roomOpen1(void *u, int room) {
   }
   if (!err && !m) err = 3;   // нет памяти — не «битый»: отойдёт от двери и вернётся — новая попытка
   if (!err && !fromPf) {
-    char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
+    char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = pwrSimFault("room") ? -1 : sceIoOpen(fn, PSP_O_RDONLY, 0);
     DCPRE96(m, sz);
     if (f < 0 || sceIoLseek32(f, g->off, PSP_SEEK_SET) != (int)g->off || sceIoRead(f, m, sz) != (int)sz) err = 4;
     if (f >= 0) sceIoClose(f);
@@ -357,7 +454,7 @@ static int roomOpen1(void *u, int room) {
   }
   if (!err && (nrcam = roomCamsParse(rcam, ROOM_CAMS, m, sz)) < 0) { nrcam = 0; err = 8; }   // таблица камер битая — пакет битый
   if (err) {
-    free(pp); free(tx); free(m); if (err != 3) rgBad[room] = 1;
+    free(pp); free(tx); free(m); if (err != 3 && err != 2) { rgBad[room] = 1; rgBadEp[room] = pwrEpoch(); rgBadT[room] = sceKernelGetSystemTimeLow(); }
     char s[96]; snprintf(s, sizeof s, "ROOM ev=fail room=%s err=%d t=%.1f\n", rooms.room[room].name, err, smkT); smkWrite(s);
     return 0;
   }
@@ -373,8 +470,10 @@ static int roomOpen1(void *u, int room) {
   // №1076: комната читается при закрытом экране (дверь) — персонажи миссии и бонусные у её старта (Дедушка в доме L1) дочитываются здесь же, а не на глазах
   // после открытия; не дольше 1,5 с (тёмный экран держится чуть дольше). Служебное flag npcwaitold 1 — как до правки
   if (!NPC_WAIT1076_OLD && !npcWaitOld) { unsigned w0 = sceKernelGetSystemTimeLow(); int n0 = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]), nl = n0;
-    while (nl > 0 && sceKernelGetSystemTimeLow() - w0 < 1500000u) { sceKernelDelayThread(5000); nl = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]); }
-    if (smkOn && n0) { char s_[96]; snprintf(s_, sizeof s_, "NPCWAIT1076 room=%s pending0=%d left=%d ms=%u\n", rooms.room[room].name, n0, nl, (sceKernelGetSystemTimeLow() - w0) / 1000u); smkWrite(s_); } }
+    pwrSleepAtPoint(1);   // тур: flag simsleepat 1 — сон в начале ожидания персонажей комнаты
+    while (nl > 0 && sceKernelGetSystemTimeLow() - w0 < (roomReady1344Old ? 1500000u : 5000000u)) { sceKernelDelayThread(5000); nl = mvNpcPending() + mvAmbMissingAt(rooms.room[room].start[0], rooms.room[room].start[1], rooms.room[room].start[2]); }
+    if (smkOn && n0) { char s_[96]; snprintf(s_, sizeof s_, "NPCWAIT1076 room=%s pending0=%d left=%d ms=%u\n", rooms.room[room].name, n0, nl, (sceKernelGetSystemTimeLow() - w0) / 1000u); smkWrite(s_); }
+    if (n0) { char b_[110]; snprintf(b_, sizeof b_, "room=%s waited=%ums npc=%d left=%d%s", rooms.room[room].name, (sceKernelGetSystemTimeLow() - w0) / 1000u, n0, nl, nl ? " cap" : ""); bbNoteDiag("ROOMREADY", b_); } }
   rg.ms = (sceKernelGetSystemTimeLow() - t0) / 1000.f; rg.heap0 = h0;
   if (smkOn) { char s_[160]; snprintf(s_, sizeof s_, "ROOMPF room=%s fromPf=%d starts=%u hits=%u waits=%u drops=%u timeouts=%u ms=%.0f t=%.1f\n", rooms.room[room].name, fromPf, roomPfStarts, roomPfHits, roomPfWaits, roomPfDrops, roomPfTimeouts, rg.ms, smkT); smkWrite(s_); } rg.heap1 = smkOn ? heapFreeBytes() : 0;
   return 1;
@@ -409,7 +508,7 @@ static void roomPrefetchTick(void) {
   if (room == rpfFail) return;
   const RoomGfxEnt *g = 0;
   for (int i = 0; i < rgN; i++) if (!strcmp(rgEnt[i].name, rooms.room[room].name)) g = &rgEnt[i];
-  if (!g || rgBad[room] || (zone3AreaOnX(Z3A_PLACE) ? zone3MaxFreeX(Z3A_PLACE) < g->size : heapFreeBytes() < g->size + ROOM_PF_HEAP_MIN)) return;   // П5 Зоны-95: предчтение комнаты — в область «место», куча не нужна
+  if (!g || rgBadNow(room) || (zone3AreaOnX(Z3A_PLACE) ? zone3MaxFreeX(Z3A_PLACE) < g->size : heapFreeBytes() < g->size + ROOM_PF_HEAP_MIN)) return;   // П5 Зоны-95: предчтение комнаты — в область «место», куча не нужна
   unsigned char *m = zone3TryX(Z3A_PLACE, "roompf", g->size, 16); if (!m) return;
   char fn[256]; levelFile(fn, "interiors-l%d-gfx.bin"); SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0);
   DCPRE96(m, g->size);
@@ -609,7 +708,7 @@ static void rdlBuild(void) {
     unsigned cap = (unsigned)gn[g] * 160u + 64u; acc = (unsigned *)malloc(cap * 4); if (!acc) { fail = 1; break; }
     unsigned nw = 0;
     for (unsigned i = 0; i < rg.npc && !fail; i++) { if (rdlPOf[i] != g) continue; Piece *d = &rg.pc[i];
-      sceKernelDcacheWritebackInvalidateRange(tmpP, 4096 * 4); sceGuStart(GU_CALL, tmpP); if (!dlNoDepth) sceGuDepthRange(65535, 0); rdlEmit(d); DCALL96(); unsigned sz = (unsigned)sceGuFinish();   // у контекста листа свои границы глубины (нули): без этого sceGuDepthOffset слоёв (setBias) в листе портил границы глубины видеочипа для всего кадра (как у листов клеток и пропов) unsigned sz = (unsigned)sceGuFinish();
+      sceKernelDcacheWritebackInvalidateRange(tmpP, 4096 * 4); sceGuStart(GU_CALL, tmpP); if (!dlNoDepth) sceGuDepthRange(65535, 0); rdlEmit(d); DCALL96(); unsigned sz = (unsigned)sceGuFinish();   // у контекста листа свои границы глубины (нули): без этого sceGuDepthOffset слоёв (setBias) в листе портил границы глубины видеочипа для всего кадра (как у листов клеток и пропов)
       unsigned n = sz / 4u; const volatile unsigned *u = (const volatile unsigned *)((unsigned)tmpP | 0x40000000u);
       if (n < 2 || n > 4000 || (u[n - 1] >> 24) != 0x0bu || nw + n > cap) { fail = 1; break; }   // последнее слово — возврат из листа (RET)
       RdlP *P = &rdlP[rdlG[g].p0 + fill[g]++]; memset(P, 0, sizeof *P); P->pi = (unsigned short)i; P->tris = (unsigned)d->r.ni / 3u; P->mw = 0xffffffffu;

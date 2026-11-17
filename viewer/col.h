@@ -148,7 +148,7 @@ int colGroundMatId(const ColWorld *w, float x, float z, float yTop, float yBotto
 // контакт, потом пересчёт (так стыки соседних стен не цепляют). box->x, box->z сдвигаются в итоговое положение;
 // *mtvX, *mtvZ — суммарный сдвиг; *nX, *nZ — нормаль самого глубокого контакта. Возврат: число контактов.
 // правка 122: заборы трассы уличной гонки поверх мира (машина их чувствует, как заборы уровня); NULL — снять; массив живёт у вызывающего
-void colExtraFences(const ColSeg *segs, unsigned n);
+void colExtraFences(const ColSeg *segs, unsigned n); unsigned colExtraFenceCount(void);
 typedef struct { float p[3],n[3],depth; uint32_t ref; } ColSphereContact;
 extern int colWheelPreOld;   // 1: без предотсева в колесо-стена (гейт tests/cars/wheel_pre.c, mcrprof)
 int colWheelWallContacts(const ColWorld *w,const float p[3],float radius,ColSphereContact *out,int max);
@@ -210,6 +210,7 @@ int colHumpRiding(uint32_t *idx, int max);
 // земли и стен (с обеих сторон), ящики, цилиндры/капсулы/сферы, заборы (вертикальная стена по отрезку). 1 = свободно.
 // Объём, внутри которого начинается луч, не мешает; кусты (материал FOLIAGE) — только при foliage != 0.
 float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foliage);
+extern int colRayK1Old;   // К1 (108): 1 — colRayFrac обходит весь прямоугольник клеток, как раньше
 extern int colRayFenceBox;   // сверка g11b-collect круг 5 (P11-Д5): 1 — заборы в луче colRayFrac перекрывают рамкой по двум концам; по умолчанию 0
 // CAMPERF: n лучей за один обход клеток (out[i] == colRayFrac(w, a[i], b[i], 0) для каждого; куски вне коробки лучей отсеиваются ящиком). n <= COL_RAYS_MAX
 #define COL_RAYS_MAX 24

@@ -88,6 +88,8 @@ typedef struct {
   float carWaitT, carFree;   // сверка g02-traffic (слой персонаж ↔ машина): с, сколько стоит, коснувшись машины (3,0 с); потом столько секунд обходит по углам кузова
   int farHold;   // Коллизия-96: идёт за пределами плана кольца коллизии — высота по маршруту, землю не спрашивает; 1 до первой честной проверки опоры
   int avoidGive; float avoidBest, avoidStall, avoidTx, avoidTz;   // №813: обход без продвижения к точке (avoidStall с при лучшем расстоянии avoidBest до точки avoidTx/Tz) — бросить обход (avoidGive)
+  float pcX, pcZ, pcY; unsigned pcF; int pcOk, pcCool;   // 1301b: «вокруг персонажа (радиус шага + 0,25 м) нет предметов и стейтпропов» — центр, высота и кадр проверки; pcCool — шагов без пробной проверки у предметов
+  int twinHide;   // 1296/1300: бонусный двойник (выдаватель гонки) скрыт и не активен, пока персонаж с тем же именем занят текущей сюжетной миссией (миссионный NPC существует): у оригинала одна точка персонажа по состоянию
 } GameNpc;
 
 // Разговор (цель dialogue) — правки Роба 26 и 38 (видео с PSP 3:07–3:30: «Гомер и Мардж стоят друг в друге, она не
@@ -189,6 +191,7 @@ typedef struct {
   float ufoHome[4]; int missionDone;             // круг 3: где стояла машина до луча; миссия завершена (для правки «выданная машина»)
   float forcedPt[3];                             // круг 3: точка выданной машины
   int animStale;                                 // круг 2, P15-15: жесты прошлого этапа живут, пока новый этап не задаст свои
+  int cargoPrevDestroyed;                        // A1.4: прошлый кадр — машина игрока разрушена (передний фронт шлёт «бочка разбита»)
   float dmgHold; int dmgHoldOn;                  // круг 2, P07 Д6: неуязвимость машины игрока на время цели dump с несколькими предметами
   unsigned aiArrived;                            // g03 A10: счёт кадров с событием «ИИ добрался» (служебно, пока включено MC_G03_FIELDS)
   float forcedStart[3]; int forcedStartOn;       // P (5.2): где стоял Гомер, когда миссия выдала машину
@@ -231,6 +234,7 @@ int  gameMsnTakeWorld(GameMsn *m, int i);                                      /
 int  gameMsnHnrOff(void);   // перепроверка 96: DisableHitAndRun миссии
 // ---- сверка g07 (02.11.2026): точки для других модулей (подробно — game_msn.c и docs/handoff/СВЕРКА_ВНЕДРЕНИЕ/g07-missions_журнал.md)
 void gameMsnSetState(GameMsn *m, int transition, int arrested, const char *entering);   // main: идёт переход в интерьер / арест / интерьер, в который входят (начало перехода)
+int  gameMsnTakeLockHint(void);                // 1327: номер подсказки запертого этапа (0..9) или -1; забирается один раз
 int  gameMsnShopAllowed(const GameMsn *m);    // лавка и гардероб (main_loop.h:774) — только в вступлении и вне миссий
 void gameMsnTalkNpcBack(GameMsn *m, int on);   // сверка g07 круг 7 (КАМЕРА 4.3): на крупном плане игрока (pc_near) собеседник стоит на 1,8 м дальше от игрока; on — план pc_near
 const float *gameMsnTalkNpcBase(const GameMsn *m);   // место собеседника без сдвига (камера разговора считает по нему) или NULL
@@ -301,7 +305,12 @@ void gameMsnAbort(GameMsn *m);
 // В85: Cancel карточки разговора перед миссией (msn_view.c mvTalkInput): gameMsnAbort + оба на свои места до разговора, собеседник
 // стоит; △ миссии не принимается GAME_TALK_RETALK с. GAME_TALK_CANCEL_OLD=1 — только gameMsnAbort (прежнее)
 void gameMsnTalkCancel(GameMsn *m);
+extern int gameNpcProp1301bOld;   // 1301b: 1 — проверка предметов у каждого шага каждого персонажа, как в 108 до удешевления
+extern float gameMsnEye[3]; extern int gameMsnEyeOn;   // 1301b: где камера (ставит main_loop.h до тика миссии): персонаж в 40 м от камеры проверяется, как у игрока
+extern int gameNpcPropSolid1301Old;   // 108 (1301): 1 — персонажи миссий идут сквозь предметы и стейтпропы, как было
 int gameMsnInSafeZone(const GameMsn *m, float x, float z);   // 1 — точка в зоне AddSafeZone текущего этапа
+extern float gameNpcDbg108[3];   // служебно (flag trfnpc108 x z): персонаж-пустышка для списка помех трафика (гейт Т1)
+int  gameMsnResetBlocked(const GameMsn *m);               // Ф2-11: на отсчёте перед гонкой сброс машины запрещён (оригинал)
 void gameMsnFreezePad(const GameMsn *m, GamePad *p);    // во время отсчёта: кнопки и стик — только START (пауза)
 // Лавка продавца (правило порта: пешком, △ у продавца в радиусе AddPurchaseCarReward + SHOP_REACH): открыта — номер продавца
 // в m->shop.seller, иначе -1. Пока открыта, игрок стоит (gameMsnFrozen), кнопки — лавке: ◄ ► выбор (m->shop.sel — k-й
@@ -315,6 +324,11 @@ extern int gameMsnCarNearOld;   // №1073: 1 — машина миссии к �
 extern void (*gameMsnNote)(const char *line);   // №1073: строка в журнал (msn_view.c ставит logf_), NULL — молча
 extern int gameMsnResetAlways;           // правка 61: отрицательный контроль (1 — переносить и после пройденной миссии)
 extern int gameMsnRaceResetOld;          // правка 1205: 1 — основная фаза уличной гонки не ставит игрока в машину на SetMissionResetPlayerInCar (прежнее; RACE_RESET_OLD / flag raceresetold)
+void gameMsnNpcList1360(const GameMsn *m, float t);   // 1360 служебное
+extern int npcSlot1360Old;   // 1360: 1 — AddNPC миссии перезаписывает слот фонового персонажа с тем же именем (как было)
+extern int hnrPolName1350Old;   // 1350: 1 — снятие погони Hit & Run убирает по имени и машину миссии с тем же именем (cPolice L4 m1), как было
+void gameMsnPoliceAt1359(GameMsn *m, float d);   // 1359 служебное: см. game_msn.c
+extern int wcarPol1359Old, stageEndName1359Old, parkDmgName1359Old, msnDonePol1359Old;   // 1359: см. game_msn.c
 extern int gamePoliceDmgOld;   // правка 280: 1 — полицейская получает полный урон машин миссий (прежнее)
 extern int gameTalkCarOld;   // правка 305: 1 — машина переносится на место разговора из данных (прежнее, красный)
 extern int gameSeller96;   // Механик/Опора-93 (L7 m2): 0 — продавец следует за бонус-персонажем с тем же именем и уступает ему △ (прежнее)

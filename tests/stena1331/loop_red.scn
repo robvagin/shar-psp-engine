@@ -1,0 +1,57 @@
+scene g1331
+flag skipcount1331old 1
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+flag msnfail
+wait 3
+press cross
+wait 4
+press cross
+wait 6
+end

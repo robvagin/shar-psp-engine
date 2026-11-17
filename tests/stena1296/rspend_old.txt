@@ -1,0 +1,20 @@
+# 1304: L2 m2 (main, msnmain 1), «Yes» на экране провала = ирис с отметкой перезапуска; через 0,3 с этап засчитан (старт следующего этапа во время затемнения). Новое: MSNEND why=retry и новый MSN stage за 4 с; красный (rspend1304old 1): перезапуска нет
+flag nosave
+scene L2_rs_old
+flag golevel 2
+wait 25
+flag player 1
+wait 2
+flag msnmain 1
+wait 3
+press cross 0.3
+wait 3
+flag rspend1304old 1
+scene YES
+flag msnretryiris
+wait 0.2
+flag msnpass
+wait 5
+scene AFTER
+wait 2
+end

@@ -1,0 +1,20 @@
+# 1359 п. 1: L5 m6, этап 1 — cPolice миссии гонится за игроком (ActivateVehicle chase, цель). После этапа она обязана остановиться и уйти (STAGEEND cPolice), а не гнаться до конца миссии.
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO5_L5
+flag golevel 5
+wait 25
+flag msnbot 1
+flag msnbotpass 0
+flag msnmainat 500
+wait 10
+flag msnpass
+wait 8
+flag msnaudit
+flag msnpass
+wait 6
+flag msnaudit
+wait 4
+end

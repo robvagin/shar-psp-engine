@@ -1,0 +1,12 @@
+# Ф2-7 (109, Стена): L1 sr1 (индекс 8, уличная гонка): этап 0 с DisableHitAndRun, этап 1 без команды. Новое: на конце этапа 0 запрет снят (строка HNROFF stage-end), new
+flag nosave
+
+scene HS_new
+wait 3
+flag msn
+wait 2
+flag msnmainat 800
+wait 6
+flag msnpass
+wait 4
+end

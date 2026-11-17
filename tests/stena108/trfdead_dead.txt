@@ -1,0 +1,12 @@
+# TRFDEAD (107b, Стена): машина трафика стоит телом. dead: развёрнута на 180° — вернуться на полосу не может никогда (курс > 90°), строка TRFDEAD start why=7; alive: стоит вдоль полосы — возвращается, строки нет
+flag nosave
+scene TD_dead
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 10
+wait 1
+flag trfturn108 180
+wait 5
+flag drive 25
+wait 27
+end

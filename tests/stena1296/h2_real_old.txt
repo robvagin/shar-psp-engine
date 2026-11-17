@@ -1,0 +1,22 @@
+flag nosave
+scene H2o
+flag golevel 2
+wait 12
+flag rspend1304old 1
+flag msn
+wait 5
+flag msnpass
+wait 6
+flag msnpass
+wait 8
+press cross
+wait 4
+flag msnpass
+wait 3
+wait 62
+wait 4
+press cross
+wait 3
+wait 12
+wait 8
+end

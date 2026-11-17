@@ -1,0 +1,40 @@
+# 108 З-5 (ОПТИМИЗАЦИЯ_PSP_ПРИЁМЫ_FABLE2): шум между турами. Один и тот же EBOOT дважды подряд на шести сценах L1, без загрузок и переходов: положить как scenario.txt рядом с EBOOT тура (набор TEST107 тур), запустить два раза подряд,
+# сравнить RFAST work_ms/fps по одноимённым сценам первого и второго прогона (разница = шум, мерка для сравнения сборок Н2/Н3). Сцена ≈ 12 с, всего ≈ 1,5 мин.
+scene F_L1
+flag cfgdefaults 1
+flag footfsm 1
+flag streameye 1
+flag repair
+wait 6
+scene N_DRIVE_A
+flag repair
+wait 1
+goto 220 172 1.5708
+wait 3
+flag drive 8
+wait 9
+flag stop
+scene N_FOOT_SPAWN
+press triangle 0.2
+wait 4
+scene N_FOOT_NEAR
+foot 289.5 178 -1.5708
+wait 2
+wait 8
+scene N_FOOT_PROPS
+foot 213.9 299 3.1416
+wait 2
+wait 8
+scene N_FOOT_ROAD
+foot 338.1 103 0
+wait 2
+wait 8
+scene N_DRIVE_B
+flag repair
+wait 1
+goto 220 172 1.5708
+wait 3
+flag drive 8
+wait 9
+flag stop
+end

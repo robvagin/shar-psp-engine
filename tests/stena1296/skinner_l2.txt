@@ -1,0 +1,17 @@
+# 1309: L2 m1, этап 1 -> msnpass -> этап 2 «оторваться» (losetail skinn_v): Скиннер преследует; игрок после начала погони переносится на дорогу в (92; −20) и стоит: Скиннер едет к нему по дорогам с поворотами
+flag nosave
+scene SK_L2
+flag golevel 2
+wait 25
+flag player 1
+flag mclogfast 1
+wait 2
+flag msnmainat 1
+wait 6
+goto -22 8 0
+wait 3
+flag msnpass
+wait 2
+goto 92 -20 0
+wait 40
+end

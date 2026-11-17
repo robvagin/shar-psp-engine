@@ -57,6 +57,7 @@ float fxVel = 30.f;
 static unsigned char texVec[64];   // №899: 1 — картинка блика (звезда), 2 — искра-штрих (fxVecGroup); №923: 3 — цветная звезда-царапина (scratch2_blue / _red)
 static unsigned texTint[64];       // №923: цвет картинки (множитель ABGR) у texVec 3: у родной картинки он свой, в векторе был белый
 static int ready, sysCar = -1, sysSpark = -1, sysPaint = -1, sysDust = -1, texScratch = -1, texGlow = -1, texDust1 = -1, texCloud = -1, texSmoke953[4] = {-1, -1, -1, -1};   // texDust1/texCloud — №847; texSmoke953 — smoke1/2/3/3alph (№953)
+extern int fxFind108Red; extern unsigned fxGen108;   // 108 О17 (ниже, fxTexFind)
 #ifndef FX_SOFTDUST847_OLD
 #define FX_SOFTDUST847_OLD 0
 #endif
@@ -88,7 +89,7 @@ int fxLoad(const char *path) {
   for (unsigned r = 0; r < H->nBrk; r++) if (BR[r].type == 24)
     for (unsigned k = 0; k < BR[r].nBB; k++) { unsigned i = BR[r].firstBB + k; if (i < H->nBB && BB[i].mode == 0) BB[i].mode = 2; }
   sceKernelDcacheWritebackRange(b, sz);
-  ready = 1;
+  ready = 1; fxGen108++;
   sysCar = fxFindInst(14); if (sysCar < 0) sysCar = fxFind("car_damage3SysShape");
   sysSpark = fxFind("code_spark"); sysPaint = fxFind("code_paint"); sysDust = fxFind("code_dust");
   texScratch = fxTexFind("scratch2.bmp"); texGlow = fxTexFind("glow2.bmp"); texDust1 = fxTexFind("dust1.bmp"); texCloud = fxTexFind("cloud.tga");   // №847
@@ -124,7 +125,7 @@ int fxReady(void) { return ready; }
 void fxFree(void) {
   FJ.np = 0; nspr = 0; memset(in_, 0, sizeof in_); memset(ambH, 0, sizeof ambH);
   if (blob) free(blob);
-  blob = 0; H = 0; ready = 0;
+  blob = 0; H = 0; ready = 0; if (!fxFind108Red) fxGen108++;
   sysCar = sysSpark = sysPaint = sysDust = texScratch = texGlow = texDust1 = texCloud = -1; texSmoke953[0] = texSmoke953[1] = texSmoke953[2] = texSmoke953[3] = -1;
 }
 
@@ -138,10 +139,24 @@ int fxFindInst(int type) {
   for (unsigned i = 0; i < H->nSys; i++) if (S[i].instType == type) return i;
   return -1;
 }
-int fxTexFind(const char *name) {
-  if (!ready) return -1;
+// 108 О17 (Бабл): картинка эффекта по имени искалась перебором таблицы каждый кадр (collectfx.c columnFrame, метки, частицы). Итог — чистая функция (имя, загруженный пакет): запоминается по хэшу имени, пока пакет
+// не перезагружен (fxGen108 растёт при загрузке и выгрузке). Хит проверяется строкой (strncmp 15, как поиск), ответ тот же. FXFIND108_OLD=1 / «flag fxfind108old 1» — перебор каждый раз;
+// «flag fxfind108red 1» — красный контроль: выгрузка пакета не сбрасывает запись; «flag fxfind108chk 1» — каждый хит сверяется с перебором (fxFind108Bad)
+#ifndef FXFIND108_OLD
+#define FXFIND108_OLD 0
+#endif
+int fxFind108Old = FXFIND108_OLD, fxFind108Red, fxFind108Chk; unsigned fxFind108Bad, fxGen108 = 1;
+static int texFindScan(const char *name) {
   for (unsigned i = 0; i < H->nTex; i++) if (!strncmp(T[i].name, name, 15)) return i;
   return -1;
+}
+int fxTexFind(const char *name) {
+  if (!ready) return -1;
+  if (fxFind108Old) return texFindScan(name);
+  unsigned h = 2166136261u; for (int k = 0; k < 15 && name[k]; k++) { h ^= (unsigned char)name[k]; h *= 16777619u; }
+  static struct { unsigned gen; char name[16]; int r; } c[16]; unsigned x = h & 15;
+  if (c[x].gen == fxGen108 && !strncmp(c[x].name, name, 15)) { if (fxFind108Chk && c[x].r != texFindScan(name)) fxFind108Bad++; return c[x].r; }
+  int r = texFindScan(name); c[x].gen = fxGen108; strncpy(c[x].name, name, 15); c[x].name[15] = 0; c[x].r = (fxFind108Red == 2 && r >= 0) ? r + 1 : r; return r;   // fxFind108Red 2 — красный контроль: в кэш пишется чужой номер
 }
 
 // ---------- кривые ----------

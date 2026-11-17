@@ -1,0 +1,21 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+scene FLY_HEAVY
+flag workmix 33
+wait 70
+scene FLY_LIGHT
+flag workmix 22
+wait 70
+scene FLY_END
+flag workmix -1
+flag stop
+wait 2
+end

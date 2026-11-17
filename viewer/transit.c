@@ -312,7 +312,9 @@ int transitSkipMsn(void) {
 }
 int transitFullyClosed(void) { return T.active && (T.mode == 1 || weightAt(T.f) <= .001f); }   // ирис закрыт целиком (или чёрный после затемнения): мир под ним не виден
 #include "flowrules.h"
+#define LOADMARK_DELAY1360 0.5f   // 1360: знак загрузки на закрытом экране — после полсекунды ожидания (короткие чёрные переходы без него)
 static void loadingBlink(void) {
+  if (uiLoadMarkReady()) { if (blackT > LOADMARK_DELAY1360) uiLoadMarkDraw(); return; }   // 1360: знак в углу вместо мигающей надписи (нет loadmark.bin или LOADMARK1360_OLD=1 — как было)
   if (IRIS_LOADING_OLD || !flowIrisLoadingOn(blackT)) return;   // №1112: фаза мигания и место надписи — по оригиналу (viewer/flowrules.h)
   int font = uiFontFind("boulder_16"); if (font < 0) font = 0;
   int w = uiText(font, 0, -100, 0x00000000u, "LOADING");   // замер ширины за экраном

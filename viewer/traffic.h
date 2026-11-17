@@ -147,11 +147,15 @@ typedef struct {
   float honkT;                      // 8.3: сигнал игроку/пешеходу — сколько до следующего, с
   float outLaneT; int noRejoin;     // P03-25: сколько с вне полосы; возврат запрещён навсегда (наклон, дальность, курс)
   float dmgSeen, dmgWin;            // P01-09: урон на прошлом кадре и окно без урона после «почти смерти», с
+  int impP108;                      // 107b (уворот по оригиналу): прошлый кадр помехой впереди была машина игрока — уворот решается только на новой помехе
+  int retOn, retR, retL, retTry; float retWait, retT;   // 1345: ударенная машина едет обратно на свою полосу сама (retOn), её полоса, попыток, сколько стоять перед возвратом (10–15 с), время возврата
   int dodged, dodgeHb, honkedP, honkKind;   // круг 3: уворот был / ручник на один кадр после 0,8 с / сигналили игроку с ближней дистанции (на того же игрока не увёртывается) / кому сигналили (1 машина игрока, 2 Гомер)
   float vy0; int wasAir;            // круг 2, P09:30: вертикальная скорость на прошлом кадре и был ли в воздухе (событие приземления)
   Car car;                                                    // твёрдое тело (carHitCar; после удара — carUpdate)
+  float deadT108;                                             // 107b: сколько с стоит телом без возврата на полосу (строка ящика TRFDEAD)
+  unsigned drawnF108;                                         // 107b: кадр (diagFrame108), когда машину нарисовали последний раз (строки ящика NEAR/STUCK)
 } TrCar;
-typedef struct { int state, wreck; float stillT; Car car; int gone, off; float dmgSeen, dmgWin; int sel; int lazy; } TrParked;   // lazy — Коллизия-96: поза по данным, на землю ещё не ставилась (carInitDeferred); оседает при включении места   // sel — круг 5 (P03-19): место выбрано при загрузке зоны   // dmgSeen/dmgWin — P01-09 (сверка g02-traffic)   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
+typedef struct { int state, wreck; float stillT; Car car; int gone, off; float dmgSeen, dmgWin; int sel; int lazy; unsigned drawnF108; } TrParked;   // lazy — Коллизия-96: поза по данным, на землю ещё не ставилась (carInitDeferred); оседает при включении места   // sel — круг 5 (P03-19): место выбрано при загрузке зоны   // dmgSeen/dmgWin — P01-09 (сверка g02-traffic)   // state: 0 спит, 1 физика; gone — вне зоны (правка 139)
 enum { TRP_OFF, TRP_WALK, TRP_STAND, TRP_FLY, TRP_DOWN, TRP_GETUP, TRP_DODGE,
        TRP_PANIC, TRP_CRINGE, TRP_SIDE, TRP_FACE, TRP_TALK };   // сверка g02-traffic: паника (7.4), съёживание и прыжок вбок (7.5), стоп лицом к игроку (P02-37), разговор (7.8)   // TRP_DODGE — уклонился от машины (правка 180)
 typedef struct {
@@ -186,6 +190,7 @@ typedef struct {
   CarParams params[TR_MAXMODEL];
   TrCar car[TR_MAXCAR]; int maxCars;
   TrParked *park; int npark;
+  float npcP[10][2]; int nnpc;                // Т1 (107b): персонажи миссии (≤10: собеседник цели, участники диалога) — перед ними трафик тормозит, как у оригинала; ставит game_msn.c каждый кадр (x, z)
   const Car *extra[TR_MAXEXTRA]; int nextra;   // машины миссий этого кадра (viewer/msncar.c): водители трафика тормозят перед ними,
                                               // как перед машиной игрока; ставит game_msn.c каждый кадр (не часть снимка мира)
   TrPed ped[TR_MAXPED]; int maxPeds;
@@ -201,6 +206,8 @@ typedef struct {
   TrEvent ev[16]; int nev;
   // ---- сверка g02-traffic
   float loadT;                          // с после загрузки/сброса (P03-12: первые 3 с круг 90 м и без снятия)
+  int raceParkOff1264;                  // №1264: сколько стоящих машин выключила гонка (журнал)
+  unsigned pedHitTraf109, pedHitPlayer109;   // 109 (Стена): сколько стоящих пешеходов сбито машинами трафика / машиной игрока за сеанс (строка TRF: pedhit=трафик/игрок)
   int streetRace;                       // P03-13: уличная гонка идёт — пешеходов нет и новые не появляются (trafficStreetRace)
   struct { signed char q[8]; unsigned char n; float tm; } jq[256];   // P16-01: очередь дорог стоп-знака на перекрёстке (по номеру перекрёстка)
   struct { int car; float t; } honkQ[3]; int nhonk;                 // P03-15: машины, что ответят на гудок игрока (номер машины, через сколько с)
@@ -237,6 +244,11 @@ void trafficUpdate(Traffic *t, const ColWorld *w, Car *player, int driving, cons
                    const float eye[3], const float fwd[3], float dt);
 // Гомер: HomerSolidFn (homer.h) — вытолкнуть круг из кузовов машин и пешеходов; крыша машины — опора
 int trafficSolid(void *traffic, float *x, float *z, float y, float r, float *top, float *nx, float *nz);
+// 107b (Стена): диагностика ящика, только чтение. Кто впереди у машины трафика ci: ближайшее препятствие по ходу (игрок, машина миссии, Гомер, пешеход, трафик, стоящая) и зазор; out — одна короткая строка. Возврат 1 — препятствие найдено
+extern int trfDodgeExact108Old, trfDodgeStop108Old; extern unsigned trfDodgeN108;   // 107b: уворот по оригиналу (1 — прежнее правило круга 3); сколько уворотов было
+extern int trfPedObs108Old;   // Т1 (107b): 1 — трафик тормозит перед любым пешеходом (прежнее); 0 — как у оригинала: игрок пешком, машины миссий, трафик
+int trafficWhyStop108(const Traffic *t, int ci, const Car *player, int homerOn, float hx, float hz, char *out, int n, int *okind, int *oidx, float *ogap);   // okind: 1 игрок, 2 машина миссии (idx — номер), 3 Гомер, 4 пешеход, 5 трафик, 6 стоящая
+int trafficRide(void *t, int id, float x, float y, float z, void *out);   // 107b Г4: крыша машины трафика как опора переноса (out — HomerRide*, homer.h)
 // пинок Гомера (сфера x,y,z,r, направление dx,dz): пешеходы в сфере летят; число задетых
 // правка 355: неподвижная машина k (оставленная своя): машины трафика и стоянки, задевшие её, отталкиваются (k не сдвигается)
 int trafficHitStill(Traffic *t, const ColWorld *w, const Car *k);
@@ -325,10 +337,12 @@ void trafficPlayerHorn(Traffic *t, int on, float x, float z);
 // пинок/наезд тоже пугают пешеходов в 12 м от игрока (7.4): звать из места, где игрок ударил
 void trafficScare(Traffic *t, float x, float z);
 // уличная гонка идёт (P03-13): все пешеходы снимаются, новые не появляются, пока on = 1. Вызывает game_msn.c при загрузке/выгрузке реквизита гонки (передано g-миссии)
-void trafficStreetRace(Traffic *t, int on);
+void trafficStreetRace(Traffic *t, int on); int trafficLiveParked(const Traffic *t);
 // P16-06: путь навигации целиком. trafficNavBuild — один раз при старте цели (позиция игрока px, pz, курс ph; цель tx, tz); trafficNavArrows — каждый кадр:
 // заполняет стрелки (позиция, курс, red = «не туда»), возвращает число (до max). Рисует msn_view.c (передано g-вид: набор darrow на каждую)
-typedef struct { float p[3], h; int red; } TrNavArrow;
+typedef struct { float p[3], h; int red, hide; } TrNavArrow;   // 108 1312: hide — стрелку не рисовать (проехана на 11–20 м)
+extern int trfNavArrow1312Old;   // NAVARROW1312_OLD=1 / файл navarrow1312old / flag navarrow1312 0 — прежний расчёт
+int trafficNavArrowState(float passed);   // 108 1312: 0 — зелёная (впереди или проехана ≤ 11 м), 1 — не рисовать (11–20 м), 2 — красная (> 20 м); passed — путь, пройденный игроком за стрелкой, м (< 0 — стрелка впереди)
 int trafficNavBuild(Traffic *t, float px, float pz, float ph, float tx, float tz);
 int trafficNavArrows(const Traffic *t, float px, float pz, TrNavArrow *out, int max);
 // сверка g02-traffic круг 2 (g11 P11-02): машины трафика, что не стоят и не OFF (едущие, сбитые, проснувшиеся стоящие), ближе r к (x, z); до max указателей. Зовёт main_loop.h
@@ -357,6 +371,9 @@ int trafficCarsNear(Traffic *t, float x, float z, float r, Car **out, int max);
 const Car *trafficSolidCarAt(const Traffic *t, float x, float z, float y, float r, const Car *extraCar);   // первая твёрдая машина, чей кузов касается круга (x, z, r) на высоте y; 0 — нет
 int trafficCarsSolid(const Traffic *t, float x, float z, float r, const Car **out, int max);          // твёрдые машины в радиусе r от (x, z) — для обхода по углам кузова
 extern int trfOneTapDeath;   // P16-17 «One Tap Traffic Death»: 1 — машина трафика, ударенная машиной игрока, гибнет с одного удара (выставит меню читов, когда оно будет)
+extern int trfRetHb1360Old;   // 1360: 1 — возврат на полосу с затянутым ручником (как было)
+extern int trfRejoin1345Old;   // 1345: 1 — ударенная машина трафика встаёт на полосу переносом через 3 с (как было); по умолчанию 0: стоит 10–15 с и возвращается своим ходом, перенос только вне кадра
+extern unsigned trfRejoin1345Tele, trfRejoin1345Drive;   // 1345: счётчики: переносов вне кадра, возвратов своим ходом
 
 #ifdef __cplusplus
 }

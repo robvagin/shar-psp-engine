@@ -26,6 +26,7 @@ import msnart_export as MX                # noqa: E402
 GAME = ROOT / 'hit-and-run-web/source/game'
 OUT = ROOT / 'viewer/collectfx_data.h'
 LEVELS = range(1, 8)
+DEFAULT_EFFECT = 'mission_col'            # 1340: составной объект art/missions/generic/missgen.p3d (общий файл миссий)
 FX_BLEND = {2: 1, 3: 2}                   # BLMD шейдера -> смешивание fxSprite (1 сложение, 2 вычитание, иначе 0 прозрачность)
 
 
@@ -39,6 +40,7 @@ def effects_used():
                 if c.op == 'SetCollectibleEffect' and c.args:
                     n = str(c.args[0])
                     if n.lower() != 'none': out.setdefault(n, set()).add(lv)
+    out.setdefault(DEFAULT_EFFECT, set()).update(LEVELS)   # 1340: эффект по умолчанию предмета без SetCollectibleEffect (в оригинале эффект по умолчанию при подборе)
     return {k: sorted(v) for k, v in sorted(out.items())}
 
 

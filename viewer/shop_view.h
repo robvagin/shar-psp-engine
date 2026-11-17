@@ -30,6 +30,7 @@ void shopViewDraw2D(Shop *s);                            // шторка све�
 extern int (*shopViewOpenFn)(const char *fn);   // Build 95 П2: открытие пакета ведёт ldrRun (0 — открыт)
 extern int (*shopViewHeal)(unsigned need);   // Будка-93 (1233): ступени лестницы под пакет лавки; 1 — место есть
 extern void (*shopViewFailNote)(const char *what);   // сообщение игроку при отказе
+extern int shopSnd1329Old;   // 1329: звуки лавки на шине эффектов (молчат под режимом Store); 0 — на шине меню
 extern int shopViewFailTest;   // служебное: flag shopfail N
 void shopViewSetLog(void (*log)(const char *line));      // строки SHOPV (smoke.txt)
 int  shopViewPhase(void);                                // SHOPV_* (служебное)

@@ -40,6 +40,10 @@ void skidSetGeRoom(int (*room)(unsigned bytes));   // правка 103: пров
 void skidDraw(float ex, float ey, float ez);
 void skidGetStat(SkidStat *s);
 // для гейтов на Маке: квад кольца i (0..SKID_QUADS-1): 4 угла и альфа углов; 0 — пусто
+unsigned skidSelect108(float ex, float ey, float ez, unsigned short *sel);   // 108 О13: квады в радиусе рисования (по возрастанию номера)
+unsigned skidCheck108(void);   // сверка плотного массива с исходными (0 — верно)
+unsigned skidLines108(void);   // модель кэша PSP: строк, затронутых выбором
+extern int skidDense108Old;
 int skidQuadAt(int i, float p[4][3], unsigned char a[4]);
 
 unsigned skidQuadRgb(int i); // 424

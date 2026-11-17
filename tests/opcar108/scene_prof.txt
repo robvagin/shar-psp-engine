@@ -1,0 +1,21 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 0
+flag xsub 1
+scene PROF1
+flag drive 100
+wait 40
+flag xsub 1
+scene PROF2
+wait 40
+scene PROF_END
+flag stop
+wait 2
+end

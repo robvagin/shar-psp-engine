@@ -116,6 +116,7 @@ extern void (*fxGlowGlint)(float x, float y, float z, float size, unsigned abgr,
 #ifndef GLOW_GLINT_OLD
 #define GLOW_GLINT_OLD 0   // 1 — свечения картинкой, как до №839
 #endif
+extern unsigned fxFind108Bad;   // 108 О17
 int  fxTexFind(const char *name);            // "scratch2.bmp", "glowsolid.bmp", "glow64.bmp", "bluestarglow.bmp"…
 // правка 249: привязать текстуру пакета (CLUT 8888 + индексы) для своего рисования (следы шин viewer/skid.c); 0 — нет пакета/номера
 int  fxTexBind(int tex);

@@ -11,7 +11,7 @@ static const struct { int level; const char *name; float p[3]; float h; } WORLD_
   {1, "rocke_v", {-90.2f, -0.77f, 211.6f}, 0.f},   // ракетная машина Гомера, локатор «rocke» l1r3.p3d (запись PS2 32:35), G10-1
 #ifndef WORLD_CARS_OLD
   // №418 (Роб 09.10: «нет уникальных машин, которые стоят в одном месте; L5 J4-7 — Bigfoot»): на каждом уровне ровно один
-  // CarStart-локатор с именем машины в данных (data[2..] = строка; у прочих 605 CarStart данных 2 слова) — ParkedCarManager
+  // CarStart-локатор с именем машины в данных (data[2..] = строка; у прочих 605 CarStart данных 2 слова) — менеджер стоящих машин оригинала
   // исполняемого файла ("FreeCar", "art\cars\%s.p3d"). Точка и курс — из локатора (z отзеркален), код места — viewer/placecode.h
   {2, "mono_v",  {-215.7f, 42.7f, -488.0f}, 0.f},          // l2z4.p3d «mono_v»     E3-3
   {3, "knigh_v", {-489.7f, -49.1f, -94.8f}, 1.5707964f},   // l3r3.p3d «knigh_v»    C7-1

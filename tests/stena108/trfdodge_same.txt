@@ -1,0 +1,11 @@
+# Уворот трафика по оригиналу (107b, Стена): машина впереди в том же направлении, игрок разгоняется: уворота нет (не лоб в лоб)
+flag nosave
+scene DG_same
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 40
+wait 0.5
+press cross 7
+wait 8
+flag trfprobe
+end

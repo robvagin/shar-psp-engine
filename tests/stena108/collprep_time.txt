@@ -1,0 +1,9 @@
+# О16 (108, Стена): цена collStreamPrepare до и после — тот же путь по L1 в двух сценах; цена читается временным замером (см. журнал), здесь только одинаковый путь
+flag nosave
+scene CPT_NEW
+goto 220 172 1.5708
+wait 3
+flag drive 30
+wait 31
+flag stop
+end

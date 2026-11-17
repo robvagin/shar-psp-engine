@@ -56,7 +56,7 @@ static void *memLadRes; static unsigned memLadAutoGap = 8000000u, memLadResKb = 
 typedef struct { char what[10]; unsigned t; unsigned size; } MemLadQ;
 static MemLadQ memLadQ[16]; static int memLadQN;
 static void mcrPreDropAll(void);
-static int memLadStopped(void) { return (uiReady && uiPaused()) || ldOn || viewBusyNow() || stBoothHold1051 || mvMissionSelectOn(); }
+static int memLadStopped(void) { return (uiReady && uiPaused()) || ldOn || viewBusyNow() || stBoothHold1051 || mvMissionSelectOn() || (!BRIEFPIC1269_OLD && mvBriefing()); }   // №1269: брифинг миссии — мир стоит, лестница может выгрузить всё лишнее под картинку карточки
 static void memLadQPush(const char *what, unsigned size) {
   for (int i = 0; i < memLadQN; i++) if (!strcmp(memLadQ[i].what, what)) { memLadQ[i].t = sceKernelGetSystemTimeLow(); memLadQ[i].size += size; return; }
   if (memLadQN < 16) { snprintf(memLadQ[memLadQN].what, sizeof memLadQ[0].what, "%s", what); memLadQ[memLadQN].t = sceKernelGetSystemTimeLow(); memLadQ[memLadQN++].size = size; }
@@ -196,7 +196,7 @@ static int memLadCellOom(void) {
 // машин), 3 - далёкие клетки города (cellsMakeRoom), 4 - мир стоит: все клетки вне кадра. Прежнего «отложенного блока под меню» (LAD_RES_KB, 448 КБ) при включённой Z3 нет: пакет меню идёт в «миссию».
 // Попытка без роста не повторяется чаще раза в 30 с (иначе круг «ступень - ничего - ступень» каждый кадр). MEMLADZ_OLD=1 - как было (один список ступеней по куче, отложенный блок 448 КБ).
 static int z3ReclaimHook(int area, const char *who, unsigned need, int step);   // main_levels.h
-static unsigned memLadZNoGrow[3];
+static unsigned memLadZNoGrow[3]; static unsigned char memLadZNGStop[3];   // №1269: пробовали ли без роста уже при стоящем мире
 static int memLadFitsZ(int zone, unsigned need) {
   int a = zone == LADZ_PLACE ? Z3A_PLACE : Z3A_MISSION;
   if (zone3AreaOnX(a) && zone3MaxFreeX(a) >= need) return 1;
@@ -214,7 +214,9 @@ static int memLadderZ(int zone, const char *who, unsigned need, int prio) {
   if (MEMLADZ_OLD || !zone3WantedX()) return memLadder(who, need, prio);
   if (memLadFitsZ(zone, need)) return 1;
   unsigned now = sceKernelGetSystemTimeLow();
-  if (memLadZNoGrow[zone] && now - memLadZNoGrow[zone] < 30000000u) return 0;
+  if (memLadZNoGrow[zone] && now - memLadZNoGrow[zone] < 30000000u) {
+    if (BRIEFPIC1269_OLD || memLadZNGStop[zone] || !memLadStopped()) return 0;   // №1269: отказ был при идущем мире (ступень 4 не допускалась), теперь мир встал (брифинг) — пробуем ещё раз со ступенью 4
+  }
   memLadRuns++;
   for (int st = 1; st <= 4; st++) {
     if (prio == LAD_PRE && st > 2) break;
@@ -223,9 +225,12 @@ static int memLadderZ(int zone, const char *who, unsigned need, int prio) {
     memLadLog("WATCHDOG", who, need, st, b0, f0, ok ? (zone == LADZ_PLACE ? "z=place ok" : "z=mission ok") : did ? "more" : "none");
     if (ok) { memLadZNoGrow[zone] = 0; return 1; }
   }
-  memLadZNoGrow[zone] = sceKernelGetSystemTimeLow() | 1u;
+  memLadZNoGrow[zone] = sceKernelGetSystemTimeLow() | 1u; memLadZNGStop[zone] = (unsigned char)memLadStopped();
   if (prio != LAD_PRE) { memLadStep[5]++; memLadFail++; memLadLog("WATCHDOG", who, need, 5, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), "simplify"); }
   return 0;
 }
-static int memLadRoomUi(unsigned need) { return !memLadOn ? cellsMakeRoom(need) : memLadderZ(LADZ_MISSION, "ui", need, LAD_TOP); }   // msnartRoom: пакеты картинок меню, паузы, миссий
+// №1269: общая функция возврата памяти области «миссия» (картинка карточки, модель машины этапа, значки этапов): тот же ход лестницы 1–4, ступень 4 открыта при брифинге и других остановках мира.
+// Зовут: msnartRoom (картинка карточки), владельцы машин и значков этапов. Строка журнала WATCHDOG mem who=<кто> ... z=mission ok|more|none. Возвращает 1, если цельный кусок need есть
+static int memLadMissionRoom(const char *who, unsigned need) { return !memLadOn ? cellsMakeRoom(need) : memLadderZ(LADZ_MISSION, who, need, LAD_TOP); }
+static int memLadRoomUi(unsigned need) { return !memLadOn ? cellsMakeRoom(need) : memLadMissionRoom("ui", need); }   // msnartRoom: пакеты картинок меню, паузы, миссий
 #endif

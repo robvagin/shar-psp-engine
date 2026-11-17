@@ -3,6 +3,7 @@
 // (hinted text metrics, sprite-font spacing, anchoring is precomputed in the pack).
 #pragma GCC optimize("O2")
 #include <stdint.h>
+extern int msnTimerFloor1324Old;   // 1324 (msn_run.c): 1 — число таймера вверх, как раньше
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -261,6 +262,10 @@ static int pauseAnimPose(float *sc, float *al); static float pauseDimA(void);
 #define PAUSEDIM1122_OLD 0
 #endif
 static int dim1122On; static float dim1122L, dim1122Plate = .75f; static unsigned dim1122T;
+// 1350 (см. drawPauseObjective1347): положение рамки задания на паузе
+#define PAUSEOBJ_GAP 7.f
+#define PAUSEOBJ_BOTTOM 268.f
+static int pauseObjOn1350; static float pauseObjBot1350, pauseObjDx, pauseObjDy;
 static int paused, pauseSel, pauseScr = UI_SCREEN_PAUSE;   // pauseScr — какая пауза открыта: свободной езды или миссии
 static const signed char PM_MAP[] = {UI_P_CONTINUE, UI_P_RESTART_MISSION, UI_P_ABORT_MISSION, UI_P_OPTIONS, UI_P_QUIT_GAME};
 static int spinPx, spinN;   // №703: площадь (px) и число вращающихся слоёв за кадр
@@ -396,6 +401,8 @@ void uiClkTest(int mode, float v) { if (mode == 0) { uiClkHold = 0; uiClkPend = 
 #define UI_DT_SV_OLD 0
 #endif
 static inline float uiDtCap(float d) { return d > .1f ? (UI_DT_SV_OLD ? .1f : .02f) : d; }
+unsigned uiProxTint1318;   // 1318: цвет полосы шкалы близости (ABGR, 0 — как в данных страницы)
+void uiProxTint(unsigned abgr) { uiProxTint1318 = abgr; }
 static void uiClockTick(void) {
   unsigned now = sceKernelGetSystemTimeLow();
   if (uiClkHold) { uiClkDt = uiClkInit ? uiDtCap(uiClkPend) : 0.f; uiClk += uiClkDt; uiClkPend = 0.f; uiClkInit = 1; uiClkLast = now; if (bubAge < 1000.f) bubAge += uiClkDt < UI_BUB_DT_CAP ? uiClkDt : UI_BUB_DT_CAP; return; }
@@ -628,6 +635,8 @@ static unsigned scrTint[UI_SCREEN_MAX][32];
 #define RT_SC(sc) (sc)
 #endif
 static void pauseEv(int ev, int on);
+static float scrMsgK = 1.f, scrMsgDy = 0.f;
+void uiScrMsgScale(float k, float dy) { scrMsgK = k > 0.2f && k <= 1.f ? k : 1.f; scrMsgDy = scrMsgK < 1.f ? dy : 0.f; }
 void uiScrRowText(int sc, int row, const char *s) { if ((unsigned)sc < UI_SCREEN_MAX && row >= 0 && row < 12) scrRowTxt[RT_SC(sc)][row] = s; }
 const char *uiScrRowShown(int sc, int row) {   // что нарисовано в строке меню row экрана sc второго пакета (гейт: кнопки, не подписи слотов)
   if (!scrPak.H || (unsigned)sc >= scrPak.H->nscreen || (unsigned)sc >= UI_SCREEN_MAX) return "";
@@ -1074,6 +1083,10 @@ static int bubContent(const UiItem *it) { return it->type == T_TEXT || it->type 
 #define UI_DROP1229_K .9f    // №1229: размер надписи «Item Dropped!» −10 %
 #define UI_DROP1229_DY 10    // и подъём на 10 px (экран 480×272)
 int uiDrop1229 = !DROP1229_OLD;
+// 1302 (Роб, 14.11: «в кат-сценах со Start Mission / Cancel значки ✕ и △ на 1–2 px выше, чем надо»): на карточке брифинга значки кнопок (UI_T_SKIP — △, UI_T_PRESS_START — ✕, картинки) опускаются на uiCardIcon1302Dy px (подпись остаётся). CARDICON1302_OLD=1 / файл cardicon1302old / flag cardicon1302old 1 — как было; flag cardicon1302dy N — шаг
+int uiCardIcon1302Old = 0, uiCardIcon1302Dy = 2;
+// 1322 (Роб, 15.11: «Continue выровнял, а Skip в сценах разговора нет; Skip с кнопкой по высоте выровняй»): на экране разговора (LETTERBOX) значок ✕ у «SKIP» стоит на 3 px выше центра подписи (в данных значок y=237 при высоте 17, подпись y=243 при высоте 10: центры 245,5 и 248; у Start Mission / Cancel значок на y=240, центры 248,5 и 248). Значок Skip опускается на uiLbSkip1322Dy px. LBSKIP1322_OLD=1 / файл lbskip1322old / flag lbskip1322old 1 — как было; flag lbskip1322dy N — шаг
+int uiLbSkip1322Old = 0, uiLbSkip1322Dy = 3;
 static int gDy;                                              // сдвиг по y текущего элемента (стопка оверлеев миссии)
 #define OBJ_SHOW_S 3.5f   // с: задание с рамкой и текстом внизу слева, потом свёрнуто (запись PS2 2:13 -> 2:16)
 #define OBJ_FLY_S .35f    // с: значок уезжает вверх
@@ -1266,7 +1279,7 @@ static void drawSpin(const UiItem *it, const UiSlot *s) {
 // ---- конец блока правки 336 (вызов — в drawScreen, case T_IMG) ------------------------------------------------------------
 
 // значок задания из данных миссии (uiSetObjIconImage): в рамке первой картинки ObjectiveIcon, по центру, пропорции как есть
-static const void *oiPix; static int oiTw, oiTh, oiW, oiH, oiVisR, oiVisL, oiVisT;
+static const void *oiPix; static int oiTw, oiTh, oiW, oiH, oiVisR, oiVisL, oiVisT, oiVisB;
 #include "ui_edge_padding.h"
 // правка Роба 18 (28.09): текст задания начинается сразу за ВИДИМЫМ краем текущего значка (круг Мардж уже рамки 101×95), без
 // значка — от левого края места значка; раньше — за самым широким значком всех миссий, у Мардж зазор 22 px
@@ -1280,15 +1293,16 @@ static float objTextX = -1.f; static int objBubY = -1, objBubH, objBubX, objBubW
 #define OBJ_TEXT_GAP 4.f
 void uiSetObjIconImage(const void *pix, int tw, int th, int w, int h) {
   oiPix = pix; oiTw = tw; oiTh = th; oiW = w; oiH = h; oiVisR = w;
-  oiVisL = oiVisT = 0;
+  oiVisL = oiVisT = 0; oiVisB = h;
   if (pix && w > 0 && h > 0) {   // RGBA 8888 без свизла: столбцы справа налево, пока альфа меньше 32
     const unsigned *p = (const unsigned *)pix; oiVisR = 0;
     for (int x = w - 1; x >= 0 && !oiVisR; x--) for (int y = 0; y < h; y++) if ((p[y * tw + x] >> 24) >= 32) { oiVisR = x + 1; break; }
     if (oiVisR) {
-      oiVisL = w; oiVisT = h;
+      oiVisL = w; oiVisT = h; oiVisB = 0;
       for (int y = 0; y < h; y++) for (int x = 0; x < oiVisR; x++) if ((p[y * tw + x] >> 24) >= 32) {
         if (x < oiVisL) oiVisL = x;
         if (y < oiVisT) oiVisT = y;
+        if (y + 1 > oiVisB) oiVisB = y + 1;
       }
     }
   }
@@ -1325,6 +1339,55 @@ static void drawExt(const void *pix, int tw, int th, int iw, int ih, int bx, int
   sceGuDrawArray(GU_SPRITES, VT_FTEX, 2, 0, v);
   st.draws++; st.verts += 2; st.pixels += (int)(w * h);
 }
+// 1360 (Роб: «вместо надписи loading — наш знак с сайта, как в Сониках: в углу, жёлтый на чёрном, пульс как у выбранного пункта меню, рядом LOADING по центру кружка»): знак (tools/loadmark_export.py,
+// файл loadmark.bin рядом с EBOOT; в репозитории его нет) — в правом нижнем углу с теми же полями, что у кольца радара HUD (22 справа, 18 снизу); масштаб — тот же пульс, что у пункта меню
+// (1,05 + 0,1·sin(2π t/0,6 с − π/6), порт: делённый на 1,15, период и размах диска); LOADING — гранью пунктов меню (boulder_16), правым краем у знака, по центру кружка по высоте.
+// Нет файла знака или LOADMARK1360_OLD=1 / «flag loadmark1360old 1» — прежняя надпись LOADING (экраны загрузки, ирис, бонус-игра)
+#ifndef LOADMARK1360_OLD
+#define LOADMARK1360_OLD 0
+#endif
+int uiLoadMark1360Old = LOADMARK1360_OLD;
+#ifndef LOADMARK1366_OLD
+#define LOADMARK1366_OLD 0
+#endif
+int uiLoadMark1366Old = LOADMARK1366_OLD;   // 1366: 1 — знак и на экранах с тегом LOADING (карточка, гардероб, газета) и в бонус-игре, как в 1360 (красный контроль гейта tests/loadmark1366)
+#define LM_D 30.f          // диаметр знака при наибольшем масштабе, px (текстура 32x32 рисуется 1:1; размеры текстуры GE — степень двойки)
+#define LM_MR 18.f         // поле справа до края знака (как у кольца радара)
+#define LM_MB 14.f         // поле снизу
+#ifndef LM_TXDX
+#define LM_TXDX 1   // подгонка чернил надписи к эталону Роба (вариант B): правый край букв в 12 px от рамки символа, центры совпадают
+#define LM_TXDY 1
+#endif
+#define LM_GAP 12.f         // между надписью и знаком
+static int lineWidth(const UiFont *f, const char *s, int n);
+static unsigned *lmPix; static int lmW, lmH, lmAW, lmAH; static unsigned lmStartUs, lmLastUs;
+void uiLoadMarkSet(const void *rgba, int w, int h, int aw, int ah) {   // w*h пикселей RGBA 8888; копия в выровненную память
+  if (!rgba || w <= 0 || h <= 0 || w > 128 || h > 128) return;
+  unsigned *p = (unsigned *)memalign(16, (size_t)w * h * 4); if (!p) return;
+  memcpy(p, rgba, (size_t)w * h * 4); sceKernelDcacheWritebackRange(p, (unsigned)(w * h * 4)); lmPix = p; lmW = w; lmH = h; lmAW = aw; lmAH = ah;
+}
+int uiLoadMarkReady(void) { return !uiLoadMark1360Old && lmPix != 0 && H != 0; }
+float uiLoadMarkScale(unsigned us) { return menuPulse((float)(us % 600000u) * 1e-3f) / (MENU_PULSE_MID + MENU_PULSE_AMP); }   // экспорт для гейта
+void uiLoadMarkDraw(void) {
+  if (!uiLoadMarkReady()) return;
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (!lmStartUs || (unsigned)(now - lmLastUs) > 300000u) lmStartUs = now | 1u;   // пульс с начала ожидания: на первом кадре масштаб 0,87, как на смене пункта
+  lmLastUs = now;
+  int font = uiFontFindExact("bart_16bit@1"); if (font < 0) font = uiFontFind("boulder_16");   // 1366б (Роб: «жирные буквы»): наша пиксельная грань Bart vs the Space Mutants, родной размер; нет грани — меню
+  const float D0 = LM_D;   // 1366б (Роб): символ 44 px (как аватар в баббле задания), текстура 64 с билинейным сглаживанием
+  float sc = 1.f - (1.f - uiLoadMarkScale(now - lmStartUs)) * .25f, d = D0 * sc, cx = 480.f - LM_MR - D0 * .5f, cy = 272.f - LM_MB - D0 * .5f;
+  beginUi(); bn = 0; btex = -1; xf.on = 0; bflush();
+  texEnable(1); curTex = -1;
+  sceGuTexMode(GU_PSM_8888, 0, 0, 0); sceGuTexImage(0, lmW, lmH, lmW, lmPix);
+  if (curFilt != GU_LINEAR) { curFilt = GU_LINEAR; sceGuTexFilter(GU_LINEAR, GU_LINEAR); }
+  void *b; VFTex *v = (VFTex *)vbeg(2 * sizeof(VFTex), &b);
+  v[0] = (VFTex){0.f, 0.f, 0xffffffffu, cx - d * .5f, cy - d * .5f, 0.f};
+  v[1] = (VFTex){(float)lmAW, (float)lmAH, 0xffffffffu, cx + d * .5f, cy + d * .5f, 0.f};
+  vend(b, 2 * sizeof(VFTex)); sceGuDrawArray(GU_SPRITES, VT_FTEX, 2, 0, v);
+  if ((unsigned)font < H->nfont) { const UiFont *f = &fonts[font]; int w = lineWidth(f, "LOADING", 7);
+    uiText(font, (int)(cx - D0 * .5f - LM_GAP - w + .5f) + LM_TXDX, (int)(cy - f->h.lh * .5f + .5f) + LM_TXDY, 0xffffffffu, "LOADING"); }   // 1366: белая надпись (знак жёлтый)
+  bflush();
+}
 // аватар = высота пузыря (Роб 28.09, правка 22; tools/ui_export.py avatar_fit): рамка значка извне — px, py, ang (w), clip (h)
 // элемента; значок msnart_export кладёт ровно этого размера — рисуется 1:1. Старый пакет (без рамки) — в рамке первого слота
 static int avatarOld;   // служебное: 1 — прежний размер (отрицательный контроль гейта tests/ui/avatar_check.py)
@@ -1341,6 +1404,7 @@ static float objVisRight(const UiItem *it) {   // видимый правый к
 }
 static void drawObjIcon(const UiItem *it, unsigned col) {
   int bx, by, bw, bh, nw = objFrame(it, &bx, &by, &bw, &bh);
+  if (pauseObjOn1350) bx += (int)floorf(pauseObjDx + .5f);   // 1350: внешний значок (аватар) идёт вместе с рамкой, как остальные части группы
   drawExt(oiPix, oiTw, oiTh, oiW, oiH, bx, by + gDy, bw, bh, col);   // gDy: свёрнутое задание — значок вверху
   if ((traceBits & UI_TRACE_AVATAR) && oiPix && oiW > 0 && oiH > 0) {   // как ушло в GE: картинка по центру рамки с пропорциями
     float k = fminf((float)bw / oiW, (float)bh / oiH), w = oiW * k, h = oiH * k, x0 = bx + (bw - w) * .5f, y0 = by + gDy + (bh - h) * .5f;
@@ -2354,15 +2418,23 @@ static void drawRadarIcons(const UiItem *it) {
 #ifndef OV_ORDER_SV_OLD
 #define OV_ORDER_SV_OLD 0
 #endif
+int uiOvBar1308Old = 0;   // 1308 (см. ниже)
+#define OV_BAR_GAP1308 10   // просвет под шкалой, строк экрана 272 (запись PS2: 17–20 из 480)
+unsigned uiOvForce1308;   // служебно (смоук, flag ovforce1308): маска меток оверлеев, показываемых принудительно
 #if OV_ORDER_SV_OLD
 static const unsigned char OV_ORDER[] = {UI_T_TIMER, UI_T_PARTIME, UI_T_LAP, UI_T_POSITION, UI_T_COLLECTIBLES};
 #else
-static const unsigned char OV_ORDER[] = {UI_T_COLLECTIBLES, UI_T_TIMER, UI_T_POSITION, UI_T_LAP, UI_T_PARTIME};
+// 1308 (Роб: «в погоне на L2 шкала, чтобы я не отстал, перекрывает время»; сверка Fable с оригиналом и записью PS2): у оригинала шкалы урона и близости ВХОДЯТ в общий список оверлеев миссии и идут в нём первыми
+// (Hud.pag: шкала и таймер лежат в одной точке — рамка 129×31 на x 140, y 54 из 640×480); младший оверлей сдвигается вниз под шкалу. Пометка M2:20 «урон и близость стоят отдельно» неверна.
+// Порядок: урон, близость, коллекционные, таймер, место, круги, парное время; шаг стопки у шкалы — высота её рамки. UI_OV_BAR1308_OLD=1 / файл ovbar1308old / flag ovbar1308old 1 — шкалы вне стопки, как было
+static const unsigned char OV_ORDER[] = {UI_T_DAMAGE, UI_T_PROXIMITY, UI_T_COLLECTIBLES, UI_T_TIMER, UI_T_POSITION, UI_T_LAP, UI_T_PARTIME};
 #endif
 #define NOV ((int)sizeof OV_ORDER)
 static int ovStack = 1, ovBox[NOV][4], ovOn[NOV];
 void uiOverlayStack(int on) { ovStack = on; }
-static int ovIndex(int tag) { for (int k = 0; k < NOV; k++) if (OV_ORDER[k] == tag) return k; return -1; }
+static int ovIsBar(int tag) { return tag == UI_T_DAMAGE || tag == UI_T_PROXIMITY; }
+static int ovIndexRaw(int tag) { for (int k = 0; k < NOV; k++) if (OV_ORDER[k] == tag) return k; return -1; }
+static int ovIndex(int tag) { if (uiOvBar1308Old && ovIsBar(tag)) return -1; return ovIndexRaw(tag); }
 int uiOverlayBoxes(int *tags, int (*rect)[4], int max) {
   int n = 0;
   for (int k = 0; k < NOV && n < max; k++) if (ovOn[k]) { tags[n] = OV_ORDER[k]; memcpy(rect[n], ovBox[k], sizeof ovBox[k]); n++; }
@@ -2622,6 +2694,7 @@ static void drawScreen(int sidx, int selected) {
   const int pfOn = !UI_PROF2_OLD && uiProfOn && sidx == UI_SCREEN_HUD && !scrMode; unsigned pf0 = pfOn ? sceKernelGetSystemTimeLow() : 0, pfLoop0 = 0;
   const UiScreen *sc = &screens[sidx];
   unsigned mask = tagMask[sidx];
+  if (sidx == UI_SCREEN_HUD && uiOvForce1308) mask |= uiOvForce1308;   // служебно (смоук): показать оверлеи по маске — гейт 1308 (flag ovforce1308)
   unsigned hid = !scrMode && (unsigned)sidx < UI_SCREEN_MAX ? menuHid[sidx] : 0;   // правка 137 (не пакет экранов загрузки)
   if (sidx == UI_SCREEN_MAIN && mainFlight && !scrMode) mask &= ~(1u << UI_T_MAIN_ROW | 1u << UI_T_LEVEL_NAME);
   curScreen = sidx;
@@ -2690,7 +2763,7 @@ static void drawScreen(int sidx, int selected) {
         if ((unsigned)(nowh - enterAt) < 100000u)
           mask &= ~(1u << UI_T_RADAR | 1u << UI_T_SPEED | 1u << UI_T_HNR_METER | 1u << UI_T_HNR_FULL | 1u << UI_T_COINS | 1u << UI_T_TIMER | 1u << UI_T_PARTIME | 1u << UI_T_LAP | 1u << UI_T_POSITION | 1u << UI_T_COLLECTIBLES | 1u << UI_T_DAMAGE);
       } }
-    if (!TIMER_SV_OLD && !tbUp && (mask >> UI_T_TIMER & 1u) && fieldv[UI_F_TIMER] <= 1000) mask &= ~(1u << UI_T_TIMER);   // сверка g09a-hud, M2:15: остаток 1 с и меньше — оверлей прячется
+    if (!TIMER_SV_OLD && !tbUp && (mask >> UI_T_TIMER & 1u) && fieldv[UI_F_TIMER] <= (msnTimerFloor1324Old ? 1000 : 0)) mask &= ~(1u << UI_T_TIMER);   // сверка g09a-hud, M2:15: остаток 1 с и меньше — оверлей прячется
     unsigned rise = mask & ~hudPrev, fall = hudPrev & ~mask;
     if (msgNew && (mask >> UI_T_OBJECTIVE & 1)) rise |= 1u << UI_T_OBJECTIVE;   // новый текст задания в той же рамке
     if (cdNew && (mask >> UI_T_COUNTDOWN & 1)) rise |= 1u << UI_T_COUNTDOWN;    // 3 -> 2 -> 1
@@ -2730,14 +2803,46 @@ static void drawScreen(int sidx, int selected) {
     }
   }
   if (!BUBBLE_UNIFORM_OLD && (bubGW || bubGH) && pv[UI_T_OBJECTIVE][2] >= pv[UI_T_OBJECTIVE][0]) { pv[UI_T_OBJECTIVE][1] -= bubGH; pv[UI_T_OBJECTIVE][2] += bubGW; }
-  if (hud && bubShift && pv[UI_T_OBJECTIVE][2] >= pv[UI_T_OBJECTIVE][0]) { pv[UI_T_OBJECTIVE][0] -= bubShift; pv[UI_T_OBJECTIVE][2] -= bubShift; }   // №710: центр всплывания — сдвинутая рамка   // №638: центр всплывания — конечная рамка (с ростом под текст), а не рамка пакета
+  if (hud && bubShift && pv[UI_T_OBJECTIVE][2] >= pv[UI_T_OBJECTIVE][0]) { pv[UI_T_OBJECTIVE][0] -= bubShift; pv[UI_T_OBJECTIVE][2] -= bubShift; }
+  if (hud && pauseObjOn1350 && pv[UI_T_OBJECTIVE][2] >= pv[UI_T_OBJECTIVE][0]) {   // 1350: рамка задания на паузе — по центру экрана, под рамкой меню
+    float cx0 = 1e9f, cx1 = -1e9f, cy0 = 1e9f, cy1 = -1e9f;   // сама рамка (капсула): центр и высота считаются по ней; значок слева выступает за рамку, его слот в данных больше самой картинки
+    for (unsigned j = 0; j < sc->count; j++) { const UiItem *a = &items[sc->first + j];
+      if (a->tag != UI_T_OBJECTIVE || a->type != T_IMG || a->w * 2 < a->h * 3 || itemVarOff(a)) continue;
+      float x0 = a->x - (bubShift ? bubShift : 0), dw = (bubGW || bubGH) ? ((!BUBBLE_LAW_OLD && lawRight > 0) ? lawRight - (a->x + a->w) : bubGW) : 0;
+      if (x0 < cx0) cx0 = x0; if (x0 + a->w + dw > cx1) cx1 = x0 + a->w + dw;
+      if (a->y - bubGH < cy0) cy0 = (float)(a->y - bubGH); if (a->y + a->h > cy1) cy1 = (float)(a->y + a->h); }
+    if (cx1 < cx0) { cx0 = pv[UI_T_OBJECTIVE][0]; cx1 = pv[UI_T_OBJECTIVE][2]; cy0 = pv[UI_T_OBJECTIVE][1]; cy1 = pv[UI_T_OBJECTIVE][3]; }
+    if (fieldv[UI_F_OBJICON] >= 0)   // по центру — вся группа «значок + рамка»: значок прилеплен к левому краю рамки (выступает за неё), как на HUD
+      for (unsigned j = 0; j < sc->count; j++) { const UiItem *a = &items[sc->first + j];
+        if (a->tag != UI_T_OBJECTIVE || a->type != T_SLOT || a->field != UI_F_OBJICON || itemVarOff(a)) continue;
+        float gx = a->x - (bubShift ? bubShift : 0);
+        if (fieldv[UI_F_OBJICON] == UI_OBJICON_EXTERNAL) { int bx_, by_, bw_, bh_; objFrame(a, &bx_, &by_, &bw_, &bh_); gx = (float)bx_;
+          if (oiPix && oiW > 0 && oiH > 0) { float k_ = fminf((float)bw_ / oiW, (float)bh_ / oiH); gx = bx_ + (bw_ - oiW * k_) * .5f + oiVisL * k_;   // видимый левый край картинки (поля кадра значка прозрачны)
+            float iy_ = by_ + (bh_ - oiH * k_) * .5f - ((bubGH && !BUBBLE_EVEN_OLD) ? bubGH / 2 : 0);   // высокий значок (вывеска Kwik-E-Mart) выступает над рамкой: верх и низ группы — по видимым строкам значка
+            if (iy_ + oiVisT * k_ < cy0) cy0 = iy_ + oiVisT * k_; if (iy_ + oiVisB * k_ > cy1) cy1 = iy_ + oiVisB * k_; } }
+        if (gx < cx0) cx0 = gx; }
+    float y0 = cy0, y1 = cy1;
+    float dy = pauseObjBot1350 + PAUSEOBJ_GAP - y0;
+    if (y1 + dy > PAUSEOBJ_BOTTOM) { dy = PAUSEOBJ_BOTTOM - y1; if (y0 + dy < pauseObjBot1350 + 2.f) dy = pauseObjBot1350 + 2.f - y0; }   // не хватает места внизу: выше, но не на меню
+    pauseObjDx = 240.f - (cx0 + cx1) * .5f; pauseObjDy = dy;
+    static float lg_[4]; if (lg_[0] != cx0 + pauseObjDx || lg_[1] != y0 + dy || lg_[2] != cx1 + pauseObjDx || lg_[3] != y1 + dy) { lg_[0] = cx0 + pauseObjDx; lg_[1] = y0 + dy; lg_[2] = cx1 + pauseObjDx; lg_[3] = y1 + dy;
+      uiLogf("PAUSEOBJ1350 frame x0=%.1f x1=%.1f cx=%.1f group y0=%.1f y1=%.1f menu_bot=%.1f\n", lg_[0], lg_[2], (lg_[0] + lg_[2]) * .5f, lg_[1], lg_[3], pauseObjBot1350); }
+  }   // №710: центр всплывания — сдвинутая рамка   // №638: центр всплывания — конечная рамка (с ростом под текст), а не рамка пакета
   int ovDy[NOV]; memset(ovDy, 0, sizeof ovDy);
   if (sidx == UI_SCREEN_HUD) {   // стопка видимых оверлеев: шаг — высота строки числа предыдущего
     int y = 0; memset(ovOn, 0, sizeof ovOn);
     for (int k = 0; k < NOV; k++) {
       if (!(mask & (1u << OV_ORDER[k]))) continue;
-      int rowh = 0;
-      for (unsigned i = 0; i < sc->count; i++) { const UiItem *it = &items[sc->first + i]; if (it->tag == OV_ORDER[k] && it->type == T_NUM && it->h > rowh) rowh = it->h; }
+      if (uiOvBar1308Old && ovIsBar(OV_ORDER[k])) continue;   // 1308: прежнее — шкалы вне стопки
+      int rowh = 0, bar_ = ovIsBar(OV_ORDER[k]);
+      if (bar_) {   // шкала урона/близости: следующий оверлей стоит ниже её рамки с просветом OV_BAR_GAP1308 (запись PS2: 17–20 из 480 = 10–11 из 272); шаг — от верха стопки данных до низа рамки шкалы + просвет
+        int base_ = 9999, bot_ = -9999;
+        for (unsigned i = 0; i < sc->count; i++) { const UiItem *it = &items[sc->first + i];
+          if (it->tag == OV_ORDER[k]) { if (it->y + it->h > bot_) bot_ = it->y + it->h; }
+          else if (it->type == T_NUM && !ovIsBar(it->tag) && ovIndexRaw(it->tag) >= 0 && it->y < base_) base_ = it->y; }
+        if (bot_ > -9999 && base_ < 9999) rowh = bot_ + OV_BAR_GAP1308 - base_ - y; if (rowh < 0) rowh = 0;
+      } else
+      for (unsigned i = 0; i < sc->count; i++) { const UiItem *it = &items[sc->first + i]; if (it->tag == OV_ORDER[k] && it->type == T_NUM && it->h > rowh) rowh = it->h; }   // число: высота строки
       ovDy[k] = ovStack ? y : 0; y += rowh;
     }
   }
@@ -2780,11 +2885,13 @@ static void drawScreen(int sidx, int selected) {
   { float dm_ = (sidx == UI_SCREEN_PAUSE || sidx == UI_SCREEN_PAUSEMSN) ? pauseDimA() : 0.f;   // №631: затемнение мира
     if (dm_ > 0.f) { UiItem r; memset(&r, 0, sizeof r); r.type = T_RECT; r.x = 0; r.y = 0; r.w = 480; r.h = 272; r.color = (unsigned)(dm_ * 255.f + .5f) << 24; xf.on = 0; drawRect(&r); } }
   float pS = 1.f, pA = 1.f; int pAnim = !scrMode && (sidx == UI_SCREEN_PAUSE || sidx == UI_SCREEN_PAUSEMSN) && pauseAnimPose(&pS, &pA);   // №631
+  int lmWanted1360 = 0;
   for (unsigned i = 0; i < sc->count; i++) {
     const UiItem *it = &items[sc->first + i];
     if (itemVarOff(it)) continue;   // №528: другой вариант пузыря задания
     unsigned tb = 1u << (it->tag & 31);
     if (!(mask & tb) && !(leaveDraw & tb)) continue;
+    if (uiLoadMark1366Old && it->tag == UI_T_LOADING && uiLoadMarkReady()) { lmWanted1360 = 1; continue; }   // 1366_OLD: как в 1360
     if (credHideBack && it->tag == UI_T_STREETRACE && (it->type == T_TEXT || (i > 0 && items[sc->first + i - 1].type == T_TEXT && items[sc->first + i - 1].tag == UI_T_STREETRACE))) continue;   // титры: подсказки Back (подпись и значок △, последние два предмета экрана) на PS2 нет; пакет без неё не затронут
     xf.on = 0; xf.sy = 0.f; bubSlideNow = 0;
     if (pAnim) { xf.on = 1; xf.s = pS; xf.a = pA; xf.cx = 240.f; xf.cy = 120.f; }   // №631 (центр: по кадрам PS2 плита растёт из середины по x и около 0,44 высоты по y): рамка и пункты паузы растут из центра
@@ -2870,6 +2977,9 @@ static void drawScreen(int sidx, int selected) {
     gDx = (hud && bubShift && it->tag == UI_T_OBJECTIVE && !itemVarOff(it)) ? -bubShift : 0;   // №710
     gDx += bubSlideNow;   // №942
     gDx += briefFitDx[it->tag & 31];   // карточка брифинга: подпись кнопки внутри рамки (briefFit)
+    if (sidx == UI_SCREEN_MISSIONLOAD && !scrMode && !uiCardIcon1302Old && it->type == T_IMG && (it->tag == UI_T_SKIP || it->tag == UI_T_PRESS_START)) gDy += uiCardIcon1302Dy;   // 1302: значок ✕/△ на 1–2 px ниже
+    if (sidx == UI_SCREEN_LETTERBOX && !uiLbSkip1322Old && it->type == T_IMG && it->tag == UI_T_SKIP) gDy += uiLbSkip1322Dy;   // 1322: значок ✕ у SKIP на высоту подписи
+    if (hud && pauseObjOn1350 && it->tag == UI_T_OBJECTIVE) { gDx += pauseObjDx; gDy += pauseObjDy; }   // 1350
     if (hud && bubGH && !BUBBLE_EVEN_OLD && it->tag == UI_T_OBJECTIVE && (it->type == T_SLOT || (it->type == T_IMG && it->w * 2 < it->h * 3))) gDy -= bubGH / 2;   // №646: значок/аватар остаётся по центру выросшей рамки (рамка растёт вверх от низа)
     if (failureDy && it->type == T_TEXT && it->field == UI_F_NONE && it->y >= failureY && it->x < failureRight && it->x + it->w > failureLeft)
       gDy += failureDy;
@@ -2908,6 +3018,7 @@ static void drawScreen(int sidx, int selected) {
       }
     }
     if (ok_ >= 0 && (it->type == T_NUM || it->type == T_TEXT)) ovBoxAdd(ok_, it->x, it->y + gDy, it->w, it->h);
+    else if (sidx == UI_SCREEN_HUD && ovIsBar(it->tag)) { int kb_ = ovIndexRaw(it->tag); if (kb_ >= 0) ovBoxAdd(kb_, it->x, it->y + gDy, it->w, it->h); }   // 1308: рамка шкалы урона/близости (любые элементы) — для проверки наложения (в прежнем порядке gDy = 0)
     if (hudMove) gDy -= (int)floorf((1.f - hudBlk) * (float)HUD_CORNER_DY + .5f);   // №623: в углу блок выше на HUD_CORNER_DY (поле от верха = поле радара от низа)
     if ((it->flags & F_SELONLY) && it->menu != selected) continue;
     if (hid && (it->flags & (F_MENU | F_SELONLY)) && it->menu < 32 && (hid >> it->menu & 1)) continue;   // правка 137: скрытая строка
@@ -3003,7 +3114,9 @@ static void drawScreen(int sidx, int selected) {
         int w = (s->w * v + 500) / 1000;
         // Сверка g09a-hud, M2:17 / Д7: при заполнении выше 75 % полоса урона мигает с периодом 0,25 с (только полоса, не вся группа). DAMAGE_BLINK_OLD=1 — без мигания
         if (!DAMAGE_BLINK_OLD && it->field == UI_F_DAMAGE && v > 750 && ((int)(uiClk / .25f) & 1)) break;
-        if (w > 0) drawSlot(s, s->x, s->y, w, it->color);
+        unsigned bc_ = it->color;
+        if (it->field == UI_F_PROXIMITY && uiProxTint1318) bc_ = (it->color & 0xff000000u) | (uiProxTint1318 & 0x00ffffffu);   // 1318: красная шкала «оторвись» / зелёная «не отставай» (оригинал красит картинку полосы)
+        if (w > 0) drawSlot(s, s->x, s->y, w, bc_);
         break;
       }
       case T_SECTOR: break; // legacy eight shutters replaced by continuous radial clipping
@@ -3042,6 +3155,10 @@ static void drawScreen(int sidx, int selected) {
           if (a < 1.f) { xf.on = 1; xf.s = 1.f; xf.a = a < 0.f ? 0.f : a; xf.cx = xf.cy = 0.f; }   // выскакивает целиком
         }
         if (it->field == UI_F_OBJECTIVE) { UiItem t2; objTextItem(it, &t2); drawTextItem(&t2, s, col);
+        } else if (scrMode && scrMsgK < 1.f && it->field == UI_F_ROW11 && (it->flags & F_WRAP)) {   // 1327: длинная подсказка — текст меньше в той же рамке (ширина переноса /k, потом сжатие к центру рамки)
+          UiItem t2 = *it; float k_ = scrMsgK, cx_ = it->x + it->w * .5f, cy_ = (float)(it->y + gDy) + it->h * .5f + scrMsgDy;
+          t2.w = (short)(it->w / k_ + .5f); t2.h = (short)(it->h / k_ + .5f); t2.x = (short)(cx_ - t2.w * .5f); t2.y = (short)(it->y - (t2.h - it->h) * .5f + scrMsgDy);
+          xf.on = 1; xf.a = subFadeA * xitA; xf.s = k_; xf.cx = cx_; xf.cy = cy_; drawTextItem(&t2, s, col); xf.on = 0;
         } else if (scrMode && it->tag == UI_T_PRESS_START) {   // №405: пульс масштабом от центра надписи (запись PS2)
           if (!TITLE_PULSE_OLD) { xf.on = 1; xf.a = subFadeA * xitA; xf.s = psPulse(scrT); xf.cx = it->x + it->w * .5f; xf.cy = it->y + it->h * .5f; }
           drawTextItem(it, s, col);
@@ -3146,6 +3263,7 @@ static void drawScreen(int sidx, int selected) {
   }
   unsigned pfF0 = pfOn ? sceKernelGetSystemTimeLow() : 0; if (pfOn) pfItemsUs += pfF0 - pfLoop0;
   bflush(); gDy = 0; gDx = 0; xf.on = 0;
+  if (lmWanted1360) uiLoadMarkDraw();   // 1366_OLD: как в 1360
   if (pfOn) pfFlushUs += sceKernelGetSystemTimeLow() - pfF0;
   if (hud && (traceBits & UI_TRACE_POP))   // гейт всплывания: рамка группы как нарисована (без масштаба — рамка данных) и альфа
     for (int t = 0; t < 32; t++) {
@@ -3414,8 +3532,20 @@ void uiSetRadar(float x, float z, float heading) { uiRadarSetPlayer(x, z, headin
 
 static void msgTags(int on) { uiShow(UI_SCREEN_HUD, UI_T_OBJECTIVE, on); uiShow(UI_SCREEN_PAUSE, UI_T_OBJECTIVE, on); }
 void uiMsgHardBreaks(int on) { msgHardBr = on != 0; }   // правка 267: служебно «flag msghardbr 1» — прежние жёсткие переносы
+// №1264 (Бабл 107, сверка Fable С4/С5): С4 — каждый старт этапа с текстом объявляется заново, и если текст тот же, что у прошлого этапа (L1 m4 2→3, L1 m7 1→2, L2 m7, L4 m1, L5 m3): uiMessageStage всегда поднимает рамку заново;
+// С5 — разовое сообщение со сроком (будка/машина недоступна, TOO SLOW, GO…) в оригинале идёт мимо окна задания; здесь оно пишется в тот же бабл и по сроку гасило всю метку вместе со значком цели в углу.
+// Теперь задание помнится (uiMessage со сроком 0), по сроку разового его текст и значок возвращаются на место без нового всплытия (рамка уже свёрнута в значок).
+// маска: 8 (BUBBLE1264D_OLD) — прежнее С4, 16 (BUBBLE1264E_OLD) — прежнее С5; «flag bubble1264old N» (ui_sfx.c)
+#ifndef BUBBLE1264D_OLD
+#define BUBBLE1264D_OLD 0
+#endif
+#ifndef BUBBLE1264E_OLD
+#define BUBBLE1264E_OLD 0
+#endif
+int uiBub1264Old = (BUBBLE1264D_OLD ? 8 : 0) | (BUBBLE1264E_OLD ? 16 : 0);
+static char objKeepText[160]; static int objKeepIcon = -1, objKeepOn;
 void uiMessage(const char *text, int icon, float seconds) {
-  if (!text || !*text) { if (msgText[0]) memcpy(msgLast, msgText, sizeof msgLast); msgText[0] = 0; msgUntil = 0; msgTags(0); return; }
+  if (!text || !*text) { if (msgText[0]) memcpy(msgLast, msgText, sizeof msgLast); msgText[0] = 0; msgUntil = 0; objKeepOn = 0; msgTags(0); return; }
   // Правка Роба 267 (04.10: «в пузырях снизу текст обрублен; когда взрывается машина, текст громадный, еле вмещается — распределять
   // красиво, как TALK TO MARGE»): тексты библии несут жёсткие переносы под рамку подсказки Барта («VEHICLE DESTROYED!\nFIND A
   // WRENCH,\n…» — 4 строки, упор в край). В нижнем пузыре текст переносится по ширине самого пузыря (uiWrapPara, без висячего
@@ -3434,7 +3564,12 @@ void uiMessage(const char *text, int icon, float seconds) {
   fieldv[UI_F_OBJICON] = icon;
   msgUntil = seconds > 0.f ? sceKernelGetSystemTimeLow() + (unsigned)(seconds * 1e6f) : 0;
   if (seconds > 0.f && !msgUntil) msgUntil = 1;
+  if (seconds <= 0.f) { memcpy(objKeepText, msgText, sizeof objKeepText); objKeepIcon = icon; objKeepOn = 1; }   // №1264в: это задание (бессрочное), к нему возвращаемся после разового
   msgTags(1);
+}
+void uiMessageStage(const char *text, int icon, float seconds) {   // №1264г: старт этапа с текстом — рамка всплывает заново даже при том же тексте
+  uiMessage(text, icon, seconds);
+  if (text && *text && !(uiBub1264Old & 8)) msgNew = 1;
 }
 // №958б: диагностика (flag msnhud): что держит угол — поле значка, есть ли картинка извне, текст сообщения и последний погасший
 const void *uiObjPix(void) { return oiPix; }   // №993: какие пиксели сейчас в значке угла (сверка с пакетом, msnartIconPixOk)
@@ -3445,7 +3580,15 @@ void uiObjective(int index, int icon) {
   msgTags(index >= 0);
 }
 static void msgExpire(void) {
-  if (msgUntil && (int)(sceKernelGetSystemTimeLow() - msgUntil) >= 0) { memcpy(msgLast, msgText, sizeof msgLast); msgText[0] = 0; msgUntil = 0; msgTags(0); }
+  if (msgUntil && (int)(sceKernelGetSystemTimeLow() - msgUntil) >= 0) {
+    if (!(uiBub1264Old & 16) && objKeepOn) {   // №1264д: вернуть задание на место: текст и значок цели, метка остаётся (без нового всплытия), рамка свёрнута в значок
+      memcpy(msgLast, msgText, sizeof msgLast); memcpy(msgText, objKeepText, sizeof msgText); fieldv[UI_F_OBJICON] = objKeepIcon; msgUntil = 0;
+      if (bubAge < OBJ_SHOW_S) bubAge = OBJ_SHOW_S;
+      if (uiClk - tagOnT[UI_T_OBJECTIVE] < OBJ_SHOW_S) tagOnT[UI_T_OBJECTIVE] = uiClk - OBJ_SHOW_S;   // свёрнуто сразу: значок летит в угол
+      return;
+    }
+    memcpy(msgLast, msgText, sizeof msgLast); msgText[0] = 0; msgUntil = 0; msgTags(0);
+  }
 }
 
 void uiMenuEnable(int menu, int item, int on) {
@@ -3708,9 +3851,46 @@ int  uiPauseInput(unsigned hit) {
 #ifndef UI_PROF_US
 #define UI_PROF_US 12000u
 #endif
+// 1347 (Роб: «когда надо сесть в машину, пишется месседж, потом пропадает, и через время забываешь, что делать»; оригинал: в паузе всегда окно задания с текстом этапа
+// и его значком, независимо от того, ушёл ли текст с экрана). В данных паузы рамки задания нет (tools/ui_export.py pause_layout её отбрасывает), поэтому на паузе рисуется
+// та же рамка, что на HUD: раскрытая, на её месте (внизу слева, под рамкой паузы), текст и значок этапа (objKeepText: бессрочное задание, а не разовое сообщение).
+// Состояние анимаций HUD на время кадра подменяется и возвращается, чтобы по выходу из паузы HUD вернулся как был (значок в углу, радар проявляется входом).
+// PAUSEOBJ1347_OLD=1 / «flag pauseobj1347old 1» — прежнее: на паузе окна задания нет
+#ifndef PAUSEOBJ1347_OLD
+#define PAUSEOBJ1347_OLD 0
+#endif
+int uiPauseObj1347Old = PAUSEOBJ1347_OLD;
+// 1350 (Роб: «бабл задания в меню паузы налазит на основное меню; по центру, прямо под меню паузы, не деформируя, капельку ниже»): рамка растёт от низа вверх по длине текста и на паузе
+// заходила на рамку меню. Теперь та же рамка (размер и вид как на HUD, без растяжения) стоит по центру экрана по горизонтали, верх рамки на PAUSEOBJ_GAP px ниже низа рамки меню;
+// не хватает места до низа экрана — выше, но не на меню. PAUSEOBJPOS1350_OLD=1 / «flag pauseobjpos1350old 1» — как 1347 (на месте HUD, внизу слева)
+#ifndef PAUSEOBJPOS1350_OLD
+#define PAUSEOBJPOS1350_OLD 0
+#endif
+int uiPauseObjPos1350Old = PAUSEOBJPOS1350_OLD;
+static void drawPauseObjective1347(void) {
+  const char *txt = objKeepOn ? objKeepText : msgText;
+  if (uiPauseObj1347Old || !txt[0] || !H || pauseScr != UI_SCREEN_PAUSEMSN) return;   // только пауза миссии (5 строк, внизу место); у свободной езды (7 строк) окна задания нет и в оригинале
+  unsigned s_prev = hudPrev, s_leave = hudLeave, s_mask = tagMask[UI_SCREEN_HUD], s_away = hudAway1091;
+  float s_on = tagOnT[UI_T_OBJECTIVE], s_age = bubAge, s_fly = objFlyT, s_blkV = hudBlkV, s_blkClk = hudBlkClk; int s_new = msgNew, s_cd = cdNew, s_blkInit = hudBlkInit, s_icon = fieldv[UI_F_OBJICON];
+  char s_txt[sizeof msgText], s_last[sizeof msgLast], t_[sizeof msgText]; memcpy(s_txt, msgText, sizeof s_txt); memcpy(s_last, msgLast, sizeof s_last); memcpy(t_, txt, sizeof t_);
+  memcpy(msgText, t_, sizeof msgText); memcpy(msgLast, t_, sizeof msgLast); if (objKeepOn) fieldv[UI_F_OBJICON] = objKeepIcon;
+  msgNew = cdNew = 0; tagMask[UI_SCREEN_HUD] |= 1u | 1u << UI_T_OBJECTIVE; hudPrev = tagMask[UI_SCREEN_HUD] & (1u | 1u << UI_T_OBJECTIVE); hudLeave = 0;
+  tagOnT[UI_T_OBJECTIVE] = uiClk - 1.f; bubAge = 1.f; objFlyT = 0.f;   // раскрыта и стоит (ни всплытия, ни полёта в угол)
+  if (!uiPauseObjPos1350Old) {   // низ рамки меню: нижняя кромка картинок рамки (не на весь экран), пересекающих середину экрана по горизонтали
+    const UiScreen *ps_ = &screens[pauseScr]; float bot_ = 0.f;
+    for (unsigned i_ = 0; i_ < ps_->count; i_++) { const UiItem *q_ = &items[ps_->first + i_];
+      if ((q_->type == T_IMG || q_->type == T_RECT) && q_->tag == UI_T_ALWAYS && q_->w < 480 && q_->h < 272 && q_->x < 240 && q_->x + q_->w > 240 && q_->y + q_->h > bot_ && q_->y + q_->h < 230) bot_ = (float)(q_->y + q_->h); }
+    if (bot_ > 0.f) { pauseObjBot1350 = bot_; pauseObjOn1350 = 1; }
+  }
+  uiDrawHudTags(1u << UI_T_OBJECTIVE);
+  pauseObjOn1350 = 0; pauseObjDx = pauseObjDy = 0.f;
+  memcpy(msgText, s_txt, sizeof msgText); memcpy(msgLast, s_last, sizeof msgLast); fieldv[UI_F_OBJICON] = s_icon;
+  tagMask[UI_SCREEN_HUD] = s_mask; hudPrev = s_prev; hudLeave = s_leave; tagOnT[UI_T_OBJECTIVE] = s_on; bubAge = s_age; objFlyT = s_fly; msgNew = s_new; cdNew = s_cd;
+  hudBlkV = s_blkV; hudBlkClk = s_blkClk; hudBlkInit = s_blkInit; hudAway1091 = s_away + 1;   // +1: по выходу из паузы HUD входит заново (радар проявляется), как без этого рисования
+}
 static void uiDrawInner(void) {
   msgExpire();
-  if (paused) { drawScreen(pauseScr, pauseSel); return; }   // the pause screen has its own coin count
+  if (paused) { drawScreen(pauseScr, pauseSel); drawPauseObjective1347(); return; }   // the pause screen has its own coin count
   if (pauseHudHidden()) { float ps_, pa_; if (pauseAnimPose(&ps_, &pa_)) drawScreen(pauseScr, pauseSel); return; }   // №631: закрытие — 3 кадра рамка сжимается, HUD вернётся через 0,4 с
   drawScreen(UI_SCREEN_HUD, -1);
 }

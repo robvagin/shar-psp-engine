@@ -10,6 +10,7 @@
 #include "props.h"
 #include "stateprops.h"
 unsigned homerSolidFrame = 0;
+void wdFire(const char *k, const char *a, const char *i) { (void)k; (void)a; (void)i; }   // 107в: заглушка сторожа
 void uiFlash(void) {}
 static Props props; static StateProps sp; static ColWorld world; static Car car;
 typedef struct { int n, crossed, back, backOk, springBad; float outMax, exitRatioMax, exitSum; } Cls;

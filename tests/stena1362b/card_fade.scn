@@ -1,0 +1,13 @@
+# 1362Б: затемнение под карточкой миссии (игровой dt = 0): L1 этап 302, карточка открыта, flag fadeout 1 — чёрный должен наступить за ~1 с настенного времени (FADE1316 black)
+scene g1362b
+flag camdet 1
+flag startcam 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnmainat 302
+wait 3
+flag fadeout 1
+wait 4
+end

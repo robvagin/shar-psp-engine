@@ -44,7 +44,7 @@ static void benchPoints(void) {
     for (int j = 0; j < hw / st + 1; j++) {
       int gx = st / 2 + (row & 1 ? (hw / st - j) : j) * st;
       if (gx < 0 || gx >= hw || nbp >= MAXBP) continue;
-      short *c = hm + ((size_t)gz * hw + gx) * 4; int lo = 32767;
+      short tmp_[4]; const short *c = hmAt(gx, gz, tmp_); int lo = 32767;
       for (int i = 0; i < 4; i++) if (c[i] != -32768 && c[i] < lo) lo = c[i];
       if (lo == 32767) continue;
       bpx[nbp] = hox + (gx + .5f) * hcell; bpz[nbp] = hoz + (gz + .5f) * hcell; bpy[nbp] = lo * .01f; nbp++;

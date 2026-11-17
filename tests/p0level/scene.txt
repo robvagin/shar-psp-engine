@@ -1,0 +1,22 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+scene BEFORE
+flag drive 100
+wait 12
+scene SLEEP
+flag simsleep 6
+wait 3
+scene AFTER
+wait 45
+scene AFTER_END
+flag stop
+wait 2
+end

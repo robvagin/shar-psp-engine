@@ -10,10 +10,25 @@ void msnartReset(void);                           // выгрузить всё (
 void msnartShutdown(void);                        // закрыть msnart.shr уровня (смена уровня): таблица, файл, записи
 void msnartLoad(const char *p3dPath, int level);  // LoadP3DFile("art\...\x.p3d"): подгрузить запись, если есть
 const char *msnartWantIcon(void);                     // №958б: имя значка задания, которого ждёт угол (диагностика)
-void msnartMissionStart(void);                    // новая миссия: записи прошлой выгружаются (уровня — остаются)
+void msnartMissionStart(void);
+int msnartPathState109(const char *p3d);   // 109: запись по пути: 1 в памяти, 0 в очереди/читается, -1 нет (в таблице нет или отказана)
+int msnartIdle(void);                   // 109: очередь чтений пуста и чтения в полёте нет (условие готовности карточки)
+int msnartIoBusy1337(void);                // 1337: запись читается или в очереди (загрузчик клеток уступает чтение)
+extern volatile int ioSerial1337, ioDevBusy1337;   // 1337 стенд: имитация одной карты памяти (flag ioserial1337 1)
+void msnartMissionEnd109(void);         // 109: конец миссии — записи миссии (кроме картинок и записей уровня) сняты
+extern int msnartShare1363; extern unsigned msnartShareHits1363, msnartShareEvict1363;   // 1363: общие записи миссий уровня остаются до смены уровня
+extern int msnartEnd109Old, msnartCap109Old, msnartCapSet109;   // 109: мест под записи 32 (прежние 24); служебный предел
+// msnartMissionStart: новая миссия: записи прошлой выгружаются (уровня — остаются)
+extern unsigned msnartLeakBytes, msnartQuarBytes; extern int msnartQuar107Old, msnartStall107;   // 107б P0: карантин брошенных чтений (байт в утечке / в карантине)
+void msnartPwrPoll107(void);   // 107б P0: сброс пометок и переоткрытие по pwrEpoch() (звать раз в кадр, до msnartPump)
+extern unsigned msnartRaceUs, msnartRaceMesh, msnartRaceBind, msnartRaceCullN, msnartRaceCalls; extern int msnartRaceOff;   // 1298: цена реквизита гонки (строка RACEPROP), флаг noraceprops
+extern unsigned msnartRaceT[3]; extern unsigned msnartRaceMeshUs, msnartRaceBnd; extern int msnartCull1298, msnartGroup1298, msnartCullMemFail; extern unsigned msnartCullMemBytes; extern unsigned msnartRaceFrustum, msnartRaceViol, msnartRaceDraws; extern int (*msnartSphereOut)(const float *c, float r); extern int (*msnartPtIn)(const float *p);   // 1298: отсечение реквизита по кадру
+extern void (*msnartReq)(const char *path);   // 109 З9: полный путь читаемой записи (журнал смоука, гейт tools/missions/msnres_gate.py)
 extern int msnartRetry94, msnartFailSim94;               // Build 94: повтор чтения записи предмета через 1 с; служебный отказ памяти N раз
 extern void (*msnartWatch)(const char *note, const char *path, int tries);   // строка WATCHDOG от движка
 extern int (*msnartRoom)(unsigned);              // №637: освободить далёкие клетки под запись; 1 — цельный кусок нужного размера есть
+extern int msnartChain1359Old; extern unsigned msnartChainUs1359;                    // 1359: насос после чтения сразу берёт следующее из очереди (Old=1 — одно действие за кадр)
+void msnartService1359(int n); int msnartChainResult1359(unsigned *n, unsigned *pumps, unsigned *us);   // служебное (гейт)
 void msnartPump(void);                            // раз в кадр: асинхронное чтение очереди записей (sceIoReadAsync)
 int  msnartIconPixOk(void);                      // №993: диагностика — пиксели в углу те, что просит миссия
 int  msnartReading(void);                         // №1247: 1 — чтение записей идёт или в очереди
@@ -29,6 +44,15 @@ extern int msnartGlowBias;
 void msnartDrawRot(const char *name, const float *pos, float heading, float ex, float ey, float ez, float t);
 void msnartDrawCull(const char *name, const float *pos, float ex, float ey, float ez, float t, float dist);   // меши дальше dist не рисуются (пропы гонки)   // то же, повёрнутое по курсу (стрелки на дороге)
 int  msnartHas(const char *name);                 // 1 — составной объект name загружен (04.10: пятно маркера цели <рисунок>_shadow)
+// №1269 (видео Роба 13.11): после ролика на карточке миссии не было картинки (чёрный фон): память не нашлась за 3 повтора (3 с), и Кольцо-96 отдало карточку без картинки.
+// Теперь картинка брифинга ждёт память на LOADING: повтор раз в секунду до MSNART_PICHARD1269 раз, каждый раз через лестницу, а пока идёт брифинг (мир стоит),
+// лестнице открыта и ступень 4 (выгрузить всё, чего нет в кадре; memladder.h memLadStopped). Карточка без картинки — только когда чтение действительно не удалось
+// или память не нашлась за весь предел. BRIEFPIC1269_OLD=1 — прежнее (3 повтора, потом без картинки; предел карточки 8 с)
+#ifndef BRIEFPIC1269_OLD
+int rb_BRIEFPIC1269_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+#define BRIEFPIC1269_OLD rb_BRIEFPIC1269_OLD
+#endif
+#define MSNART_PICHARD1269 60
 int  msnartPicGaveUp(void);                       // Кольцо-96: картинка брифинга отказана по памяти после всех попыток: карточка показывается без неё сразу
 extern int msnartFailMissgen;                     // служебно: N отказов памяти у missgen.p3d
 extern int msnartPicWaitOld;                      // 1 — как до правки (мгновенный повтор, 8 с чёрного)
@@ -66,4 +90,5 @@ void msnartDoorLab944(const float *p, const float *X, const float *Y, unsigned c
 extern unsigned g944DoorOld, g944DoorNew;
 extern void (*msnartNote944)(const char *site, const char *what, const float *p, int a, int b);
 #endif
+extern unsigned msaFind108Bad;   // 108 О17: расхождений кэша поиска (flag msafind108chk 1)
 extern unsigned msaCallN, msaFindUs, msaDrawUs;   // №849 служебно: вызовы msnartDraw и мкс поиска по имени

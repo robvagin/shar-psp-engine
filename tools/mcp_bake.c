@@ -37,3 +37,8 @@ int main(int argc, char **argv) {
   FILE *f = fopen(argv[3], "wb"); if (!f || fwrite(out, 1, sz, f) != sz) { fprintf(stderr, "mcp_bake: не записать %s\n", argv[3]); return 2; }
   fclose(f); return 0;
 }
+
+// 107b (Гомер П7/П8): homer.c ссылается на правила объёмов предметов из stateprops.c; запекание их не вызывает (homerSolidSprops только в игре),
+// заглушки не тянут stateprops.c, а с ним props и монеты
+int spNoSolid(const void *sp, unsigned i) { (void)sp; (void)i; return 0; }
+int spVolumeShift(void *sp, unsigned i, float offOld[3], float offW[3]) { (void)sp; (void)i; (void)offOld; (void)offW; return 0; }

@@ -7,6 +7,7 @@
 #ifndef HUSKSEAT_OLD
 #define HUSKSEAT_OLD 0
 #endif
+#define HOMER_C 1
 #include "homer.h"
 #include "stateprops.h"
 #include "sverka_shared.h"   // сверка g04-homer: svSurfaceAt (поверхность земли для звука шага)
@@ -65,12 +66,41 @@ int homerHitTest(const HomerEvent *e, float cx, float cy, float cz, float r) {
 #endif
 static float homerDoorOut = HOMER_DOOR_OUT_OLD ? 0.f : .12f;   // замер tests/homer/door_hand.sh: при 0 запястье в 1–5 см от борта (пальцы в двери), при 0,12 — в 13 см (пальцы у поверхности)
 void homerSetDoorOut(float m) { homerDoorOut = m; }
+#ifndef HOMER_DECKS1332_OLD
+#define HOMER_DECKS1332_OLD 0
+#endif
+int homerDecks1332Old = HOMER_DECKS1332_OLD;
+#define CD_CARS 64
+static struct { char name[12]; int n; float d[HOMER_DECK_MAX][4]; } cdTab[CD_CARS]; static int cdN;   // имя, этажи: смещение вдоль машины от центра кузова, полудлина, полуширина, высота верха над низом колёс
+void homerDecksParse(const char *text) {
+  cdN = 0; if (!text) return;
+  for (const char *p = text; *p && cdN < CD_CARS; ) {
+    const char *e = strchr(p, '\n'); size_t l = e ? (size_t)(e - p) : strlen(p); char ln[400]; if (l >= sizeof ln) l = sizeof ln - 1; memcpy(ln, p, l); ln[l] = 0; p = e ? e + 1 : p + l;
+    if (ln[0] == '#' || !ln[0]) continue;
+    char nm[24]; int n = 0, used = 0; if (sscanf(ln, "%23s %d%n", nm, &n, &used) < 2 || n < 1 || n > HOMER_DECK_MAX) continue;
+    int ok = 1; float d[HOMER_DECK_MAX][4]; const char *q = ln + used;
+    for (int i = 0; i < n && ok; i++) { int u = 0; if (sscanf(q, "%f %f %f %f%n", &d[i][0], &d[i][1], &d[i][2], &d[i][3], &u) != 4) ok = 0; else q += u; }
+    if (!ok) continue;
+    memset(cdTab[cdN].name, 0, sizeof cdTab[cdN].name); strncpy(cdTab[cdN].name, nm, sizeof cdTab[cdN].name - 1); cdTab[cdN].n = n; memcpy(cdTab[cdN].d, d, sizeof d); cdN++;
+  }
+}
+int homerCarDecks(const Car *k, HomerDeck out[HOMER_DECK_MAX]) {
+  CarBox b; carBox(k, &b); float tilt = cosf(k->pitch) * cosf(k->roll), roof = k->y + k->p.bodyHi * tilt;
+  int ci = -1;
+  if (!homerDecks1332Old) for (int i = 0; i < cdN; i++) if (!strncmp(cdTab[i].name, k->p.name, 11)) { ci = i; break; }
+  if (ci < 0) { out[0].x = b.x; out[0].z = b.z; out[0].fx = b.fx; out[0].fz = b.fz; out[0].hl = b.hl; out[0].hw = b.hw; out[0].top = roof; return 1; }
+  for (int i = 0; i < cdTab[ci].n; i++) {
+    const float *d = cdTab[ci].d[i]; HomerDeck *o = &out[i];
+    o->x = b.x + b.fx * d[0]; o->z = b.z + b.fz * d[0]; o->fx = b.fx; o->fz = b.fz; o->hl = d[1]; o->hw = d[2]; o->top = k->y + d[3] * tilt;
+  }
+  return cdTab[ci].n;
+}
 void homerCarFrom(HomerCar *hc, const Car *c, float lift) {
   if(!carBoomed(c))lift=carModelLift(c,lift);
   carPieceMatrix(c, lift, 0, 0, 0, 1, hc->m);
   hc->lift = lift; hc->x = c->x; hc->y = c->y; hc->z = c->z; hc->h = c->h; hc->v = c->v;
   carBox(c, &hc->box);
-  hc->roof = c->y + c->p.bodyHi; hc->ok = 1;
+  hc->roof = c->y + c->p.bodyHi; hc->ok = 1; hc->nd = homerCarDecks(c, hc->deck);
   // Р8 (тур Роба на 102, «не смог сесть в разбитую машину»): правка 355 — в остов ПОСЛЕ взрыва сесть можно (△, близнец a355_huskdrive2). carHuskDrives требует car.huskDrive, а game.c ставит его только
   // пока игрок за рулём (пешком 0): вышедший игрок видел остов «мёртвым» навсегда. Для посадки хватает «взорвалась» (carBoomed). HUSKSEAT_OLD=1 — прежнее
   int seat_ = HUSKSEAT_OLD ? carHuskDrives(c) : (!CAR_HUSK_OLD && carBoomed(c));
@@ -477,33 +507,67 @@ void homerPlace(Homer *H, const ColWorld *w, float x, float y, float z, float h)
 }
 
 // ------------------------------------------------------------------ коллизия
+// 107b В1 (сверка Fable-2): предел наклона 30° у оригинала действует на объёмы столкновений (ящики, цилиндры, подвижные тела: проверка наклона опоры), а на земле уровня
+// (рельеф, дороги, газон) предела нет: высота берётся из рельефа при любом наклоне, ничего не стекает. У нас правило ГОМЕР 4.1 стояло на всём, и Гомер не заходил на травяной склон 35–50° и съезжал
+// с него. Теперь рельеф (треугольники COL_TRI) с нормалью y ≥ HOMER_SLOPE_TRI_NY (круче 60° это уже стенка, не склон) предела не имеет; ящики и цилиндры, бордюр-грани круче 60° как были.
+// HOMERSLOPE107B_OLD=1 / flag homerslope107bold 1 — как было (30° на всём)
+#ifndef HOMERSLOPE107B_OLD
+#define HOMERSLOPE107B_OLD 0
+#endif
+#define HOMER_SLOPE_TRI_NY 0.5f
+int homerSlope107bOld = HOMERSLOPE107B_OLD;
+static int slopeIsTerrain(const ColWorld *w, float x, float z, float top, float bottom) {
+  if (homerSlope107bOld) return 0;
+  float y, n[3] = {0.f, 1.f, 0.f}; int mat = 0; uint32_t ref = 0;
+  if (!colGroundMatId(w, x, z, top, bottom, &y, n, &mat, &ref)) return 0;
+  return (ref >> 29) == COL_TRI && n[1] >= HOMER_SLOPE_TRI_NY;
+}
 // круг Гомера против кузова машины (прямоугольник в xz), выталкивание наружу
-static void pushFromCar(Homer *H, const HomerCar *c) {
-  if (!c || !c->ok) return;
-  const CarBox *b = &c->box;
-  if (H->y >= c->roof - .15f || H->y + HOMER_HEIGHT < c->y + .1f) return;   // выше крыши / ниже
-  float dx = H->x - b->x, dz = H->z - b->z, rx = -b->fz, rz = b->fx;
-  float a = dx * b->fx + dz * b->fz, s = dx * rx + dz * rz;
-  float ca = clampf(a, -b->hl, b->hl), cs = clampf(s, -b->hw, b->hw);
+// 1332 (Роб, 108 на PSP: «не могу запрыгнуть на машины сверху: Mr. Plow, школьный автобус»; обе куплены, то есть своя машина игрока). Чужие машины (трафик, миссий) Гомер пускает на крышу, когда стопы выше крыши минус ступенька
+// HOMER_STEP (traffic.c solidCar, msncar.c mcSolid), своя выталкивала его, пока стопы не выше крыши минус 0,15: на пределе прыжка (стопы ≈ 2,8 м) это закрывало крыши выше ≈ 2,95 м, автобус и Mr. Plow не брались ни разу из 45 попыток стенда
+// (tests/roof1332). Теперь та же ступенька, что у чужих. HOMER_OWNROOF1332_OLD=1 / файл ownroof1332old / flag ownroof1332old 1 — как было
+#ifndef HOMER_OWNROOF1332_OLD
+#define HOMER_OWNROOF1332_OLD 0
+#endif
+int homerOwnRoof1332Old = HOMER_OWNROOF1332_OLD;
+static void pushFromBox(Homer *H, float bx, float bz, float bfx, float bfz, float bhl, float bhw) {   // круг Гомера против прямоугольника (xz), выталкивание наружу
+  float dx = H->x - bx, dz = H->z - bz, rx = -bfz, rz = bfx;
+  float a = dx * bfx + dz * bfz, s = dx * rx + dz * rz;
+  float ca = clampf(a, -bhl, bhl), cs = clampf(s, -bhw, bhw);
   float ea = a - ca, es = s - cs, d2 = ea * ea + es * es, R = HOMER_RADIUS;
   if (d2 >= R * R) return;
   float na, ns, push;
   if (d2 > 1e-8f) { float d = sqrtf(d2); na = ea / d; ns = es / d; push = R - d; }
   else {                                                     // центр внутри: по ближайшей стороне
-    float pa = b->hl - fabsf(a), ps = b->hw - fabsf(s);
+    float pa = bhl - fabsf(a), ps = bhw - fabsf(s);
     if (pa < ps) { na = a < 0 ? -1.f : 1.f; ns = 0.f; push = pa + R; } else { na = 0.f; ns = s < 0 ? -1.f : 1.f; push = ps + R; }
   }
-  float nx = na * b->fx + ns * rx, nz = na * b->fz + ns * rz;
+  float nx = na * bfx + ns * rx, nz = na * bfz + ns * rz;
   H->x += nx * push; H->z += nz * push;
   float vn = H->vx * nx + H->vz * nz; if (vn < 0.f) { H->vx -= vn * nx; H->vz -= vn * nz; }
 }
-// крыша машины как земля (можно запрыгнуть и стоять)
+// 1332: свои этажи (HomerCar.deck): каждый блок отталкивает, пока стопы не выше его верха со ступенькой (у одного этажа — как раньше)
+static void pushFromCar(Homer *H, const HomerCar *c) {
+  if (!c || !c->ok) return;
+  if (H->y + HOMER_HEIGHT < c->y + .1f) return;   // ниже
+  for (int i = 0; i < c->nd; i++) {
+    const HomerDeck *d = &c->deck[i];
+    if (homerOwnRoof1332Old ? H->y >= d->top - .15f : H->y + HOMER_STEP >= d->top) continue;   // выше верха блока (со ступенькой)
+    pushFromBox(H, d->x, d->z, d->fx, d->fz, d->hl, d->hw);
+  }
+}
+// крыша машины как земля (можно запрыгнуть и стоять): самый высокий этаж под точкой
 static int carRoofAt(const HomerCar *c, float x, float z, float *y) {
   if (!c || !c->ok) return 0;
-  const CarBox *b = &c->box; float dx = x - b->x, dz = z - b->z;
-  float a = dx * b->fx + dz * b->fz, s = dx * -b->fz + dz * b->fx;
-  if (fabsf(a) > b->hl - .3f || fabsf(s) > b->hw - .15f) return 0;
-  *y = c->roof; return 1;
+  int has = 0;
+  for (int i = 0; i < c->nd; i++) {
+    const HomerDeck *d = &c->deck[i]; float dx = x - d->x, dz = z - d->z;
+    float a = dx * d->fx + dz * d->fz, s = dx * -d->fz + dz * d->fx;
+    float ma = fminf(.3f, d->hl * .5f), ms = fminf(.15f, d->hw * .5f);   // поле у края: обычная машина .3 / .15
+    if (fabsf(a) > d->hl - ma || fabsf(s) > d->hw - ms) continue;
+    if (!has || d->top > *y) { *y = d->top; has = 1; }
+  }
+  return has;
 }
 
 // край без дна (HOMER_VOID_WALL, homer.h): из (x0, z0) в (x1, z1), под которыми нет опоры не выше top. 1 — край (шаг отменить).
@@ -671,7 +735,7 @@ static void stepMove(Homer *H, const ColWorld *w, const HomerCar *car, float dt,
   // сверка g04-homer ГОМЕР 4.1: опора — наклон не круче 30° (нормаль.y > 0,866); круче не опора. Порт: на крутую грань до HOMER_SLOPE_RISE над
   // последней годной опорой (бордюр, ступень) ступить можно; выше — стена, шаг отменяется, и если уже стоит на крутом — стекает вниз.
   // HOMER_SLOPE30_OLD=1 — любой наклон
-  if (!HOMER_SLOPE30_OLD && w && has && gy == colGy && colNy < HOMER_SLOPE_NY && colNy > .02f) {
+  if (!HOMER_SLOPE30_OLD && w && has && gy == colGy && colNy < HOMER_SLOPE_NY && colNy > .02f && !slopeIsTerrain(w, H->x, H->z, top, ny - 200.f)) {
     if (H->grounded && gy > H->supY + HOMER_SLOPE_RISE) {
       float hl = sqrtf(n[0] * n[0] + n[2] * n[2]), dxn = hl > 1e-4f ? n[0] / hl : 0.f, dzn = hl > 1e-4f ? n[2] / hl : 0.f;   // горизонталь нормали — вниз по склону
       float mvx = H->x - x0, mvz = H->z - z0;
@@ -1234,6 +1298,10 @@ int homerEject(Homer *H, const ColWorld *w, const HomerCar *car, float fromX, fl
 #endif
 #define HOMER_CARHIT_V 3.f      // м/с: как TR_PED_HIT_V прохожих
 #define HOMER_CARHIT_COOL 1.5f  // с: пауза до следующего удара (пока встаёт)
+#ifndef HOMERHIT109_OLD
+int rb_HOMERHIT109_OLD __attribute__((weak)) = 0;   // 109 (rollback.txt): 1 — прежнее: сбивает и боком, и стоящего на крыше
+#define HOMERHIT109_OLD rb_HOMERHIT109_OLD
+#endif
 static int carHitsHomer(Homer *H, const HomerCar *c) {
   // сверка g04-homer ГОМЕР 5.7: пешего сбивают только машины ИИ миссий (c->hostile: погоня, цели), порог 1 м/с; трафик, припаркованные и чужие — обычные толчки по столкновению.
   // HOMER_CARHIT_ALL_OLD=1 — любая машина быстрее HOMER_CARHIT_V (3 м/с)
@@ -1242,6 +1310,10 @@ static int carHitsHomer(Homer *H, const HomerCar *c) {
   const CarBox *b = &c->box; float dx = H->x - b->x, dz = H->z - b->z, a = dx * b->fx + dz * b->fz, s = -dx * b->fz + dz * b->fx, r = HOMER_RADIUS;
   if (fabsf(a) >= b->hl + r || fabsf(s) >= b->hw + r) return 0;
   float vx = b->fx * c->v, vz = b->fz * c->v, sp = fabsf(c->v);
+  if (!HOMERHIT109_OLD) {   // 109 (С-г1, сверка Fable-2): сбивает машина, которая ЕДЕТ НА Гомера: он у переднего (по ходу) торца и в ширине кузова; бок проезжающей машины только толкает (общая коллизия); стоящего на крыше (выше 0,8 м над началом машины) не сбивает
+    float uxd = c->v < 0.f ? -b->fx : b->fx, uzd = c->v < 0.f ? -b->fz : b->fz, au = dx * uxd + dz * uzd;
+    if (au < b->hl - 0.3f || H->y - c->y > 0.8f) return 0;
+  }
   if (vx * dx + vz * dz <= 0.f) return 0;                     // уезжает от Гомера (он стоит позади бампера): не сбивает
   // отлёт: по ходу машины, добавка наружу от кузова
   float ox = fabsf(a) - b->hl > fabsf(s) - b->hw ? (a < 0 ? -b->fx : b->fx) : (s < 0 ? b->fz : -b->fz), oz = fabsf(a) - b->hl > fabsf(s) - b->hw ? (a < 0 ? -b->fz : b->fz) : (s < 0 ? -b->fx : b->fx);
@@ -1358,8 +1430,18 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     if (!HOMER_RIDE_OLD && H->onCar && car && car->ok && H->grounded && H->carPrevOk) {
       const CarBox *cb_ = &car->box; float ang = atan2f(cb_->fx, cb_->fz), da = wrapPi(ang - H->carPrevAng), c_ = cosf(da), s_ = sinf(da);
       float rx = H->x - H->carPrevX, rz = H->z - H->carPrevZ;
-      H->x = cb_->x + rx * c_ + rz * s_; H->z = cb_->z - rx * s_ + rz * c_; H->h = wrapPi(H->h + da); H->y += car->roof - H->carPrevRoof;
-      H->vx = H->vz = 0.f;
+      H->x = cb_->x + rx * c_ + rz * s_; H->z = cb_->z - rx * s_ + rz * c_; H->h = wrapPi(H->h + da); H->y += (H->carDeck >= 0 && H->carDeck < car->nd ? car->deck[H->carDeck].top : car->roof) - H->carPrevRoof;
+      if (homerRide107bOld) H->vx = H->vz = 0.f;
+      else { float vx_ = H->vx * c_ + H->vz * s_, vz_ = -H->vx * s_ + H->vz * c_; H->vx = vx_; H->vz = vz_; }   // Г5: собственный ход остаётся, поворачивается с машиной
+    }
+    // 107b Г4: крыша чужой машины едет вместе с ней, как своя (положение и поворот вокруг центра кузова, высота крыши)
+    if (!homerRide107bOld && H->rideOk && homerRideFn && H->grounded) {
+      HomerRide cur;
+      if (homerRideFn(homerRideUser, H->rideId, H->x, H->y, H->z, &cur)) {
+        float da = wrapPi(cur.ang - H->rideAng), c_ = cosf(da), s_ = sinf(da), rx = H->x - H->rideX, rz = H->z - H->rideZ;
+        H->x = cur.x + rx * c_ + rz * s_; H->z = cur.z - rx * s_ + rz * c_; H->h = wrapPi(H->h + da); H->y += cur.roof - H->rideRoof;
+        float vx_ = H->vx * c_ + H->vz * s_, vz_ = -H->vx * s_ + H->vz * c_; H->vx = vx_; H->vz = vz_;
+      } else H->rideOk = 0;   // машина исчезла
     }
     // сверка g04-homer P05-1 / P02-24: праздничный клип — малый стик прерывает, большой не прерывает и держит на месте
     if (H->celKind) {
@@ -1405,11 +1487,20 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     if (H->grounded || !HOMER_PAD_ANY_OLD) tryBounce(H, w);   // подкидывающая точка (JMP1); P02-Д4: в любой фазе — вход в объём (действие обрывается)
     // сверка g04-homer P02-22: стоим ли на крыше машины (земля — крыша, а не мир): для переезда вместе с ней и сёрфинга
     H->onCar = 0;
-    if (H->grounded && car && car->ok && fabsf(H->y - car->roof) < .02f && fabsf(H->y - H->groundY) < .02f) {
-      const CarBox *cb2 = &car->box; float ex_ = H->x - cb2->x, ez_ = H->z - cb2->z;
-      if (fabsf(ex_ * cb2->fx + ez_ * cb2->fz) <= cb2->hl && fabsf(-ex_ * cb2->fz + ez_ * cb2->fx) <= cb2->hw) H->onCar = 1;
+    if (H->grounded && car && car->ok && fabsf(H->y - H->groundY) < .02f) {
+      for (int di_ = 0; di_ < car->nd; di_++) {   // 1332 (Б): на каком этаже стоят ступни (у машины без данных — один, как было)
+        const HomerDeck *dk_ = &car->deck[di_]; if (fabsf(H->y - dk_->top) >= .02f) continue;
+        float ex_ = H->x - dk_->x, ez_ = H->z - dk_->z;
+        if (fabsf(ex_ * dk_->fx + ez_ * dk_->fz) <= dk_->hl && fabsf(-ex_ * dk_->fz + ez_ * dk_->fx) <= dk_->hw) { H->onCar = 1; H->carDeck = di_; H->carPrevRoof = dk_->top; break; }
+      }
     }
-    if (H->onCar) { H->carPrevOk = 1; H->carPrevX = car->box.x; H->carPrevZ = car->box.z; H->carPrevAng = atan2f(car->box.fx, car->box.fz); H->carPrevRoof = car->roof; } else H->carPrevOk = 0;
+    if (H->onCar) { H->carPrevOk = 1; H->carPrevX = car->box.x; H->carPrevZ = car->box.z; H->carPrevAng = atan2f(car->box.fx, car->box.fz); } else H->carPrevOk = 0;
+    // 107b Г4: стоим ли на крыше чужой машины — запомнить её и положение для переноса в следующем кадре
+    H->rideOk = 0;
+    if (!homerRide107bOld && !H->onCar && H->grounded && homerRideFn) {
+      HomerRide pr; int id = homerRideFn(homerRideUser, -1, H->x, H->y, H->z, &pr);
+      if (id > 0) { H->rideOk = 1; H->rideId = id - 1; H->rideX = pr.x; H->rideZ = pr.z; H->rideAng = pr.ang; H->rideRoof = pr.roof; }
+    }
     // анимация
     if (H->clip == H->cJKick && !H->hitSent && H->clipT >= (HOMER_JKICK_ONCE_OLD ? 5.f : 6.f) / 30.f) kickHit(H, .7f, .4f);   // удар ногой: кадры 4–11 (P02-11: кадр удара 6, 0,2 с)
     if (H->grounded == 3) {                                   // приземлился
@@ -1556,7 +1647,7 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
     // Правка Роба 212 (03.10: «Гомер обходит к двери очень долго — если далеко, садиться с другой стороны или через ирис-кружок»):
     // путь к двери водителя (с обходом угла) длиннее HOMER_IRIS_PATH — сразу на сиденье под ирисом (тот же переход, что при
     // занятой двери); рядом с дверью — как было, дверь и посадка анимацией оригинала. HOMER_IRIS_PATH = 0 (-D) — прежнее
-    if (H->irisOn && H->st <= dt * 1.5f && HOMER_IRIS_PATH > 0.f) {
+    if ((homerWalk1284Old || !homerFar1367Old) && H->irisOn && H->st <= dt * 1.5f && HOMER_IRIS_PATH > 0.f) {   // 1367: обход дальше HOMER_IRIS_PATH — ирис для всех героев и машин
       float path = hypotf(tx - H->x, tz - H->z) + hypotf(p[0] - tx, p[2] - tz);
       if (path > HOMER_IRIS_PATH) { seatUnderIris(H); break; }
     }
@@ -1570,7 +1661,7 @@ static void homerUpdateBody(Homer *H, const ColWorld *w, const HomerCar *car, co
       if (fmaxf(da, ds) < .25f) { seatUnderIris(H); break; }
       H->stallD = 1e9f; H->stallT = 0.f;
     }
-    if (H->irisOn) {
+    if ((homerWalk1284Old || !homerFar1367Old) && H->irisOn) {   // 1367: упёрся — ирис через 0,6 с для всех героев и машин
       float dn = hypotf(tx - H->x, tz - H->z) + hypotf(p[0] - tx, p[2] - tz);
       if (dn < H->stallD - .15f) { H->stallD = dn; H->stallT = 0.f; }
       else if ((H->stallT += dt) > .6f) { seatUnderIris(H); break; }
@@ -1990,6 +2081,45 @@ static void mulR(const float R[9], const float v[3], float o[3]) {
 #define HOMER_SOLID_CACHE_OLD 0
 #endif
 #define HS_CACHE_M 6.f
+// 107b (сверка Fable-2 П7/П8; семья «упёрся в невидимое пешком»: 1153, 1222, видео 1265 0:40–1:11): объём стейтпропа для пешего считался (а) в позе кадра 0, хотя у машины он едет
+// за суставом анимации (stateprops.c followOffsets: паук L7 уходит до 5,7 м, автомат 0,26 м, у 35 экземпляров L1–L7 расхождение больше 0,2 м), и (б) даже в состоянии, где ничего не рисуется
+// (№1248е у машины есть, у Гомера не было). Теперь оба правила общие: spVolumeShift и spNoSolid. HOMERSP107B_OLD=1 / flag homersp107bold 1 — как было
+#ifndef HOMERSP107B_OLD
+#define HOMERSP107B_OLD 0
+#endif
+int homerSp107bOld = HOMERSP107B_OLD;
+// 107b, правка 1284 (слово Роба 13.11 «всё как в оригинале»): посадка издалека — всегда пешком к двери водителя. Убраны правила порта, отправлявшие под ирис вместо ходьбы: путь к двери длиннее HOMER_IRIS_PATH (правка 212)
+// и «не приблизился на 0,15 м за 0,6 с» (правка 285, часть про упор). Остаются данные оригинала: SetIrisTransition в .con машины, занятая/закрытая дверь, машина едет, Гомер внутри габарита; таймаут ходьбы 1,5×путь/4 м/с (P02-32) — ставит к двери.
+// HOMERWALK1284_OLD=1 / flag homerwalk1284old 1 / файл homerwalk1284old рядом с EBOOT — как было
+#ifndef HOMERWALK1284_OLD
+#define HOMERWALK1284_OLD 0
+#endif
+int homerWalk1284Old = HOMERWALK1284_OLD;
+// 1367 (Роб, «сотый раз»: «если игрок долго обходит машину, чтобы сесть, он садится ирисом; у Гомера и Барта это есть, а Мардж свой джип обходит полтора часа»): правка 1284 («издалека всегда пешком») сняла ирис для обхода и упора у ВСЕХ героев;
+// одно правило для всех героев (Гомер, Барт, Лиза, Мардж, Апу) и всех машин: путь к двери водителя с обходом длиннее HOMER_IRIS_PATH (4,5 м, правка 212; ≈1,1 с ходьбы) — сразу на сиденье под ирисом; не приблизился к двери на 0,15 м за 0,6 с (упёрся, правка 285) —
+// тоже ирис, а не бесконечный обход у кузова (высокий джип Мардж: упор в запаску и колёса). Остаются данные оригинала: SetIrisTransition, занятая дверь, едущая машина, внутри габарита. Тот же код у всех: правило не знает ни героя, ни машины.
+// HOMERFAR1367_OLD=1 / flag homerfar1367old 1 — как после 1284 (издалека пешком, таймаут 1,5×путь/4 м/с ставит к двери)
+#ifndef HOMERFAR1367_OLD
+#define HOMERFAR1367_OLD 0
+#endif
+int homerFar1367Old = HOMERFAR1367_OLD;
+#ifndef HOMERP9107_OLD
+#define HOMERP9107_OLD 0   // 107b П9: 1 — отреагировавший стейтпроп остаётся твёрдым для Гомера (как было; flag homerp9107old 1)
+#endif
+int homerP9107Old = HOMERP9107_OLD;
+// 107b Г4/Г5 (сверка Fable-2, оригинал: персонаж на опоре движется вместе с ней как сдвиг и поворот в осях опоры, собственный ход сохраняется): (Г5) на крыше своей машины перенос не обнуляет
+// собственную скорость Гомера (раньше vx = vz = 0 каждый кадр: по крыше он полз 0,3–0,7 м/с, а не шёл), её только поворачивает вместе с машиной; (Г4) то же для крыши любой другой машины
+// (трафик, припаркованные, миссионные): раньше она давала только высоту, и едущая машина уезжала из-под ног. HOMERRIDE107B_OLD=1 / flag homeride107bold 1 — как было
+#ifndef HOMERRIDE107B_OLD
+#define HOMERRIDE107B_OLD 0
+#endif
+int homerRide107bOld = HOMERRIDE107B_OLD;
+HomerRideFn homerRideFn; void *homerRideUser;
+#define HS_FOLLOW_M 7.f   // запас на отход объёма за суставом (макс. 5,66 м у паука L7)
+static float hsFollowM(const StateProps *sp, unsigned i) {
+  if (homerSp107bOld) return 0.f;
+  unsigned t = sp->inst[i].type; return sp->follow && t < sp->nfollow && sp->follow[t] ? HS_FOLLOW_M : 0.f;
+}
 #define HS_CACHE_MAX 1024
 unsigned homerSolidFrame;   // != 0 только внутри homerUpdate; меняется на каждый вызов
 static float *hsBrT; static const void *hsBrOwner; static unsigned hsBrN;
@@ -2013,7 +2143,7 @@ int homerSolidSprops(void *user, float *x, float *z, float y, float r, float *to
     for (unsigned i = 0; i < sp->ninst; i++) {
       const SpRun *R = &sp->run[i]; const SpType *T = &sp->type[sp->inst[i].type];
       if (!R->alive || !R->colOn || !T->nCol || T->cls == 2) continue;
-      float dx0 = *x - R->x, dz0 = *z - R->z, br = hsTypeBr(sp, sp->inst[i].type) + r + .5f + HS_CACHE_M;
+      float dx0 = *x - R->x, dz0 = *z - R->z, br = hsTypeBr(sp, sp->inst[i].type) + r + .5f + HS_CACHE_M + hsFollowM(sp, i);
       if (dx0 * dx0 + dz0 * dz0 > br * br) continue;
       if (cacheN >= HS_CACHE_MAX) { cacheOk = 0; break; }
       cacheList[cacheN++] = i; }
@@ -2025,13 +2155,17 @@ int homerSolidSprops(void *user, float *x, float *z, float y, float r, float *to
     const SpRun *R = &sp->run[i]; const SpType *T = &sp->type[sp->inst[i].type];
     if (!R->alive || !R->colOn || !T->nCol || T->cls == 2) continue;
     float dx0 = *x - R->x, dz0 = *z - R->z, br = (useCache ? hsTypeBr(sp, sp->inst[i].type) : sqrtf(T->h[0] * T->h[0] + T->h[1] * T->h[1] + T->h[2] * T->h[2]) +
-              sqrtf(T->c[0] * T->c[0] + T->c[2] * T->c[2])) + r + .5f;
+              sqrtf(T->c[0] * T->c[0] + T->c[2] * T->c[2])) + r + .5f + hsFollowM(sp, i);
     if (dx0 * dx0 + dz0 * dz0 > br * br) continue;
+    if (!homerP9107Old && spReacted107(R, T)) continue;   // 107b П9 (сверка Fable-2, оригинал): сбитый/отреагировавший стейтпроп (состояние не начальное, не куст) пешего не держит — как машину
+    if (!homerSp107bOld && spNoSolid(sp, i)) continue;   // 107b П8: ничего не рисуется и ни во что не перейдёт — пешего не держит (как машину, №1248е)
+    float shOld[3] = {0, 0, 0}, shW[3] = {0, 0, 0};
+    if (!homerSp107bOld && hsFollowM(sp, i) > 0.f) spVolumeShift((StateProps *)sp, i, shOld, shW);   // 107b П7: объём едет за суставом, как у машины
     for (unsigned k = 0; k < T->nCol; k++) {
       const SpCol *C = &sp->col[T->firstCol + k];
       if (C->second && !R->col2On) continue;
-      float c[3], a[3][3], ey = 0.f;
-      mulR(R->R, C->c, c); c[0] += R->x; c[1] += R->y; c[2] += R->z;
+      float c[3], a[3][3], ey = 0.f, cc[3] = {C->c[0] + shOld[0], C->c[1] + shOld[1], C->c[2] + shOld[2]};
+      mulR(R->R, cc, c); c[0] += R->x + shW[0]; c[1] += R->y + shW[1]; c[2] += R->z + shW[2];
       for (int m = 0; m < 3; m++) mulR(R->R, C->a + 3 * m, a[m]);
       int circle = C->kind == 1 || (C->kind == 2 && fabsf(a[1][1]) > .9f);
       if (C->kind == 1) ey = C->h[0]; else for (int m = 0; m < 3; m++) ey += C->h[m] * fabsf(a[m][1]);

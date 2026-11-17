@@ -358,7 +358,7 @@ void bwStep(BotWorld *w, unsigned buttons, float ax, float ay) {
 #endif
   if ((p.hit & GP_TRIANGLE) && w->haveHomer && w->haveCol && !(w->haveMsn && gameMsnWantsAction(&w->msn))) { gameTriangle(G); p.hit &= ~GP_TRIANGLE; }
   G->collRoom = w->room >= 0 ? collectRoomId(rooms.room[w->room].name) + 1 : 0;   // гэги комнат — только в своей комнате
-  if ((p.hit & GP_START) && w->haveCol) { gameReset(G); w->props.havePreviousCar = 0; w->st.resets++; }   // RESET CAR
+  if ((p.hit & GP_START) && w->haveCol && !(w->haveMsn && gameMsnResetBlocked(&w->msn))) { gameReset(G); w->props.havePreviousCar = 0; w->st.resets++; }   // RESET CAR
   if (w->haveCol) {
     CarInput in; gameCarInput(G, &p, &in); gameCarLimits(G, &in); gameExitAssist(G, &in); if (w->haveMsn) gameMsnFreezeCar(&w->msn, &in); BWP(0, gameCarStep(G, &in, BW_DT));
     if (w->car.wallV > w->st.maxWallV) w->st.maxWallV = w->car.wallV;
@@ -366,7 +366,8 @@ void bwStep(BotWorld *w, unsigned buttons, float ax, float ay) {
 #ifdef BW_HAVE_AO
     if (w->haveAo) {   // объекты уровня: действие, кадр клипа, живые объёмы COL1 (после spUpdate — поза этого кадра), как main.c
       int ft = gameOnFoot(G);
-      aoStep(&w->ao, &w->sp, &col, ft ? w->homer.x : w->car.x, ft ? w->homer.y : w->car.y, ft ? w->homer.z : w->car.z, ft, w->aoAct, BW_DT); w->aoAct = 0; }
+      aoStep(&w->ao, &w->sp, &col, ft ? w->homer.x : w->car.x, ft ? w->homer.y : w->car.y, ft ? w->homer.z : w->car.z, ft, w->aoAct, BW_DT); w->aoAct = 0;
+      if (ft && w->ao.rideOn && w->haveHomer) { w->homer.x += w->ao.rideD[0]; w->homer.z += w->ao.rideD[2]; w->homer.h += w->ao.rideYaw; } }   // №1274: Гомер на платформе едет с ней, как main_loop.h
 #endif
   }
   float fx = sinf(w->car.h), fz = cosf(w->car.h), px = w->car.x, pz = w->car.z;

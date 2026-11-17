@@ -155,6 +155,7 @@ void uiSetRadar(float x, float z, float heading);  // engine metres + main.c hea
 // Message box (objective box with the mission icon).  text: Latin-1, wraps to 2 lines;
 // icon 0..31 = UI_F_OBJICON order; seconds <= 0 = until replaced.  NULL/"" hides it.
 void uiMessage(const char *text, int icon, float seconds);
+void uiMessageStage(const char *text, int icon, float seconds);   // №1264: старт этапа — всегда всплывает заново
 void uiObjectiveCollapse(int on);   // 1 (по умолчанию): задание через 3.5 с сворачивается — значок в угол вверху слева (как PS2); 0 — рамка всё время
 extern int icon993Old;                       // №993: 1 — значок дома №623 вне задания, как было (красный контроль)
 int uiHomeShown(void);                       // №993: диагностика — в углу сейчас значок дома №623
@@ -179,6 +180,7 @@ int  uiBriefPicSettled(int frames);   // №612: картинка карточк
 void uiBriefAnim(int on);        // №512: 1 — карточка миссии появилась (въезд), 0 — нажат Continue (выезд)
 void uiBriefHold(void);        // №994: брифинг открыт, карточка ещё не готова: рисуется только LOADING, въезд стартует следующим uiBriefAnim(1) (CARD994_OLD / flag card994 0 — без этого)
 void uiCard994Set(int old);       // №994: 1 — карточка как в TEST70 (стоит на месте до второго запуска въезда)
+void uiProxTint(unsigned abgr);   // 1318: цвет полосы шкалы близости, ABGR (красный 0xff0000ff «оторвись», зелёный 0xff00ff00 «не отставай»); 0 — по данным страницы
 void uiBriefExitGo(void);         // №633: конец первого кадра после Continue — карточка начинает выезд (до этого стоит)
 int  uiBriefExitBusy(void);      // 1 — карточка ещё уезжает (после Continue): main рисует её поверх мира (uiDrawBriefing)
 // Провал миссии (Scrooby MissionOver.scr, экран UI_SCREEN_MISSIONOVER): FAILED, причина, подсказка, «Retry Mission?»,
@@ -310,6 +312,16 @@ void uiRadarAddH(int type, float x, float z, float heading);   // правка 1
 void uiRadarHarassOld(int on);                    // №241: 1 — стрелка полиции за краем радара не показывается (прежнее)
 void uiRadarConeOff(int on);                       // отрицательный контроль правки 50: клин вверх всегда, все значки у обода
 void uiBriefMixedCase(int on);                     // отрицательный контроль правки 52: название брифинга не прописными
+extern unsigned uiOvForce1308;   // служебно: принудительная маска оверлеев HUD (смоук)
+extern int uiOvBar1308Old;   // 1308: 1 — шкалы урона/близости вне стопки оверлеев (как было)
+extern int uiLoadMark1366Old;   // 1366: 1 — знак на всех экранах ожидания, как в 1360 (по умолчанию знак только на экране ириса)
+extern int uiLoadMark1360Old;   // 1360: знак загрузки вместо надписи LOADING (Old=1 — надпись)
+void uiLoadMarkSet(const void *rgba, int w, int h, int aw, int ah);   // loadmark.bin (tools/loadmark_export.py)
+int uiLoadMarkReady(void); void uiLoadMarkDraw(void);
+extern int uiPauseObjPos1350Old;   // 1350: рамка задания на паузе по центру под рамкой меню (Old=1 — на месте HUD, как 1347)
+extern int uiPauseObj1347Old;   // 1347: на паузе окно задания с текстом этапа (Old=1 — как было, окна нет)
+extern int uiLbSkip1322Old, uiLbSkip1322Dy;   // 1322: значок ✕ у SKIP экрана разговора ниже на Dy px; Old=1 — как было
+extern int uiCardIcon1302Old, uiCardIcon1302Dy;   // 1302: значки ✕/△ карточки брифинга ниже на Dy px; Old=1 — как было
 void uiCoin3D(int on);                             // правка 79: счёт монет — плоскую иконку не рисовать (3D-монета — main.c)
 int  uiCoinIcon(float *cx, float *cy, float *h, float *alpha);   // место иконки монеты этого кадра; 0 — счёта не было
 const char *uiBriefTitle(void);                    // служебно: название брифинга, как нарисовано
@@ -389,6 +401,7 @@ void uiScrPauseLeakOld(int on);
 int  uiScrMenuInput(int screen, int *sel, unsigned buttonsJustPressed);
 // Текст строки k из кода (слот сохранения, сообщение с номером слота): подпись строки меню k и текст с полем ROW<k>
 // рисуются строкой s (Latin-1; указатель живёт, пока открыт пакет), NULL — как в пакете. Сбрасывается uiScrOpen/uiScrClose
+void uiScrMsgScale(float k, float dy);   // 1327: текст сообщения (поле ROW11) экрана второго пакета рисуется в масштабе k (<1) внутри той же рамки и сдвигается по вертикали на dy (px, вверх −); k 1 — как есть. Длинная подсказка запертого этапа (savemenu.c hintNotice)
 void uiScrRowText(int screen, int row, const char *s);   // текст строки row экрана screen второго пакета (NULL — из пакета)
 const char *uiScrRowShown(int screen, int row);   // что нарисовано в строке меню row экрана screen (с подменами из кода; гейт сохранений)
 int  uiScrScreens(void);                           // экранов во втором пакете (0 — не открыт)

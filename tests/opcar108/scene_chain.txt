@@ -1,0 +1,70 @@
+flag menu
+flag lvset 1
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=1 300
+wait 8
+flag player
+flag msn
+wait 2
+scene C1
+flag drive 100
+wait 12
+flag golevel 2
+waitfor LEVEL ev=load n=2 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C2
+flag drive 100
+wait 12
+flag golevel 3
+waitfor LEVEL ev=load n=3 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C3
+flag drive 100
+wait 12
+flag golevel 4
+waitfor LEVEL ev=load n=4 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C4
+flag drive 100
+wait 12
+flag golevel 5
+waitfor LEVEL ev=load n=5 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C5
+flag drive 100
+wait 12
+flag golevel 6
+waitfor LEVEL ev=load n=6 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C6
+flag drive 100
+wait 12
+flag golevel 7
+waitfor LEVEL ev=load n=7 300
+wait 6
+flag player
+flag msn
+wait 2
+scene C7
+flag drive 100
+wait 12
+scene CEND
+flag stop
+wait 2
+end

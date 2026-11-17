@@ -16,7 +16,7 @@
 #include "stateprops.h"
 
 #ifndef RF_OLD
-#define RF_OLD 7   // Политики проверены по картинке; скорость PSP ещё не измерена
+#define RF_OLD 5   // 108 (О3 шаг 1, слово дирижёра): RF_DL включён по умолчанию (повтор клетки без чтения куска; кадр сверен 06.10, выкл: файл rfdlold / flag rfold 7); RF_GG и RF_SP по-прежнему прежние. Было 7
 #endif
 #define RF_GG 1
 #define RF_DL 2

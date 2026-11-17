@@ -1,0 +1,10 @@
+# красный контроль гейта: газ не нажат — STUCK не бывает
+flag nosave
+scene STK0
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 8
+wait 1
+flag trfstill
+wait 9
+end

@@ -52,6 +52,7 @@ typedef struct MsnFile {
 
 /* Validates everything (bounds of every index) so the runtime never checks again.
  * data must stay alive and be 4-byte aligned. Returns 0 on success, else writes err. */
+extern int msnRetrying109;   /* 109: 1 — cleanup перезапуска, не конец миссии */
 int msn_open(MsnFile *f, const void *data, size_t size, char *err, int errlen);
 
 const char   *msn_str(const MsnFile *f, uint32_t s);
@@ -90,6 +91,7 @@ typedef struct { float x, y, z; } MsnVec3;
 /* point inside any trigger volume of the locator (sphere / oriented box); if the locator has no
  * trigger, inside the sphere of default_radius around its position. */
 int msn_loc_contains(const MsnFile *f, const MsnLoc *l, MsnVec3 p, float default_radius);
+
 
 /* ---------------- engine interface ---------------- */
 enum MsnWhen {
@@ -204,7 +206,16 @@ typedef struct MsnWorld {
     int arrested;             /* полиция ловит игрока (busted): то же */
     int vehicle_boom;         /* 0 — хост не знает; 1 — машина под игроком взрывается (анимация идёт); 2 — анимация взрыва доиграна (P07-13) */
     const char *entering;     /* P07-32: имя интерьера, в который игрок ВХОДИТ (переход начался), NULL — нет */
+    /* A1.1 (сверка Fable 13.11): габарит машины игрока для входа в объём цели; car_valid = 0 — хост не знает (точка, как раньше). Курс (fx,fz) = (sin h, cos h) */
+    int car_valid; float car_hw, car_hl, car_hh, car_ofs, car_fx, car_fz, car_cy;   /* полуширина, полудлина, полувысота, сдвиг кузова вдоль, курс, высота центра кузова над player.y */
 } MsnWorld;
+#ifndef MSN_CARREACH_OLD
+int rb_MSN_CARREACH_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
+#define MSN_CARREACH_OLD rb_MSN_CARREACH_OLD   /* A1.1: 1 — машина входит в объём только центром (прежнее) */
+#endif
+/* A1.1: вход машины в объём локатора как в оригинале: отсев по |центр объёма - центр машины| < sqrt(полуширина + полувысота) + радиус объёма; затем шар объёма: центр машины в r + 1,5 м
+   либо один из четырёх углов кузова внутри; ящик: центр или угол внутри. Пешком (car_valid = 0) — только точка. MSN_CARREACH_OLD=1 — всегда точка */
+int msn_loc_contains_car(const MsnFile *f, const MsnLoc *l, const MsnWorld *w, float default_radius);
 
 enum MsnInput { MSN_IN_DIALOGUE_DONE = 1, MSN_IN_FMV_DONE, MSN_IN_BOSS_HIT, MSN_IN_CARGO_LOST,
                 MSN_IN_HIT_VEHICLE /* name = rammed vehicle */, MSN_IN_COLLECTED /* value = item index */,
@@ -230,7 +241,10 @@ typedef struct MsnRuntime {
     int phase;                        /* 0 intro, 1 main                              */
     int stage;                        /* index inside phase                           */
     int cp_phase, cp_stage;           /* checkpoint                                   */
-    int cp_timer, restoring; float cp_remaining;
+    int cp_timer, restoring, replaying;
+    int scene_busy, hold_done, hold_log; float hold_t;   /* 1324: хост ставит scene_busy, пока под игроком не готовы клетки; hold_t — сколько этап ждал; hold_log — что писать в журнал (мс; ≥1000000 — по сроку; −1 нечего) */
+    int load_busy; float load_wait;   /* 109 (в/г, ПОРЯДОК_ЗАГРУЗКИ §4): хост каждый кадр ставит 1, пока модели машин/персонажей следующего этапа ещё не в памяти; этап поездки ждёт пустую очередь не дольше MSN_LOADWAIT_S, мир идёт */   /* replaying: идёт повтор команд прежних этапов при перезапуске с точки (A2.5) */
+    float cp_remaining;
     int status, fail;
     float delay;
     int auto_bonus;                   /* 1 (default): action button next to a bonus giver in free roam starts it */
@@ -274,6 +288,8 @@ typedef struct MsnRuntime {
     int buy_fallback;                 /* круг 5, P06-24: хост не смог поставить купленную машину игроку — этап buycar закрывается по владению, как раньше */
     float hit_delay;                  /* P07-10: удар по цели dump засчитан, предмет выпадет через 1 с (<= 0 — ждать удара) */
 } MsnRuntime;
+extern int msnTimerFloor1324Old, msnTimerHold1324Old;
+extern int msnLockIcon1321Old;   /* 1321: 1 — после запертого этапа значок следующего не обновляется, как раньше (msn_run.c) */
 
 enum { MSN_REG_NPC = 1, MSN_REG_VEHICLE, MSN_REG_PROP, MSN_REG_BONUS, MSN_REG_SELLER };
 
@@ -301,6 +317,9 @@ float msn_talk_reach(const MsnRuntime *rt, const MsnCmd *c_talk);
 int  msn_free_roam(const MsnRuntime *rt);
 void msn_tick(MsnRuntime *rt, float dt, const MsnWorld *w);
 /* MsnWorld.vehicle_health = health of the player's current (or last used) car, 1.0 if intact / none */
+/* A1.4 (сверка Fable 13.11): бочка L7. В оригинале: машина с бочкой на борту взрывается → бочка взрывается → сообщение о гибели предмета → этап «keepbarrel» откатывает миссию на N этапов.
+   Хост зовёт каждый кадр с признаком «машина игрока разрушена»; по переднему фронту при rt->cargo шлёт MSN_IN_CARGO_LOST. *prev — память хоста. MSN_BARRELLOST_OLD=1 — как было (сигнала нет никогда) */
+void msn_cargo_watch(MsnRuntime *rt, int car_destroyed, int *prev);
 void msn_notify(MsnRuntime *rt, int input, const char *name, int value);
 void msn_retry(MsnRuntime *rt, int from_start);
 /* сверка g07 (P06-20 / P07-23): 0 — AllowMissionAbort("false") (L1 m3sd, L2 m6sd, L6 m1sd): отказаться от начала миссии нельзя, кнопки Accept/Cancel не показывать */

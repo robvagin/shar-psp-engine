@@ -15,6 +15,7 @@
 #include "stateprops.h"
 #include "car.h"
 unsigned homerSolidFrame = 0;
+void wdFire(const char *k, const char *a, const char *i) { (void)k; (void)a; (void)i; }   // 107б: заглушка сторожа (car.c его зовёт)
 static Props props; static StateProps sp; static ColWorld world; static Car car;
 static float gUp[400], gX[400], gY[400], gZ[400]; static int gN;
 static int kicked, kickI; static float gTilt;   // gTilt: наименьшая «вертикальность» (R[1][1]) сбитого предмета за 4 с после удара; 1 — стоит прямо
@@ -88,6 +89,7 @@ static int runS(unsigned i, float x, float y, float z, float h, float v, int *wa
 }
 
 int main(int argc, char **argv) {
+  if (getenv("POLE1276OLD")) propsPoleKick1276Old = 1;   // 107б П6: красный контроль — толчок бампера 1046
   if (argc < 3) return 2; const char *mode = argv[2]; const char *only = argc > 3 ? argv[3] : 0;
   FILE *f = fopen(argv[1], "rb"); if (!f) return 2;
   fseek(f, 0, SEEK_END); long size = ftell(f); rewind(f);

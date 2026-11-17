@@ -1,0 +1,28 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 4
+scene M3_START
+flag msnmainat 301
+wait 14
+scene M3_PASS1
+flag msnpass
+wait 14
+scene M3_PASS2
+flag msnpass
+wait 14
+scene M3_PASS3
+flag msnpass
+wait 14
+scene M3_PASS4
+flag msnpass
+wait 14
+scene M3_END
+flag stop
+wait 2
+end

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(sharview C)
-add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c watchdog.c watchdog_game.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c zone3.c)
+add_executable(sharview load_fuse_io.c msio.c geguard.c main.c game.c hud.c col.c car.c props.c coins.c fx.c skid.c groundshade.c carvis.c stateprops.c ui.c ui_sfx.c tone.c surface.c svdata.c skin.c homer.c watchdog.c watchdog_game.c sound.c audio.c movie.c frontend3d.c police_fx.c msncar.c game_msn.c shop.c shop_view.c phone_view.c wardrobe_view.c msn_view.c msnart.c msnres.c mission/msn_file.c mission/msn_run.c mission/msn_ops.c mission/msn_game.c rooms.c roomcam.c carzone.c traffic.c collect.c gag_skin.c coll_stream.c transit.c msn_audio.c animobj.c savegame.c savemenu.c lang.c savefile.c msncam.c convcam.c tutorial.c memwatch.c gevb.c bonus.c bonus_audio.c ticket.c ticket_view.c fe_audio.c ending_view.c reliab.c uidiag.c bootmark.c zone3.c power.c)
 
 # TEST93 (Данные-93, C2): список обязательных файлов набора для проверки полноты при старте (viewer/setcheck.h) генерируется из tools/ship_files.sh
 # (tools/gen_setfiles.sh -> viewer/setfiles.inc); пересчёт — когда изменились правила выпуска или сам скрипт. Нет bash/ошибка — остаётся закоммиченный файл
@@ -44,8 +44,18 @@ foreach(v SHAR_JITTER_DEFAULT SHAR_RELEASE SHAR_RELEASE_KEEP_DIAG SHAR_RELEASE_K
     target_compile_definitions(sharview PRIVATE ${v}=1)
   endif()
 endforeach()
+# №1270: номер сборки для загрузочного экрана — из viewer/BUILD_NUMBER (выпускной скрипт пишет туда число следующей сборки), не руками в bootseq.h
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/BUILD_NUMBER" _shr_bn)
+string(STRIP "${_shr_bn}" _shr_bn)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/BUILD_NUMBER")
+target_compile_definitions(sharview PRIVATE SHAR_BUILD_NUM=${_shr_bn})
 # правка 103: учёт отказов памяти во всех модулях (viewer/memwatch.c)
 target_link_libraries(sharview "-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign,--wrap=free,--wrap=_malloc_r,--wrap=_calloc_r,--wrap=_realloc_r,--wrap=_memalign_r,--wrap=_free_r,--wrap=sceIoClose,--wrap=sceGuStart")   # sceIoClose: ловушка 05.10 (main.c __wrap_sceIoClose)
+# 108 шаг 0 (З-1…З-4): служебные замеры только в сборке тура (viewer/smkdiag.c, счёт sinf/cosf/atan2f/hypotf/floorf через --wrap); в игровой сборке файла и ключей нет
+if(NOT SHAR_RELEASE OR SHAR_RELEASE_KEEP_SMOKE)
+  target_sources(sharview PRIVATE smkdiag.c)
+  target_link_libraries(sharview "-Wl,--wrap=sinf,--wrap=cosf,--wrap=atan2f,--wrap=hypotf,--wrap=floorf")
+endif()
 # правки 269/273/276, ступень 0 (проба Media Engine): сторона игры viewer/me/meprobe.c — только по флагу сценария «meprobe»;
 # модуль ядра sharme.prx (код ME, метод MIST, viewer/me/vendor — MIT) собирается отдельно: make -C viewer/me, правило в
 # tools/ship_rules.txt — как ловушка вылетов viewer/kexc

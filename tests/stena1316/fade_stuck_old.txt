@@ -1,0 +1,18 @@
+# 1316: затемнение без «открыть» (SetFadeOut, после которого никто не зовёт fade-in) — новое: WATCHDOG fade-stuck через ~5 с и экран открывается; старое (fadeguard1316old 1): чёрный висит до конца
+flag nosave
+flag fadeguard1316old 1
+scene Fo
+flag golevel 2
+wait 25
+flag player 1
+wait 2
+flag msnmainat 200
+wait 10
+press cross 0.3
+wait 8
+scene BLACK
+flag fadeout 0.3
+wait 9
+scene AFTER
+wait 3
+end

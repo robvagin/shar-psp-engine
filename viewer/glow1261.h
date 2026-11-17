@@ -14,6 +14,13 @@
 #define GLOW1261_RANGE 55.f
 #define GLOW1261_PERIOD 1.6f
 #define GLOW1261_ARCH_W 3.0f   // полуширина триггера, м: ≥ — арка (Kwik-E-Mart 4,07), меньше — «взрыв» (дом Симпсонов 1,77: триггер шире самой двери)
+// 1341 (Роб, 108 на PSP: «светяшка на каждом входе в дом и в помещения классная по краям, но в центре слишком яркая; в оригинале видно только края, края у нас идентичные»): заливка между ядром и ободком у нас шла
+// с альфой .20 уже у границы ядра (r .30) и .68 к r .78, то есть вся середина (над дверью и вокруг) была густо-лиловой; у PS2 середина почти прозрачна, видна дверь, заметны края (кадры build/ps2_glow_1261). Теперь ядро шире
+// (r .52) и альфа в нём ноль, к r .78 она растёт до прежних .68; всё от r .78 наружу (ободок, контур, ореол) и число вершин прежние. GLOW1341_OLD=1 / файл glow1341old / flag glow1341old 1 — как было.
+#ifndef GLOW1341_OLD
+#define GLOW1341_OLD 0
+#endif
+static int glow1341Old = GLOW1341_OLD;
 static int glow1261On = !GLOW1261_OLD; static float glow1261Phase = -1.f;   // >= 0 — фаза пульса зафиксирована (служебно: flag glowphase, гейт кадрами)
 static unsigned glow1261Quads, glow1261Draws, glow1261Doors, glow1261Booths;
 typedef struct { unsigned c; float x, y, z; } G61V;
@@ -48,8 +55,8 @@ G61_SMALL static unsigned g61Burst(G61V *o, const float c[3], const float X[3], 
   g61Shape();
   G61V *o0 = o;
   // четыре полосы: ядро (прозрачное) → заливка → светлый ободок → контур → ореол наружу в ноль; у каждой полосы цвет и доля радиуса внутренней и внешней кромки
-  const unsigned col[5] = {g61Col(rgb[0], rgb[1], rgb[2], .20f * A), g61Col(rgb[0], rgb[1], rgb[2], .68f * A), g61Col(.93f, .88f, 1.f, .80f * A), g61Col(rgb[0], rgb[1], rgb[2], .34f * A), g61Col(rgb[0], rgb[1], rgb[2], 0.f)};
-  static const float rad[5] = {.30f, .78f, .96f, 1.04f, 1.20f};
+  const unsigned col[5] = {g61Col(rgb[0], rgb[1], rgb[2], (glow1341Old ? .20f : 0.f) * A), g61Col(rgb[0], rgb[1], rgb[2], .68f * A), g61Col(.93f, .88f, 1.f, .80f * A), g61Col(rgb[0], rgb[1], rgb[2], .34f * A), g61Col(rgb[0], rgb[1], rgb[2], 0.f)};
+  const float rad[5] = {glow1341Old ? .30f : .52f, .78f, .96f, 1.04f, 1.20f};
   for (int i = 0; i < G61_N; i++) { int j = (i + 1) % G61_N;
     for (int b = 0; b < 4; b++) {   // два треугольника полосы: A(i) B(i) B(j) и A(i) B(j) A(j)
       unsigned ca = col[b], cb = col[b + 1]; float ra = rad[b], rb = rad[b + 1];

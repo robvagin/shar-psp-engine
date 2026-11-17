@@ -82,7 +82,9 @@ typedef struct {
   float q[4];               // ориентация (w, x, y, z): тело -> мир
   float vel[3], w[3];       // скорость центра масс, угловая скорость (мир)
   float com[3];             // центр масс в осях тела сейчас (с вилли)
+  unsigned char wcon;       // 1323: колёса с настоящим контактом на прошлом шаге (бит i), для «неваляшки»
   float comp[4];            // сжатие подвески колёс FL FR RL RR, м (0 — колесо в воздухе)
+  float xs[4];              // 107b (1278): ход подвески со знаком от нейтрали, м: + сжатие, − отбой ниже нейтрали (колесо у земли, но вытянуто); в воздухе −lim (полный отбой). CAR_SUSP1278_OLD=1 — xs = comp
   float modelRaise;         // model origin offset from native suspension equilibrium
   int slip;                 // 0 сцепление, 1 занос на газу, 2 ручник
   // --- урон ---
@@ -157,6 +159,7 @@ typedef struct {
   int wheelSurf[4];         // 3.3: тип поверхности под колесом (SURF_*), последний подшаг
   float jturn;              // 3.1: 1 — идёт разворот задним ходом
   float sideT;              // P01-18: секунд подряд на боку/крыше при скорости < 1 м/с
+  float restLin, restAng;    // 1330: сглаженные скорость и вращение «вверх колёсами без касания» (скользящее среднее 1/15 за кадр, начало 0,1 м/с и 0,6 рад/с, как у оригинала)
   float bushPassT;                // №1101 (g11): сколько ещё секунд машина «продавливает» кусты-шары (stateprops.c): следующий куст в ряду не останавливает её
   float burnLevel; int burnBig;   // №1082 (сверка g11): уровень пробуксовки 0..1 (вперёд 1 − 0,5 × доля TopSpeed / BurnoutRange, назад — сила тормоза), рывок со старта копился 2,5 с и больше — огонь вместо пыли; читает main_loop.h (дым колёс)
   float lastThr; int lastHb, spinDrive;   // P01 Д3/P01-23: последний газ и ручник (с защёлкой); ведущие колёса: +1 пробуксовка вперёд, −1 назад (рисует carvis.c), 0 — обычно
@@ -271,6 +274,10 @@ static inline int carHuskDrives(const Car *c) { return !CAR_HUSK_OLD && c->huskD
 // №1050: диагностика остановок (car.c carDbg1050, flag carcon1050): контакты кузова и колёс на последнем подшаге
 typedef struct { int revert, tries, bn, wn; float bdepth; unsigned char btype[8]; unsigned bidx[8]; float bnx[8], bnz[8], bd[8]; unsigned wref[8]; float wn3[8][3], wdepth[8]; } CarDbg1050;
 extern CarDbg1050 carDbg1050; extern int carDbgOn1050;
+// 107b (Стена): строки ящика STUCK/NEAR (viewer/stuck108.h) — чтение уже посчитанного контакта, физику не меняют. diagFrame108 — номер кадра (ставит главный цикл);
+// carHitRec108 — последние удары carHitCar (кто кого, где центр партнёра); carDbgDiag108 — собирать carDbg1050 без flag carcon1050. STUCKLOG108_OLD=1 — ничего не собирается
+typedef struct { const Car *a; float bx, by, bz, hl, hw; unsigned frame; } CarHitRec108;
+extern unsigned diagFrame108, carHitN108; extern float diagFootWant108; extern CarHitRec108 carHitRec108[4]; extern int carDbgDiag108;
 void carUpdate(Car *c, const ColWorld *w, const CarInput *in, float dt);
 // №1104 (коды оригинала, viewer/cheats.h): ставит main_loop.h каждый кадр. Действуют только на машину игрока (huskDrive / svPlayer)
 extern int carDmgMercy96;   // пощада один раз (DMGMERCY_OLD)
@@ -289,6 +296,8 @@ float carModelLift(const Car *c,float storedLift);
 // удар двух машин (кузова — прямоугольники в xz): разводит и обменивается импульсом с учётом масс. 1 = было касание.
 // w (может быть NULL): мир, в который разведение не должно вдавливать кузов (упёршаяся машина отдаёт сдвиг другой)
 int carHitCar(Car *a, Car *b, const ColWorld *w);
+void carDamageProp107(Car *c, float propMass, float closing);   // 107б П10: урон машине от удара о предмет массой propMass (приведённая масса · скорость · (1+e) / 100000, порог 0,06)
+extern int carDmgProp107Old;
 // матрица куска машины для GE (столбцы, как ScePspFMatrix4): мир = T + R * (o + sc * v); модель смотрит в -Z,
 // её низ колёс на -lift. Полная ориентация тела.
 void carPieceMatrix(const Car *c, float lift, float ox, float oy, float oz, float sc, float m[16]);
@@ -343,4 +352,24 @@ extern void (*carResetFlash)(void);   // сверка: вспышка сброс
 #define FOLIAGE_IMPULSE 50.f
 #endif
 static inline int foliageFxOk(float carMass, float v) { return FOLIAGEIMP_SV_OLD ? v >= 3.f : carMass * v >= FOLIAGE_IMPULSE; }
+extern int carFenceAng1279Old;
+extern unsigned carWeebleN;
+extern int carWeeble1323Old;   // 1323: 1 — прежняя «неваляшка» (пары по comp <= 0, в полёте момента нет)
+extern int carStack1333Old;   // 1333: 1 — средняя ось «вверх» двух машин при любом наклоне цели (цель, накренённая тараном, «вставала» на крышу), как было
+extern int carFlipEma1330Old, carLeanRest1330Old;   // 1330: 1 — автосброс по мгновенной скорости (без сглаживания) / лежащую на двух колёсах (подъём < 0,5, колёс <= 2) не считать «лежит»
+extern int carSusp1278Old, carStop1278Old;   // 107b 1278: кандидат подвески (по умолчанию 1 = прежняя); объявление нужно флагу сценария susp1278old в туре
+extern int carSpr109Old, carCog109Old;   // 108: 1 — жёсткости по доле веса оси / центр масс из данных диска (как было)
+extern int carHitFric1279Old;   // 109 1279: 1 — удар машина-машина без трения вдоль касательной (как было)   // 107b 1279: 1 — забор тормозит правилом CAR_CRASH_ANG как раньше (rollback.txt)
+extern int carWheelDraw108Old;   // 108: 1 — колёса рисуются по сжатию comp (нижняя точка на нейтрали), как до подвески оригинала (rollback.txt: CAR_WHEELDRAW108_OLD)
+// 108: смещение рисунка колеса от нейтрали = фактический ход подвески (xs со знаком; в воздухе −lim, то есть колесо свисает на eq+lim = 0,40 м, как у PS2); низ колеса = точка контакта.
+// dyN — вариант для кузовов с bodyMass (смещение отсчитывается от suspensionYOffset). up — запас модели вверх. Всё это == прежним формулам, когда подвеска прежняя (carSusp1278Old) или carWheelDraw108Old
+static inline float carWheelDy(const Car *c, int i, float up) {
+  int o = carWheelDraw108Old || carSusp1278Old; float d = o ? c->comp[i] : c->xs[i], lo = o ? -c->eq : -c->eq - c->lim, hi = fminf(c->lim - c->eq, up), v = d - c->eq;
+  return v < lo ? lo : v > hi ? hi : v;
+}
+static inline float carWheelDyN(const Car *c, int i, float up) {
+  int o = carWheelDraw108Old || carSusp1278Old; float s = c->p.suspensionYOffset, d = (o ? c->comp[i] : c->xs[i]) + s, lo = o ? s : s - c->lim, hi = fminf(c->lim + s, up);
+  return d < lo ? lo : d > hi ? hi : d;
+}
+static inline int carWheelGround(const Car *c, int i) { return (carWheelDraw108Old || carSusp1278Old) ? c->comp[i] > 0.f : c->xs[i] > -c->lim + 1e-4f; }   // колесо на земле (для следа шин)
 #endif

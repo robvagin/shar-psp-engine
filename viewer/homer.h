@@ -348,12 +348,26 @@ typedef struct {
 } HomerInput;
 
 // машина для посадки/выхода и толкания (homerCarFrom заполняет из car.h)
+// 1332 (Б): «этажи» верха машины (коллизионные объёмы оригинала, tools/car_decks_export.py, файл cardecks.txt рядом с EBOOT): у высоких машин верх не плоский (у школьного автобуса передний блок 3,39 м,
+// задний 2,80 м; у Mr. Plow кабина и кузов), Гомер встаёт на любой. top — абсолютная высота верха (y машины + высота над низом колёс), x/z/fx/fz — центр и ось блока, hl/hw — полудлина и полуширина.
+// HOMER_DECKS1332_OLD=1 / файл decks1332old / flag decks1332old 1 — одна плоская крыша на bodyHi, как было. Нет файла или машины нет в нём — одна крыша.
+#define HOMER_DECK_MAX 6
+typedef struct { float x, z, fx, fz, hl, hw, top; } HomerDeck;
+extern int homerDecks1332Old;
+void homerDecksParse(const char *text);                       // строки файла cardecks.txt (читает вызывающий)
+int homerCarDecks(const Car *k, HomerDeck out[HOMER_DECK_MAX]);   // этажи любой машины (трафик, миссий, своя); всегда >= 1
+#ifndef HOMER_C   // слабый запасной вариант для сборок traffic.c / msncar.c без homer.c (хост-тесты): одна плоская крыша, как было; настоящий — в homer.c
+__attribute__((weak)) int homerCarDecks(const Car *k, HomerDeck out[HOMER_DECK_MAX]) {
+  CarBox b; carBox(k, &b); out[0].x = b.x; out[0].z = b.z; out[0].fx = b.fx; out[0].fz = b.fz; out[0].hl = b.hl; out[0].hw = b.hw; out[0].top = k->y + k->p.bodyHi * cosf(k->pitch) * cosf(k->roll); return 1;
+}
+#endif
 typedef struct {
   float m[16];                 // модель машины -> мир (carPieceMatrix(c, lift, 0,0,0, 1)): смотрит в -Z, +X вправо
   float lift;                  // модель на lift над низом колёс
   float x, y, z, h, v;         // низ колёс, курс, скорость
   CarBox box;                  // кузов (carBox)
   float roof;                  // высота крыши (на неё можно запрыгнуть)
+  int nd; HomerDeck deck[HOMER_DECK_MAX];   // 1332 (Б): этажи верха (нет данных — один, на roof)
   int ok;
   int dead;                    // машина взорвана (остов): сесть нельзя (txtbible: «VEHICLE DESTROYED! FIND A WRENCH, OR GO TO A PHONEBOOTH»)
   float door[2];               // точка у двери водителя (x, z модели; car.p.doorX/Z): отсюда начинается посадка
@@ -366,6 +380,7 @@ typedef struct {
   int openTop;                 // правка 1240: машина без верха над сиденьем (carOpenFor, список tools/open_cars.txt) — причёска Мардж за рулём стоймя
   int iris;                    // правка 333: в .con машины SetIrisTransition(1) (car.c carIrisFor) — посадка и выход ирисом, без клипов двери
 } HomerCar;
+extern int homerOwnRoof1332Old;   // 1332: своя машина — крыша с той же ступенькой, что у чужих; 1 — как было (выталкивает до крыши минус 0,15)
 void homerCarFrom(HomerCar *hc, const Car *c, float lift);
 void homerSetDoorOut(float m);   // Роб 17.10: насколько дальше от борта стоит у двери, м (0,12 по умолчанию; 0 — как было) — рука не уходит в дверь
 
@@ -381,6 +396,17 @@ typedef struct {
 // Возврат: 1 — вытолкнули (нормаль в *nx, *nz). Готовая реализация для стейтпропов — homerSolidSprops (user = StateProps*).
 typedef int (*HomerSolidFn)(void *user, float *x, float *z, float y, float r, float *top, float *nx, float *nz);
 struct StateProps;
+// 107b Г4 (сверка Fable-2): крыша чужой машины. Функция возвращает положение машины-опоры (центр кузова, курс atan2(fx, fz), высота крыши):
+// id < 0 — найти машину, на крыше которой стоят ступни (x, y, z); вернуть 1 + номер (0 — нет) и положение; id >= 0 — положение машины с этим номером (1 — есть, 0 — исчезла).
+typedef struct { float x, z, ang, roof; } HomerRide;
+typedef int (*HomerRideFn)(void *user, int id, float x, float y, float z, HomerRide *out);
+extern HomerRideFn homerRideFn; extern void *homerRideUser;   // ставит main (main_state.h homerRideAll); NULL — крыши чужих машин только высота земли, как было
+extern int homerRide107bOld;   // 1 — как было: перенос только на крыше своей машины, у неё собственная скорость обнуляется каждый кадр (flag homeride107bold 1)
+extern int homerSlope107bOld;   // 107b В1: 1 — предел наклона 30° и на рельефе (как было); flag homerslope107bold 1
+extern int homerP9107Old;   // 107b П9: 1 — отреагировавший стейтпроп твёрдый для пешего (как было); flag homerp9107old 1
+extern int homerFar1367Old;   // 1367: 1 — издалека пешком, без ириса для обхода и упора (как после 1284)
+extern int homerWalk1284Old;   // 107b 1284: 1 — посадка издалека под ирисом (пути > 4,5 м и упор 0,6 с), как было
+extern int homerSp107bOld;   // 107b: 1 — объём стейтпропа для пешего как до сверки Fable-2 (П7/П8); flag homersp107bold 1
 extern unsigned homerSolidFrame;   // != 0 только внутри homerUpdate: твёрдость предметов считает список «кто рядом» раз за вызов (HOMER_SOLID_CACHE_OLD=1 — выкл.)
 int homerSolidSprops(void *stateProps, float *x, float *z, float y, float r, float *top, float *nx, float *nz);
 
@@ -490,7 +516,8 @@ typedef struct {
   float celT; int celKind;     // праздничный клип: 0 нет, 1 малый (стик прерывает), 2 большой (не прерывает)
   int celClip;                 // клип праздника, который играет
   int cSurf[3], surfSt;        // сёрфинг на крыше едущей машины: surf_in / surf_cycle / surf_out; 0 нет, 1 вход, 2 цикл, 3 выход
-  int onCar, carPrevOk; float carPrevX, carPrevZ, carPrevAng, carPrevRoof;   // стоит на крыше машины и её прошлое положение (едет вместе с ней)
+  int rideOk, rideId; float rideX, rideZ, rideAng, rideRoof;   // 107b Г4: стоит на крыше ЧУЖОЙ машины (трафик, припаркованная; homerRideFn) и её прошлое положение — едет вместе с ней
+  int onCar, carPrevOk, carDeck; float carPrevX, carPrevZ, carPrevAng, carPrevRoof;   // стоит на крыше машины и её прошлое положение (едет вместе с ней)
   float doorT, doorBudget; int doorHold;   // посадка: время подхода к двери и его бюджет, дверь остаётся открытой при выходе (круг 6: поле ожидания остановки машины waitCar убрано — ожидания нет, посадка идёт сразу ирисом)
   int gKind; float drvPrevSpd;                      // жест водителя: 1 руль, 2 газ, 3 тормоз; прошлая скорость машины (круг 6: неиспользуемое gHold убрано)
   float bobOff, bobPrevY, bobPrevVy; int bobInit;   // качание фигуры водителя

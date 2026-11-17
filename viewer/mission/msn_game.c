@@ -3,6 +3,7 @@
 #include <math.h>
 #include "msn_game.h"
 #include "briefcards_data.h"
+int rb_MSN_TRAFFICHOLD_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
 #ifndef MSN_DLG_TEXT842_OLD
 #define MSN_DLG_TEXT842_OLD 0
 #endif
@@ -381,7 +382,13 @@ static void on_event(void *user, const MsnEvent *e)
         if (rt->par > 0) { g->hud.par_ms = (int)(rt->par * 1000.0f); CALL(ui, par_time, g->hud.par_ms); }
         if (rt->obj == MSN_OBJ_TALKTO && rt->c_talk)
             CALL(npc, talk_target, msn_arg_s(f, rt->c_talk, 0), msn_arg_i(f, rt->c_talk, 1), msn_arg_f(f, rt->c_talk, 2), msn_arg_f(f, rt->c_talk, 3));
-        if (!stage_has_op(g, MSN_OP_SETMAXTRAFFIC, MSN_OP_NOTRAFFICFORSTAGE) && (MSN_TRAFFIC25_OLD || !g->traffic_zero)) CALL(traffic, max_cars, -1);   /* P06-25: лимит 0 держится до SetMaxTraffic */
+        /* Правка Ф2-5 (сверка Fable-2 13.11, оригинал): предел трафика меняет только этап со своей SetMaxTraffic / NoTrafficForStage, иначе остаётся прежний, в том числе от вступления m3sd/m5sd
+           (там 2) и от прошлой миссии; к полному возвращается только запуск игры. Прежде этап без команды сбрасывал предел на уровневый (5): L1 m3 и m5 шли с 5 вместо 2, пробки на пути цели.
+           MSN_TRAFFICHOLD_OLD=1 — как было */
+#ifndef MSN_TRAFFICHOLD_OLD
+#define MSN_TRAFFICHOLD_OLD rb_MSN_TRAFFICHOLD_OLD
+#endif
+        if (MSN_TRAFFICHOLD_OLD && !stage_has_op(g, MSN_OP_SETMAXTRAFFIC, MSN_OP_NOTRAFFICFORSTAGE) && (MSN_TRAFFIC25_OLD || !g->traffic_zero)) CALL(traffic, max_cars, -1);   /* P06-25: лимит 0 держится до SetMaxTraffic */
         break; }
     case MSN_EV_MARKER: send_marker(g, e->pos, e->loc, e->name); break;
     case MSN_EV_MARKER_CLEAR:

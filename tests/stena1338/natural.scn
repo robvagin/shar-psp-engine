@@ -1,0 +1,18 @@
+scene g1338n
+flag golevel 4
+wait 30
+flag msnpass
+wait 4
+flag msnpass
+wait 6
+press cross
+wait 5
+flag msnhud
+flag msnpass
+wait 5
+flag msnhud
+wait 12
+flag msnhud
+wait 12
+flag msnhud
+end

@@ -65,7 +65,8 @@ static float dalApply(float dt, int skip) {
   float cap = dalCur < keep ? dalCur : keep;
   if (dalRampOn) {   // рампа: к цели с ограниченной скоростью, шагами по DAL_Q (вверх DAL_UP м/с, вниз DAL_DN м/с)
     static int dir_; if (dalOut > keep) dalOut = keep;
-    if (cap > dalOut) { if (dir_ != 1) { dir_ = 1; dalAcc = 0.f; } dalAcc += DAL_UP * dt; while (dalAcc >= DAL_Q && dalOut < cap) { dalOut += DAL_Q; dalAcc -= DAL_Q; } if (dalOut > cap) dalOut = cap; }
+    if (cap > dalOut && dal72On && stMissRing > 0) { /* Даль-1272: рампа вверх ждёт, пока весь круг вокруг загружен */ }
+    else if (cap > dalOut) { if (dir_ != 1) { dir_ = 1; dalAcc = 0.f; } dalAcc += DAL_UP * dt; while (dalAcc >= DAL_Q && dalOut < cap) { dalOut += DAL_Q; dalAcc -= DAL_Q; } if (dalOut > cap) dalOut = cap; }
     else if (cap < dalOut) { if (dir_ != -1) { dir_ = -1; dalAcc = 0.f; } dalAcc += DAL_DN * dt; while (dalAcc >= DAL_Q && dalOut > cap) { dalOut -= DAL_Q; dalAcc -= DAL_Q; } if (dalOut < cap) dalOut = cap; }
     else { dalAcc = 0.f; dir_ = 0; }
     cap = dalOut; }

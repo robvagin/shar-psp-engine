@@ -1,6 +1,7 @@
 // Test-only A/B: restore the same retained renderer inputs, no game step between draws.
 // Requested only by smoke flag rfcompare. Ordinary gameplay never allocates this snapshot.
 static int rfCapture, rfBreak;
+static int rf108Sv[3], rf108Skip;   // rf108Skip (flag rf108skip 1): пятый проход без прежних путей — основа для сравнения шума проходов   // 108: выключатели «прежний путь» (следы, картинки эффектов, рисунки меток) до проверки rfcompare
 static Car rfSavedCar;
 static Homer *rfSavedHomer;
 static Traffic *rfSavedTraffic;

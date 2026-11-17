@@ -1,0 +1,11 @@
+# Скиннер в гонке L1 m1 срезает дворами как в оригинале (107b, слово Роба 1284): строка MCRIVAL shortcuts=1 (при MC_RIVAL_ROAD108_OLD=1: 0). Skinner появляется на этапе 4 миссии 1 (msnmainat 101)
+flag nosave
+scene RIV
+wait 3
+flag msn
+wait 2
+flag msnmainat 101
+wait 10
+flag drive 25
+wait 30
+end

@@ -1,0 +1,7 @@
+flag nosave
+scene L2_twin
+flag golevel 2
+wait 25
+flag player 1
+wait 5
+end

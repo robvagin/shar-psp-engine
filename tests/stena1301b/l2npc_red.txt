@@ -1,0 +1,15 @@
+# 1301b: L2 как в туре (F_GO7_L2), чтение PH4SUB npc (мс на кадр, Мак)
+flag nosave
+flag npcprop1301bold 1
+scene A
+flag golevel 2
+wait 40
+wait 3
+flag trflog 1
+flag repair
+wait 3
+flag camin
+scene F_GO7_L2
+foot 135.46 -314.48 0
+wait 20
+end

@@ -1,0 +1,15 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+scene RX_FLY
+wait 100
+scene RX_END
+flag stop
+wait 2
+end

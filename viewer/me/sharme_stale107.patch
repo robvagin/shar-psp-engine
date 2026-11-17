@@ -1,0 +1,33 @@
+diff --git a/viewer/me/sharme.c b/viewer/me/sharme.c
+index 4320a61f..e55aec1b 100644
+--- a/viewer/me/sharme.c
++++ b/viewer/me/sharme.c
+@@ -214,10 +214,12 @@ static int svcScheme; static SceUID svcKuid = -1; static unsigned svcFn;   // sv
+ static unsigned svcKbox[2];               // ящики клиентов в памяти ядра (кэшируемые адреса, по 64 байта)
+ static MixJob *svcKjob;                   // задание звука в памяти ядра (схема ME_MEM_KERN)
+ static unsigned svcUjob[2], svcSeq[2], svcOut[2];
+-static volatile MeBox *flBox; static unsigned flSeq;
++static volatile MeBox *flBox; static unsigned flSeq, flT;   // flT — когда задание ушло на ME (107б: сон оставлял «занято» навсегда)
+ static int svcBusy(void) {
+   if (!flBox) return 0;
+   if (flBox->done == flSeq && ME_STATE == ME_DONE_WORD) { flBox = 0; return 0; }
++  // 107б (Fable, журнал 20:35; Роб 1273): задание в ME дольше 500 мс не бывает (буфер звука 12 мс, задание города единицы мс) — после сна ME его никогда не закончит; «занято» вечно сажало звук на главный процессор
++  if ((unsigned)(sceKernelGetSystemTimeLow() - flT) > 500000u) { flBox = 0; ME_STATE = (int)svcSt0; __asm__ volatile("sync" : : : "memory"); return 0; }
+   return 1;
+ }
+ // задание — на ME; режим ядра (игра зовёт через kuKernelCall). Схема 0: a1 — некэшируемый адрес ящика в памяти игры (игра его
+@@ -242,12 +244,12 @@ int meSvcKick(unsigned a1, unsigned a2, unsigned a3) {
+   if (svcBusy()) r = ME_SVC_BUSY;
+   else if (!kb3) {
+     volatile MeBox *ub = (volatile MeBox *)a1;
+-    flBox = ub; flSeq = ub->sent; r = (int)flSeq;
++    flBox = ub; flSeq = ub->sent; flT = sceKernelGetSystemTimeLow(); r = (int)flSeq;
+   } else {
+     volatile MeBox *kb = (volatile MeBox *)KUNC(svcKbox[c]);
+     svcUjob[c] = a2; svcOut[c] = 0;
+     kb->kind = kind; kb->job = job; kb->words = a3; kb->sum = 0; kb->sent = ++svcSeq[c]; __asm__ volatile("sync" : : : "memory");
+-    flBox = kb; flSeq = svcSeq[c]; r = (int)flSeq;
++    flBox = kb; flSeq = svcSeq[c]; flT = sceKernelGetSystemTimeLow(); r = (int)flSeq;
+     a1 = (svcScheme & 3) == ME_MEM_KBOXU ? KUNC(svcKbox[c]) : svcKbox[c];   // адрес ящика для ME: кэшируемый (1, 3) или нет (2)
+   }
+   if (r != ME_SVC_BUSY) {

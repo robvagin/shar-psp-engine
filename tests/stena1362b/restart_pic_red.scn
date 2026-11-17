@@ -1,0 +1,45 @@
+# Restart из паузы миссии L1 (этап 302) по картинке: снимки каждые 0,5 с после выбора Restart; чёрный кадр = средняя яркость ~0
+scene g1362ro
+flag fadedir1349old 1
+flag fadeclk1362bold 1
+flag camdet 1
+flag startcam 1
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnmainat 302
+wait 3
+press cross
+wait 5
+shot a0
+press start
+wait 2
+shot a1
+press down
+wait 0.5
+shot a2
+press cross
+wait 0.5
+shot b0
+wait 0.5
+shot b1
+press cross
+wait 0.5
+shot c0
+wait 0.5
+shot c1
+wait 0.5
+shot c2
+wait 0.5
+shot c3
+wait 0.5
+shot c4
+wait 0.5
+shot c5
+wait 0.5
+shot c6
+wait 0.5
+shot c7
+wait 1
+end

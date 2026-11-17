@@ -851,10 +851,15 @@ def build(sc, assets, fonts):
     return dl
 
 
+# 1334 (Роб: «в Mission Select галочки жёлтые, в оригинале зелёные»): значки состояния строки (dash / cross / check, 25x25) в общей странице pextra (карточки VIEW CARDS, 255 цветов k-means
+# на всё) теряли чистый цвет: у галочки (78,244,9 на диске) оставался (123,170,66). Свои 3 картинки — своя страница с точной палитрой. MSSTATUS1334_OLD=1 — как было
+STATUS_IMGS = ('dash.png', 'cross.png', 'check.png')
 def group_of(key):
     b = key.split('@')[0]
     if b.startswith('tvframe'):
         return 'tv'
+    if os.environ.get('MSSTATUS1334_OLD') != '1' and b in STATUS_IMGS:
+        return 'status'
     return 'ui'
 
 
@@ -863,7 +868,7 @@ def export(name, out=None, mocks=True):
         U.SCREEN_PAGES[sc] = PAGES[sc]
     if name == 'scrapgal':
         for sc in PACKS[name]: _GALC[sc] = gallery_items(sc, U.LEVEL)
-    spec = dict(screens=PACKS[name], build=build, tags=TAGS, group=group_of, radar=False, groups=('tv', 'ui'),
+    spec = dict(screens=PACKS[name], build=build, tags=TAGS, group=group_of, radar=False, groups=('tv', 'ui', 'status') if os.environ.get('MSSTATUS1334_OLD') != '1' else ('tv', 'ui'),
                 layout='layout_planted.json' if os.environ.get('MENU_OLD') else 'layout_%s.json' % name)
     res = U.pack(out or (U.ROOT / 'build' / ('%s.shr' % name)), spec)
     if os.environ.get('MENU_ROWS_OUT'):

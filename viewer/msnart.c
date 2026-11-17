@@ -14,6 +14,8 @@
 #include <math.h>
 #include "zone3_api.h"   // П5 Зоны-95: картинки миссий — область «миссия»
 #include "msnart.h"
+#include "msnres.h"
+#include "power.h"   // 107б P0: pwrEpoch(), pwrSimFault(), pwrKillHook()
 #include "lvcheck.h"
 #include "glintshape941.h"   // №944: общий шейп блика (GLINT944_OLD)
 #include "ui.h"
@@ -60,7 +62,16 @@ static int msaIsShadow(const char *n) { size_t l = strlen(n); return l > 7 && !s
 static int msaIsBeam(const char *n) { for (; *n; n++) if ((n[0] | 32) == 'b' && (n[1] | 32) == 'e' && (n[2] | 32) == 'a' && (n[3] | 32) == 'm') return 1; return 0; }
 
 static char file[320]; static MsaRow *rows; static unsigned nrows;
-#define MAXE 24
+// 109 (Fable-2 по LOADLIST109): карточка теперь заказывает ВСЕ записи миссии сразу, а мест было 24; по спискам msnres-l1..l7 худшая миссия (L1 m2) занимает 17 своих + 6 уровневых = 23, запас 1, а при переполнении
+// молча вытеснялась самая ранняя запись миссии (значок первого этапа). Мест теперь 32 (хранится только указатель; память занимают сами записи, их сумма та же, что и раньше: msnResPeak). MSNARTCAP109_OLD=1 / flag msnartcap109old 1 — прежние 24.
+// Служебно flag msnartcap109 N — предел N мест (стенд переполнения). Вытеснение пишет BBOP art- (самописец и журнал смоука) и WATCHDOG msnart evict
+#ifndef MSNARTCAP109_OLD
+#define MSNARTCAP109_OLD 0
+#endif
+int msnartCap109Old = MSNARTCAP109_OLD, msnartCapSet109;
+#define MAXE_ARR 32
+static inline int entLim(void) { return msnartCap109Old ? 24 : (msnartCapSet109 > 0 && msnartCapSet109 < MAXE_ARR ? msnartCapSet109 : MAXE_ARR); }
+#define MAXE entLim()
 // №512 (11.10, железо): картинка брифинга миссии (art/frontend/dynaload/images/mis*) терялась молча в двух местах: очередь чтений была в MAXE мест и
 // отбрасывала новое при заполнении, а дочитанная запись без свободной ячейки ent[] освобождалась. Теперь картинка встаёт в очередь первой, очередь
 // длиннее, при нехватке ячеек вытесняется запись миссии, не картинка, сбой чтения повторяется один раз. MSNART_PIC_OLD=1 — как раньше
@@ -68,7 +79,7 @@ static char file[320]; static MsaRow *rows; static unsigned nrows;
 #define MSNART_PIC_OLD 0
 #endif
 #define MAXQ 64
-static struct { int row, level; unsigned char *b; } ent[MAXE];
+static struct { int row, level; unsigned char *b; unsigned char shared, used; } ent[MAXE_ARR];   // 1363: shared — общая запись миссий уровня (переживает конец миссии, уходит при тесноте), used — просили в этой миссии
 static unsigned char retried[256];
 // Кольцо-96 (Fable, п.14, находка longgame L4 с fragblk 0.6): картинка брифинга при отказе памяти получала ОДИН мгновенный повтор и тихо пропадала (msnartLostPics++), а карточка 8 с (BRIEF_PIC_MAX)
 // стояла на чёрном LOADING. Теперь картинка ждёт память по ступеням лестницы (msnartRoom на каждой попытке), повтор не чаще раза в секунду, до MSNART_PIC_TRIES попыток; отказ пишет
@@ -80,7 +91,10 @@ static unsigned char retried[256];
 #define MSNART_PIC_TRIES 3
 #endif
 static unsigned char picTries[256], picGaveUp[256];
+static int picMaxTries(void) { return BRIEFPIC1269_OLD ? MSNART_PIC_TRIES : MSNART_PICHARD1269; }   // №1269
+static void picFinal(int r) { if (!BRIEFPIC1269_OLD && r >= 0 && r < (int)sizeof picGaveUp) picGaveUp[r] = 1; }   // №1269: картинка потеряна окончательно (чтение не удалось) — карточка не ждёт предел
 int msnartPicWaitOld = MSNART_PICWAIT_OLD; int msnartFailMissgen;
+void (*msnartReq)(const char *path);   // 109 З9: полный путь записи, которую начали читать (строка MSNREQ журнала смоука; на поведение не влияет)
 int msnartPicGaveUp(void) { for (int r = 0; r < nrows && r < (int)sizeof picGaveUp; r++) if (picGaveUp[r]) return 1; return 0; }
 unsigned msnartLostPics;   // сколько картинок брифинга так и не доехало (служебный счётчик для лога)
 static unsigned bytesUsed;
@@ -90,11 +104,27 @@ static SceUID afd = -1; static int qrow[MAXQ], qlev[MAXQ], nq, busyRow = -1, bus
 static int isPic(int r) { return strstr(rows[r].path, "/images/mis") != 0; }
 static char wantIcon[32];
 float msnartAvDelayS;   // №1247 (служебно): задержка значка задания, секунды
+// №1363 (Роб; аудит 1359 п.5: cards/wrench/missgen ×35, значки msnic ×222 за тур, ≈ 0,3–0,6 с на старт миссии): общие записи миссий уровня (список ресурсов msnres: уровневая группа «L» или записи
+// двух и более миссий) читались заново на каждом старте — на конце миссии снимались все записи без «уровня». Теперь общие остаются в области «миссия» до смены уровня, но НЕ «уровня»: при тесноте
+// уходят первыми (сначала те, что эта миссия ещё не просила, потом по прежним правилам: отказ памяти / нет ячейки — как до 1363), поэтому область они не занимают сверх того, что миссия и так читала.
+// Картинки карточек в кэш не входят (снимаются, как раньше). Нет файла списка (msnResShared = 0) — как было. MSNARTSHARE1363_OLD=1 / «flag msnartshare1363 0» / файл msnartshare1363old — как было
+#ifndef MSNARTSHARE1363_OLD
+#define MSNARTSHARE1363_OLD 0
+#endif
+static void drop(int i);
+int msnartShare1363 = !MSNARTSHARE1363_OLD; unsigned msnartShareHits1363, msnartShareEvict1363;
+static int shareRow1363(int row) { return msnartShare1363 && row >= 0 && !isPic(row) && msnResShared(rows[row].path); }
+static int evictShared1363(void) {   // уйти первой общей записи, которую эта миссия ещё не просила; сколько снято
+  int n = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && ent[i].shared && !ent[i].used && !ent[i].level) { bbOp("art-", rows[ent[i].row].path, 0); drop(i); n++; msnartShareEvict1363++; }
+  return n;
+}
 void msnartShutdown(void);
 
+static void msnartPwrSync107(void);   // 107в: эпоха питания на момент открытия файла уровня
 int msnartInit(const char *dir) {
   if (rows || afd >= 0) msnartShutdown();   // повторное открытие (другой уровень) — прежняя таблица не течёт
   snprintf(file, sizeof file, "%smsnart.shr", dir);
+  msnartPwrSync107();   // 107в
   SceUID f = sceIoOpen(file, PSP_O_RDONLY, 0); if (f < 0) return -1;
   unsigned h[4]; if (sceIoRead(f, h, 16) != 16 || memcmp(h, "MSA2", 4)) { sceIoClose(f); return -2; }
 #ifndef MSAROWS1195_OLD
@@ -131,8 +161,13 @@ static void msaCacheDrop(const unsigned char *b, unsigned size) {
   for (unsigned i = 0; i < msaNBn; ) { const unsigned char *d = (const unsigned char *)msaNB[i].d;
     if (d >= b && d < b + size) { free(msaNB[i].bb); free(msaNB[i].ok); msaNB[i] = msaNB[--msaNBn]; } else i++; }
 }
-static void drop(int i) { const unsigned char *b_ = ent[i].b; unsigned sz_ = b_ ? rows[ent[i].row].size : 0;
-  if (ent[i].b) { geDeferFree(ent[i].b); bytesUsed -= rows[ent[i].row].size; } ent[i].b = 0; msaCacheDrop(b_, sz_); }
+static unsigned entGen108 = 1;   // 108 О17: растёт при любом изменении таблицы записей ent (кэш поиска рисунка по имени)
+int msaFind108Red;   // красный контроль: выгрузка записи не сбрасывает кэш
+static int mBndOwnerIn(const unsigned char *b, unsigned sz);   // 1298: рабочая память отсечения принадлежит этой записи
+static void cullMemFree(void);
+static void drop(int i) { if (!msaFind108Red) entGen108++; const unsigned char *b_ = ent[i].b; unsigned sz_ = b_ ? rows[ent[i].row].size : 0;
+  if (ent[i].b) { geDeferFree(ent[i].b); bytesUsed -= rows[ent[i].row].size; } ent[i].b = 0; msaCacheDrop(b_, sz_);
+  if (mBndOwnerIn(b_, sz_)) cullMemFree(); }
 // №1156 (TEST84 на PSP: STALL под интерфейсом, последним действием стояло «art=» картинки брифинга): никакое чтение под интерфейсом не ждёт вечно. Чтение в полёте старше
 // MSNART_READ_MS (3 с) бросается: буфер не освобождается (его всё ещё может писать ядро — теряем его намеренно), дескриптор не закрывается, файл открывается заново, картинка брифинга
 // получает свой один повтор, дальше — «брифинг без картинки» (№512). Отказ памяти при чтении: сначала просим клетки (msnartRoom), потом сбрасываем кэш записей миссий и пробуем один раз.
@@ -142,11 +177,13 @@ static void drop(int i) { const unsigned char *b_ = ent[i].b; unsigned sz_ = b_ 
 #endif
 #define MSNART_READ_MS 3000u
 static unsigned busyT0; unsigned msnartAbandoned;   // начало чтения в полёте, мкс; сколько чтений брошено (служебный счётчик)
+static void quarPush107(unsigned char *b, unsigned sz, SceUID fd);   // 107б P0: карантин буфера и дескриптора брошенного чтения (ниже)
 static void abandonBusy(void) {   // чтение не кончилось за MSNART_READ_MS: бросить буфер и файл, открыть заново
   bbOp("art!", busyRow >= 0 ? rows[busyRow].path : "-", 0); msnartAbandoned++;
   if (isPic(busyRow) && busyRow < (int)sizeof retried && !retried[busyRow] && nq < MAXQ) { retried[busyRow] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = busyRow; qlev[0] = busyLev; nq++; }
-  else if (isPic(busyRow)) msnartLostPics++;
-  busyBuf = 0; busyRow = -1;   // буфер и старый дескриптор — в утечку: их может ещё писать ядро
+  else if (isPic(busyRow)) { msnartLostPics++; picFinal(busyRow); }
+  quarPush107(busyBuf, busyRow >= 0 ? rows[busyRow].size : 0, afd);   // 107б P0: буфер и старый дескриптор — в карантин (ядро могло ещё писать), а не в утечку насовсем
+  busyBuf = 0; busyRow = -1;
   afd = sceIoOpen(file, PSP_O_RDONLY, 0);
 }
 static void waitBusy(void) {   // дождаться чтения в полёте (буфер нельзя освобождать, пока его пишет ядро)
@@ -158,11 +195,46 @@ static void waitBusy(void) {   // дождаться чтения в полёт�
   }
   SceInt64 r; sceIoWaitAsync(afd, &r); free(busyBuf); busyBuf = 0; busyRow = -1;
 }
-void msnartReset(void) { waitBusy(); nq = 0; memset(retried, 0, sizeof retried); memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
+static void tries107Reset(void);   // 107б P0: tries94 (ниже) сбрасывается со сменой уровня, миссии и пробуждения
+void msnartReset(void) { waitBusy(); tries107Reset(); nq = 0; memset(retried, 0, sizeof retried); memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
 void msnartShutdown(void) {   // смена уровня: записи, таблица и открытый файл msnart.shr — уровень N+1 откроет свой (l<N>/)
   msnartReset(); if (afd >= 0) sceIoClose(afd); afd = -1; free(rows); rows = 0; nrows = 0; bytesUsed = 0;
 }
-void msnartMissionStart(void) { memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) drop(i); wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
+void msnartMissionStart(void) { cullMemFree(); tries107Reset(); memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp); for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level) { if (ent[i].shared && msnartShare1363) { ent[i].used = 0; continue; } drop(i); } wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0); }
+// 109 (Роб «внедряем», Fable ПОРЯДОК_ЗАГРУЗКИ §4 п.1, 6; закон 1276б): (а) очередь msnart пуста — условие готовности карточки миссии (msn_view.c briefReady): читается всё, что заказали load-скрипт и картинка;
+// (е) записи миссии (предметы, значки, картинки прошлых карточек) снимаются на её КОНЦЕ (cleanup без повтора), а не на старте следующей: у оригинала ресурсы миссии живут от карточки до конца миссии. Записи уровня остаются.
+// Картинка следующей карточки (isPic), если уже заказана или лежит, не снимается. LOADEND109_OLD=1 / «flag loadend109old 1» / rollback.txt — как было (снимает старт следующей миссии)
+#ifndef LOADEND109_OLD
+#define LOADEND109_OLD 0
+#endif
+int msnartEnd109Old = LOADEND109_OLD;
+int msnartIdle(void) { return busyRow < 0 && nq == 0; }
+// 1337 (живой ход Роба, L2 m5: картинки миссии читались 4,2 с, персонаж 4,0 с — в очереди за догрузкой города): ресурсы миссии на старте этапа первые в очереди карты памяти (канон 17).
+// msnartIoBusy1337 — запись читается или ждёт чтения; загрузчик клеток (main_stream.h msnIoHold1337) при этом не начинает новых клеток, не дольше MSNIOHOLD1337_US подряд. Служебное: ioSerial1337 / ioDevBusy1337 —
+// стенд-имитация «одна карта памяти»: пока загрузчик читает клетку, фоновое чтение записи не стартует (эмулятор такого ожидания не знает).
+volatile int ioSerial1337, ioDevBusy1337;
+int msnartIoBusy1337(void) { return busyRow >= 0 || nq > 0; }
+// 109: состояние записи по пути (тот же вид, что у msnartLoad): 1 — в памяти, 0 — в очереди или читается (повторы после отказов тоже здесь), -1 — в таблице нет или к ней не пришла (отказ, снята)
+int msnartPathState109(const char *p3d) {
+  if (!rows || !p3d) return -1;
+  char key[80]; unsigned n = 0;
+  for (; p3d[n] && n < sizeof key - 1; n++) { char c = p3d[n] == '\\' ? '/' : p3d[n]; key[n] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+  key[n] = 0;
+  for (unsigned r = 0; r < nrows; r++) {
+    if (strcmp(rows[r].path, key)) continue;
+    for (int i = 0; i < MAXE; i++) if (ent[i].b && ent[i].row == (int)r) return 1;
+    if (busyRow == (int)r) return 0;
+    for (int i = 0; i < nq; i++) if (qrow[i] == (int)r) return 0;
+    return -1;
+  }
+  return -1;
+}
+void msnartMissionEnd109(void) {
+  if (msnartEnd109Old) return;
+  int n = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && !isPic(ent[i].row)) { if (ent[i].shared && msnartShare1363) { ent[i].used = 0; continue; } drop(i); n++; }
+  wantIcon[0] = 0; uiSetObjIconImage(0, 0, 0, 0, 0);   // значок указывал в буфер, который сняли
+  { char a_[32]; snprintf(a_, sizeof a_, "mission n=%d", n); bbOp("art-end", a_, 0); }
+}
 const char *msnartWantIcon(void) { return wantIcon; }   // №958б: диагностика
 unsigned msnartBytes(void) { return bytesUsed; }
 void msnartLoad(const char *p3d, int level) {
@@ -172,7 +244,7 @@ void msnartLoad(const char *p3d, int level) {
   key[n] = 0;
   for (unsigned r = 0; r < nrows; r++) {
     if (strcmp(rows[r].path, key)) continue;
-    for (int i = 0; i < MAXE; i++) if (ent[i].b && ent[i].row == (int)r) { if (level) ent[i].level = 1; return; }   // уже есть
+    for (int i = 0; i < MAXE; i++) if (ent[i].b && ent[i].row == (int)r) { if (level) ent[i].level = 1; if (ent[i].shared && !ent[i].used) { ent[i].used = 1; msnartShareHits1363++; } return; }   // уже есть (1363: общая — из кэша, чтения нет)
     if (busyRow == (int)r) { busyLev |= level; return; }
     for (int i = 0; i < nq; i++) if (qrow[i] == (int)r) { qlev[i] |= level; return; }
     if (!MSNART_PIC_OLD && isPic((int)r)) {   // картинка брифинга — в начало очереди, место есть всегда (вытесняется последняя запись)
@@ -197,6 +269,28 @@ int (*msnartRoom)(unsigned);
 int msnartRetry94 = !MSNARTRETRY94_OLD;
 int msnartFailSim94;   // служебное (flag msnartfail N): N первых запусков чтения «нет памяти»
 void (*msnartWatch)(const char *note, const char *path, int tries);
+// 108 (дирижёр, чёрный ящик PSP 13.11, сборка 106, L1 m5: 64 раза подряд «op art+ …/images/msnic» через ~1,03 с, ни одного «art=», mem 0): запись значка задания (msnicons, 64 КБ) не доходит до чтения — повтор раз
+// в секунду по Build 94 (failRetry94: нет памяти или отказ запуска чтения) до сдачи через 60 попыток, значок не встаёт, бабл ждёт. Причина на железе по ящику не видна (в ящик не писалось, КАКОЙ отказ), поэтому:
+// (1) отказ теперь пишется в ящик отдельной строкой: «art-mem» (нет памяти: нужно / куча), «art-io» (коды Lseek и sceIoReadAsync); (2) при отказе запуска чтения дескриптор msnart.shr закрывается и открывается заново
+// (залипший асинхронный дескриптор лечится только так), а с третьей попытки запись читается СИНХРОННО (sceIoRead, 64 КБ ≈ 5 мс) в тот же буфер, мимо асинхронного пути. MSNARTIO108_OLD=1 / «flag msnartio108old 1» — как было.
+// Служебно «flag msnartiostuck 1»: sceIoReadAsync отказывает, пока дескриптор не открыт заново (модель залипшего дескриптора; синхронное чтение не затронуто)
+#ifndef MSNARTIO108_OLD
+#define MSNARTIO108_OLD 0
+#endif
+int msnartIo108Old = MSNARTIO108_OLD, msnartIoStuck108; unsigned msnartIoReopen108, msnartIoSync108;
+// 107б (генплан Fable 13.11, сценарий «мёртвый файл»): правка 108 лечила только значок задания (!isPic), картинка карточки сдавалась сразу (LOST), а неудачное переоткрытие оставляло afd = −1 и модуль молчал до смены
+// уровня (msnartPump: afd < 0 -> return). Теперь картинки идут тем же путём (дескриптор заново, повтор раз в секунду по picTries до picMaxTries, с 3-й попытки синхронное чтение), а afd < 0 при непустой очереди
+// пробуется открыть заново раз в секунду. MSNARTIO107B_OLD=1 / «flag msnartio107bold 1» — как после 108 (картинки сдаются сразу, afd −1 молчит). Служебно «flag msnartreopenfail N»: N первых переоткрытий отказывают
+#ifndef MSNARTIO107B_OLD
+#define MSNARTIO107B_OLD 0
+#endif
+int msnartIo107bOld = MSNARTIO107B_OLD, msnartReopenFail107; static unsigned reopenAt107;
+static int ioReopen107(void) {   // 1 — дескриптор открыт заново
+  if (afd >= 0) { sceIoClose(afd); afd = -1; }
+  if (msnartReopenFail107 > 0) { msnartReopenFail107--; msnartIoReopen108++; return 0; }
+  afd = sceIoOpen(file, PSP_O_RDONLY, 0); msnartIoReopen108++; msnartIoStuck108 = 0;
+  return afd >= 0;
+}
 static unsigned char tries94[256]; static unsigned retryAt94;
 static int failRetry94(int r, int lev, const char *why) {   // 1 — запись поставлена на повтор
   if (!msnartRetry94 || isPic(r) || r < 0 || r >= (int)sizeof tries94 || nq >= MAXQ) return 0;
@@ -206,23 +300,30 @@ static int failRetry94(int r, int lev, const char *why) {   // 1 — запис�
   retryAt94 = sceKernelGetSystemTimeLow() + 1000000u; if (!retryAt94) retryAt94 = 1;
   return 1;
 }
-void msnartPump(void) {
-  if (afd < 0) return;
+static void pumpOnce(void) {
+  if (afd < 0) {
+    if (msnartIo107bOld || msnartIo108Old || !rows || !file[0] || (busyRow < 0 && !nq)) return;   // 107б: не открыт, а читать нечего — молчим
+    unsigned now_ = sceKernelGetSystemTimeLow(); if (reopenAt107 && (int)(now_ - reopenAt107) < 0) return;
+    reopenAt107 = now_ + 1000000u; if (!reopenAt107) reopenAt107 = 1;
+    int ok_ = ioReopen107(); bbOp("art-reopen", ok_ ? "ok" : "fail", 0); if (msnartWatch) msnartWatch(ok_ ? "reopen-ok" : "reopen-fail", file, 1);
+    if (!ok_) return;
+  }
   if (msnartAvDelayS > 0.f && wantIcon[0]) msnartSetObjIcon(wantIcon);   // №1247 (служебно): отложенный значок встаёт, когда срок вышел
   if (busyRow >= 0) {
     SceInt64 res = 0;
-    if (sceIoPollAsync(afd, &res) == 1) {   // ещё читается
+    if (msnartStall107 || sceIoPollAsync(afd, &res) == 1) {   // ещё читается (msnartStall107 — служебно: чтение «зависло», как при сне)
       if (!MSNARTSTALL1156_OLD && (unsigned)(sceKernelGetSystemTimeLow() - busyT0) > MSNART_READ_MS * 1000u) abandonBusy();   // №1156
       return;
     }
     int slot = -1; for (int i = 0; i < MAXE; i++) if (!ent[i].b) { slot = i; break; }
+    if (slot < 0 && msnartShare1363 && res == (SceInt64)rows[busyRow].size && evictShared1363()) for (int i = 0; i < MAXE; i++) if (!ent[i].b) { slot = i; break; }   // 1363: общая, не нужная этой миссии, уходит первой
     if (slot < 0 && !MSNART_PIC_OLD && res == (SceInt64)rows[busyRow].size) {   // нет ячейки: вытеснить запись миссии (не уровня, не картинку брифинга)
-      for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && !isPic(ent[i].row)) { bbOp("art-", rows[ent[i].row].path, 0); drop(i); slot = i; break; }
+      for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && !isPic(ent[i].row)) { bbOp("art-", rows[ent[i].row].path, 0); if (msnartWatch) msnartWatch("evict", rows[ent[i].row].path, 1); drop(i); slot = i; break; }
       if (slot < 0 && isPic(busyRow)) for (int i = 0; i < MAXE; i++) if (ent[i].b && !isPic(ent[i].row)) { bbOp("art-", rows[ent[i].row].path, 0); drop(i); slot = i; break; }
     }
     if (res == (SceInt64)rows[busyRow].size && slot >= 0) {
       sceKernelDcacheWritebackRange(busyBuf, rows[busyRow].size);   // текстуры GE читает из RAM
-      ent[slot].b = busyBuf; ent[slot].row = busyRow; ent[slot].level = busyLev; bytesUsed += rows[busyRow].size;
+      entGen108++; ent[slot].b = busyBuf; ent[slot].row = busyRow; ent[slot].level = busyLev; ent[slot].shared = (unsigned char)shareRow1363(busyRow); ent[slot].used = 1; bytesUsed += rows[busyRow].size;
       if (busyRow < (int)sizeof tries94 && tries94[busyRow]) { if (msnartWatch) msnartWatch("recovered", rows[busyRow].path, tries94[busyRow]); tries94[busyRow] = 0; }
       if (busyRow < (int)sizeof picTries) { if (picTries[busyRow] && msnartWatch) msnartWatch("pic-recovered", rows[busyRow].path, picTries[busyRow]); picTries[busyRow] = 0; picGaveUp[busyRow] = 0; }
     } else {
@@ -230,7 +331,7 @@ void msnartPump(void) {
       failRetry94(busyRow, busyLev, "read-fail");
       if (!MSNART_PIC_OLD && isPic(busyRow)) {   // картинка не дочиталась: один повтор в начало очереди, иначе в счётчик потерь
         if (busyRow < (int)sizeof retried && !retried[busyRow] && nq < MAXQ) { retried[busyRow] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = busyRow; qlev[0] = busyLev; nq++; }
-        else msnartLostPics++;
+        else { msnartLostPics++; picFinal(busyRow); }
       }
     }
     busyBuf = 0; if (!MSNART_BBDONE_OLD) bbOp("art=", rows[busyRow].path, 0);   // тур 10.10 (L3): строка «op art+ …» в чёрном ящике оставалась последней и «зависшей», хотя запись давно дочитана — теперь окончание тоже действие
@@ -238,28 +339,87 @@ void msnartPump(void) {
     if (wantIcon[0]) msnartSetObjIcon(wantIcon);                 // значок задания мог ждать эту запись
   }
   if (busyRow < 0 && nq) {
+    if (ioSerial1337 && ioDevBusy1337) return;   // 1337: стенд «одна карта» — читать нельзя, пока загрузчик в клетке
     if (retryAt94) { if ((int)(sceKernelGetSystemTimeLow() - retryAt94) < 0) return; retryAt94 = 0; }   // Build 94: пауза 1 с между повторами
     int r = qrow[0], lev = qlev[0]; nq--; memmove(qrow, qrow + 1, sizeof(int) * nq); memmove(qlev, qlev + 1, sizeof(int) * nq);
+    if (msnartReq) msnartReq(rows[r].path);
     bbOp("art+", rows[r].path, 0);   // правка 103: самописец — что читается с карты
     int sim94 = msnartFailSim94 > 0; if (sim94) msnartFailSim94--;
     if (!sim94 && msnartFailMissgen > 0 && strstr(rows[r].path, "missgen")) { sim94 = 1; msnartFailMissgen--; }   // Кольцо-96, служебно (flag msnartfailmissgen N): N отказов памяти только у missgen.p3d — воспроизводит L4 fragblk: 0,65 МБ не находится, остальное грузится   // служебный отказ: все три попытки памяти этой записи мимо
     busyBuf = sim94 ? 0 : zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16);
+    if (!busyBuf && msnartShare1363 && !sim94 && evictShared1363()) busyBuf = zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16);   // 1363: теснота — сначала общие записи, которых эта миссия не просила
     if (!busyBuf && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(rows[r].size) && !sim94) busyBuf = zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16);
     // Кольцо-96 (корень чёрной карточки, longgame L4 fragblk 0.6): отказ памяти у missgen.p3d (0,65 МБ) сбрасывал ВСЕ записи миссии, в том числе только что дочитанный пакет картинки брифинга,
     // каждую секунду (60 повторов): картинка не держалась, карточка 8 с ждала на чёрном LOADING. Картинки брифинга при этом не сбрасываются (MSNART_PICWAIT_OLD=1 / flag msnartpicwaitold 1 — как было)
     if (!busyBuf && !MSNARTSTALL1156_OLD) { int dropped_ = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && (msnartPicWaitOld || !isPic(ent[i].row))) { drop(i); dropped_++; }   // №1156: отказ памяти — кэш записей миссий долой и один повтор
       if (dropped_) { bbOp("art~", rows[r].path, 0); busyBuf = sim94 ? 0 : zone3AllocX(Z3A_MISSION, "art", rows[r].size, 16); } }
     if (!busyBuf && !msnartPicWaitOld && !MSNART_PIC_OLD && isPic(r) && r < (int)sizeof picTries) {   // Кольцо-96: картинка брифинга ждёт память, раз в секунду, до MSNART_PIC_TRIES раз
-      if (picTries[r] < MSNART_PIC_TRIES && nq < MAXQ) { if (++picTries[r] == 1 && msnartWatch) msnartWatch("pic-no-mem", rows[r].path, 1);
+      if (picTries[r] < picMaxTries() && nq < MAXQ) { if (++picTries[r] == 1 && msnartWatch) msnartWatch("pic-no-mem", rows[r].path, 1);
         qrow[nq] = r; qlev[nq] = lev; nq++; retryAt94 = sceKernelGetSystemTimeLow() + 1000000u; if (!retryAt94) retryAt94 = 1; return; }
-      picGaveUp[r] = 1; msnartLostPics++; if (msnartWatch) msnartWatch("pic-give-up", rows[r].path, MSNART_PIC_TRIES); return;
+      picGaveUp[r] = 1; msnartLostPics++; if (msnartWatch) msnartWatch("pic-give-up", rows[r].path, picMaxTries()); return;
     }
-    if (!busyBuf) { if (failRetry94(r, lev, "no-mem")) return; if (!MSNART_PIC_OLD && isPic(r)) { if (r < (int)sizeof retried && !retried[r] && nq < MAXQ) { retried[r] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = r; qlev[0] = lev; nq++; } else msnartLostPics++; } return; }
+    if (!busyBuf && !msnartIo108Old) { char a_[48]; snprintf(a_, sizeof a_, "need=%u r=%d", rows[r].size, r); bbOp("art-mem", a_, 0); }
+    if (!busyBuf) { if (failRetry94(r, lev, "no-mem")) return; if (!MSNART_PIC_OLD && isPic(r)) { if (r < (int)sizeof retried && !retried[r] && nq < MAXQ) { retried[r] = 1; memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = r; qlev[0] = lev; nq++; } else { msnartLostPics++; picFinal(r); } } return; }
     DCPRE96(busyBuf, rows[r].size);
-    if (sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET) < 0 || sceIoReadAsync(afd, busyBuf, rows[r].size) < 0) { free(busyBuf); busyBuf = 0; if (failRetry94(r, lev, "io-fail")) return; if (!MSNART_PIC_OLD && isPic(r)) msnartLostPics++; return; }
+    int rcS_ = sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET), rcR_ = rcS_ < 0 ? 0 : ((msnartIoStuck108 || pwrSimFault("msnart")) ? (int)0x80020329 : sceIoReadAsync(afd, busyBuf, rows[r].size));
+    if (rcS_ >= 0 && rcR_ >= 0) { /* чтение запущено */ }
+    else if (!msnartIo108Old && (!isPic(r) || !msnartIo107bOld) && r >= 0 && r < (int)sizeof tries94) {   // 108: отказ запуска чтения — в ящик, дескриптор заново, с 3-й попытки синхронно; 107б: и у картинок карточки
+      int tr_ = isPic(r) ? picTries[r] : tries94[r]; char a_[48]; snprintf(a_, sizeof a_, "s=%08x r=%08x t=%u", (unsigned)rcS_, (unsigned)rcR_, tr_); bbOp("art-io", a_, 0);
+      if (msnartIo107bOld) { if (afd >= 0) sceIoClose(afd); afd = sceIoOpen(file, PSP_O_RDONLY, 0); msnartIoReopen108++; msnartIoStuck108 = 0; } else ioReopen107();   // 107б: неудачное переоткрытие — afd −1, дальше повтор в начале msnartPump
+      if (afd >= 0 && tr_ >= 2 && sceIoLseek32(afd, (int)rows[r].off, PSP_SEEK_SET) >= 0 && sceIoRead(afd, busyBuf, rows[r].size) == (int)rows[r].size) {
+        int slot_ = -1; for (int i = 0; i < MAXE; i++) if (!ent[i].b) { slot_ = i; break; }
+        if (slot_ < 0 && !msnartIo107bOld && isPic(r)) for (int i = 0; i < MAXE; i++) if (ent[i].b && !ent[i].level && !isPic(ent[i].row)) { bbOp("art-", rows[ent[i].row].path, 0); drop(i); slot_ = i; break; }   // 107б: как в msnartPump, место картинке
+        if (slot_ >= 0) { sceKernelDcacheWritebackRange(busyBuf, rows[r].size); entGen108++; ent[slot_].b = busyBuf; ent[slot_].row = r; ent[slot_].level = lev; bytesUsed += rows[r].size; busyBuf = 0; msnartIoSync108++;
+          bbOp("art=", rows[r].path, 0); if (tries94[r]) { if (msnartWatch) msnartWatch("recovered", rows[r].path, tries94[r]); tries94[r] = 0; }
+          if (isPic(r)) { if (picTries[r] && msnartWatch) msnartWatch("pic-recovered", rows[r].path, picTries[r]); picTries[r] = 0; picGaveUp[r] = 0; } if (wantIcon[0]) msnartSetObjIcon(wantIcon); return; } }
+      free(busyBuf); busyBuf = 0;
+      if (isPic(r)) {   // 107б: картинка карточки — повтор раз в секунду до picMaxTries (как «нет памяти»), потом сдача с LOST
+        if (picTries[r] < picMaxTries() && nq < MAXQ) { if (++picTries[r] == 1 && msnartWatch) msnartWatch("pic-io", rows[r].path, 1);
+          qrow[nq] = r; qlev[nq] = lev; nq++; retryAt94 = sceKernelGetSystemTimeLow() + 1000000u; if (!retryAt94) retryAt94 = 1; return; }
+        picGaveUp[r] = 1; msnartLostPics++; if (msnartWatch) msnartWatch("pic-give-up", rows[r].path, picMaxTries()); return;
+      }
+      if (failRetry94(r, lev, "io-fail")) return; return;
+    } else { free(busyBuf); busyBuf = 0; if (failRetry94(r, lev, "io-fail")) return; if (!MSNART_PIC_OLD && isPic(r)) { msnartLostPics++; picFinal(r); } return; }
     busyRow = r; busyLev = lev; busyT0 = sceKernelGetSystemTimeLow();
   }
 }
+// 1359 (оценка Fable п.6б, Роб: «мелкий файл миссии стоит 0,1 с не из-за карты, а из-за опроса раз в кадр»): msnartPump звали раз в кадр, а чтение записи (значок 64 КБ ≈ 5 мс) кончалось
+// через несколько миллисекунд — следующая запись очереди ждала кадра (33 мс): 10 значков подряд = 10 кадров. Теперь после запуска чтения насос в том же кадре коротко опрашивает его
+// (sceIoPollAsync, паузы по 150 мкс), и как только оно кончилось — тут же берёт следующее из очереди; общий предел MSNART_CHAIN_US за кадр (крупные записи не задерживают кадр больше). MSNARTCHAIN1359_OLD=1 /
+// «flag msnartchain1359old 1» / файл — как было (одно действие за кадр)
+#ifndef MSNARTCHAIN1359_OLD
+#define MSNARTCHAIN1359_OLD 0
+#endif
+unsigned msnartChainUs1359 = 8000u;   // предел за кадр; msn_view.c ставит 24 мс, пока мир скрыт (карточка, ирис): там кадр ничего не рисует, ждать чтение можно дольше
+int msnartChain1359Old = MSNARTCHAIN1359_OLD;
+static unsigned ch1359T0, ch1359N, ch1359Pumps, ch1359DoneUs, ch1359DonePumps;   // служебное (гейт): время и число кадров, за которые очередь из msnartService1359 опустела
+void msnartPump(void) {
+  if (ch1359T0) ch1359Pumps++;
+  unsigned t0 = sceKernelGetSystemTimeLow();
+  pumpOnce();
+  if (!msnartChain1359Old && !msnartStall107) {
+    while ((busyRow >= 0 || nq) && afd >= 0 && (unsigned)(sceKernelGetSystemTimeLow() - t0) < msnartChainUs1359) {
+      int b0 = busyRow, q0 = nq;
+      if (busyRow >= 0) sceKernelDelayThread(150);   // чтение в полёте: даём ему закончиться (результат опроса снимает pumpOnce сам — sceIoPollAsync отдаёт его один раз)
+      pumpOnce();
+      if (busyRow < 0 && b0 < 0 && nq == q0) break;   // читать нечего или ждём повтор/память (стенд одной карты): до следующего кадра
+    }
+  }
+  if (ch1359T0 && busyRow < 0 && !nq) { ch1359DoneUs = sceKernelGetSystemTimeLow() - ch1359T0; ch1359DonePumps = ch1359Pumps; ch1359T0 = 0; }
+}
+// служебное (flag msnartchain1359 N): поставить в очередь N разных небольших записей (не картинок, ещё не загруженных) и замерить, за сколько кадров и мкс очередь опустеет
+void msnartService1359(int n) {
+  if (!rows || n <= 0) return;
+  int got = 0;
+  for (unsigned r = 0; r < nrows && got < n; r++) {
+    if (isPic((int)r) || rows[r].size > 200000u) continue;
+    int have = 0; for (int i = 0; i < MAXE; i++) if (ent[i].b && ent[i].row == (int)r) have = 1;
+    if (have || busyRow == (int)r) continue; for (int i = 0; i < nq; i++) if (qrow[i] == (int)r) have = 1; if (have) continue;
+    msnartLoad(rows[r].path, 0); got++;
+  }
+  ch1359T0 = sceKernelGetSystemTimeLow() | 1u; ch1359N = (unsigned)got; ch1359Pumps = 0; ch1359DoneUs = 0;
+}
+int msnartChainResult1359(unsigned *n, unsigned *pumps, unsigned *us) { if (!ch1359DoneUs) return 0; *n = ch1359N; *pumps = ch1359DonePumps; *us = ch1359DoneUs; return 1; }
 static const MsaImg *findImg(const char *name, const unsigned char **base) {
   if (!name) return 0;
   for (int i = MAXE - 1; i >= 0; i--) {
@@ -395,8 +555,46 @@ full:
   msnartDraw(name,pos,ex,ey,ez,t);
 }
 static float cullD;   // msnartDrawCull: меши дальше cullD от глаза (по земле) не рисуются — пропы гонки, сотни экземпляров
+// 1298 (Роб: «в гонке с Милхаусом на L2 очень сильно лагает у покрышек вдоль дороги»; реквизит l2_sr1p: 622 меша на суставах, в круге 70 м в среднем 210 мешей, у каждого своя матрица и своя привязка текстуры):
+// (1) меш, чья сфера (центр из бокса вершин через матрицу сустава, радиус — полудиагональ × масштаб) целиком снаружи боковых плоскостей кадра, не рисуется (rfSphereOut, как у пропов: GE его всё равно отсёк бы);
+// (2) непрозрачные меши (режим 0) рисуются группами по текстуре — одна привязка на текстуру (4020 → 480 за 60 кадров); порядок рисования при этом другой, по краям покрышек единицы-десятки пикселей (3–22 при ровном ходе); худший кадр L2 sr1 18,1 → 15,7 мс. Включено словом Роба 14.11; MSNARTGROUP1298_OLD=1 / файл msnartgroup1298old / «flag msnartgroup1298 0» — прежний порядок.
+// Выключатель MSNARTCULL1298_OLD=1 / «flag msnartcull1298 0» / файл msnartcull1298old — как было. «flag msnartcull1298 3» — сверка: у отсечённого меша ни одна вершина не должна лежать внутри четырёх плоскостей кадра (msnartRaceViol);
+// 4 — красный контроль: радиус ×0,3 со сверкой (viol > 0)
+#ifndef MSNARTCULL1298_OLD
+#define MSNARTCULL1298_OLD 0
+#endif
+// msnartGroup1298 (flag msnartgroup1298 0|1, файл msnartgroup1298old, MSNARTGROUP1298_OLD): непрозрачные по текстурам; с 14.11 по умолчанию 1 (слово Роба); 0 — порядок рисования прежний, картинка бит в бит
+#ifndef MSNARTGROUP1298_OLD
+#define MSNARTGROUP1298_OLD 0   // слово Роба 14.11 «что ты ждёшь»: группировка включена по умолчанию
+#endif
+int msnartCull1298 = !MSNARTCULL1298_OLD, msnartGroup1298 = !MSNARTGROUP1298_OLD; unsigned msnartRaceFrustum, msnartRaceViol, msnartRaceDraws;
+int (*msnartSphereOut)(const float *c, float r); int (*msnartPtIn)(const float *p);   // main_render.h: плоскости кадра
+typedef struct { float c[3], r; unsigned char ok; } MsaBndM; static const void *mBndOwner;
+typedef struct { ScePspFMatrix4 M; unsigned tex, nv, off; } MsaDefer;
+// 1298: сетка 32 м по положению суставов мешей реквизита (строится один раз на рисунок): в круге cullD берутся мешы только соседних ячеек, а не все 622 дважды
+#define MSA_GRID_CELL 32.f
+#define MSA_GRID_MAXC 1024
+#define MSA_DEFER_N 512
+// Рабочая память отсечения (границы мешей, отложенные меши, сетка, выбор) ~76 КБ: раньше статически (143 КБ BSS на ВСЕ запуски, канон 13), теперь берётся при первом кадре реквизита гонки из области «миссия» (zone3AllocX, как записи msnart)
+// и возвращается вместе с записью реквизита (drop) / при старте миссии / при выгрузке. Не нашлась (даже после msnartRoom) — прежний путь без отсечения, повтор не чаще раза в 2 с. Строка WATCHDOG на отказ
+typedef struct { MsaBndM bnd[1024]; MsaDefer defer[MSA_DEFER_N]; unsigned short kbuf[2048];
+  struct { const void *d; float x0, z0; int nx, nz; unsigned start[MSA_GRID_MAXC + 1]; unsigned short idx[2048]; unsigned fill[MSA_GRID_MAXC]; unsigned char anyTr; } grid; } MsaCullMem;
+static int mBndOwnerIn(const unsigned char *b, unsigned sz) { return b && mBndOwner && (const unsigned char *)mBndOwner >= b && (const unsigned char *)mBndOwner < b + sz; }
+static MsaCullMem *mc; static unsigned mcFailT; unsigned msnartCullMemBytes; int msnartCullMemFail;   // msnartCullMemFail (flag msnartcullmemfail 1) — служебно: память отсечения «не нашлась», проверка прежнего пути
+static void cullMemFree(void) { if (mc) free(mc); mc = 0; mBndOwner = 0; msnartCullMemBytes = 0; }
+static int cullMemGet(void) {
+  if (mc) return 1; unsigned now = sceKernelGetSystemTimeLow(); if (mcFailT && now - mcFailT < 2000000u) return 0;
+  mc = msnartCullMemFail ? 0 : (MsaCullMem *)zone3AllocX(Z3A_MISSION, "mcull", sizeof *mc, 16);
+  if (!mc && !msnartCullMemFail && !MSNART_ROOM_OLD && msnartRoom && msnartRoom(sizeof *mc)) mc = (MsaCullMem *)zone3AllocX(Z3A_MISSION, "mcull", sizeof *mc, 16);
+  if (!mc) { mcFailT = now | 1u; if (msnartWatch) msnartWatch("race cull memory refused: old path", "mcull", 1); return 0; }
+  memset(mc, 0, sizeof *mc); mBndOwner = 0; mcFailT = 0; msnartCullMemBytes = (unsigned)sizeof *mc; return 1;
+}
+unsigned msnartRaceT[3]; unsigned msnartRaceMeshUs, msnartRaceBnd, msnartRaceUs, msnartRaceMesh, msnartRaceBind, msnartRaceCullN, msnartRaceCalls; int msnartRaceOff;   // 1298 замер: реквизит гонки (мкс на рисование, мешей, привязок текстур, отсечённых по расстоянию); msnartRaceOff — служебный флаг «не рисовать»
 void msnartDrawCull(const char *name, const float *pos, float ex, float ey, float ez, float t, float dist) {
+  if (msnartRaceOff) return;
+  unsigned rt0_ = sceKernelGetSystemTimeLow(); msnartRaceCalls++;
   cullD = dist; msnartDraw(name, pos, ex, ey, ez, t); cullD = 0.f;
+  msnartRaceUs += sceKernelGetSystemTimeLow() - rt0_;
 }
 void msnartDrawRot(const char *name, const float *pos, float heading, float ex, float ey, float ez, float t) {
   rotOn = 1; rotC = cosf(heading); rotS = sinf(heading); msnartDraw(name, pos, ex, ey, ez, t); rotOn = 0;
@@ -488,17 +686,29 @@ int msnartHas(const char *name) {
   }
   return 0;
 }
+int msaFind108Old, msaFind108Chk; unsigned msaFind108Bad;
 unsigned msaCallN, msaFindUs, msaDrawUs;   // №849 служебно (msnart.h): вызовы, мкс поиска по имени и всего рисунка
 void msnartDraw(const char *name, const float *pos, float ex, float ey, float ez, float tsec) {
   unsigned t0_ = sceKernelGetSystemTimeLow(); msaCallN++;
   const unsigned char *b = 0; const MsaDraw *d = 0;
-  for (int i = MAXE - 1; i >= 0 && !d; i--) {
-    if (!ent[i].b) continue;
-    const MsaHdr *h = (const MsaHdr *)ent[i].b;
-    for (unsigned k = 0; k < h->ndraw; k++) {
-      const MsaDraw *x = (const MsaDraw *)(ent[i].b + h->offDraw) + k;
-      if (!strcasecmp(x->name, name)) { d = x; b = ent[i].b; break; }
+  // 108 О17 (Бабл; «поиск рисунка по имени каждый кадр, msa_find»): итог поиска — чистая функция (имя без учёта регистра, таблица записей); запоминается по хэшу имени, пока таблица не менялась (entGen108). Хит проверяется
+  // сравнением строки без учёта регистра, как поиск. MSAFIND108_OLD=1 / «flag msafind108old 1» — поиск каждый раз; «flag msafind108chk 1» — каждый хит сверяется с поиском (msaFind108Bad, строка PBCHK msa_bad)
+  static struct { unsigned gen; char name[40]; const MsaDraw *d; const unsigned char *b; } fc[32]; unsigned fh = 2166136261u, fx = 0; int fok = 0;
+  if (!msaFind108Old) { size_t nl = strlen(name); if (nl < sizeof fc[0].name) { for (size_t q = 0; q < nl; q++) { unsigned char ch = (unsigned char)name[q]; if (ch >= 'A' && ch <= 'Z') ch += 32; fh ^= ch; fh *= 16777619u; } fx = fh & 31; fok = 1; } }
+  int hit = 0;
+  if (fok && fc[fx].gen == entGen108 && !strcasecmp(fc[fx].name, name)) { d = msaFind108Red == 2 ? 0 : fc[fx].d; b = fc[fx].b; hit = 1; }   // msaFind108Red 2 — красный контроль: хит теряет рисунок
+  if (!hit || msaFind108Chk) {
+    const MsaDraw *d2 = 0; const unsigned char *b2 = 0;
+    for (int i = MAXE - 1; i >= 0 && !d2; i--) {
+      if (!ent[i].b) continue;
+      const MsaHdr *h = (const MsaHdr *)ent[i].b;
+      for (unsigned k = 0; k < h->ndraw; k++) {
+        const MsaDraw *x = (const MsaDraw *)(ent[i].b + h->offDraw) + k;
+        if (!strcasecmp(x->name, name)) { d2 = x; b2 = ent[i].b; break; }
+      }
     }
+    if (hit) { if (d2 != d || b2 != b) msaFind108Bad++; }
+    else { d = d2; b = b2; if (fok) { fc[fx].gen = entGen108; snprintf(fc[fx].name, sizeof fc[fx].name, "%s", name); fc[fx].d = d; fc[fx].b = b; } }
   }
   msaFindUs += sceKernelGetSystemTimeLow() - t0_;
   if (!d) return;
@@ -532,27 +742,83 @@ void msnartDraw(const char *name, const float *pos, float ex, float ey, float ez
   sceGuDisable(GU_FOG); sceGuDisable(GU_CULL_FACE);
   sceGuTexScale(1.f, 1.f); sceGuTexOffset(0.f, 0.f);
   const MsaMesh *ms = (const MsaMesh *)(b + d->offMesh);
-  for (int pass = 0; pass < 2; pass++)   // сначала непрозрачное и вырезки (пишут глубину), потом полупрозрачное и свечения
-  for (unsigned k = 0; k < d->nmesh; k++) {   // меши (ведёрко, «!», доллар): вершины в осях сустава, матрица кадра
+  unsigned meshT0_ = sceKernelGetSystemTimeLow(); unsigned nDefer = 0; unsigned nk = d->nmesh; const unsigned short *klist = 0; int skipTr = 0;
+  const int cull98 = cullD > 0.f && msnartCull1298 && msnartSphereOut && d->njoint && !rotOn && cullMemGet();   // + сетка 32 м и отсечение по кадру; msnartGroup1298 — группы по текстуре
+  if (cull98 && mBndOwner != (const void *)d) { memset(mc->bnd, 0, sizeof mc->bnd); mBndOwner = d; }
+  if (cull98 && d->nmesh <= 2048) {   // сетка по суставам (один раз), выбор мешей круга
+    if (mc->grid.d != (const void *)d) {
+      float lx = 1e30f, hx = -1e30f, lz = 1e30f, hz = -1e30f; mc->grid.anyTr = 0;
+      for (unsigned k = 0; k < d->nmesh; k++) { const MsaMesh *m = &ms[k]; if (!m->nvert) continue; unsigned j = m->flags >> 16; const float *J = JM + (j < d->njoint ? j : 0) * 12; float x = ox + J[9], z = oz + J[11];
+        if (x < lx) lx = x; if (x > hx) hx = x; if (z < lz) lz = z; if (z > hz) hz = z; if (((m->flags >> 8) & 0xFF) >= 2) mc->grid.anyTr = 1; }
+      mc->grid.x0 = lx; mc->grid.z0 = lz; mc->grid.nx = (int)((hx - lx) / MSA_GRID_CELL) + 1; mc->grid.nz = (int)((hz - lz) / MSA_GRID_CELL) + 1;
+      if (mc->grid.nx * mc->grid.nz > MSA_GRID_MAXC) { mc->grid.d = 0; }
+      else { memset(mc->grid.start, 0, sizeof(unsigned) * (unsigned)(mc->grid.nx * mc->grid.nz + 1));
+        for (int pass2 = 0; pass2 < 2; pass2++) { if (pass2) memcpy(mc->grid.fill, mc->grid.start, sizeof(unsigned) * (unsigned)(mc->grid.nx * mc->grid.nz));
+          for (unsigned k = 0; k < d->nmesh; k++) { const MsaMesh *m = &ms[k]; if (!m->nvert) continue; unsigned j = m->flags >> 16; const float *J = JM + (j < d->njoint ? j : 0) * 12;
+            int cx = (int)((ox + J[9] - mc->grid.x0) / MSA_GRID_CELL), cz = (int)((oz + J[11] - mc->grid.z0) / MSA_GRID_CELL); int c = cz * mc->grid.nx + cx;
+            if (!pass2) mc->grid.start[c + 1]++; else mc->grid.idx[mc->grid.fill[c]++] = (unsigned short)k; }
+          if (!pass2) for (int c = 0; c < mc->grid.nx * mc->grid.nz; c++) mc->grid.start[c + 1] += mc->grid.start[c]; }
+        mc->grid.d = d; } }
+    if (mc->grid.d == (const void *)d) {
+      int cx0 = (int)floorf((ex - cullD - mc->grid.x0) / MSA_GRID_CELL), cx1 = (int)floorf((ex + cullD - mc->grid.x0) / MSA_GRID_CELL), cz0 = (int)floorf((ez - cullD - mc->grid.z0) / MSA_GRID_CELL), cz1 = (int)floorf((ez + cullD - mc->grid.z0) / MSA_GRID_CELL);
+      if (cx0 < 0) cx0 = 0; if (cz0 < 0) cz0 = 0; if (cx1 >= mc->grid.nx) cx1 = mc->grid.nx - 1; if (cz1 >= mc->grid.nz) cz1 = mc->grid.nz - 1;
+      unsigned n = 0; unsigned bits[64]; unsigned nw = (d->nmesh + 31u) >> 5; memset(bits, 0, nw * 4u);
+      for (int cz = cz0; cz <= cz1; cz++) for (int cx = cx0; cx <= cx1; cx++) { int c = cz * mc->grid.nx + cx; for (unsigned q = mc->grid.start[c]; q < mc->grid.start[c + 1]; q++) { unsigned k_ = mc->grid.idx[q]; bits[k_ >> 5] |= 1u << (k_ & 31); } }
+      for (unsigned w = 0; w < nw; w++) for (unsigned v = bits[w]; v; v &= v - 1) mc->kbuf[n++] = (unsigned short)((w << 5) + (unsigned)__builtin_ctz(v));   // по возрастанию номера, как прежний обход, без сортировки
+      klist = mc->kbuf; nk = n; skipTr = !mc->grid.anyTr; } }
+  msnartRaceT[0] += sceKernelGetSystemTimeLow() - meshT0_;   // границы мешей — только у реквизита с отсечением: прочие рисунки кадра кэш не сбрасывают
+  for (int pass = 0; pass < 2; pass++) {   // сначала непрозрачное и вырезки (пишут глубину), потом полупрозрачное и свечения
+  if (pass && skipTr) break;   // 1298: полупрозрачных мешей у рисунка нет
+  for (unsigned kk = 0; kk < nk; kk++) {   // меши (ведёрко, «!», доллар): вершины в осях сустава, матрица кадра
+    unsigned k = klist ? klist[kk] : kk;
     const MsaMesh *m = &ms[k]; if (!m->nvert) continue;
     unsigned mode = (m->flags >> 8) & 0xFF, j = m->flags >> 16; if ((mode >= 2) != pass) continue;
     ScePspFMatrix4 M; memset(&M, 0, sizeof M); M.x.x = M.y.y = M.z.z = M.w.w = 1.f; M.w.x = ox; M.w.y = oy; M.w.z = oz;
     if (cullD > 0.f && d->njoint) { const float *J = JM + (j < d->njoint ? j : 0) * 12;
-      float dx = ox + J[9] - ex, dz = oz + J[11] - ez; if (dx * dx + dz * dz > cullD * cullD) continue; }
+      float dx = ox + J[9] - ex, dz = oz + J[11] - ez; if (dx * dx + dz * dz > cullD * cullD) { if (!pass) msnartRaceCullN++; continue; } }
     if (d->njoint) { const float *J = JM + (j < d->njoint ? j : 0) * 12;
       float cx_[3] = {J[0], J[1], J[2]}, cy_[3] = {J[3], J[4], J[5]}, cz_[3] = {J[6], J[7], J[8]}, t_[3] = {J[9], J[10], J[11]};
       rotY(cx_); rotY(cy_); rotY(cz_); rotY(t_);
       M.x.x = cx_[0]; M.x.y = cx_[1]; M.x.z = cx_[2]; M.y.x = cy_[0]; M.y.y = cy_[1]; M.y.z = cy_[2]; M.z.x = cz_[0]; M.z.y = cz_[1]; M.z.z = cz_[2];
       M.w.x += t_[0]; M.w.y += t_[1]; M.w.z += t_[2]; }
     else if (rotOn) { M.x.x = rotC; M.x.z = -rotS; M.z.x = rotS; M.z.z = rotC; }
+    if (cull98 && k < 1024) {   // 1298: сфера меша целиком вне боковых плоскостей кадра — не рисуем
+      MsaBndM *bm = &mc->bnd[k];
+      if (!bm->ok) { msnartRaceBnd++; const MsaVert *vs = (const MsaVert *)(b + m->offVert); float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (unsigned v = 0; v < m->nvert; v++) { float p[3] = {vs[v].x, vs[v].y, vs[v].z}; for (int a_ = 0; a_ < 3; a_++) { if (p[a_] < lo[a_]) lo[a_] = p[a_]; if (p[a_] > hi[a_]) hi[a_] = p[a_]; } }
+        for (int a_ = 0; a_ < 3; a_++) bm->c[a_] = (lo[a_] + hi[a_]) * .5f;
+        bm->r = sqrtf((hi[0] - lo[0]) * (hi[0] - lo[0]) + (hi[1] - lo[1]) * (hi[1] - lo[1]) + (hi[2] - lo[2]) * (hi[2] - lo[2])) * .5f; bm->ok = 1; }
+      float wc[3] = {M.x.x * bm->c[0] + M.y.x * bm->c[1] + M.z.x * bm->c[2] + M.w.x, M.x.y * bm->c[0] + M.y.y * bm->c[1] + M.z.y * bm->c[2] + M.w.y, M.x.z * bm->c[0] + M.y.z * bm->c[1] + M.z.z * bm->c[2] + M.w.z};
+      float sx = sqrtf(M.x.x * M.x.x + M.x.y * M.x.y + M.x.z * M.x.z), sy = sqrtf(M.y.x * M.y.x + M.y.y * M.y.y + M.y.z * M.y.z), sz = sqrtf(M.z.x * M.z.x + M.z.y * M.z.y + M.z.z * M.z.z), sc = sx > sy ? sx : sy; if (sz > sc) sc = sz;
+      if (msnartSphereOut(wc, bm->r * sc * (msnartCull1298 >= 4 ? .3f : 1.f))) {
+        msnartRaceFrustum++;
+        if (msnartCull1298 >= 3 && msnartPtIn) { const MsaVert *vs = (const MsaVert *)(b + m->offVert); int bad = 0;   // сверка: у отсечённого меша внутри кадра ни одной вершины
+          for (unsigned v = 0; v < m->nvert && !bad; v++) { float p[3] = {M.x.x * vs[v].x + M.y.x * vs[v].y + M.z.x * vs[v].z + M.w.x, M.x.y * vs[v].x + M.y.y * vs[v].y + M.z.y * vs[v].z + M.w.y, M.x.z * vs[v].x + M.y.z * vs[v].y + M.z.z * vs[v].z + M.w.z}; if (msnartPtIn(p)) bad = 1; }
+          msnartRaceViol += (unsigned)bad; }
+        continue; }
+    }
+    if (cull98 && msnartGroup1298 && mode == 0 && nDefer < MSA_DEFER_N) { MsaDefer *df = &mc->defer[nDefer++]; df->M = M; df->tex = m->tex; df->nv = m->nvert; df->off = m->offVert; continue; }   // 1298: непрозрачные — после цикла, по текстурам
     if (msnartGeRoom && !msnartGeRoom(MSA_GE_MESH)) { msnartGeSkips++; continue; }   // правка 103: список GE полон
     sceGuSetMatrix(GU_MODEL, &M);
+    if (cullD > 0.f) { msnartRaceMesh++; msnartRaceBind++; }
     bindTex(b, m->tex, 1);
     if (mode == 0) { sceGuDisable(GU_BLEND); sceGuDisable(GU_ALPHA_TEST); sceGuDepthMask(GU_FALSE); }
     else if (mode == 1) { blendMode(1); sceGuEnable(GU_ALPHA_TEST); sceGuDepthMask(GU_FALSE); }   // вырезка: альфа-тест (GREATER 0x40) + глубина
     else { blendMode(mode == 3 ? 2 : mode == 4 ? 3 : 1); sceGuDisable(GU_ALPHA_TEST); sceGuDepthMask(GU_TRUE); }
     sceGuDrawArray(GU_TRIANGLES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, (int)m->nvert, 0, b + m->offVert);
   }
+  if (pass == 0) msnartRaceT[1] += sceKernelGetSystemTimeLow() - meshT0_;
+  if (pass == 0 && nDefer) {   // 1298: непрозрачные меши группами по текстуре: привязка и состояние один раз на текстуру
+    const MsaHdr *hh = (const MsaHdr *)b; unsigned nt = hh->ntex; unsigned char did[1024]; memset(did, 0, nDefer);
+    for (unsigned t = 0; t <= nt; t++) { int first = 1;   // t == nt: меши с текстурой вне таблицы (bindTex их выключает)
+      for (unsigned i = 0; i < nDefer; i++) { if (did[i]) continue; unsigned tx = mc->defer[i].tex; if (t < nt ? tx != t : tx < nt) continue; did[i] = 1;
+        if (msnartGeRoom && !msnartGeRoom(MSA_GE_MESH)) { msnartGeSkips++; continue; }
+        if (first) { bindTex(b, tx, 1); sceGuDisable(GU_BLEND); sceGuDisable(GU_ALPHA_TEST); sceGuDepthMask(GU_FALSE); first = 0; msnartRaceBind++; }
+        sceGuSetMatrix(GU_MODEL, &mc->defer[i].M); msnartRaceMesh++; msnartRaceDraws++;
+        sceGuDrawArray(GU_TRIANGLES, GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_3D, (int)mc->defer[i].nv, 0, b + mc->defer[i].off); } }
+    nDefer = 0; }
+  }
+  if (cullD > 0.f) { msnartRaceMeshUs += sceKernelGetSystemTimeLow() - meshT0_; msnartRaceT[2] += sceKernelGetSystemTimeLow() - meshT0_; }
   sceGuDisable(GU_ALPHA_TEST);
   ScePspFMatrix4 I; memset(&I, 0, sizeof I); I.x.x = I.y.y = I.z.z = I.w.w = 1.f;
   sceGuSetMatrix(GU_MODEL, &I);
@@ -683,4 +949,59 @@ int msnartFlat(const char *name, MsnartFlat *f) {
   if (ncache < 16) { strncpy(cache[ncache].name, name, 31); cache[ncache].name[31] = 0; cache[ncache].ok = ok; cache[ncache].f = r; ncache++; }
   if (ok) *f = r;
   return ok;
+}
+
+// 107б P0 (Роб 1273 «сон и пробуждение», генплан Fable §P0): пометки отказов msnart не живут дольше повторного чтения.
+// (1) tries94 — счёт неудач записи миссии (до сдачи через 60) — НИКОГДА не сбрасывался: номер строки переходил на следующий уровень, а после сдачи запись не просили до конца игры. Теперь его сбрасывают смена уровня
+// (msnartReset), старт миссии (msnartMissionStart) и пробуждение. (2) pwrEpoch() (счётчик Будки: растёт на пробуждении и смене уровня): при смене — счёт неудач и пауза повтора обнулены, картинки и пометки «потеряна» тоже;
+// чтение В ПОЛЁТЕ (его дескриптор после сна мёртв) возвращается в начало очереди, буфер намеренно в утечку (ядро могло ещё его писать, как в abandonBusy), дескриптор msnart.shr открывается заново (не вышло — afd = −1,
+// дальше решает msnartPump). PWR107_OLD=1 / «flag pwr107old 1» — как было. pwrEpoch и убийца дескриптора — power.h (Будка, flag simsleep N).
+#ifndef PWR107_OLD
+#define PWR107_OLD 0
+#endif
+int msnartPwr107Old = PWR107_OLD; unsigned msnartPwr107N;
+// Карантин (дирижёр, 13.11: Роб усыпляет PSP постоянно, утечка на каждом сне копилась бы): буфер брошенного чтения (сон, тайм-аут) и его дескриптор не бросаются насовсем, а держатся в одной из QUAR_N ячеек; ядро
+// могло ещё писать в буфер, поэтому освобождаются они только через QUAR_MS после постановки (после сна чтение с мёртвого дескриптора кончается ошибкой, на тайм-ауте — давно дочитано), дескриптор — отменой и закрытием.
+// Все ячейки заняты: освобождается самая старая, если ей больше QUAR_MIN_MS, иначе новый буфер уходит в утечку (три сна за секунду). Утечка и держание — счётчики msnartLeakBytes и msnartQuarBytes (строка PBCHK).
+// QUAR107_OLD=1 / «flag quar107old 1» — как было (всё в утечку)
+#ifndef QUAR107_OLD
+#define QUAR107_OLD 0
+#endif
+#define QUAR_N 2
+#define QUAR_MS 10000u
+#define QUAR_MIN_MS 1500u
+int msnartQuar107Old = QUAR107_OLD, msnartStall107; unsigned msnartLeakBytes, msnartQuarBytes;
+static struct { unsigned char *b; unsigned sz, t; SceUID fd; } quar[QUAR_N];
+static void quarFree(int i) { if (quar[i].fd >= 0) { sceIoCancel(quar[i].fd); sceIoClose(quar[i].fd); } free(quar[i].b); msnartQuarBytes -= quar[i].sz; quar[i].b = 0; quar[i].fd = -1; quar[i].sz = 0; }
+static void quarTick107(void) { unsigned now = sceKernelGetSystemTimeLow() / 1000u; for (int i = 0; i < QUAR_N; i++) if (quar[i].b && (unsigned)(now - quar[i].t) > QUAR_MS) quarFree(i); }
+static void quarPush107(unsigned char *b, unsigned sz, SceUID fd) {
+  if (!b) { if (fd >= 0 && fd != afd) { sceIoCancel(fd); sceIoClose(fd); } return; }
+  if (msnartQuar107Old) { msnartLeakBytes += sz; return; }
+  quarTick107(); unsigned now = sceKernelGetSystemTimeLow() / 1000u; int slot = -1, old = -1;
+  for (int i = 0; i < QUAR_N; i++) { if (!quar[i].b) { slot = i; break; } if (old < 0 || (unsigned)(now - quar[i].t) > (unsigned)(now - quar[old].t)) old = i; }
+  if (slot < 0 && old >= 0 && (unsigned)(now - quar[old].t) > QUAR_MIN_MS) { quarFree(old); slot = old; }
+  if (slot < 0) { msnartLeakBytes += sz; return; }
+  quar[slot].b = b; quar[slot].sz = sz; quar[slot].t = now; quar[slot].fd = fd >= 0 ? fd : -1; msnartQuarBytes += sz;
+}
+static unsigned epoch107, reopenAt107b; static int hook107;
+static void msnartPwrSync107(void) { epoch107 = pwrEpoch(); reopenAt107b = 0; }   // 107в (ревью Fable): без этого первый msnartPwrPoll107 после каждой загрузки уровня видел «эпоха сменилась» (pwrBump на смене уровня) и закрывал здоровый msnart.shr
+static void msnartKill107(void) { if (afd >= 0) sceIoClose(afd); afd = -1; }   // убийца дескриптора для simsleep (power.h): закрыть и записать −1
+static void tries107Reset(void) { if (!msnartPwr107Old) { memset(tries94, 0, sizeof tries94); retryAt94 = 0; } }
+static int reopen107b(void) {   // открыть msnart.shr заново; simsleep N портит и открытия
+  if (afd >= 0) sceIoClose(afd);
+  afd = (file[0] && !pwrSimFault("msnart")) ? sceIoOpen(file, PSP_O_RDONLY, 0) : -1; return afd >= 0;
+}
+void msnartPwrPoll107(void) {
+  quarTick107();   // карантин: ячейки старше QUAR_MS освобождаются
+  if (!hook107) { hook107 = 1; pwrKillHook("msnart", msnartKill107); epoch107 = pwrEpoch(); }
+  if (!msnartPwr107Old && afd < 0 && rows && file[0]) { unsigned now_ = sceKernelGetSystemTimeLow(); if (!reopenAt107b || (int)(now_ - reopenAt107b) >= 0) { reopenAt107b = now_ + 1000000u; if (!reopenAt107b) reopenAt107b = 1; if (reopen107b()) bbOp("art-reopen", "pwr", 0); } }   // после сна дескриптор не открылся — раз в секунду заново
+  unsigned e = pwrEpoch(); if (e == epoch107) return;
+  epoch107 = e; if (msnartPwr107Old) return;
+  msnartPwr107N++; bbOp("art-pwr", "epoch", 0);
+  memset(tries94, 0, sizeof tries94); retryAt94 = 0; memset(picTries, 0, sizeof picTries); memset(picGaveUp, 0, sizeof picGaveUp);
+  if (busyRow >= 0) {   // чтение в полёте: дескриптор мёртв — в очередь заново, буфер в утечку
+    if (nq < MAXQ) { memmove(qrow + 1, qrow, sizeof(int) * nq); memmove(qlev + 1, qlev, sizeof(int) * nq); qrow[0] = busyRow; qlev[0] = busyLev; nq++; }
+    quarPush107(busyBuf, rows[busyRow].size, -1); busyBuf = 0; busyRow = -1;   // буфер в карантин (ограниченный), не в утечку
+  }
+  if (rows) reopen107b();
 }

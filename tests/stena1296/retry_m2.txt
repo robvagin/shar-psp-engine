@@ -1,0 +1,19 @@
+# 1304: L2 m2, провал (экран MissionOver) -> ✕ на YES кнопкой: должен быть MSN retry, затем новый MSN stage
+flag nosave
+scene L2_retry
+flag golevel 2
+wait 25
+flag player 1
+wait 2
+flag msnmain 2
+wait 3
+press cross 0.3
+wait 3
+flag msnfail
+wait 1.5
+scene YES
+press cross 0.3
+wait 6
+scene AFTER
+wait 2
+end

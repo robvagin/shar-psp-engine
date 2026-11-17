@@ -112,6 +112,16 @@ static void trimTiles(ColRing *r) {
     tileFree(r, best);
   }
 }
+// 108 (тур 108 на PSP: 1,59 млн строк ioerr, 60 МБ журнала): строка «ioerr» — не на каждую ошибку, а раз в 30 тиков кольца со счётчиком страниц и тайлов за это время
+static void nomemNote(ColRing *r, const char *s) {   // отказ памяти — тоже раз в 30 тиков (стойкий отказ давал бы поток строк)
+  if (!r->memLogTick || r->tickNo + 1u - r->memLogTick >= 30u) { rlog(r, s); r->memLogTick = r->tickNo + 1u; }
+}
+static void ioNote(ColRing *r, int page) {
+  if (page) r->ioLogPg++; else r->ioLogTl++; r->ioLogN++;
+  if (!r->ioLogTick || r->tickNo + 1u - r->ioLogTick >= 30u) {
+    char l_[120]; snprintf(l_, sizeof l_, "WATCHDOG colring ioerr page=%u tile=%u since_last", r->ioLogPg, r->ioLogTl); rlog(r, l_);
+    r->ioLogTick = r->tickNo + 1u; r->ioLogPg = r->ioLogTl = r->ioLogN = 0; }
+}
 static int pageLoad(ColRing *r, uint32_t p, int sync) {
   if (r->pg[p] || r->pgFar[p]) return 0;
   if (sync && !r->wantPage[p]) trimPages(r);
@@ -119,9 +129,9 @@ static int pageLoad(ColRing *r, uint32_t p, int sync) {
   if (!m && r->inTick) {   // пул исчерпан и куча тоже: вне запроса можно вытеснить лишнюю страницу вне кольца
     for (uint32_t q = 0; q < r->npages && !m; q++) if (r->pgFar[q]) { pageFree(r, q); m = pageAlloc(r, &src); }
   }
-  if (!m) { r->st.ioErr++; rlog(r, "WATCHDOG colring nomem page"); return -1; }
+  if (!m) { r->st.ioErr++; nomemNote(r, "WATCHDOG colring nomem page"); return -1; }
   if (rd(r, r->offTri + p * CRING_PAGEB, m, CRING_PAGEB)) {
-    r->st.ioErr++; rlog(r, "WATCHDOG colring ioerr page");
+    r->st.ioErr++; ioNote(r, 1);
     if (src == 1) r->freeStk[r->nfree++] = (uint16_t)(((uint8_t *)m - r->poolMem) / CRING_PAGEB); else { free(m); if (r->st.heapPages) r->st.heapPages--; }
     return -1; }
   if (sync && !r->wantPage[p]) r->pgFar[p] = m; else r->pg[p] = m;
@@ -134,7 +144,8 @@ static int tileLoad(ColRing *r, uint32_t t, int sync) {
   if (r->blob[t] || r->blobFar[t]) return 0;
   if (sync && !r->wantTile[t]) trimTiles(r);
   uint32_t *b = (uint32_t *)malloc(r->tile[t].bytes);
-  if (!b || rd(r, r->offBlob + r->tile[t].off, b, r->tile[t].bytes)) { free(b); r->st.ioErr++; rlog(r, "WATCHDOG colring ioerr tile"); return -1; }
+  if (!b) { r->st.ioErr++; nomemNote(r, "WATCHDOG colring nomem tile"); return -1; }   // 108: отказ памяти — своя строка (у страниц так же), не «ioerr»
+  if (rd(r, r->offBlob + r->tile[t].off, b, r->tile[t].bytes)) { free(b); r->st.ioErr++; ioNote(r, 0); return -1; }
   if (sync && !r->wantTile[t]) r->blobFar[t] = b; else r->blob[t] = b;
   r->stampTile[t] = r->tickNo; r->st.blobBytes += r->tile[t].bytes; if (r->st.blobBytes > r->st.blobPeak) r->st.blobPeak = r->st.blobBytes;
   if (sync) r->st.syncTiles++; else r->st.loadTiles++;

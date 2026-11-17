@@ -275,9 +275,8 @@ static void jointXf(const CarVis *v, const Car *c, int j, float R[9], float t[3]
   if (j < 0 || j >= v->njoint) { t[0] = t[1] = t[2] = 0; return; }
   t[0] = v->joint[j].x; t[1] = v->joint[j].y; t[2] = v->joint[j].z;
   for (int i = 0; i < 4; i++) if (v->wheelJ[i] == j) {
-    float dy = clampf(c->comp[i] - c->eq, -c->eq, fminf(c->lim - c->eq, v->wheelUp[i]));   // правка 354: не выше запаса модели
-    if(c->p.bodyMass>0.f)dy=clampf(c->comp[i]+c->p.suspensionYOffset,c->p.suspensionYOffset,
-                                fminf(c->lim+c->p.suspensionYOffset,v->wheelUp[i]));
+    float dy = carWheelDy(c, i, v->wheelUp[i]);   // правка 354: не выше запаса модели; 108: по фактическому ходу подвески (xs)
+    if(c->p.bodyMass>0.f)dy=carWheelDyN(c, i, v->wheelUp[i]);
     t[1] += dy;
     float ph = i < 2 ? -c->steer * v->maxSteer : 0.f, sp = noSpin ? 0.f : -v->spin[i];
     CarVis *vm = (CarVis *)v;   // кэш — служебное, не часть состояния

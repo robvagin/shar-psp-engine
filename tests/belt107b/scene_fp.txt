@@ -1,0 +1,47 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+scene FP
+wait 5
+shot f00
+wait 5
+shot f01
+wait 5
+shot f02
+wait 5
+shot f03
+wait 5
+shot f04
+wait 5
+shot f05
+wait 5
+shot f06
+wait 5
+shot f07
+wait 5
+shot f08
+wait 5
+shot f09
+wait 5
+shot f10
+wait 5
+shot f11
+wait 5
+shot f12
+wait 5
+shot f13
+wait 5
+shot f14
+wait 5
+shot f15
+flag stop
+wait 2
+end

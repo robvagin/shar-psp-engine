@@ -36,7 +36,7 @@ typedef struct ColRing {
   const ColTri **pgFar; const uint32_t **blobFar;   // дочитанное вне плана кольца (далёкие игровые объекты: NPC, машины миссий): читается только через *Sync, там же обновляется давность — повторный запрос не идёт на карту
   uint8_t *poolMem; uint32_t poolPages, nfree; uint16_t *freeStk;
   // план кольца
-  float R, planX, planZ; int planValid; uint32_t tickNo;
+  float R, planX, planZ; int planValid; uint32_t tickNo; uint32_t ioLogTick, ioLogN, ioLogPg, ioLogTl, memLogTick;   /* 108: строка ioerr не чаще раза за 30 тиков — счётчик ошибок между строками */
   uint8_t *wantTile, *wantPage; uint32_t *stampTile, *stampPage; uint32_t *order, norder; uint32_t *pendT, *pendP; uint32_t npendT, npendP;
   uint32_t nsync;
   long whoRel[12]; unsigned whoN[12];   // кто чаще всего дочитывал землю (colGroundRel), для журнала

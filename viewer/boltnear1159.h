@@ -54,7 +54,7 @@ static inline float boltScan(StateProps *sp, Props *pr, const float a[3], const 
     if (bk == 1) { spEvent(sp, (unsigned)bi, SP_EV_HIT); spImpulse(sp, (unsigned)bi, dir[0], dir[2], 400.f); }
     else { PropState *st = &pr->st[bi]; const PropType *ty = &pr->types[pr->def[bi].type];
       float dl = sqrtf(dir[0] * dir[0] + dir[2] * dir[2]), dx = dl > 1e-4f ? dir[0] / dl : 0.f, dz = dl > 1e-4f ? dir[2] / dl : 1.f, v = 400.f / (ty->mass > 0.f ? ty->mass : 100.f), h45 = v * .70710678f;
-      st->vel[0] = dx * h45; st->vel[2] = dz * h45; st->vel[1] = h45; st->w[0] = dz * h45; st->w[2] = -dx * h45; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; }
+      st->vel[0] = dx * h45; st->vel[2] = dz * h45; st->vel[1] = h45; st->w[0] = dz * h45; st->w[2] = -dx * h45; st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; propsHotSync(pr, (unsigned)bi); }
   }
   return best;
 }

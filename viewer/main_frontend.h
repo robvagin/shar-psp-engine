@@ -491,6 +491,7 @@ static void loadFrame(int permille, void **fbp) {   // загрузка уров
 }
 static void loadPump(void) {
   if (!ldOn || !ldFbp || loadPumpOff || sceKernelGetSystemTimeLow() - ldFrameLast < LOAD_PUMP_MS * 1000u) return;
+  pwrSleepAtPoint(2);   // тур: flag simsleepat 2 — сон во время загрузки уровня под газетой
   if (smkOn) { static unsigned musT; unsigned now_ = sceKernelGetSystemTimeLow();   // №665: музыка под газетой — раз в 0,5 с (дорожка, состояние потока, позиция); обрыв виден как смена дорожки/state
     if (now_ - musT >= 500000u) { musT = now_; char a_[200]; int l_ = snprintf(a_, sizeof a_, "LOADMUS ld=%.2f ", ldSec()); l_ += audioMusicState(a_ + l_, sizeof a_ - l_); snprintf(a_ + l_, sizeof a_ - l_, "\n"); smkWrite(a_); } }
   loadFrame(ldPermLast, ldFbp);
@@ -537,6 +538,15 @@ static int loadWarmPending(void);
 static int loadNewsMusicOld;   // файл loadnewsmusicold рядом с EBOOT: стингер газеты режется концом загрузки (№665 откат)
 static int loadSilent;   // файл loadsilent рядом с EBOOT (main_loop.h) или flag loadsilent 1
 static float feNewsMusicLeft(void);   // секунд до конца играющего стингера газеты (0 — не играет), ниже у feStinger
+// 1362 (Роб: «всё нужно загрузить во время загрузки с газетой, не открывать раньше, чем надо, чтобы потом что-то догружалось»). В туре 73015bd8 на всех 25 загрузках уровня LOADCELLS pending0=55–83 left=то же, extra_ms=0:
+// потолок LOAD_MAX_S считался от начала показа газеты (чтение 5–7 с уже его превысило), ожидание клеток не шло ни одного кадра, и 55–83 клеток около старта собирались после раскрытия (прежние 109 клеток в секунду).
+// Теперь потолок отсчитывается от начала самого ожидания (газета держится, пока очередь прогрева убывает, не дольше LOAD_MAX_S сверх чтения); и под газетой дочитываются машины всей миссии (mvLoadPrime1362, до LOAD_PRIME_MAX_S).
+// LOADWAIT1362_OLD=1 / файл loadwait1362old / flag loadwait1362old 1 — прежнее (потолок от начала показа, машины фазы после раскрытия)
+#ifndef LOADWAIT1362_OLD
+#define LOADWAIT1362_OLD 0
+#endif
+#define LOAD_PRIME_MAX_S 3.f
+int loadWait1362Old = LOADWAIT1362_OLD;
 static void loadEnd(void **fbp) {   // чтение кончилось: показ не короче LOAD_MIN_S, огонь доходит до динамита
   loadFuseIoEnd(); fuseProbeFlush();
   if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "LOADFUSE508 old=%d calls=%d max_jump=%d permille\n", LOAD_SMOOTH_OLD, ldFuseCalls, ldFuseJump); smkWrite(s_); }
@@ -563,7 +573,7 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
 #endif
 #define LOAD_STALL_S 0.4f
     int ldLast = ldPend0; float ldLastT = ldSec();
-    while (ldOn && ldSec() < LOAD_MAX_S && loadWarmPending() > 0) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); ldPendFr++;
+    while (ldOn && (loadWait1362Old ? ldSec() : ldSec() - ldPendT0) < LOAD_MAX_S && loadWarmPending() > 0) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); ldPendFr++;
       int pn_ = loadWarmPending(); if (pn_ < ldLast) { ldLast = pn_; ldLastT = ldSec(); } else if (!LOAD_STALL_OLD && ldSec() - ldLastT > LOAD_STALL_S) break; }
     if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADCELLS pending0=%d left=%d extra_ms=%.0f frames=%d t=%.1f\n", ldPend0, loadWarmPending(), (ldSec() - ldPendT0) * 1000.f, ldPendFr, smkT); smkWrite(s); }
   }
@@ -580,7 +590,10 @@ static void loadEnd(void **fbp) {   // чтение кончилось: пока
     if (smkOn) { char s[80]; snprintf(s, sizeof s, "CARWAIT1076 left=%d t=%.1f\n", nc_, smkT); smkWrite(s); } }
   if (!NPC_WAIT1076_OLD && !npcWaitOld) { int np0 = mvNpcPending(), na0 = mvAmbMissing(), fr_ = 0; float t0_ = ldSec();   // и бонусные рядом (Дедушка в доме L1)
     while (ldOn && (mvNpcPending() > 0 || mvAmbMissing() > 0) && ldSec() - t0_ < NPC_WAIT_MAX_S) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); fr_++; }
-    if (smkOn) { char s[128]; snprintf(s, sizeof s, "NPCWAIT1076 pending0=%d near0=%d left=%d/%d ms=%.0f frames=%d t=%.1f\n", np0, na0, mvNpcPending(), mvAmbMissing(), (ldSec() - t0_) * 1000.f, fr_, smkT); smkWrite(s); } }
+    if (smkOn) { char s[192]; snprintf(s, sizeof s, "NPCWAIT1076 pending0=%d near0=%d left=%d/%d ms=%.0f frames=%d who=%s/%s t=%.1f\n", np0, na0, mvNpcPending(), mvAmbMissing(), (ldSec() - t0_) * 1000.f, fr_, mvNpcPendName1361(), mvAmbMissName1361, smkT); smkWrite(s); } }
+  if (!loadWait1362Old) { int p0 = mvLoadPrime1362(), fr_ = 0; float t0_ = ldSec();   // 1362: машины всей миссии под газетой
+    while (ldOn && p0 > 0 && ldSec() - t0_ < LOAD_PRIME_MAX_S && mvLoadPrime1362() > 0) { scrFrame(ldScr1060, 1000, 1, fbp); newsShotTick(); loadWarmStep(); fr_++; }
+    if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADPRIME1362 phasecars0=%d left=%d ms=%.0f frames=%d t=%.1f\n", p0, mvLoadPrime1362(), (ldSec() - t0_) * 1000.f, fr_, smkT); smkWrite(s); } }
   if (smkOn) { char s[128]; snprintf(s, sizeof s, "LOADSHOW ms=%.0f min_ms=%.0f spin_ms=%.0f fast=%d t=%.1f\n", ldSec() * 1000.f,
                                      LOAD_MIN_S * 1000.f, LOAD_SPIN_S * 1000.f, ldFast, smkT); smkWrite(s); }
   ldOn = 0; ldBase = 0; ldWarmOn = 0;
@@ -923,14 +936,14 @@ static int cellsRingNear1209(const float *c, float r, int *outBytes) {
   { LdWait lw_ = {0}; while (loaderBusy) { loaderWaitStep(&lw_, "busy", 0, 0); ldWaitLimit(&lw_, "busy_ring1209", WAITLIMIT_LOADER_MS); sceKernelDelayThread(1000); } }
   unsigned rm = regAt(c[0], c[2]) | regRes | regPre; int need = 0;
   for (unsigned i = 0; i < ncell; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
-    if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
+    if (regCellOff(q, rm, ZN_LOAD)) continue;
     if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) need++; }
   if (outBytes) *outBytes = 0;
   if (!need) return 0;
   short *idx = malloc((size_t)need * sizeof *idx); if (!idx) return -1;
   int n = 0;
   for (unsigned i = 0; i < ncell && n < need; i++) { const Cell *q = &cl[i]; if (q->owner || q->state) continue;
-    if (zgOn && CELL_REG(q) && CELL_REG(q) <= 16 && !((rm >> (CELL_REG(q) - 1)) & 1u)) continue;
+    if (regCellOff(q, rm, ZN_LOAD)) continue;
     if (cellDist((Cell *)q, c[0], c[1], c[2]) < r) idx[n++] = (short)i; }
   for (int k_ = 0; k_ < n; k_++) cl[idx[k_]].wantFar = 0;   // Лестница-96: кольцо двери - рядом, все полные
   if (memLadOn) memLadderZ(LADZ_PLACE, "ring", RING_RUNMAX, LAD_TOP);
@@ -961,7 +974,7 @@ static int viewBusyNow(void) { return phoneViewOn() || shopViewOn() || wardrobeO
 static void msnStart(void) {   // пункт 8: старт уровня миссий + куча до/после (smoke.txt)
   float h0 = smokeHeapFree();
   mvViewBusy = viewBusyNow;   // №632
-  mvCarPrefetch = mcrReadahead;   // №629: чтение машин этапа впрок (и из сценария смоука: flag msn)
+  mvCarReady = mcrReadyOrGone; mvCarPrefetch = mcrReadahead;   // №629: чтение машин этапа впрок (и из сценария смоука: flag msn)
   // Правка 259 (03.10, тур на PSP вставал 5 раз из 5): старт миссий ставит игрока на точку фазы в городе, а комната оставалась
   // открытой — Гомер в координатах города при комнате (падал сквозь пол), кадр рисовался «в комнате», и PSP вставала целиком.
   // NEW GAME выводил из комнаты сам (newGame), служебный старт — нет. Правило: старт миссий всегда из города; если точка фазы
@@ -1143,7 +1156,7 @@ static void homerWear(int k) {
   if (homerInit(&homer, homerM) != 0) { homerM = old; skinFree(m); homerInit(&homer, homerM); }
   else { skinFree(old); skinWorn = k;
          hnrHeat = 0.f; hnrCalm = G.hnrLatched ? 3.f : 0.f; }   // правка 121: «Hint : Switching clothes lowers the meter» (MISSION_FAILED_HIT_N_RUN_HINT1) — как смена машины
-  homer.solid = homerSolidAll; homer.solidUser = 0;
+  homer.solid = homerSolidAll; homerRideFn = homerRideAll; homer.solidUser = 0;
   homerPlace(&homer, G.pHomerWorld ? G.pHomerWorld : &world, x, y, z, h);
   if (smkOn) { char s[96]; snprintf(s, sizeof s, "WARDROBE wear %d %s t=%.1f\n", k, f, smkT); smkWrite(s); }
 }
@@ -1222,6 +1235,7 @@ void bbNoteIcon(const char *line) {   // №958б: blackbox.h
   if (smkOn) { char t[160]; snprintf(t, sizeof t, "%s t=%.1f\n", line, smkT); smkWrite(t); }
 }
 static void svLog(const char *line) { smkWrite(line); bbNote(line); }
+#include "stuck108.h"   // 107b: строки ящика STUCK/NEAR/PAUSE/MSNEND (хвост на 8 записей)
 // Исследование 03.10 (docs/ИССЛЕДОВАНИЕ_ПАМЯТЬ_ME_ПОДГРУЗКА_2026-10-03.md, П1–П3): замеры без риска строкой в ящик, чтобы решать
 // про Media Engine и память по числам железа. П1 — доля процессора потоков за секунду (sceKernelReferThreadRunStatus, runClocks);
 // П2 — клетки: загружено за секунду, худшая задержка «запрос -> готова», дольше 100 мс, кадров с видимой незагруженной;
@@ -1345,6 +1359,10 @@ static int bbCompose(const char *head) {   // шапка + кольцо -> bbOut
   if (!BBICON958_OLD) for (unsigned k = bbIconN > 4 ? bbIconN - 4 : 0; k < bbIconN; k++) {   // №958б: события значка цели — после кольца, если есть место
     char t[140]; int l = snprintf(t, sizeof t, "# ICON %s", bbIconLog[k & 3]); if (l < 0 || n + l > BB_FILE - 1) break;
     memcpy(bbOut + n, t, l); n += l;
+  }
+  if (!STK_OFF()) for (unsigned k = bbDiagN; k > (bbDiagN > BBD_N ? bbDiagN - BBD_N : 0); k--) {   // 107b: STUCK/NEAR/PAUSE/MSNEND — после ICON, от новых к старым, пока есть место (файл не растёт)
+    const char *r = bbDiag[(k - 1) & (BBD_N - 1)]; int l = (int)strlen(r); if (l < 4) continue; if (n + 2 + l > BB_FILE - 1) break;
+    bbOut[n++] = '#'; bbOut[n++] = ' '; memcpy(bbOut + n, r, l); n += l;
   }
   memset(bbOut + n, ' ', BB_FILE - 1 - n); bbOut[BB_FILE - 1] = '\n';
   return BB_FILE;
@@ -1614,7 +1632,7 @@ static int bbDogThread(SceSize a, void *b) {
     unsigned now = bbBeat;
     if (now != last || !bbDogOn) { if (told) bbStallMs = still; last = now; still = 0; told = 0; continue; }   // ожил: главный поток допишет
     still += BB_DOG_STEP;
-    if (still >= BB_STALL_MS && !told) { told = 1; bbStalls++; { unsigned bs_ = msioBusySince; bbDogReadHang = !waitLimitOld && bs_ && sceKernelGetSystemTimeLow() - bs_ > WAITLIMIT_READ_MS * 1000u; } int ph = bbPhase; bbStallPh = (unsigned)ph; bbDogScreen(still, ph); bbDogWrite(still, ph, now); bbDogStall(still, ph, now); bbReportWrite("STALL", still, ph); }
+    if (still >= BB_STALL_MS + bbGraceMs && !told) { told = 1; bbStalls++; { unsigned bs_ = msioBusySince; bbDogReadHang = !waitLimitOld && bs_ && sceKernelGetSystemTimeLow() - bs_ > WAITLIMIT_READ_MS * 1000u; } int ph = bbPhase; bbStallPh = (unsigned)ph; bbDogScreen(still, ph); bbDogWrite(still, ph, now); bbDogStall(still, ph, now); bbReportWrite("STALL", still, ph); }
   }
   return 0;
 }
@@ -2067,6 +2085,12 @@ static void hnrMusicOff(void) {
 #define POLICE_WRECK_OLD 0   // сверка g10b-loop круг 2 (g07 P03-09): 1 — взорванная машина погони остаётся в счёте погони (прежнее)
 #endif
 // круг 2 (g07 P03-09): взорванная машина погони выбывает из счёта сразу (остова у погони нет), слот свободен: следующая ставится по обычному интервалу spawn (gameHnrSpawnDue), пока шкала не ниже порога
+// 1360 (оценка Fable, Ж4): «в миссии» для шкалы Hit & Run считалось по mvInMission() — оно ложно в окне между этапами (статус BETWEEN), и каждый конец этапа читался как «миссия выиграна» (шкала и полиция в ноль), а старт следующего — как новая миссия
+// (журнал: пары «HNR msnreset win / start» внутри одной миссии). Теперь окно между этапами остаётся «в миссии» (mvInMissionPause, 1348): шкала меняется только на старте миссии и на её победе. HNRSTAGEPAUSE1360_OLD=1 / файл hnrstagepause1360old / flag hnrstagepause1360old 1 — прежнее
+#ifndef HNRSTAGEPAUSE1360_OLD
+#define HNRSTAGEPAUSE1360_OLD 0
+#endif
+int hnrStagePause1360Old = HNRSTAGEPAUSE1360_OLD;   // extern в rollback.h
 static void hnrPursuit(float dt) {
   G.hnrOff = mvHnrOff(); G.hnrRoom = inRoom() || (!HNRTALK_OLD && mvTalkActive());   // сверка g09b-menu (P03-07): в разговоре, как в помещении, Hit & Run выключен
   if (G.hnrOff) {   // перепроверка 96: уличная гонка (DisableHitAndRun) — шкала пуста, погони нет (данные: выключение = сброс)
@@ -2076,7 +2100,7 @@ static void hnrPursuit(float dt) {
     hnrMusicOff(); return;
   }
   if (!HNRMSN_OLD) {   // сверка g09b-menu (P03-Д7): старт миссии и её победа сбрасывают шкалу и помечают погоню на удаление; проигрыш не сбрасывает
-    static int inM_ = -1, failSeen_; int fsel_ = 0, im_ = mvInMission(), fs_ = mvFailedScreen(&fsel_);
+    static int inM_ = -1, failSeen_; int fsel_ = 0, im_ = hnrStagePause1360Old ? mvInMission() : mvInMissionPause(), fs_ = mvFailedScreen(&fsel_);
     { static int fsPrev_; if (mrHnrRetry(fsPrev_, fs_, im_)) { if (!MSNREPAIR_OLD) svCarRepair("retry");
         zoneReloadWorld("retry");   // круг 5 (P12-03)
         if (mrHnrRetryReset()) { hnrHeat = hnrCalm = 0.f; G.hnrLatched = 0; hnrActive = 0; mvPolice(0); hnrMusicOff(); } }   // круг 3: повтор миссии после провала — событие старта заново, шкала в 0
@@ -2129,7 +2153,7 @@ static void hnrPursuit(float dt) {
   }
   const MsnCars *m = mvCars(); float best = 1e9f; int chasers = 0;
   float px = onFoot() ? homer.x : car.x, pz = onFoot() ? homer.z : car.z;
-  if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
+  if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
     const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; }
   if (G.hnrLatched && G.hnrBusted <= 0.f && !G.hnrRoom && m) {   // полиция нужна: нет или отстала дальше 110 м — заново в 100 м
     float pv_ = onFoot() ? homer.speed : fabsf(car.v);
@@ -2140,14 +2164,14 @@ static void hnrPursuit(float dt) {
       if (gameHnrSpawnDue(&hnrSpawnT, dt)) { hnrSpawnT = HNR_PASS_S; if (chasers < mvPoliceLimit()) { mvPoliceAdd(); moved_ = 1; } }
       if ((farT_ += dt) >= HNR_FAR_S) { farT_ = 0.f; if (chasers) { mvPoliceFar(px, pz, HNR_REMOVE_R); moved_ = 1; } }
       if (moved_) { chasers = 0; best = 1e9f;
-        for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
+        for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
           const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; }
         if (smkOn) { char s[96]; snprintf(s, sizeof s, "HNR police1 t=%.1f police=%d near=%.0f\n", smkT, chasers, chasers ? best : -1.f); smkWrite(s); } }
     }
     if (HNRONE_OLD ? (((!chasers || best > HNR_REMOVE_R) && gameHnrSpawnDue(&hnrSpawnT, dt)) || hnrIdleT > HNR_POLICE_CYCLE) : hnrIdleT > HNR_POLICE_CYCLE) {
       hnrSpawnT = 1.f; hnrIdleT = 0.f; if (chasers) mvPolice(0); mvPolice(1); chasers = 0; best = 1e9f;
       if (hnrActive && HNRNEWAI_OLD) sndSay(SND_SAY_NEWAI, 0);   // аудит 09.10: W_NewAI («Another one?») — новая машина погони (близнец b2_loop кадр 11250, в погоне); первая — без реплики (правило порта)
-      if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
+      if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
         const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; }
       if (smkOn) { char s[96]; snprintf(s, sizeof s, "HNR police t=%.1f cars=%d police=%d near=%.0f\n", smkT, m->n, chasers, chasers ? best : -1.f); smkWrite(s); }
     }
@@ -2157,7 +2181,7 @@ static void hnrPursuit(float dt) {
       static float outT_[32], farT2_; int dropped_ = 0;
       if ((farT2_ += dt) >= HNR_FAR_S) { farT2_ = 0.f; int n0_ = chasers; mvPoliceFar(px, pz, HNR_REMOVE_R); dropped_ = 1; if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR far-pass t=%.1f police_before=%d near=%.0f\n", smkT, n0_, best); smkWrite(s_); } }
       for (int i = 0; i < m->n && i < 32; i++) {
-        if (!(m->c[i].on && mvIsPolice(m->c[i].name))) { outT_[i] = 0.f; continue; }
+        if (!(m->c[i].on && mvIsHnrCar(&m->c[i]))) { outT_[i] = 0.f; continue; }
         const Car *k = &m->c[i].car; float bx_[6] = {k->x - 2.f, k->y, k->z - 2.f, k->x + 2.f, k->y + 2.f, k->z + 2.f};
         if (mrHnrOutStep(&outT_[i], visBox(bx_, 0.f, 0.f, 0.f), dt)) { if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "HNR drop out5s t=%.1f car=%d v=%.1f dist=%.0f visible=%d limbo=%d\n", smkT, i, k->v, hypotf(k->x - px, k->z - pz), visBox(bx_, 0.f, 0.f, 0.f), hnrLimbo); smkWrite(s_); } mvPoliceDrop(i); outT_[i] = 0.f; dropped_ = 1; }
       }
@@ -2165,14 +2189,14 @@ static void hnrPursuit(float dt) {
         mvPoliceLimbo(1); hnrLimbo = 1;
         if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR limbo t=%.1f\n", smkT); smkWrite(s_); } }
       if (dropped_) { chasers = 0; best = 1e9f;
-        for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
+        for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && (POLICE_WRECK_OLD || !carBoomed(&m->c[i].car))) {
           const Car *k = &m->c[i].car; float d = hypotf(k->x - px, k->z - pz); chasers++; if (d < best) best = d; } }
     } }   // защёлка отпущена — полиция уезжает (после ареста стоит, №627); сверка g09b-menu (P03-Д2): стоящие остаются и гонятся, пока шкала не 0 и они не дальше 110 м
   if (!(chasers && !G.hnrLatched && !bustPolice && hnrHeat <= 0.f)) { mrHnrMarkCap(&hnrMarkT, 0, dt); if (hnrLimbo) { if (chasers) mvPoliceLimbo(0); hnrLimbo = 0; } }   // правка 433: вне помеченного состояния счёт с нуля
   if (!HNRNEWAI_OLD) {   // P10-22: слежение за первой не отмеченной машиной погони
     static unsigned done_; int first = -1;
     if (!chasers || (!HNRNEWAI3_OLD && onFoot())) done_ = 0;   // круг 3: слежение только пока игрок в машине, при выходе снимается
-    else if (m) { for (int i = 0; i < m->n && i < 32; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && !(done_ >> i & 1u)) { first = i; break; }
+    else if (m) { for (int i = 0; i < m->n && i < 32; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && !(done_ >> i & 1u)) { first = i; break; }
       if (first >= 0) { const Car *k = &m->c[first].car; if (hypotf(k->x - px, k->z - pz) < HNR_NEWAI_R) { done_ |= 1u << first; if (hnrActive || G.hnrLatched) sndSay(SND_SAY_NEWAI, 0); } } }
   }
   { static int hid_; if (!HNRTALK_OLD && G.hnrRoom && !hid_ && chasers && m) { if (!mrHnrSuspKeep()) mvPolice(0); else mvPoliceSuspend(); chasers = 0; best = 1e9f; hid_ = 1; if (smkOn) { char s_[64]; snprintf(s_, sizeof s_, "HNR hide t=%.1f\n", smkT); smkWrite(s_); } }   // P03-07
@@ -2201,10 +2225,10 @@ static void hnrPursuit(float dt) {
     if (hnrMusic) { sndMusic(SND_MUS_HITRUN_CAUGHT); if (!HNRMUSDELAY_OLD) hnrMusCaught = HNR_MUS_CAUGHT_S; } hnrMusic = 0;   // правка 174: hit_run_end_neg, потом музыка города
     mvBusted();   // данные миссий: MISSION_FAILED_HIT_N_RUN «Hit & Run: You got busted!» — идущая миссия провалена
     if (smkOn) { char s[80]; snprintf(s, sizeof s, "HNR busted t=%.1f coins=%d\n", smkT, haveCoins ? coins.collected : -1); smkWrite(s); }
-    if (smkOn) { int pn = 0; const MsnCars *m2 = mvCars(); if (m2) for (int i = 0; i < m2->n; i++) if (m2->c[i].on && mvIsPolice(m2->c[i].name)) pn++;
+    if (smkOn) { int pn = 0; const MsnCars *m2 = mvCars(); if (m2) for (int i = 0; i < m2->n; i++) if (m2->c[i].on && mvIsHnrCar(&m2->c[i])) pn++;
       char s[96]; snprintf(s, sizeof s, "BUSTED arrest police_after=%d t=%.2f\n", pn, smkT); smkWrite(s); }   // №627: гейт tests/hnr/busted_ps2.sh
   }
-  { static float lt; if (smkOn && (lt += dt) >= 1.f) { lt = 0.f; char s_[128]; float pvm_ = 0.f; if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsPolice(m->c[i].name) && fabsf(m->c[i].car.v) > pvm_) pvm_ = fabsf(m->c[i].car.v);
+  { static float lt; if (smkOn && (lt += dt) >= 1.f) { lt = 0.f; char s_[128]; float pvm_ = 0.f; if (m) for (int i = 0; i < m->n; i++) if (m->c[i].on && mvIsHnrCar(&m->c[i]) && fabsf(m->c[i].car.v) > pvm_) pvm_ = fabsf(m->c[i].car.v);
     snprintf(s_, sizeof s_, "HNRV t=%.1f heat=%.3f latch=%d police=%d near=%.0f busted=%.1f pv=%.1f limbo=%d\n", smkT, hnrHeat, G.hnrLatched, chasers, chasers ? best : -1.f, G.hnrBusted, pvm_, hnrLimbo); smkWrite(s_); } }   // служебное: шкала раз в секунду
 }
 // Правка Роба 63 (запись PS2 33:40): угон — Гомер пешком у машины трафика (едет или стоит), ближе, чем у своей: △ — машина
@@ -2739,6 +2763,7 @@ static int camExit1170 = !CAMEXIT1170_OLD;
 #define BUBAFTERCAM1218_OLD 0
 #endif
 // №1235: просьба памяти от моделей персонажей миссии (msn_view.c npcRoom) — лестница п.13: персонажу миссии высший приоритет, фоновому — ступени впрок. Лестница выключена — как есть (1)
+static void msnartReqSmk(const char *path) { if (smkOn) { char l_[160]; snprintf(l_, sizeof l_, "MSNREQ art %s t=%.1f\n", path, smkT); smkWrite(l_); } }   // 109 З9
 static void msnartWatchLog94(const char *note, const char *path, int tries) { char w[96]; snprintf(w, sizeof w, "%s n=%d %s", note, tries, path); memLadLog("WATCHDOG", "msnart", 0, 0, memMaxBlock ? memMaxBlock() : 0, heapFreeBytes(), w); }   // Build 94
 // Build 96 (Опора-93, срочно от дирижёра: Kearney на L4 невидим 36 с, при куче как у PSP и 250 м): модель персонажа читается в область «миссия» (skin.c), а лестница смотрела только кучу и по каждому опросу
 // (раз в 0,12-0,25 с) писала строки WATCHDOG mem who=npc (ступень 1 «none», 2 «more», 5 «simplify»), ничего не выбрасывая надолго: далёкие клетки уходили и тут же ложились обратно. Теперь:
@@ -2779,7 +2804,8 @@ static void memEat1235(int kb) {
   while (memMaxBlock && memMaxBlock() >= lim && memEatN < 96) { unsigned b = memMaxBlock(), sz = b > lim ? b - lim / 2 : b; void *p = malloc(sz); if (!p) break; memset(p, 0x5a, sz < 4096 ? sz : 4096); memEatList[memEatN++] = p; }
   if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "MEMEAT limit=%dKB blocks=%d blk=%.2f free=%.2f\n", kb, memEatN, memMaxBlock ? memMaxBlock() / 1048576.f : 0.f, heapFreeBytes() / 1048576.f); smkWrite(s_); }
 }
-static int camBusy1047(void) { int b_ = camIn1041 && (mcPlay != 0 || lbOpen > 0.f || (!BUBAFTERCAM1218_OLD && camBExit && camBT >= 0.f)); static int p_; if (smkOn && b_ != p_) { char s_[96]; snprintf(s_, sizeof s_, "MSNCAM busy=%d fr=%u t=%.1f\n", b_, smkFrameAbs, smkT); smkWrite(s_); } p_ = b_; return b_; }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
+static int worldHidden1310(void) { return uiBriefExitBusy() || transitBusy() || uiPaused(); }   // 1310: игрок мира не видит — карточка уезжает, ирис на экране, пауза (пузырь этапа ждёт, срок текста не идёт)
+static int camBusy1047(void) { int b_ = camIn1041 && (mcPlay != 0 || lbOpen > 0.f || (!BUBAFTERCAM1218_OLD && camBExit && camBT >= 0.f)); mvCamWhy1315 = !b_ ? 0 : mcPlay != 0 ? "nayezd" : lbOpen > 0.f ? "polosy" : "duga"; static int p_; if (smkOn && b_ != p_) { char s_[96]; snprintf(s_, sizeof s_, "MSNCAM busy=%d fr=%u t=%.1f\n", b_, smkFrameAbs, smkT); smkWrite(s_); } p_ = b_; return b_; }   // №1047: наезд идёт или полосы ещё на экране — пузырь цели ждёт
 // правка Роба 1246 (07.11): наезды старта миссий — то огромные пролёты на сотни метров (дальние клетки догружаются, PSP слабее), то совсем без наезда. Решение Роба: везде один короткий
 // плавный наезд на игрока, отход от оригинала разрешён. Теперь вместо анимации с диска (и там, где её нет) идёт синтетический наезд MCSHORT96_DUR с: глаз начинает в MCSHORT96_BACK м позади и
 // MCSHORT96_UP м выше обычной игровой позы камеры и плавно (S-кривая) приходит в неё, взгляд на игрока; все клетки — вокруг игрока, дальних нет. Остальное прежнее (игрок стоит, полосы, X/START — пропустить,
@@ -2827,11 +2853,23 @@ static void msncamStartPhase(const char *phase, const char *cam) {   // крюч
 // играет событие Level_Intro (короткая туба Гомера), музыка езды (Sunday_Drive_Intro -> Sunday_Drive) — событием
 // Sunday_Drive_start / M0_start, т. е. с посадкой в машину (HOMER_EV_IN_CAR). Пешком на старте — туба и атмосфера
 static void feStinger(const char *ev);
+// 108 правка Роба 1294 (нет гитарной музыки на старте L2; сверка Fable: у оригинала на первом кадре игры после загрузки уровня подаётся «вступление уровня» ВСЕГДА — и пешком, и в машине, в машине следом музыка езды).
+// Раньше стингер играл только пешком, в машине сразу шла музыка езды. LEVELINTROCAR1294_OLD=1 / файл levelintrocarold / flag levelintrocar 0 — как было; flag audforcecar 1 — служебно: считать игрока в машине (гейт)
+#ifndef LEVELINTROCAR1294_OLD
+#define LEVELINTROCAR1294_OLD 0
+#endif
+static int levelIntroCarOn = !LEVELINTROCAR1294_OLD, audForceCar1294;
+static void levelIntroStart(int foot) {
+  if (foot) { sndMusic(SND_MUS_OFF); feStinger("level_intro"); return; }
+  if (levelIntroCarOn && audioTrack("level_intro") >= 0) { sndMusic(SND_MUS_OFF); feStinger("level_intro"); sndMusicQueueFreeroam(); if (smkOn) { char s_[80]; snprintf(s_, sizeof s_, "LEVELINTRO car stinger+drive t=%.1f\n", smkT); smkWrite(s_); } }
+  else sndMusic(SND_MUS_FREEROAM);
+}
 static void levelAudioStart(void) {
   if (smkOn) { char s[112]; snprintf(s, sizeof s, "LEVELAUDIO onfoot=%d iris=%d newsleft=%.2f t=%.1f\n", haveHomer && onFoot(), transitBusy(), feNewsMusicLeft(), smkT); smkWrite(s); }   // правка 155: гейт; №665: ирис и недоигранный стингер газеты в момент старта
+  const int foot1294_ = haveHomer && onFoot() && !audForceCar1294;
   sndOnFoot(haveHomer && onFoot());   // сверка g08-sound (P09:1): фон улицы и шина «Пешком» знают, где игрок, с первого кадра
   sndLevelStart(spawnP[0], spawnP[1], spawnP[2]); sndMode(SND_MODE_NORMAL);
-  if (haveHomer && onFoot()) { sndMusic(SND_MUS_OFF); feStinger("level_intro"); } else sndMusic(SND_MUS_FREEROAM);
+  levelIntroStart(foot1294_);
 }
 // правка 53: машины мира (ракетная Гомера у локатора «rocke») — список viewer/worldcars.h; его же читает tools/msncar_export.py
 // (правка 268: модели машин мира — в пакет msncars уровня, иначе машина твёрдая и невидимая)
@@ -2881,7 +2919,7 @@ static void newGame(void) {
   memset(onceKeep, 0, sizeof onceKeep);   // правка 334: новая игра — все разовые целы (LOAD / RESUME вернёт их в saveApply)
   ldStep("pre-ao"); aoBind(); ldStep("ao");   // правка 244: кадр газеты между шагами новой игры; объекты уровня: кадр 0, живые объёмы COL1 вернутся на место первым aoStep
   if (haveHomer) {
-    homerInit(&homer, homerM); homer.solid = homerSolidAll; homer.solidUser = 0;   // стейтпропы + трафик (цепочка)
+    homerInit(&homer, homerM); homer.solid = homerSolidAll; homerRideFn = homerRideAll; homer.solidUser = 0;   // стейтпропы + трафик (цепочка)
     if (haveCol) { HomerCar hc; homerCarFrom(&hc, &car, cv.lift); homerSetInCar(&homer, &hc); homerDoor(0, 0.f); }
   }
   ldStep("homer-init");   // №517: шаги разнесены, чтобы журнал называл виновника
@@ -2895,7 +2933,7 @@ static void newGame(void) {
   ldStep("pre-traffic"); if (haveTraffic) trafficReset(&traffic, &world);   // стоящие машины на места, трафик и пешеходы — заново вокруг спавна
   if (ldOn || audioDefer) ldAudio = 1;   // правка 20: под экраном загрузки звучит стингер газеты — атмосфера и музыка уровня после него (loadEnd)
   else levelAudioStart();
-  ldStep("pre-msn"); mvCamBusy = camBusy1047; msnartRoom = memLadRoomUi; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; mvMemLadder = memLadNpc1235; msnartWatch = msnartWatchLog94; msnStart();
+  ldStep("pre-msn"); mvCamBusy = camBusy1047; mvWorldHidden1310 = worldHidden1310; msnartRoom = memLadRoomUi; mvPump = loadPump; mvHeapRoom = memPrefetchRoom; mvMemLadder = memLadNpc1235; msnartWatch = msnartWatchLog94; msnartReq = msnartReqSmk; msnartSphereOut = msnartSphereOut1298; msnartPtIn = msnartPtIn1298; msnStart();
   // NPC_ASYNC (видео TEST17: «подгрузка NPC роняет FPS до 11»): mvPump означает «идёт экран загрузки», а здесь он ставился один раз и жил до конца игры, поэтому фоновое
   // чтение моделей персонажей (msn_view.c modelFor/modelPrefetch, коммит 85ac58e4) не срабатывало ни в одном туре: все MSNNPC load шли синхронно в кадре (44–82 мс на
   // файл, 40 загрузок за тур, ни одной с async=1). Теперь после старта уровня насос снимается: дальше модели читаются в фоне, NPC до готовности не рисуется.
@@ -3019,7 +3057,13 @@ static void feLoadShown(int screen, const char *packName, void **fbp) {   // в�
 #define DEMOBLINK_OLD 0   // сверка g09b-menu (M1 №7, M3 №15; круг 3): надпись «- DEMO -» на входе скрыта: первые 0,25 с нет, следующие 0,25 с есть; 1 — горит всё время
 #endif
 static int feColdRequested, coldTitleWait;
-static float menuIdleS = MENU_IDLE_S, demoIdleS = DEMO_IDLE_S; static int titleDeaf, demoDeaf, demoNoLabel, demoTv;
+static float menuIdleS = MENU_IDLE_S, demoIdleS = DEMO_IDLE_S; static int titleDeaf, demoDeaf, demoNoLabel;
+// №1271 (Роб 13.11: «в некоторых местах нет рамки»): единственный ролик без рамки-телевизора — демо простоя (правка 153: Роб принял демо «без контура и рамки» 01.10).
+// Решение дирижёра 13.11: по умолчанию демо БЕЗ рамки, как в 153; рамка — только по DEMOTV1271=1 (сборка) или flag demotv (сценарий), код оставлен под выключателем до слова Роба
+#ifndef DEMOTV1271
+#define DEMOTV1271 0
+#endif
+static int demoTv = DEMOTV1271;
 static unsigned titleExitAt;   // время нажатия, которым ушли с титульного/демо (строка MENUBACK: отклик до кадра меню)
 static int bootShots;   // служебное: «flag bootshots» — снимки лицензии и BootupLoad
 static void feFrameLine(const char *l) {   // правка 293: журнал перелёта меню (frontend3d.c feFrameLog) + смена буфера прошлого

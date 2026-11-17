@@ -1,0 +1,129 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag dalbelt 1
+foot 342.14 -211.94 0.0 
+wait 12
+camrel 0 7 0 1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv0xpn
+shot v0xpn
+flag dalbelt 0
+wait 3
+scene Sv0xpo
+shot v0xpo
+camrel 0 7 0 -1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv0xmn
+shot v0xmn
+flag dalbelt 0
+wait 3
+scene Sv0xmo
+shot v0xmo
+camrel 0 7 0 0 -0.03 1
+flag dalbelt 1
+wait 5
+scene Sv0zpn
+shot v0zpn
+flag dalbelt 0
+wait 3
+scene Sv0zpo
+shot v0zpo
+camrel 0 7 0 0 -0.03 -1
+flag dalbelt 1
+wait 5
+scene Sv0zmn
+shot v0zmn
+flag dalbelt 0
+wait 3
+scene Sv0zmo
+shot v0zmo
+foot 344.11 96.38 0.0 
+wait 12
+camrel 0 7 0 1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv1xpn
+shot v1xpn
+flag dalbelt 0
+wait 3
+scene Sv1xpo
+shot v1xpo
+camrel 0 7 0 -1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv1xmn
+shot v1xmn
+flag dalbelt 0
+wait 3
+scene Sv1xmo
+shot v1xmo
+camrel 0 7 0 0 -0.03 1
+flag dalbelt 1
+wait 5
+scene Sv1zpn
+shot v1zpn
+flag dalbelt 0
+wait 3
+scene Sv1zpo
+shot v1zpo
+camrel 0 7 0 0 -0.03 -1
+flag dalbelt 1
+wait 5
+scene Sv1zmn
+shot v1zmn
+flag dalbelt 0
+wait 3
+scene Sv1zmo
+shot v1zmo
+foot 439.13 -441.28 0.0 
+wait 12
+camrel 0 7 0 1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv2xpn
+shot v2xpn
+flag dalbelt 0
+wait 3
+scene Sv2xpo
+shot v2xpo
+camrel 0 7 0 -1 -0.03 0
+flag dalbelt 1
+wait 5
+scene Sv2xmn
+shot v2xmn
+flag dalbelt 0
+wait 3
+scene Sv2xmo
+shot v2xmo
+camrel 0 7 0 0 -0.03 1
+flag dalbelt 1
+wait 5
+scene Sv2zpn
+shot v2zpn
+flag dalbelt 0
+wait 3
+scene Sv2zpo
+shot v2zpo
+camrel 0 7 0 0 -0.03 -1
+flag dalbelt 1
+wait 5
+scene Sv2zmn
+shot v2zmn
+flag dalbelt 0
+wait 3
+scene Sv2zmo
+shot v2zmo
+flag stop
+wait 2
+end

@@ -222,6 +222,40 @@ int msn_loc_contains(const MsnFile *f, const MsnLoc *l, MsnVec3 p, float default
     return 0;
 }
 
+static int trig_has(const MsnTrig *t, float x, float y, float z, float eps) {   /* точка внутри объёма (шар строго, ящик в границах; epsilon оригинала у ящика не читается) */
+    float d[3] = { x - t->center[0], y - t->center[1], z - t->center[2] };
+    (void)eps;
+    if (t->kind == 0) return d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < t->half[0] * t->half[0];
+    for (int k = 0; k < 3; k++) { float q = d[0] * t->axis[k][0] + d[1] * t->axis[k][1] + d[2] * t->axis[k][2]; if (fabsf(q) > t->half[k]) return 0; }
+    return 1;
+}
+int msn_loc_contains_car(const MsnFile *f, const MsnLoc *l, const MsnWorld *w, float default_radius)
+{
+    if (!l) return 0;
+    if (MSN_CARREACH_OLD || !w->car_valid || w->on_foot || l->ntrig == 0) return msn_loc_contains(f, l, w->player, default_radius);
+    if (msn_loc_contains(f, l, w->player, default_radius)) return 1;   /* прежнее — подмножество нового */
+    float rx = w->car_fz, rz = -w->car_fx;   /* вправо от курса */
+    float bx = w->player.x + w->car_fx * w->car_ofs, bz = w->player.z + w->car_fz * w->car_ofs, by = w->player.y + w->car_cy;
+    float cx[4], cy[4], cz[4], sx[4] = { -1, 1, 1, -1 }, sy[4] = { -1, -1, 1, 1 }, sz[4] = { -1, -1, 1, 1 };   /* углы (-x,-y,-z) (+x,-y,-z) (+x,+y,+z) (-x,+y,+z) как в оригинале */
+    for (int k = 0; k < 4; k++) {
+        cx[k] = bx + rx * sx[k] * w->car_hw + w->car_fx * sz[k] * w->car_hl;
+        cz[k] = bz + rz * sx[k] * w->car_hw + w->car_fz * sz[k] * w->car_hl;
+        cy[k] = by + sy[k] * w->car_hh;
+    }
+    float pre = sqrtf(w->car_hw + w->car_hh);
+    for (unsigned i = 0; i < l->ntrig; i++) {
+        const MsnTrig *t = &f->trigs[l->first_trig + i];
+        float d[3] = { w->player.x - t->center[0], w->player.y - t->center[1], w->player.z - t->center[2] };
+        float dist2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        float bsr = t->kind == 0 ? t->half[0] : sqrtf(t->half[0] * t->half[0] + t->half[1] * t->half[1] + t->half[2] * t->half[2]);
+        if (!(dist2 < (pre + bsr) * (pre + bsr))) continue;
+        if (t->kind == 0 && dist2 <= (t->half[0] + 1.5f) * (t->half[0] + 1.5f)) return 1;
+        for (int k = 0; k < 4; k++) if (trig_has(t, cx[k], cy[k], cz[k], 0.f)) return 1;
+        if (t->kind != 0 && trig_has(t, w->player.x, w->player.y, w->player.z, 0.f)) return 1;
+    }
+    return 0;
+}
+
 const char *const msn_objective_name[MSN_OBJ_COUNT] = { "none", "goto", "getin", "talkto", "dialogue", "interior",
     "gooutside", "race", "follow", "losetail", "delivery", "dump", "destroy", "pickupitem", "destroyboss", "timer",
     "fmv", "buycar", "buyskin", "coins", "dummy" };

@@ -9,6 +9,14 @@
 typedef struct { const CfxDef *d; float t, p[3]; } CfxRun;
 static CfxRun run[CFX_MAX];
 int cfxOld;
+// 1340 (Роб, 108 на PSP: «у предметов миссии, которые собираешь, нет блестяшки при подборе, блинк-блинк, как у гаечного ключа»): в оригинале у собираемой цели
+// без SetCollectibleEffect, если у неё есть рисунок, в точке подбора играет эффект миссии по умолчанию mission_col (три квада свечения bluestarglow / halo + частицы
+// mission_col_psShape, 0,7 с; эффект по умолчанию при подборе). У нас без команды эффекта не играло ничего (L1 m4 доставка, L2 m5 и m6 доставка, L3 m3 и m5 сброс и др.);
+// «none» в скрипте — по-прежнему ничего. Эффект берётся из данных диска (tools/collectfx_export.py, missgen.p3d). CFX_DEFAULT1340_OLD=1 — как было
+#ifndef CFX_DEFAULT1340_OLD
+#define CFX_DEFAULT1340_OLD 0
+#endif
+int cfxDefault1340Old = CFX_DEFAULT1340_OLD;
 unsigned cfxSprites;
 // №463 (Роб; запись PS2, knowledge/facts/ps2-obs-video-m1-rings-wrench.yaml, В57): на въезде в точку этапа wrench_collect даёт не вспышку звёзд
 // 0,37 с, а бледно-голубой полупрозрачный вертикальный столб со спиралью: растёт из машины, через 0,2 с 3-4 высоты машины, потом выше

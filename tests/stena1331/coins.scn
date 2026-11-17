@@ -1,0 +1,23 @@
+# 1335: монеты до провала «машина разбита» и после Yes (повтор миссии): не должны уменьшаться на цену починки
+scene g1335
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+wait 3
+flag coins 100
+wait 1
+flag msnhud
+flag testboom
+wait 7
+flag msnhud
+press cross
+wait 5
+flag msnhud
+press cross
+wait 6
+flag msnhud
+wait 2
+flag msnhud
+end

@@ -2,6 +2,8 @@
 // (а) игрок отходит на 100 м и 300 м на 120 с без взгляда камеры — предмет лежит там же, не спрятан, не вернулся домой (прежние TEST81: домой через 5 с дальше 60 м);
 // (б) игрок уходит дальше PROP_ZONE_R (зона выгружена) — предмет возвращается домой; (в) машина игрока проезжает по лежащему 3 раза — не застревает (скорость не падает ниже 70 %)
 // и не сдвигает его (лежащий машине не мешает). Ключи для accept.sh.
+// 107б (сверка физики Fable-2 П1, П2; оригинал): (в) ПЕРЕПИСАНО: лежащий обычный предмет (ящик, урна, скамья, конус) машине НЕ призрак — три проезда его сдвигают (moved_by_cars > 1 м); призраком остаётся только высокий
+// класс (фонари, столбы). (г) НОВОЕ: касание медленнее 0,5 м/с не ставит отметку «тронут»: после касания 0,3 м/с и паузы машина на 10 м/с предмет бьёт и он летит (slow_marked 0, slow_then_moved > 1 м).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,6 +13,7 @@
 #include "car.h"
 unsigned homerSolidFrame = 0;
 void uiFlash(void) {}
+void wdFire(const char *k, const char *a, const char *i) { (void)k; (void)a; (void)i; }
 static Props props; static ColWorld world; static Car player;
 static unsigned char *data;
 static int load(const char *path) {
@@ -72,6 +75,19 @@ int main(int argc, char **argv) {
     moved = dist2d(&props.st[i], r2);
     vmin = vmin / v0;
   }
+  // (г) П2: медленное касание, пауза, потом удар на скорости
+  int slowMarked = -1; float slowMoved = -1.f;
+  if (chosen >= 0) {
+    unsigned i = (unsigned)chosen; propsFree(&props); load(argv[1]);
+    { const PropState *st0 = &props.st[i]; float ang = 0.9f, g = 0, bx = st0->x - sinf(ang) * 2.2f, bz = st0->z - cosf(ang) * 2.2f; if (!colGround(&world, bx, bz, 40, -50, &g, 0)) g = st0->y;
+      carInit(&player, 0, &world, bx, g + .6f, bz, ang);
+      for (int f = 0; f < 90; f++) { CarInput in = {0, 0, 0, 0}; carSetSpeed(&player, 0.3f); carUpdate(&player, &world, &in, 1.f / 30.f); propsUpdate(&props, &world, &player, 1.f / 30.f); if (props.st[i].kicked || !props.st[i].fresh) {} } }
+    for (int f = 0; f < 60; f++) propsUpdate(&props, &world, &player, 1.f / 30.f);
+    slowMarked = props.st[i].kicked; float h0[2] = {props.st[i].x, props.st[i].z};
+    drive(i, 150, 10.f); for (int f = 0; f < 300; f++) propsUpdate(&props, &world, &player, 1.f / 30.f);
+    slowMoved = dist2d(&props.st[i], h0);
+  }
+  printf("slow_marked %d\nslow_then_moved %.2f\n", slowMarked, slowMoved);
   printf("chosen %d\nkicked %d\nlies_away %d\nstill_100m %d\nhidden_100m %d\nhome_100m %d\nhome_300m %d\nhidden_300m %d\nhome_beyond_zone %d\nspeed_ratio %.2f\nmoved_by_cars %.2f\n",
          chosen, kicked, away, still, hidden100, home100, home300, hidden300, homeFar, vmin, moved);
   return 0;

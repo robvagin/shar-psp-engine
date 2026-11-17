@@ -1327,6 +1327,7 @@ static int fenceBand(const Q *q, const ColSeg *G) {
 // широкая фаза + срезы: собрать фигуры всего, что может задеть кузов
 static const ColSeg *xSeg; static uint32_t nxSeg;   // заборы трассы гонки (colExtraFences)
 void colExtraFences(const ColSeg *segs, unsigned n) { xSeg = segs; nxSeg = segs ? n : 0; }
+unsigned colExtraFenceCount(void) { return nxSeg; }   // №1264: сколько заборов гонки сейчас в коллизии (гейт выходов)
 // №984 (наряд ГОРОД L3–L7, столкновение кузова в подшаге): широкая фаза на свободной дороге каждый вызов (4 подшага × толчок и проба) обходит ячейки сетки и зря проверяет коробки ничего не нашедших.
 // Кэш «пусто»: если в области запроса (x/z/y) НИ ОДИН примитив не пересекает её по габариту (тот же проход, что в gather до нарезки фигур — побочных эффектов у него нет:
 // горбы, память заборов, листва считаются только у прошедших габарит), то для любой вложенной области результат тот же — 0 фигур, побитно. Область расширяется при втором «пусто» подряд
@@ -2332,6 +2333,10 @@ void colRaysFrac(const ColWorld *w, int n, const float (*a)[3], const float (*b)
       }
     }
 }
+#ifndef COLRAYK1_OLD
+#define COLRAYK1_OLD 0
+#endif
+int colRayK1Old = COLRAYK1_OLD;   // К1 (108): 1 — прежний обход всего прямоугольника клеток; служебное «flag colrayk1old 1»
 float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foliage) {
   colQueryKind = 7;   // Коллизия-96: кто спрашивает (журнал дочитываний кольца по виду запроса)
   if (!w || !w->scr) return 1.f;
@@ -2343,8 +2348,27 @@ float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foli
   if (gx0 > gx1 || gz0 > gz1) return 1.f;
   uint32_t o1 = w->ntri, o2 = o1 + w->nbox, o3 = o2 + w->ncyl, nprim = o3 + w->nseg;
   uint16_t st = nextStamp(S, nprim);
-  for (int gz = gz0; gz <= gz1; gz++)
-    for (int gx = gx0; gx <= gx1; gx++) {
+  // К1 (108, Стена; Fable §4.1): длинный луч (камера смотрит на машину в 540 м) обходил весь прямоугольник клеток между концами, для диагонали почти всю коллизию уровня
+  // (на PSP ещё и дочитывание кольца клеток), 155 мс на кадр в F_L7_WALK. Теперь по каждому ряду клеток берётся только кусок отрезка, попавший в ряд, с тем же запасом 0,1 м:
+  // примитив, который луч может задеть, лежит в клетке задетой точки, а ответ — наименьшая доля по примитивам, порядок обхода на него не влияет, ответ тот же бит в бит.
+  // Заборы-рамки (colRayFenceBox, сборщик) перекрывают рамкой весь прямоугольник, не только свои клетки — им прежний обход. COLRAYK1_OLD=1 / colRayK1Old = 1 — прежний обход всего прямоугольника
+  const int k1 = !colRayK1Old && !colRayFenceBox && gx1 > gx0 && gz1 > gz0;
+  const float cs_ = 1.f / w->inv;
+  for (int gz = gz0; gz <= gz1; gz++) {
+    int gxa = gx0, gxb = gx1;
+    if (k1) {
+      float zl = w->oz + (float)gz * cs_ - 0.1f - 1e-3f, zh = w->oz + (float)(gz + 1) * cs_ + 0.1f + 1e-3f, t0 = 0.f, t1 = 1.f;
+      if (fabsf(d[2]) > 1e-9f) { float u0 = (zl - a[2]) / d[2], u1 = (zh - a[2]) / d[2]; if (u0 > u1) { float q = u0; u0 = u1; u1 = q; } t0 = u0 < 0.f ? 0.f : u0; t1 = u1 > 1.f ? 1.f : u1; t0 -= 1e-5f; t1 += 1e-5f; if (t0 < 0.f) t0 = 0.f; if (t1 > 1.f) t1 = 1.f; }
+      else if (a[2] < zl || a[2] > zh) continue;
+      if (t0 > t1) continue;
+      float xa = a[0] + d[0] * t0, xb = a[0] + d[0] * t1; if (xa > xb) { float q = xa; xa = xb; xb = q; }
+#ifdef COLRAYK1_PLANT   // красный контроль tests/stena108/rayk1_host.c: ряд берётся по одной точке отрезка — клетки у краёв потеряны
+      xb = xa = 0.5f * (xa + xb);
+#endif
+      gxa = (int)floorf((xa - 0.1f - 1e-3f - w->ox) * w->inv); gxb = (int)floorf((xb + 0.1f + 1e-3f - w->ox) * w->inv);
+      if (gxa < gx0) gxa = gx0; if (gxb > gx1) gxb = gx1;
+    }
+    for (int gx = gxa; gx <= gxb; gx++) {
       uint32_t c = (uint32_t)gz * (uint32_t)w->W + (uint32_t)gx;
       const uint32_t *kb_, *ke_; CELL_SPAN(w, gx, gz, c, kb_, ke_);
       for (const uint32_t *rp_ = kb_; rp_ < ke_; rp_++) {
@@ -2359,5 +2383,6 @@ float colRayFrac(const ColWorld *w, const float a[3], const float b[3], int foli
         if (h < best) best = h;
       }
     }
+  }
   return best;
 }

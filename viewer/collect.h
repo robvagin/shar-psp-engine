@@ -126,6 +126,7 @@ typedef struct Collect {
 } Collect;
 
 // pak — весь файл, выровнен на 16, живёт, пока жив Collect (не копируется). 0 = ок, <0 — битый пакет
+extern int carCardCorner108Old;   // 108 (1297): 1 — карточка из машины как раньше (точка +0,9, углы с запасом 1,5 м)
 int  collectInit(Collect *c, const void *pak, unsigned size);
 int collectInitResident(Collect *c, const void *pak, unsigned size, int detachedKeys);
 void collectFree(Collect *c);                         // spFree; сам pak освобождает вызывающий

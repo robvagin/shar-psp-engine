@@ -10,6 +10,7 @@
 //    is identical in PPSSPP, on hardware and in the Mac test harness.
 //  The same VAG blocks can later be fed to sceSasCore (pspsascore.h, hardware-assisted VAG voices) for
 //  many simultaneous positional effects without re-exporting anything.
+#include "power.h"   // 107б P0
 #include "audio.h"
 #include "reliab.h"   // №1192: relNote
 // Аудит 09.10 п. 22 (правка 161). AMB161_OLD=1 — прежнее: ×AMB_GAIN только при загрузке банка, а первый же набор шин режима
@@ -256,6 +257,13 @@ static Voice voices[NVOICE + NSTREAM];
 enum { SBS_NONE, SBS_LOAD, SBS_READY, SBS_ERR };
 static int sbOld = SNDBANK96_OLD, sbOn, sbBreak;
 static AFile sbf = AF_NONE;
+// 107б P0 (генплан Fable §P0.2): sfx.sab не лечился после сна — файл читает фоновая нить, мёртвый дескриптор давал SBS_ERR навсегда («всё, чего нет в кэше, молчит до смены уровня»). Теперь перед чтением сверяется
+// эпоха питания (power.h): сон или смена уровня → закрыть и открыть заново (до 8 попыток по 40 мс), отказ чтения → то же и одно повторное чтение. SBHEAL107B_OLD=1 — как было
+#ifndef SBHEAL107B_OLD
+#define SBHEAL107B_OLD 0
+#endif
+static char sbPath[256]; static unsigned sbfEpoch, sbHealN, sbHealFail; static int sbHealOld = SBHEAL107B_OLD;
+void audioSbHealOld(int on) { sbHealOld = on != 0; }
 static volatile unsigned char sbSt[SB_MAXF];
 static unsigned sbRes[SB_MAXF], sbSz[SB_MAXF], sbUse[SB_MAXF], sbDst[SB_MAXF];
 static unsigned char sbPin[SB_MAXF];
@@ -342,9 +350,32 @@ static int sbReserve(unsigned fi, int soft) {
   return 1;
 }
 // чтение одного файла кэша (фоновая нить; на Маке — из audioHostMix)
+static int sbReopen(void) {   // 1 — файл банка открыт заново (фоновая нить банка)
+  if (!sbPath[0]) return 0;
+  if (AF_OK(sbf)) afClose(sbf);
+  sbf = AF_NONE;
+  for (int r = 0; r < 8 && !sbQuit; r++) {
+    if (!pwrSimFault("sfx.sab")) sbf = afOpen(sbPath);
+    if (AF_OK(sbf)) break;
+#ifndef AUDIO_HOST
+    sceKernelDelayThread(40000);
+#endif
+  }
+  sbfEpoch = pwrEpoch(); sbHealN++; if (!AF_OK(sbf)) sbHealFail++;
+  return AF_OK(sbf);
+}
+static void sbKill(void) { if (AF_OK(sbf)) { afClose(sbf); sbf = AF_NONE; } }   // flag simsleep: файл банка закрыт, как умирает после сна (power.h pwrKillHook)
+static int sbReadFile(unsigned fi, unsigned sz) { return AF_OK(sbf) && !pwrSimFault("sfx.sab") && afRead(sbf, sbDataOff + F[fi].off, (void *)(DATA + sbRes[fi]), (int)sz) == (int)sz; }
 static void sbIoLoad(unsigned fi) {
   unsigned t0 = nowUs(), sz = sbSz[fi];
-  int ok = sbBreak ? 1 : (AF_OK(sbf) && afRead(sbf, sbDataOff + F[fi].off, (void *)(DATA + sbRes[fi]), (int)sz) == (int)sz);
+  int ok;
+  if (sbBreak) ok = 1;
+  else if (sbHealOld) ok = AF_OK(sbf) && afRead(sbf, sbDataOff + F[fi].off, (void *)(DATA + sbRes[fi]), (int)sz) == (int)sz;
+  else {
+    if (sbfEpoch != pwrEpoch() || !AF_OK(sbf)) sbReopen();
+    ok = sbReadFile(fi, sz);
+    if (!ok && sbReopen()) ok = sbReadFile(fi, sz);
+  }
 #ifndef AUDIO_HOST
   if (ok && !sbBreak) sceKernelDcacheWritebackInvalidateRange((void *)(DATA + sbRes[fi]), sz);   // ME и поток смешивания читают данные мимо кэша главного
 #endif
@@ -416,9 +447,9 @@ static int sbLoadPinned(void) {
   return 1;
 }
 int audioSbLine(char *out, int n) {   // строка SNDB журнала смоука: запрошено ↔ сыграно ↔ грузилось, отказы (тишина) отдельно
-  return snprintf(out, n, "on=%d req=%u play=%u miss=%u warm=%u fail=%u evict=%u steal=%u err=%u always_kb=%u cache_kb=%u res_kb=%u load_max_us=%u load_avg_us=%u dly_max_us=%u dly_avg_us=%u dly_n=%u",
+  return snprintf(out, n, "on=%d req=%u play=%u miss=%u warm=%u fail=%u evict=%u steal=%u err=%u always_kb=%u cache_kb=%u res_kb=%u load_max_us=%u load_avg_us=%u dly_max_us=%u dly_avg_us=%u dly_n=%u heal=%u/%u",
                   sbOn, sbReqN, sbPlayN, sbMissN, sbWarmN, sbFailN, sbEvictN, sbStealN, sbErrN, sbAlways >> 10, sbCacheCap >> 10, (sbAlways + sbResBytes) >> 10, sbLoadMaxUs,
-                  sbMissN ? sbLoadSumUs / sbMissN : 0u, sbDlyMax, sbDlyN ? sbDlySum / sbDlyN : 0u, sbDlyN);
+                  sbMissN ? sbLoadSumUs / sbMissN : 0u, sbDlyMax, sbDlyN ? sbDlySum / sbDlyN : 0u, sbDlyN, sbHealN, sbHealFail);
 }
 void audioSbStatReset(void) { sbDlyMax = sbDlySum = sbDlyN = sbDlyLate = 0; }   // служебно (гейт): обнулить задержки
 void audioWarm(int id) { sbWarmRes(id, 0); }
@@ -1007,16 +1038,19 @@ static volatile int outVol = PSP_AUDIO_VOLUME_MAX;             // hardware chann
 // правка 313) — mebox.h ME_MEM. Ролик (sceJpeg — тоже ME) и сон PSP — ME звуку не отдаём (audioMeHold, обратный вызов питания)
 #include <psppower.h>
 #include "me/mebox.h"
-int meSvcScheme(void); int meSvcSubmit(int c, volatile MeBox *ubox, unsigned kind, void *job, unsigned words);
+void meSvcForget(int c); int meSvcScheme(void); int meSvcSubmit(int c, volatile MeBox *ubox, unsigned kind, void *job, unsigned words);
 int meSvcPoll(int c, volatile MeBox *ubox, unsigned seq, unsigned *sum); unsigned meSvcQuiesce(void); void meSvcHold(int on);
 static MixJob *meSpare;                   // запасное задание: ME не ответил — счёт переезжает сюда (память взята заранее, главным потоком)
 static MeBox *meBox;                      // ящик звука в памяти игры (схема ME_MEM_USER); служба пишет и читает его мимо кэша
 static volatile int meState;              // 0 — нет службы, 1 — звук на ME, 2 — выключен до конца запуска
 static volatile int meHoldReq, meHoldAck, meSleep;
+static unsigned meJobsTot;   // 107б: все ответы ME за запуск (ME WAKE ok считает ответы)
 static unsigned meSeq, meSecJobs, meSecWait, meJobsLast, meWaitLast, meBusy;   // за секунду: заданий, наибольшее ожидание (мкс); ME занят
 static char meWhy[40] = "-";
 static int mePwrCb(int unk, int flags, void *arg) {
   (void)unk; (void)arg;
+  if (flags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING | PSP_POWER_CB_STANDBY)) pwrNoteSuspend();   // 107б P0: общий счётчик сна (power.h)
+  else if (flags & (PSP_POWER_CB_RESUME_COMPLETE | PSP_POWER_CB_RESUMING)) pwrNoteResume(flags);
   if (flags & (PSP_POWER_CB_POWER_SWITCH | PSP_POWER_CB_SUSPENDING | PSP_POWER_CB_STANDBY)) {
     pwrSleeping = 1;
     meSleep = 1;                                                     // сон: дальше звук только на главном
@@ -1034,6 +1068,8 @@ static int mePwrCb(int unk, int flags, void *arg) {
 #endif
   return 0;
 }
+void audioSimSuspend(void) { mePwrCb(0, PSP_POWER_CB_SUSPENDING, NULL); }   // 107б: flag simsleep — тот же обработчик, что зовёт прошивка
+void audioSimResume(void) { mePwrCb(0, PSP_POWER_CB_RESUMING, NULL); mePwrCb(0, PSP_POWER_CB_RESUME_COMPLETE, NULL); }
 static SceUID pwrTh = -1;
 static int mePwrThread(SceSize a, void *b) {
   (void)a; (void)b;
@@ -1178,15 +1214,32 @@ static int meCollect(unsigned *sum) {     // 1 — ответ есть; 0 — н
     if (w >= 50000u) return 0;
     sceKernelDelayThread(w < 2000u ? 100 : 500);
   }
-  meSecJobs++; if (w > meSecWait) meSecWait = w;
+  meSecJobs++; meJobsTot++; if (w > meSecWait) meSecWait = w;
   aq.colUs += nowUs() - t0;               // правка 410: ожидание ответа вместе с опросом
   return 1;
 }
+// 107б P0 (Fable, журнал 20:35; Роб 1273): после сна звук на ME не возвращался (meState=2 «off:sleep», :1264) — 2,3–3,2 мс главного процессора на каждом кадре до перезапуска игры. Теперь по смене эпохи питания (пробуждение,
+// power.h) через 2 с ME возвращается (meState=1); неответ ловит прежний таймаут 50 мс (meOff «timeout» → снова на главном), повторы через 2, 4, 8, 16 с, пять попыток; строки ME WAKE в ящик и журнал.
+// MEWAKE107B_OLD=1 / «flag mewakeold 1» — как было. Настоящий ME после сна проверяет только железо: в эмуляторе пустышка ME (meaudio=3) молчит 5 с после flag simsleep (tests/p0sleep/me.sh)
+#ifndef MEWAKE107B_OLD
+#define MEWAKE107B_OLD 0
+#endif
+static int meWakeOld = MEWAKE107B_OLD; void audioMeWakeOld(int on) { meWakeOld = on != 0; }
+static int meWakePend; static unsigned meWakeEpoch, meWakeAt, meWakeTries, meWakeOkAt, meWakeJobs0;
+static void meWakeArm(const char *why, unsigned seq) {   // ME ушёл («sleep», «timeout» и пр.) на самом сне или в пределах 10 с после пробуждения — вернуть его позже
+  if (meWakeOld || meWakePend) return;   // уже ждёт возврата — расписание не сбрасывать
+  unsigned now = nowUs(); int soon = pwrResumeCount() && pwrResumeAtUs && (unsigned)(now - pwrResumeAtUs) < 10000000u;
+  if (!soon && strcmp(why, "sleep")) return;
+  meWakePend = 1; meWakeTries = 0; meWakeAt = (now + 2000000u) | 1u; meWakeOkAt = 0; meWakeEpoch = pwrEpoch();
+  relNote("ME WAKE off why=%s seq=%u epoch=%u wakes=%u", why, seq, pwrEpoch(), pwrResumeCount());
+}
 static void meOff(const char *why, unsigned job) {   // ME больше не трогаем; счёт — копия задания на главном
   meState = 2; snprintf(meWhy, sizeof meWhy, "off:%s@%u", why, job);
+  meWakeArm(why, job);
   if (meSpare && J != meSpare) { memcpy(meSpare, J, sizeof *meSpare); J = meSpare; }   // старое задание не трогаем: ME мог бы ещё писать в него
   J->data = DATA;
 }
+
 static int mixThread(SceSize a, void *b) {
   int cur = 0, pend = 0, prepped = 0; unsigned busy = 0, win0 = nowUs(), cnt = 0, worst = 0; fpuThreadInit();   // правка 252
   aqBufTot = 0; memset(&aq, 0, sizeof aq); aq.restMin = -1;   // правка 410: новый поток (смена уровня) — прогрев 2 буфера
@@ -1226,7 +1279,23 @@ static int mixThread(SceSize a, void *b) {
       wbAll = 1; aq.cpu++;                // правка 410 К1: задание целиком в кэше главного — следующий сброс целиком
       mixPost(J, outBuf[cur]);
     } else mixBuffer(outBuf[cur]);
-    if (meSleep && meState == 1) { meSvcQuiesce(); snprintf(meWhy, sizeof meWhy, "off:sleep@%u", meSeq); meState = 2; }   // сон: ME больше не трогаем
+    if (meSleep && meState == 1) { meSvcQuiesce(); snprintf(meWhy, sizeof meWhy, "off:sleep@%u", meSeq); meState = 2; meWakeArm("sleep", meSeq); }   // сон: ME больше не трогаем (107б: и вернуть после пробуждения)
+    if (!meWakeOld && meWakePend && !meSleep && !pwrSleeping && !pend && !prepped && meBox) {   // 107б: вернуть ME после пробуждения
+      unsigned nw = nowUs();
+      if (meWakeEpoch != pwrEpoch() && meState == 2) { meWakeEpoch = pwrEpoch(); meWakeAt = (nw + 2000000u) | 1u; meWakeTries = 0; }   // ещё одно пробуждение: счёт попыток заново
+      if (meState == 1 && meWakeOkAt) {   // ждём 1,5 с: ME должен реально отвечать (задания считаны), а не числиться включённым при вечном «занят»
+        if ((int)(nw - meWakeOkAt) > 1500000) {
+          if (meJobsTot - meWakeJobs0 >= 20) { relNote("ME WAKE ok tries=%u jobs=%u epoch=%u", meWakeTries, meJobsTot - meWakeJobs0, pwrEpoch()); meWakePend = 0; meWakeOkAt = 0; }
+          else { relNote("ME WAKE retry-fail busy jobs=%u tries=%u", meJobsTot - meWakeJobs0, meWakeTries); meWakeOkAt = 0; meOff("busy", meSeq); }
+        }
+      }
+      else if (meState == 2 && meWakeAt && (int)(nw - meWakeAt) >= 0) {
+        if (meWakeTries >= 5) { relNote("ME WAKE give-up tries=%u why=%s", meWakeTries, meWhy); meWakePend = 0; }
+        else { meWakeTries++; meWakeAt = (nw + (1000000u << meWakeTries)) | 1u; meWakeOkAt = (nw + 1u) | 1u; meWakeJobs0 = meJobsTot; relNote("ME WAKE retry n=%u prev=%s epoch=%u", meWakeTries, meWhy, pwrEpoch()); meSvcQuiesce();
+          { volatile MeBox *u_ = (volatile MeBox *)(0x40000000u | (unsigned)meBox); u_->done = u_->sent; meSync(); meSvcForget(0); }   // клиентская сторона «занято»: своё прошлое задание не забрано (sent != done) и очередь службы помнит ящик у ME — после сна оно не вернётся никогда
+          snprintf(meWhy, sizeof meWhy, "on:wake%u", meWakeTries); meState = 1; }
+      }
+    }
     if (meState == 1 && !meHoldReq && !quit) {   // следующий буфер — на ME
       unsigned p0 = nowUs(); mixPre(J); aq.preUs += nowUs() - p0;
       if (meKick()) pend = 1; else prepped = 1;
@@ -1367,7 +1436,10 @@ static int sbTryInit(AFile f, unsigned sz) {
   unsigned cmin = sbMaxLazy * 3u; if (cmin < (192u << 10)) cmin = 192u << 10;
   if ((uint64_t)H->dataOff + sbAlways + cmin > slotCap) { bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; return 0; }
   sbDataOff = H->dataOff; sbCacheCap = (slotCap - sbDataOff - sbAlways) & ~63u;
-  DATA = bank + H->dataOff; sbResBytes = 0; sbf = f;
+  DATA = bank + H->dataOff; sbResBytes = 0; sbf = f; sbfEpoch = pwrEpoch();
+#ifndef AUDIO_HOST
+  pwrKillHook("sfx.sab", sbKill);
+#endif
   sbOn = 1;   // ниже sbGet/sbLoadPinned работают в режиме по требованию
   if (!sbLoadPinned()) { sbOn = 0; sbf = AF_NONE; bank = 0; H = 0; R = 0; VAR = 0; F = 0; car = 0; DATA = 0; return 0; }
   sbQr = sbQw = 0; sbQuit = 0; sbDlyMax = sbDlySum = sbDlyN = sbDlyLate = 0; sbStealN = sbErrN = sbWarmN = 0; sbStealT = 0;
@@ -1384,7 +1456,7 @@ int audioInit(const char *dir) {
   char p[256];
   for (int b = 0; b < AUDIO_NBUS; b++) busVol[b] = 1;
   for (int s = 0; s < NSTREAM; s++) { streams[s].cur = -1; streams[s].queued = -1; streams[s].reqTrack = -1; streams[s].vol = 1; streams[s].pan = 0; }
-  snprintf(p, sizeof p, "%ssfx.sab", dir);
+  snprintf(p, sizeof p, "%ssfx.sab", dir); snprintf(sbPath, sizeof sbPath, "%s", p);
   AFile f = afOpen(p);
   if (!AF_OK(f)) return fail("sfx.sab not found");
   unsigned sz = afSize(f);
@@ -1705,6 +1777,7 @@ void audioBus(int bus, float vol) {
   busVol[bus] = clampf(vol, 0, 1);
 }
 void audioMaster(float vol) { master = clampf(vol, 0, 1); }
+float audioBusLevel(int bus) { return bus >= 0 && bus < AUDIO_NBUS ? busVol[bus] * userVol[bus] : 0.f; }   // №1266: уровень шины для журнала и гейта
 void audioUserVolume(int bus, float vol) { if (bus >= 0 && bus < AUDIO_NBUS) userVol[bus] = clampf(vol, 0, 1); }
 // правка 279 (04.10: «на PSP нет музыки ни в миссии, ни в погоне»): служебно — громкость пути музыки целиком (мастер × шина × игрок)
 // и что играет поток музыки; строка AUDV в журнал раз в секунду (main.c) и в чёрный ящик

@@ -1,0 +1,20 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 3
+scene M0
+flag simsleep 8
+flag wsreset 1
+wait 3
+scene M1
+wait 14
+scene M2
+wait 3
+flag stop
+wait 2
+end

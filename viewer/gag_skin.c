@@ -125,6 +125,7 @@ int gagSkinNext(const unsigned char *wanted,unsigned *idx,unsigned *off,unsigned
   return 0;
 }
 int gagSkinGagOf(unsigned idx){return idx<count?records[idx].gag:-1;}
+void gagSkinClearBad(void){free(badRec);badRec=0;}   // 107б P0: пометки «чтение не вышло» снимаются (сон, повтор через паузу)
 void gagSkinMarkBad(unsigned idx){if(idx>=count)return;if(!badRec)badRec=calloc(count,1);if(badRec)badRec[idx]=1;}
 int gagSkinAdopt(unsigned idx,unsigned char *buf) {
   if(!sourceRead || idx>=count || owned[idx])return -1;

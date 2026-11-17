@@ -1,0 +1,14 @@
+# 1338: строки TARGET и MCRBAD в ящик выпуска (первая загрузка машин миссии отказывает, этап 1 L4 m1)
+scene g1338t
+flag mcrreadfail 6
+flag golevel 4
+wait 30
+flag msnpass
+wait 4
+flag msnpass
+wait 6
+press cross
+wait 5
+flag msnpass
+wait 6
+end

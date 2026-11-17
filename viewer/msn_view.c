@@ -1,5 +1,6 @@
 // Миссии в EBOOT: интерфейс, персонажи, маркеры (см. msn_view.h). Логика миссий — game_msn.c (общая с ботами).
 #include <pspkernel.h>
+#include "power.h"   // 107б P0: эпоха питания
 #include <pspgu.h>
 #include <pspctrl.h>
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include "msn_view.h"
 #include "msn_wager.h"
 #include "msn_rules.h"
+#include "mission/msn_cosm1264.h"
 #ifndef BRIEF_ART_PRELOAD_OLD
 #define BRIEF_ART_PRELOAD_OLD 0   // 1 — карточка по готовности данных картинки, как в TEST17
 #endif
@@ -28,7 +30,9 @@ int camNearOld = NEAR_CULL_OLD;     // №602: прежние пороги ис�
 #include "skin.h"
 #include "xsub.h"   // служебно (Модели-96, замер x_npc): участки mvDraw3D 50–57 в строке XSUB
 #include "ui.h"
+#include "watchdog.h"
 #include "msnart.h"
+#include "msnres.h"
 #include "sound.h"
 #include "audio.h"
 #include "convcam.h"
@@ -48,6 +52,7 @@ static void (*logFn)(const char *);
 static float clock_;                       // секунды игры (вспышки HUD)
 static void logf_(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #include <stdarg.h>
+int rb_MVGETINARROW_OLD __attribute__((weak));   /* 107б rollback.txt (viewer/rollback.h): прежний путь без пересборки */
 static void logf_(const char *fmt, ...) {
   if (!logFn) return;
   char s[200]; va_list a; va_start(a, fmt); vsnprintf(s, sizeof s, fmt, a); va_end(a); logFn(s);
@@ -83,7 +88,14 @@ static struct { char name[24]; SkinModel *m; int amb; } model[NMODEL];
 #define NPRE 4
 static struct { char name[24]; SkinPre *p; unsigned t0; } pre[NPRE];
 static char npcPend[8][24]; static int nNpcPend;   // персонажи миссии, чья модель ещё читается: animFor(create) повторяется каждый кадр
+#ifndef NPD1361_OLD
+#define NPD1361_OLD 0
+#endif
+int mvNpd1361 = !NPD1361_OLD;
 static int preFail;   // modelFor: файл не открылся / повреждён — повторять нечего
+// 1344: служебная задержка чтения модели персонажа (flag npcdelay МС): модель считается прочитанной не раньше, чем через МС после начала фонового чтения (медленная карта: красный контроль ожидания персонажей комнаты)
+unsigned mvNpcDelayUs;
+#define NPCDELAY1344(pi) (mvNpcDelayUs && (unsigned)(sceKernelGetSystemTimeLow() - pre[pi].t0) < mvNpcDelayUs)
 static int prePending(const char *name) { for (int i = 0; i < NPRE; i++) if (pre[i].p && msn_streq(pre[i].name, name)) return 1; return 0; }
 #define NANIM 10
 typedef struct { char name[24]; const SkinModel *m; SkinPlayer p; int idle, walk; int talkLine, gest; float gestT;
@@ -115,7 +127,14 @@ static int preStartBlocked(void);
 int npcRetry96 = !NPCRETRY96_OLD;
 #define NPC_RETRY_US 1000000u
 int (*mvMemLadder)(const char *who, unsigned need, int top); int npcLad1235 = !NPCLAD1235_OLD;
-static struct { char name[24]; unsigned n; int subst; unsigned retryAt, dropN; } npcFail[8];   // по имени: сколько отказов по памяти, слот модели-замены (-1 нет)
+// 107б P0 (сон и пробуждение, Роб 1273; генплан Fable §P0.3): файл модели персонажа «не найден» (после сна карта ещё не ответила) делал preFail = 1 — опрос сдавался сразу, персонаж не появлялся. Теперь «нет файла» повторяется раз в секунду
+// до NPC_MISS_N подряд в одной эпохе питания (замена чужой моделью не включается: файл вернётся), потом как раньше. P0NPC_OLD=1 / файл p0npcold — как было
+#ifndef P0NPC_OLD
+#define P0NPC_OLD 0
+#endif
+#define NPC_MISS_N 8
+int npcP0 = !P0NPC_OLD;
+static struct { char name[24]; unsigned n; int subst; unsigned retryAt, dropN; unsigned miss, missEp; } npcFail[8];   // по имени: сколько отказов по памяти, слот модели-замены (-1 нет)
 static int npcFailSlot(const char *name) {
   int fr = -1; for (int i = 0; i < 8; i++) { if (npcFail[i].name[0] && msn_streq(npcFail[i].name, name)) return i; if (!npcFail[i].name[0] && fr < 0) fr = i; }
   if (fr < 0) fr = 0;
@@ -135,7 +154,11 @@ static int npcRoom(const char *fn, int amb) {   // 1 — цельный кусо
 }
 static const SkinModel *npcLoadFail(const char *name, const char *fn, int amb) {   // отказ чтения/разбора: файл есть — память, не окончательно; замена загруженным персонажем
   logf_("MSNNPC load-fail %s\n", fn); bbOp("npc!", name, 0);
-  SceIoStat st; if (!npcLad1235 || sceIoGetstat(fn, &st) < 0) { preFail = 1; return 0; }
+  SceIoStat st; int gs_ = npcLad1235 ? (pwrSimFault("npc") ? -1 : sceIoGetstat(fn, &st)) : -1;
+  if (npcP0 && npcLad1235 && gs_ < 0) {   // 107б P0: файла нет сейчас — повтор раз в секунду, сдаваться не сразу
+    int k_ = npcFailSlot(name); if (npcFail[k_].missEp != pwrEpoch()) { npcFail[k_].miss = 0; npcFail[k_].missEp = pwrEpoch(); }
+    if (++npcFail[k_].miss <= NPC_MISS_N) { unsigned t_ = sceKernelGetSystemTimeLow() + NPC_RETRY_US; npcFail[k_].retryAt = t_ ? t_ : 1u; logf_("MSNNPC file-miss %s n=%u (повтор)\n", name, npcFail[k_].miss); return 0; } }
+  if (gs_ < 0) { preFail = 1; return 0; }
   int k = npcFailSlot(name); unsigned n = ++npcFail[k].n;
   if (npcRetry96) { unsigned t_ = sceKernelGetSystemTimeLow() + NPC_RETRY_US; npcFail[k].retryAt = t_ ? t_ : 1u; }
   if (n == 1) logf_("MSNNPC mem-fail %s (повтор по опросу)\n", name);
@@ -162,9 +185,11 @@ static const SkinModel *modelFor(const char *name, int amb) {
     for (int i = 0; i < 8; i++) if (npcFail[i].name[0] && msn_streq(npcFail[i].name, name)) {
       if (npcFail[i].retryAt && (int)(sceKernelGetSystemTimeLow() - npcFail[i].retryAt) < 0) return 0;
       break; } }
+  int inPack1361 = 0;
   for (unsigned k = 0; k < sizeof npcFiles / sizeof *npcFiles; k++) {
     const char *b = npcFiles[k] + 6; size_t n = strlen(name);   // "chars/" + имя + ".chr"
     if (strncmp(b, name, n) || strcmp(b + n, ".chr")) continue;
+    inPack1361 = 1;
     for (int i = 0; i < NMODEL; i++) if (!model[i].m) {
       char fn[320]; snprintf(fn, sizeof fn, "%s%s", dir, npcFiles[k]);
       unsigned t0 = sceKernelGetSystemTimeLow();
@@ -179,8 +204,8 @@ static const SkinModel *modelFor(const char *name, int amb) {
           bbOp("npc+", name, BB_SYNC_ASYNC_OLD ? 1 : 0);   // фоновое чтение: запись ящика не в кадре (blackbox.h)
           pre[pi].p = skinPreStart(fn); if (!pre[pi].p) return npcLoadFail(name, fn, amb);
           strncpy(pre[pi].name, name, sizeof pre[pi].name - 1); pre[pi].name[sizeof pre[pi].name - 1] = 0; pre[pi].t0 = t0 = sceKernelGetSystemTimeLow();
-          if (!skinPreReady(pre[pi].p)) { logf_("MSNNPC prefetch %s\n", name); return 0; }
-        } else if (!skinPreReady(pre[pi].p)) return 0;
+          if (!skinPreReady(pre[pi].p) || NPCDELAY1344(pi)) { logf_("MSNNPC prefetch %s\n", name); return 0; }
+        } else if (!skinPreReady(pre[pi].p) || NPCDELAY1344(pi)) return 0;
         model[i].m = skinPreFinish(pre[pi].p); pre[pi].p = 0; pre[pi].name[0] = 0;
         if (!model[i].m && !SKINPRE_ERR_OLD) { logf_("MSNNPC async-fail %s, sync read\n", name); model[i].m = skinLoad(fn); }   // ревизия 1.2: ошибка фонового чтения — синхронно, как до заглядывания вперёд
         if (!model[i].m) return npcLoadFail(name, fn, amb);
@@ -199,6 +224,10 @@ static const SkinModel *modelFor(const char *name, int amb) {
       return model[i].m;
     }
   }
+  // №1361 (Роб: загрузка L5 ждала 3 с «кого-то»): AddNPC("npd", …) в L1 m5 и L5 m1 — риг без кожи (art/chars/npd_m.p3d: скелет, мешей нет; npd_a.p3d: клипы), персонаж-пустышка, модели у него
+  // нет и быть не может, в пакете персонажей (npcFiles) его нет. Раньше такое имя оставалось «читается» (animFor повторялся каждый кадр до 1800 попыток), экран загрузки ждал потолок NPC_WAIT_MAX_S
+  // (3,0 с на каждой загрузке L5, журнал NPCWAIT1076 left=1/.). Теперь имя вне пакета — отказ сразу (preFail), ожидание не начинается. NPD1361_OLD=1 / «flag npd1361old» / файл npd1361old — как было
+  if (mvNpd1361 && !inPack1361) { preFail = 1; static char seen1361[6][24]; int k1 = 0; while (k1 < 6 && seen1361[k1][0] && strcmp(seen1361[k1], name)) k1++; if (k1 < 6 && !seen1361[k1][0]) { snprintf(seen1361[k1], 24, "%s", name); logf_("MSNNPC no-model %s (нет в пакете персонажей)\n", name); } }
   return 0;
 }
 // Заглядывание вперёд (разбор тура 12): модели персонажей СЛЕДУЮЩЕГО этапа читаются в фон, пока идёт текущий (на первом этапе — пока висит карточка
@@ -222,6 +251,7 @@ static int preStartBlocked(void) {
   unsigned now = sceKernelGetSystemTimeLow(); if (now - last < 120000u) return 1;
   last = now; return 0;
 }
+int (*mvCarReady)(const char *);   // 109: 1 — модель машины миссии в памяти (или её уже не будет: нет в пакете, битая); 0 — ещё нет, хост пробует читать (ставит main)
 void (*mvCarPrefetch)(const char *);   // №629: фоновое чтение блока модели машины миссии (mcrPreStart, main_render.h)
 static void modelPrefetch(const char *name) {
   if (STAGE_PREFETCH_OLD || mvPump || !name || !*name) return;
@@ -270,8 +300,9 @@ void mvSetVis(int (*f)(const float bb[6])) { mvVis = f; }
 #ifndef NPCSCENE431_OLD
 #define NPCSCENE431_OLD 0
 #endif
-static int (*mvSceneOk)(float x, float z);
+static int (*mvSceneOk)(float x, float z); static int (*mvSceneOkY)(float x, float y, float z);   // 108 1293: вариант с высотой ног персонажа (NULL — прежний)
 void mvSetSceneOk(int (*f)(float x, float z)) { mvSceneOk = f; }
+void mvSetSceneOkY(int (*f)(float x, float y, float z)) { mvSceneOkY = f; }
 int mvNpcSceneHeld;   // сколько персонажей прямо сейчас скрыто за сцену (смоук читает по строкам NPCSCENE431)
 int mvNpcCityPos(int i, float *x, float *z) {   // служебно (смоук dropnpc): городской персонаж миссии под номером i (не комната) — его место; 0 — нет такого
   if (i < 0 || i >= M.nnpc) return 0;
@@ -338,6 +369,13 @@ static struct {
 #ifndef SV_SKIP_OLD
 #define SV_SKIP_OLD 0
 #endif
+// 1331 (Роб: «на третьей-четвёртой попытке жму Yes, карточка, потом снова failed, теперь с пунктом Skip»): Skip появлялся на 4-м провале вместо 7-го. Попытки считались дважды: Yes на экране провала и Restart паузы бумили счётчик сами,
+// и ещё раз титул карточки (titleCb), которая выходит на каждом повторе, — по два на повтор (1, 2, 4, 6, 7 на 4-м экране провала). У оригинала сброс миссии учитывается один раз за попытку (счёт сбросов / 2, Skip при 7 попытках).
+// Теперь Yes и Restart сами не бумят, считает только карточка. SKIPCOUNT1331_OLD=1 / flag skipcount1331old 1 — прежнее
+#ifndef SKIPCOUNT1331_OLD
+#define SKIPCOUNT1331_OLD 0
+#endif
+int mvSkipCount1331Old = SKIPCOUNT1331_OLD;
 static unsigned char msTries[32]; static unsigned msSkipped;
 static void msTryBump(void) { if (!SV_SKIP_OLD && M.rt.cur >= 0 && M.rt.cur < 32 && msTries[M.rt.cur] < 255) msTries[M.rt.cur]++; }
 // сверка g07b-msnview (M2:6): «Item Dropped!» мигает вкл/выкл каждые 0,25 с и висит, пока активных предметов больше нуля; снимается на нуле. Было: фиксированные 2 с без мигания.
@@ -367,6 +405,14 @@ static int iconIndex(const char *icon) {   // значок задания: из 
 #ifndef BBICON958_OLD
 #define BBICON958_OLD 0
 #endif
+// 1324: готов ли мир для старта отсчёта и таймера: клетки города под игроком, под машиной и в 25 м вокруг (sceneReadyHook, как у героя и раскрытия перехода). Клетка, которая не прочиталась (failed), не ждётся
+static int sceneBusy1324(void) {
+  if (!sceneReadyHook || !M.g || !M.g->pWorld) return 0;
+  int foot = gameOnFoot(M.g); float px = foot ? M.g->pHomer->x : M.g->pCar->x, pz = foot ? M.g->pHomer->z : M.g->pCar->z;
+  float pt[6][2] = {{px, pz}, {M.g->pCar->x, M.g->pCar->z}, {px + 25.f, pz}, {px - 25.f, pz}, {px, pz + 25.f}, {px, pz - 25.f}};
+  for (int i = 0; i < 6; i++) { int failed = 0; if (!sceneReadyHook(M.g->pWorld, pt[i][0], pt[i][1], &failed) && !failed) return 1; }
+  return 0;
+}
 static int iconLv;   // уровень пакета миссии, в котором значок/текст цели поставлены последний раз
 static char iconKey[48];
 void mvIconState(char *o, unsigned n) {
@@ -391,14 +437,66 @@ static void objectiveShow(const char *text, const char *icon);
 #ifndef BUBBLE1247_OLD
 #define BUBBLE1247_OLD 0
 #endif
+// №1264/1267/1268 (Роб 13.11, видео IMG_8263, Build 106; сверка Fable с оригиналом: значок всплывает 0,5 с, потом текст, новый текст получает полный срок, этап без текста бабл не трогает, ожидания картинки нет):
+// три пути потери сообщения этапа. бит 1 (BUBBLE1264A_OLD) — этап без текста и этап-разговор (msn_game.c даёт "") гасили показанный и ждущий бабл; теперь бабл они не трогают;
+// бит 2 (BUBBLE1264B_OLD) — ожидание значка было 90 кадров (≈3 с), у оригинала 0,5 с (15 кадров); бит 4 (BUBBLE1264C_OLD) — cleanup не снимал ждущий текст (в новый этап уезжал текст прежней миссии).
+// «flag bubble1264old N» (маска 1|2|4) — прежнее поведение выбранных путей; 7 — всё как в Build 106. Журнал: BUBBLE1264 keep / drop
+#ifndef BUBBLE1264A_OLD
+#define BUBBLE1264A_OLD 0
+#endif
+#ifndef BUBBLE1264B_OLD
+#define BUBBLE1264B_OLD 0
+#endif
+#ifndef BUBBLE1264C_OLD
+#define BUBBLE1264C_OLD 0
+#endif
+int mvBubble1264Old = (BUBBLE1264A_OLD ? 1 : 0) | (BUBBLE1264B_OLD ? 2 : 0) | (BUBBLE1264C_OLD ? 4 : 0);
 #define BUB1247_AVATAR_CAP_FR 90   // кадров игры (≈3 с при 30 к/с): срок идёт только пока рисуются кадры мира; на экране загрузки и под ней не тикает (журнал L5 Будки: срок истёк в загрузке, иконка пришла через 0,3 с после первого кадра)
 int mvBubble1247Old = BUBBLE1247_OLD; static int holdFr;
 static int avatarWait1247(const char *icon) {
   if (mvBubble1247Old || !icon || !*icon || msnartImage(icon) || !msnartReading()) return 0;
-  if (holdFr >= BUB1247_AVATAR_CAP_FR) { static int lg_ = -1; if (holdFr != lg_) { lg_ = holdFr; logf_("WATCHDOG bubble avatar-late icon=%s cap=%d кадров t=%.1f\n", icon, BUB1247_AVATAR_CAP_FR, clock_); } return 0; }
+  int cap_ = mvBubble1264Old & 2 ? BUB1247_AVATAR_CAP_FR : 15;   // №1264б: 0,5 с оригинала (15 кадров при 30 к/с)
+  if (holdFr >= cap_) { static int lg_ = -1; if (holdFr != lg_) { lg_ = holdFr; logf_("WATCHDOG bubble avatar-late icon=%s cap=%d кадров t=%.1f\n", icon, cap_, clock_); } return 0; }
   return 1;
 }
-static int bubbleBusy1247(const char *icon) { int cam_ = mvCamBusy && mvCamBusy(); if (cam_ && !mvBubble1247Old) holdFr = 0; return cam_ || avatarWait1247(icon); }   // срок ожидания аватара идёт с конца наезда, а не с прихода текста (наезд длиннее срока)
+// 1310/1311 (Роб: «непонятно, что делать»; Fable по записи оригинала: значок 0,5 с, затем текст 3,0 с, срок считает экран игры): у нас текст этапа 0 показывался под карточкой, уезжающей до 1,6 с, и под закрытым ирисом
+// (экран игры тогда рисуется и срок 3,5 с идёт), игрок видел его укороченным или совсем не видел. Теперь пузырь ждёт ещё и «мир виден»: карточка не стоит и не уезжает, ирис открыт, перехода нет, нет паузы
+// (крючок main — mvWorldHidden1310); срок начинается с первого кадра, где игрок видит мир. BUBVIS1310_OLD=1 / flag bubvis1310old 1 — прежнее. Журнал: BUBBLE shown=<с видно> why=expire|replaced|cleanup, сторож WATCHDOG bubble short (видно < 3,0 с)
+// 1315 К5 (Роб: «сядь в машину» появилось, когда он уже в машине): «камера занята» держала пузырь БЕЗ предела. Теперь предел 2 с для полос разговора и дуги камеры, 8 с для самого наезда, потом показ и WATCHDOG bubble cam-late why=<…>. BUBCAM1315_OLD=1 / flag bubcam1315old 1 — прежнее
+#ifndef BUBVIS1310_OLD
+#define BUBVIS1310_OLD 0
+#endif
+#ifndef BUBCAM1315_OLD
+#define BUBCAM1315_OLD 0
+#endif
+int mvCamFree1310, mvBubVis1310Old = BUBVIS1310_OLD, mvBubCam1315Old = BUBCAM1315_OLD; int (*mvWorldHidden1310)(void); const char *mvCamWhy1315;
+static unsigned camSince1315, camLog1315;
+static int camStuck1315(void) { mvCamWhy1315 = "duga"; return 1; }
+void mvCamStuck1315(int on) { mvCamBusy = on ? camStuck1315 : 0; }   // служебно (flag camstuck1315 1): «камера занята» застряла навсегда (стенд К5)
+static int worldHidden1310(void) { return H.briefing || (mvWorldHidden1310 && mvWorldHidden1310()); }
+static int bubbleBusy1247(const char *icon) {
+  int cam_ = !mvCamFree1310 && mvCamBusy && mvCamBusy();   // mvCamFree1310 — служебно (flag camfree1310 1): миссия без камеры старта, как у части миссий на железе (стенд К1)
+  if (!mvBubCam1315Old) {
+    if (cam_) { unsigned now_ = sceKernelGetSystemTimeLow(); if (!camSince1315) { camSince1315 = now_ ? now_ : 1; }
+      unsigned lim_ = mvCamWhy1315 && mvCamWhy1315[0] == 'n' ? 8000000u : 2000000u;   // n(аезд) — 8 с, полосы и дуга — 2 с
+      if ((unsigned)(now_ - camSince1315) >= lim_) { if (camLog1315 != camSince1315) { camLog1315 = camSince1315; logf_("WATCHDOG bubble cam-late why=%s cap=%u мс t=%.1f\n", mvCamWhy1315 ? mvCamWhy1315 : "?", lim_ / 1000u, clock_); } cam_ = 0; } }
+    else camSince1315 = 0;
+  }
+  int hid_ = !mvBubVis1310Old && worldHidden1310();
+  if ((cam_ || hid_) && !mvBubble1247Old) holdFr = 0;
+  return cam_ || hid_ || avatarWait1247(icon); }   // срок ожидания аватара идёт с конца наезда, а не с прихода текста (наезд длиннее срока)
+// 1310 К2: сколько секунд текст этапа был виден (мир виден: ирис открыт, карточки нет, не пауза) за 3,5 с срока экрана игры. Срок экрана идёт, пока нет карточки и паузы
+static struct { int on; float el, shown; char tx[28]; } bubT;
+static void bubEnd1310(const char *why) {
+  if (!bubT.on) return; bubT.on = 0;
+  logf_("BUBBLE shown=%.1f why=%s text=\"%s\" t=%.1f\n", bubT.shown, why, bubT.tx, clock_);
+  if (!strcmp(why, "expire") && bubT.shown < 3.0f) { char i_[96]; snprintf(i_, sizeof i_, "shown=%.1f text=%s", bubT.shown, bubT.tx); wdFire("bubble", "short", i_); }
+}
+static void bubTick1310(float dt) {
+  if (!bubT.on || uiPaused() || H.briefing) return;
+  bubT.el += dt; if (!(mvWorldHidden1310 && mvWorldHidden1310())) bubT.shown += dt;
+  if (bubT.el >= 3.5f) bubEnd1310("expire");
+}
 void mvBubblePump(void) {
   if (!holdOn) return;
   holdFr++;
@@ -406,12 +504,15 @@ void mvBubblePump(void) {
   if (!bubbleBusy1247(holdIcon)) { holdOn = 0; objectiveShow(holdText, holdIcon); } }
 static void uiObjectiveCb(void *u, const char *text, int msg, const char *icon) {
   (void)u; (void)msg;
+  if (!(text && *text) && icon && *icon && !msnLockIcon1321Old) {   // 1321: этап без текста, но со значком (после запертого этапа): только значок в углу, бабл не трогаем (у оригинала «показать цель −1» = обновить значок)
+    holdOn = 0; msnartSetObjIcon(icon); uiHudSet(UI_F_OBJICON, iconIndex(icon)); iconLv = mvPackLevel(); iconNote("set-icon-only"); logf_("LOCKICON1321 icon=%s t=%.1f\n", icon, clock_); return; }
+  if (!(text && *text) && !(mvBubble1264Old & 1)) { logf_("BUBBLE1264 keep (этап без текста бабл не трогает) hold=%d t=%.1f\n", holdOn, clock_); return; }   // №1264а
   if (text && *text && !holdOn) holdFr = 0;
   if (text && *text && bubbleBusy1247(icon)) { snprintf(holdText, sizeof holdText, "%s", text); snprintf(holdIcon, sizeof holdIcon, "%s", icon ? icon : ""); holdOn = 1; return; }   // №1047: сначала наезд, потом пузырь; №1247: и аватар
   holdOn = 0; objectiveShow(text, icon);
 }
 static void objectiveShow(const char *text, const char *icon) {
-  if (text && *text) { msnartSetObjIcon(icon); uiMessage(text, iconIndex(icon), 0.f); iconLv = mvPackLevel(); iconNote("set"); }
+  if (text && *text) { bubEnd1310("replaced"); bubT.on = 1; bubT.el = bubT.shown = 0.f; logf_("BUBBLE start briefing=%d hidden=%d t=%.1f\n", H.briefing, mvWorldHidden1310 ? mvWorldHidden1310() : -1, clock_); snprintf(bubT.tx, sizeof bubT.tx, "%.27s", text); msnartSetObjIcon(icon); uiMessageStage(text, iconIndex(icon), 0.f); iconLv = mvPackLevel(); iconNote("set"); }
   else { uiMessage(NULL, -1, 0.f); iconNote("off"); }
 }
 // сверка g09a-hud круг 3 (С16, M2:15): мигание таймера (белый–красный, период 0,5 с, ×0,67 после половины окна, ×0,5 после 0,8). Границы окна мигания в скриптах миссий не найдены
@@ -423,8 +524,10 @@ static void objectiveShow(const char *text, const char *icon) {
 #define SV_TIMERBLINK_S 10
 extern void uiTimerBlink(int on, float frac) __attribute__((weak));
 extern void uiTimerUp(int up) __attribute__((weak));
+static int tmrLastSec1324 = -1;   // 1324: последнее число таймера обратного отсчёта, которое игрок видел (с), для строки провала
 static void uiTimerCb(void *u, int ms, int up) {
-  (void)u; uiHudSet(UI_F_TIMER, ms < 0 ? 0 : ms); uiHudShow(UI_T_TIMER, ms >= 0);
+  (void)u; if (!up && ms > (msnTimerFloor1324Old ? 1000 : 0)) tmrLastSec1324 = ms / 1000;   // как в ui.c: при остатке ≤ порога оверлей прячется — такое число игрок не видит
+  uiHudSet(UI_F_TIMER, ms < 0 ? 0 : ms); uiHudShow(UI_T_TIMER, ms >= 0);
   if (uiTimerUp) uiTimerUp(ms >= 0 && up);
   if (uiTimerBlink) { int in = !SV_TIMERBLINK_OLD && ms > 1000 && !up && ms <= SV_TIMERBLINK_S * 1000; uiTimerBlink(in, in ? 1.f - (float)ms / (SV_TIMERBLINK_S * 1000.f) : 0.f); }
 }
@@ -504,7 +607,8 @@ static void uiFailedCb(void *u, int reason, const char *text, const char *hint) 
     bbOp("fail", reason >= 0 && reason < (int)(sizeof why / sizeof *why) ? why[reason] : "?", 1); }
   snprintf(H.failMsg, sizeof H.failMsg, "%s", text ? text : "");
   uiSetMissionOver(text, hint); uiMessage(NULL, -1, 0.f);
-  logf_("MSN failed %d %s t=%.1f\n", reason, text ? text : "", clock_);
+  logf_("MSN failed %d %s t=%.1f lastshown=%d tries=%d skip=%d\n", reason, text ? text : "", clock_, tmrLastSec1324, M.rt.cur >= 0 && M.rt.cur < 32 ? msTries[M.rt.cur] : -1, mvFailSkipOk());
+  { char b_[120]; snprintf(b_, sizeof b_, "reason=%d stage=%d.%d tries=%d skip=%d rem=%.1f", reason, M.rt.phase, M.rt.stage, M.rt.cur >= 0 && M.rt.cur < 32 ? msTries[M.rt.cur] : -1, mvFailSkipOk(), M.rt.remaining); bbNoteDiag("FAILINFO", b_); }   // 1331: в ящик выпуска (смоука у Роба нет)
 }
 static int mkShadowOld;   // 04.10: 1 — маркер цели без пятна <рисунок>_shadow (как до правки; флаг сценария mkshadowold)
 void mvMarkerShadowOld(int on) { mkShadowOld = on; }
@@ -583,7 +687,12 @@ void mvStatePropSync(StateProps *sp) {
     if ((sp->run[i].state != 0) != want) { spEnter(sp, i, want ? 1 : 0); logf_("MSN stateprop-sync inst=%u show=%d t=%.1f\n", i, want, clock_); }
   }
 }
-static void itemCollectedCb(void *u, int index, const MsnItem *it) { (void)u; if (it) cfxAt(it->effect, &it->at.pos, "item", index); }
+extern int cfxDefault1340Old;
+static void itemCollectedCb(void *u, int index, const MsnItem *it) { (void)u;
+  if (!it) return;
+  const char *eff = it->effect;
+  if (!cfxDefault1340Old && (!eff || !*eff) && it->drawable && *it->drawable) eff = "mission_col";   // 1340: без SetCollectibleEffect и с рисунком — эффект по умолчанию, как у оригинала
+  cfxAt(eff, &it->at.pos, "item", index); }
 static void giverCb(void *u, const MsnGiver *g, int on) {   // значки бонус-миссий и продавцов на радаре (Scrooby HudMap)
   (void)u; int i;
   for (i = 0; i < H.ngiver; i++) if (msn_streq(H.giver[i].name, g->name)) break;
@@ -652,10 +761,11 @@ static void ambSlots(float x, float y, float z, float cameraOffset, float speed,
   }
   if (miss >= 0) { NpcAnim *a = animFor(npcKey(&M.npc[miss]), 1, 1); logf_("MSN npc %s kind=%d model=%s\n", M.npc[miss].name, M.npc[miss].kind, a ? "yes" : "no"); }
 }
+char mvAmbMissName1361[24];   // №1361 служебно: имя последнего фонового персонажа без модели (строка NPCWAIT1076)
 int mvAmbMissingAt(float x, float y, float z) {   // №1076: бонусные и фоновые персонажи в пределах видимости точки без модели (Дедушка в доме L1); есть — двигает их чтение
   if (!active) return 0;
   int want[NMODEL_AMB], nw = gameMsnAmbWantRange(&M, x, y, z, NPC_DRAW_DISTANCE, NMODEL_AMB, want), miss = 0;
-  for (int j = 0; j < nw; j++) if (!animFor(npcKey(&M.npc[want[j]]), 0, 0)) miss++;
+  for (int j = 0; j < nw; j++) if (!animFor(npcKey(&M.npc[want[j]]), 0, 0)) { miss++; snprintf(mvAmbMissName1361, sizeof mvAmbMissName1361, "%s", M.npc[want[j]].name); }
   if (miss) { ambElapsed = NPC_PREFETCH_PERIOD; ambSlots(x, y, z, 0.f, 0.f, 0.f); }
   return miss;
 }
@@ -677,7 +787,7 @@ static void presentationCb(void *u, const char *bitmap) {   // SetPresentationBi
 #ifndef BRIEF_PIC_OLD
 #define BRIEF_PIC_OLD 0   // №512: =1 — ждать картинку брифинга без предела, как раньше
 #endif
-#define BRIEF_PIC_MAX 8.0f
+#define BRIEF_PIC_MAX (BRIEFPIC1269_OLD ? 8.0f : 70.f)   // №1269: предел ждущей картинки длиннее всех повторов msnart (60 с); окончательный отказ чтения (picGaveUp) выводит карточку сразу
 static int brBriefed;          // брифинг уже был на этом уровне (mvInit сбрасывает)
 static int brOld;              // служебное (mvBriefOld): отрицательный контроль гейта — прежняя карточка
 void mvBriefOld(int on) { brOld = on; }
@@ -741,8 +851,87 @@ static float briefSec(void) { return (unsigned)(sceKernelGetSystemTimeLow() - H.
 static float brReadyT = -1.f;   // с какого времени брифинга всё прежнее готово (для предела ожидания чтения)
 static int readaheadBusy(void) { for (int q = 0; q < NPRE; q++) if (pre[q].p && !skinPreReady(pre[q].p)) return 1; return 0; }
 static int briefReadyBase(void);
+// 109 (а) (Fable ПОРЯДОК_ЗАГРУЗКИ §4 п.1, оригинал: карточка ждёт, пока вся миссия в памяти): к прежним условиям готовности добавлено «очередь msnart пуста» и «модели машин фазы в памяти» (mvPhaseCarsReady — крючок Стены,
+// NULL — условия нет). Предел BRIEF_QUEUE_MAX (25 с, надпись LOADING остаётся): дольше — карточка выходит с записью в журнал (лестницу памяти под карточкой держат msnart и модели сами). LOADREADY109_OLD=1 / «flag loadready109old 1» / rollback.txt — как было
+#ifndef LOADREADY109_OLD
+#define LOADREADY109_OLD 0
+#endif
+#define BRIEF_QUEUE_MAX 25.f
+// 109 (Запекание З9): список ресурсов миссии (msnres-l<N>.shr, tools/missions/msnres.py) — карточка заказывает у msnart ВСЕ записи миссии в порядке списка (вступление, основная часть, значки всех этапов, картинка карточки)
+// сразу на старте миссии и считает себя готовой, когда каждая из них прочитана или отказана. Раньше записи основной части и значки поздних этапов просились только когда до них доходила миссия, то есть читались уже ПОД ИГРОЙ.
+// Нет файла списка (старый набор) — msnResOpen = -1, всё как было. LOADLIST109_OLD=1 / flag loadlist109old 1 — прежнее
+#ifndef LOADLIST109_OLD
+#define LOADLIST109_OLD 0
+#endif
+// 109/правка Роба 1293 (последняя миссия L1: Бёрнс невидим, пока с ним не заговоришь): модели персонажей миссии (kind CHR списка) раньше читались по ходу этапов (заглядывание вперёд видело
+// только следующий этап), и к появлению персонажа модели ещё не было. Теперь карточка заказывает модели ВСЕХ персонажей миссии (обоих фаз) на старте и открывается, когда они в памяти;
+// после старта этапа чтений персонажей миссии нет. Слоты те же (модели миссии, не фоновые), память — msnResBytes(CHR) списка. LOADCHR109_OLD=1 / flag loadchr109old 1 — прежнее
+#ifndef LOADCHR109_OLD
+#define LOADCHR109_OLD 0
+#endif
+#ifndef FINLINE1317_OLD
+#define FINLINE1317_OLD 0
+#endif
+int mvFinLine1317Old = FINLINE1317_OLD;
+#ifndef PROXBAR1318_OLD
+#define PROXBAR1318_OLD 0
+#endif
+int mvProxBar1318Old = PROXBAR1318_OLD;
+int mvChr109Old = LOADCHR109_OLD;
+// 1303 (Роб: «карточка уезжает, потом ирис, потом опять уезжает»; Fable по записи оригинала): ✕, нажатый, пока карточка ещё на LOADING, запоминался и сам закрывал карточку в миг её готовности — игрок
+// не успевал её увидеть, а потом шли переходы миссии. У оригинала нажатия до появления кнопки не считаются. LOADQ1303_OLD=1 / flag loadq1303old 1 — прежнее (помнить ✕ с LOADING)
+#ifndef LOADQ1303_OLD
+#define LOADQ1303_OLD 0
+#endif
+int mvLoadQ1303Old = LOADQ1303_OLD;
+int mvList109Old = LOADLIST109_OLD; static int resOk109, resMi109 = -1;
+void mvResFree109(void) { msnResClose(); resOk109 = 0; resMi109 = -1; }
+static int resKeep109(const MsnResEnt *r) { return (r->kind == MSNRES_ART || r->kind == MSNRES_PIC) && !(r->flags & (MSNRES_F_MISSING | MSNRES_F_ENGINE)); }
+static int resChr109(const MsnResEnt *r) { return r->kind == MSNRES_CHR && !(r->flags & (MSNRES_F_MISSING | MSNRES_F_ENGINE)) && !strchr(r->key, '#'); }
+static void resOrder109(const char *id) {   // MISSION_START: заказ по списку миссии id
+  resMi109 = -1; if (mvList109Old || !resOk109 || !id) return;
+  int mi = msnResMission(id); if (mi < 0) { logf_("MSN reslist %s none t=%.1f\n", id, clock_); return; }
+  resMi109 = mi; unsigned n = msnResCount(mi), ord = 0, gone = 0, chr = 0;
+  for (unsigned i = 0; i < n; i++) { const MsnResEnt *r = msnResAt(mi, i); if (r && !mvChr109Old && resChr109(r)) chr++; }
+  for (unsigned i = 0; i < n; i++) { const MsnResEnt *r = msnResAt(mi, i); if (!r || !resKeep109(r)) continue; msnartLoad(r->key, 0); ord++; if (msnartPathState109(r->key) < 0) gone++; }
+  logf_("MSN reslist %s entries=%u ordered=%u notintable=%u chars=%u peak=%u t=%.1f\n", id, n, ord, gone, chr, msnResPeak(mi), clock_);
+}
+static int resReady109(void) {   // 1 — всё заказанное прочитано или отказано (в очереди и в чтении нет)
+  if (resMi109 < 0) return 1;
+  unsigned n = msnResCount(resMi109);
+  for (unsigned i = 0; i < n; i++) { const MsnResEnt *r = msnResAt(resMi109, i); if (r && resKeep109(r) && msnartPathState109(r->key) == 0) return 0; }
+  if (!mvChr109Old) for (unsigned i = 0; i < n; i++) { const MsnResEnt *r = msnResAt(resMi109, i); if (r && resChr109(r) && !modelFor(r->key, 0)) return 0; }   // модель персонажа в памяти (чтение в фоне, повтор каждый кадр карточки)
+  return 1;
+}
+int mvReady109Old = LOADREADY109_OLD; int (*mvPhaseCarsReady)(void);
+static float carsDelay109; static int carsDelayTest109(void) { return briefSec() >= carsDelay109; }
+void mvCarsDelay109(float s) { carsDelay109 = s; mvPhaseCarsReady = s > 0.f ? carsDelayTest109 : 0; }   // служебно (flag mvcarsdelay109 N): «модели машин фазы» готовы через N с после открытия карточки — стенд условия готовности
+// 1337 (ящик Роба с L4: на карточке «LOADING» ждала ~20 с, а в ящике на это время ни одной записи): на чём карточка ждёт — q (очередь картинок msnart), c (модели машин фазы), l (список ресурсов: записи и персонажи) —
+// пишется в ящик при смене причины («brief-wait q1 c0 l1 0.4с») и при готовности («brief-ready … ждала X с»). Поведения не меняет. MSNBRIEFBB1337_OLD=1 / mvBriefBb1337Old (файл briefbb1337old, flag briefbb1337old 1) — не писать
+#ifndef MSNBRIEFBB1337_OLD
+#define MSNBRIEFBB1337_OLD 0
+#endif
+int mvBriefBb1337Old = MSNBRIEFBB1337_OLD;
+static void briefBb1337(int q, int c, int l, int base) {
+  static int last = -1; static float prevSec = 1e9f, firstWait = 0.f; float s = briefSec();
+  if (s < prevSec) { last = -1; firstWait = 0.f; }   // новая карточка
+  prevSec = s;
+  if (mvBriefBb1337Old) return;
+  int mask = (!q ? 1 : 0) | (!c ? 2 : 0) | (!l ? 4 : 0) | (!base ? 8 : 0);
+  if (mask == last || (last < 0 && !mask)) return;
+  char t[64];
+  if (mask) { if (last <= 0) firstWait = s; snprintf(t, sizeof t, "q%d c%d l%d base%d %.1fs", q, c, l, base, s); bbOp("brief-wait", t, 0); }
+  else { snprintf(t, sizeof t, "ждала %.1f с (с %.1f по %.1f)", s - firstWait, firstWait, s); bbOp("brief-ready", t, 0); }
+  last = mask;
+}
 static int briefReady(void) {
   int r = briefReadyBase();
+  if (!r) briefBb1337(1, 1, 1, 0);   // 1337: карточка ждёт картинку/первую загрузку
+  if (r && !mvReady109Old && !brOld) {
+    int q = msnartIdle(), c = mvPhaseCarsReady ? mvPhaseCarsReady() : 1, l = resReady109();
+    briefBb1337(q, c, l, 1);
+    if (!q || !c || !l) { if (briefSec() < BRIEF_QUEUE_MAX) return 0; static float lg_ = -1.f; if (lg_ != clock_) { lg_ = clock_; logf_("MSN briefing-ready TIMEOUT queue_idle=%d cars_ready=%d list_ready=%d after %.1f s t=%.1f\n", q, c, l, briefSec(), clock_); } }
+  }
   if (!r || MSN_READAHEAD_OLD || BRIEF_CONTINUE_READY_OLD) return r;
   float t = briefSec(); if (brReadyT < 0.f) brReadyT = t;
   return readaheadBusy() && t < brReadyT + BRIEF_RA_MAX ? 0 : 1;
@@ -752,7 +941,7 @@ static int briefReadyBase(void) {
   if (H.brFirst && briefSec() < BRIEF_FIRST_LOAD) return 0;
   const void *pix = 0; int tw, th, w, h;
   if (!H.present[0] || (msnartImageData(H.present, &pix, &tw, &th, &w, &h) && pix)) {
-    if (!BRIEF_ART_PRELOAD_OLD && H.present[0] && !uiBriefPicSettled(3) && briefSec() < BRIEF_PIC_MAX) return 0;   // №612 (видео TEST17): картинка догружалась уже на показанной карточке — ждём 3 кадра готовой картинки под газетой
+    if (!BRIEF_ART_PRELOAD_OLD && H.present[0] && !uiBriefPicSettled(3) && briefSec() < 8.0f) return 0;   // №612 (видео TEST17): картинка догружалась уже на показанной карточке — ждём 3 кадра готовой картинки под газетой
     return 1;
   }
   if (!BRIEF_PIC_OLD && !msnartPicWaitOld && msnartPicGaveUp()) {   // Кольцо-96: картинка отказана по памяти после всех повторов — карточка без неё сразу, не 8 с чёрного
@@ -813,9 +1002,18 @@ static void featureCb(void *u, int feature, const MsnCall *c) {   // LoadP3DFile
 #define RACE_SEG_MAX 256   // перепись миссий 04.10: заборов на трассе до 222 (L7 sr2; L5 sr2 173, L4 sr1 172) — было 192, хвост терялся
 static void *rfData; static unsigned rfSize;
 static char raceProps[32]; static ColSeg raceSeg[RACE_SEG_MAX]; static unsigned nRaceSeg;
-static void raceOff(void) { if (raceProps[0]) bbOp("race-", raceProps, 0); raceProps[0] = 0; nRaceSeg = 0; colExtraFences(NULL, 0); }
+// №1264 (Бабл 107, сверка Fable A2.10/Б.7; оригинал: пропы гонки и их коллизия — один файл зоны, появляются вместе): заборы трассы включаются, когда рисунок пропов уже в памяти, и каждый — когда под ним
+// есть земля (высота считалась один раз, нет земли — y = 0 и забор «не на той высоте»). Нет рисунка и чтение кончилось (отказ по памяти) — заборов нет (WATCHDOG race-fences), невидимых ограждений не бывает.
+// RACEFENCE1264_OLD=1 / flag racefence1264old 1 — прежнее (сразу и одним куском)
+#ifndef RACEFENCE1264_OLD
+#define RACEFENCE1264_OLD 0
+#endif
+int mvRaceFence1264Old = RACEFENCE1264_OLD;
+static ColSeg raceAll[RACE_SEG_MAX]; static unsigned nRaceAll; static unsigned char raceYok[RACE_SEG_MAX]; static int raceFencePend, raceFencePub; static float raceFenceT0, raceFenceNext;
+extern int mvRaceExitPlant;   // (определение в game_msn.c, int107) служебное (flag racexitplant 1): красный контроль гейта выходов — уборка гонку не снимает
+static void raceOff(void) { if (mvRaceExitPlant) return; if (raceProps[0]) bbOp("race-", raceProps, 0); raceProps[0] = 0; nRaceSeg = 0; nRaceAll = 0; raceFencePend = 0; raceFencePub = 0; colExtraFences(NULL, 0); }
 static void raceFences(const char *stem) {
-  nRaceSeg = 0; colExtraFences(NULL, 0);
+  nRaceSeg = 0; nRaceAll = 0; raceFencePend = 0; raceFencePub = 0; colExtraFences(NULL, 0);
   const unsigned char *p = rfData; if (!p || rfSize < 8 || memcmp(p, "RFN1", 4)) return;
   unsigned n; memcpy(&n, p + 4, 4); unsigned off = 8;
   for (unsigned r = 0; r < n && off + 36 <= rfSize; r++) {
@@ -825,13 +1023,37 @@ static void raceFences(const char *stem) {
       for (unsigned i = 0; i < k && nRaceSeg < RACE_SEG_MAX; i++) {
         float f[6]; memcpy(f, p + off + i * 24, 24); ColSeg *g = &raceSeg[nRaceSeg++];
         g->a[0] = f[0]; g->a[1] = f[1]; g->b[0] = f[2]; g->b[1] = f[3]; g->n[0] = f[4]; g->n[1] = f[5];
-        float y; if (!gameMsnGroundY(&M, (f[0] + f[2]) * .5f, (f[1] + f[3]) * .5f, &y)) y = 0.f;
+        float y; int ok = gameMsnGroundY(&M, (f[0] + f[2]) * .5f, (f[1] + f[3]) * .5f, &y); if (!ok) y = 0.f;
         g->y0 = y - 2.f; g->y1 = y + 3.f;
+        if (!mvRaceFence1264Old) { raceAll[i] = *g; raceYok[i] = (unsigned char)ok; }
       }
+      if (!mvRaceFence1264Old) { nRaceAll = nRaceSeg; nRaceSeg = 0; raceFencePend = 1; raceFenceT0 = clock_; raceFenceNext = 0.f; colExtraFences(NULL, 0); return; }   // №1264: включает raceFenceTick
       colExtraFences(raceSeg, nRaceSeg); return;
     }
     off += k * 24;
   }
+}
+#define RACEFENCE_WAIT_S 4.f   // чтение записи пропов кончилось, а рисунка нет: ждём столько и отказываемся от заборов
+static void raceFenceTick(void) {
+  if (!raceFencePend || clock_ < raceFenceNext) return;
+  raceFenceNext = clock_ + .25f;
+  int art = msnartHas(raceProps);
+  if (!art) {
+    if (!msnartReading() && clock_ - raceFenceT0 > RACEFENCE_WAIT_S) { raceFencePend = 0; logf_("WATCHDOG race-fences nopics %s fences=0/%u t=%.1f\n", raceProps, nRaceAll, clock_); }
+    return;
+  }
+  unsigned have = 0, done = 0, add = 0;
+  for (unsigned i = 0; i < nRaceAll; i++) {
+    if (!raceYok[i]) { float y; if (gameMsnGroundY(&M, (raceAll[i].a[0] + raceAll[i].b[0]) * .5f, (raceAll[i].a[1] + raceAll[i].b[1]) * .5f, &y)) { raceAll[i].y0 = y - 2.f; raceAll[i].y1 = y + 3.f; raceYok[i] = 1; add++; } }
+    done += raceYok[i];
+  }
+  have = done;
+  if (add || !raceFencePub) {   raceFencePub = 1;   // набор растёт: пересобрать подряд лежащие участки с землёй и отдать коллизии заново
+    nRaceSeg = 0; for (unsigned i = 0; i < nRaceAll; i++) if (raceYok[i]) raceSeg[nRaceSeg++] = raceAll[i];
+    colExtraFences(raceSeg, nRaceSeg);
+    logf_("MSN race-fences %s on=%u/%u art=1 t=%.1f\n", raceProps, have, nRaceAll, clock_);
+  }
+  if (done >= nRaceAll || clock_ - raceFenceT0 > 30.f) raceFencePend = 0;   // не пришла земля за 30 с — остальные участки далеко и не нужны
 }
 static void racePropsCb(void *u, const char *name, int load) {
   (void)u; if (!load || !name) return;   // Unload — по концу гонки (cleanupCb)
@@ -848,7 +1070,7 @@ static void racePropsCb(void *u, const char *name, int load) {
   char path[48]; snprintf(path, sizeof path, "art/%s.p3d", stem); msnartLoad(path, 0);
   bbOp("race+", stem, 0);   // правка 103: самописец — пропы и заборы гонки
   snprintf(raceProps, sizeof raceProps, "%s", stem); raceFences(stem);
-  logf_("MSN race-props %s fences=%u t=%.1f\n", stem, nRaceSeg, clock_);
+  logf_("MSN race-props %s fences=%u t=%.1f\n", stem, mvRaceFence1264Old ? nRaceSeg : 0u, clock_);   /* №1264: заборы включит raceFenceTick (строки MSN race-fences) */
 }
 // правка 122 (сверка 30.09, запись PS2 26:50): машина-награда (бонусная миссия, все уличные гонки) — окно сообщения Message.scr
 // «Congratulations! You've unlocked Cletus' Pickup Truck. Go to a phone booth to use it.» (текст — UNLOCK_<модель> пакета миссий,
@@ -887,11 +1109,45 @@ static float fadeA, fadeLen = 1.f; static int fadeDir, stayBlack;
 #define SV_FADE_OUT .25f
 #define SV_FADE_HOLD 2.0f
 static int rsPend;   // перезапуск ждёт чёрного экрана: 1 — Restart паузы, 2 — Retry (restartIris)
+// 1304 (Роб: «yes» на экране провала — повтора нет, как будто no; и на L2 m2): пока перезапуск ждёт чёрного (rsPend), старт этапа (MSN_EV_STAGE_START) и «ирис открыть» (MSN_EV_IRIS) разворачивали затемнение обратно, и отметка терялась до следующего чёрного.
+// Теперь пока отметка взведена, затемнение не разворачивается, а если за RSPEND_FORCE_S чёрного так и нет — перезапуск идёт принудительно. RSPEND1304_OLD=1 / flag rspend1304old 1 — как было
+#ifndef RSPEND1304_OLD
+#define RSPEND1304_OLD 0
+#endif
+int mvRsPend1304Old = RSPEND1304_OLD;
+#undef RSPEND1304_OLD
+#define RSPEND1304_OLD mvRsPend1304Old
+#define RSPEND_FORCE_S 1.5f
+static float rsPendT;
+// 1316 (Роб, L2 m3: победа в гонке → ирис → снова карточка и гонка → чёрный экран с HUD, выйти нельзя). Причины: (1) отметка перезапуска rsPend от несработавшего «yes» жила, пока не придёт следующий чёрный экран, — им стал финиш m3 (SetFadeOut) и миссия перезапустилась;
+// (2) затемнение шло игровым dt, а под камерой миссии он 0 — чёрный замерзал, пауза при затемнении запрещена. Теперь: затемнение, срок принудительного перезапуска и выдержка считаются настенным временем; отметка привязана к миссии и снимается при её смене, конце и закрытии;
+// сторож (канон 12): полностью чёрный экран > 5 с без причины (этап StayInBlack, выдержка, загрузка) открывается строкой WATCHDOG fade-stuck; пауза не запрещается затемнением дольше 3 с. FADEGUARD1316_OLD=1 / flag fadeguard1316old 1 — как было
+#ifndef FADEGUARD1316_OLD
+#define FADEGUARD1316_OLD 0
+#endif
+int mvFadeGuard1316Old = FADEGUARD1316_OLD;
+// 1326 (Роб, 108 на PSP: «в начале каждой миссии 2–3 с чёрный экран: счётчик идёт, видны только элементы интерфейса, карты не видно, а я могу газовать»): после ✕ карточки экран закрывает слой затемнения или мир не нарисован,
+// а игра и интерфейс идут. Канон 14: экран раскрывается один раз, когда мир нарисован; до этого интерфейс не показан, управление, отсчёт и таймер стоят. main_loop.h следит за 10 с после ✕: кадров с миром почти без
+// треугольников подряд или чёрного слоя затемнения без причины (не этап StayInBlack и не перезапуск) — интерфейс прячется, dt = 0, не дольше 5 с (потом идёт как раньше, строка в журнал и ящик). WORLDHOLD1326_OLD=1 / flag worldhold1326old 1 — прежнее
+#ifndef WORLDHOLD1326_OLD
+#define WORLDHOLD1326_OLD 0
+#endif
+int mvWorldHold1326Old = WORLDHOLD1326_OLD; unsigned mvContUs1326; static float wbForceEnd = -1.f;
+#undef FADEGUARD1316_OLD
+#define FADEGUARD1316_OLD mvFadeGuard1316Old
+#ifndef FADECLK1362B_OLD
+#define FADECLK1362B_OLD 0
+#endif
+int mvFadeClk1362bOld = FADECLK1362B_OLD;   // 1362Б (Fable, корень класса 1304/1316/1326/1349): часы затемнения под карточкой шли по игровому dt = 0. flag fadeclk1362bold 1 / rollback.txt — как было
+float mvWallDt1316;   // настоящее время кадра (main_loop.h ставит перед mvTick: под камерой миссии игровой dt = 0)
+static float fclk_, fadeStuckT, fadeBlackT;   // часы затемнения (настенные); сколько подряд чёрный без причины; сколько подряд чёрный вообще
+static int rsPendMsn = -1;   // миссия, которой принадлежит отметка перезапуска
+#define FCLK (FADEGUARD1316_OLD ? clock_ : fclk_)
 static void restartRun(int kind);
 static float blackAt = -1.f; static int fadeInPend, fadeHoldNeed;   // blackAt — когда экран стал полностью чёрным; fadeInPend — выход из чёрного ждёт конца выдержки
 static void fadeInStart(void) {   // выход из чёрного (конец этапа StayInBlack / начало следующего этапа)
   if (SV_FADE_OLD) { fadeDir = -1; fadeLen = FADE_IN; return; }
-  if (fadeHoldNeed && (fadeDir > 0 || blackAt < 0.f || clock_ < blackAt + SV_FADE_HOLD)) { fadeInPend = 1; return; }   // чёрный ещё не выдержан — выход отложен до fadeTick
+  if (fadeHoldNeed && (fadeDir > 0 || blackAt < 0.f || FCLK < blackAt + SV_FADE_HOLD)) { fadeInPend = 1; return; }   // чёрный ещё не выдержан — выход отложен до fadeTick
   fadeDir = -1; fadeLen = SV_FADE_OUT; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f;
 }
 static void fadeCb(void *u, int out, float t) {
@@ -901,17 +1157,40 @@ static void fadeCb(void *u, int out, float t) {
   else fadeInStart();
 }
 static void stayBlackCb(void *u) { (void)u; stayBlack = 1; fadeA = 1.f; fadeDir = 0; }
+int mvFadeCover1326(void) { return active && fadeA >= .9f && !stayBlack && !rsPend && !H.failed && !H.levelDone && !H.levelEnd && !H.fmvWait && M.rt.status == MSN_RUNNING; }
+void mvServiceWorldBlack(float s) { wbForceEnd = fclk_ + s; fadeA = 1.f; fadeDir = 0; logf_("WORLDBLACK1326 forced %.1f s t=%.1f\n", s, clock_); }   // служебное (flag worldblack S): чёрный слой затемнения на S с, как у PSP (гейт tests/missions/worldhold1326.sh)
 float mvFadeAlpha(void) { return active ? fadeA : 0.f; }
+float mvFadePauseAlpha(void) { return !FADEGUARD1316_OLD && fadeBlackT > 3.f ? 0.f : mvFadeAlpha(); }   // 1316: запрет паузы по затемнению — не дольше 3 с чёрного
 void mvServiceFade(int out, float t) { fadeCb(0, out, t); }   // служебное: flag fadeout / fadein (проверка затемнения)
+// 1349 (Баблу: Restart из паузы на данных 108 — ~5 с чёрного и WATCHDOG fade-stuck; те же 5 с в цикле Yes → карточка → ✕ у Роба, 1331/1326): перезапуск (rspend-fire) ставит выход из чёрного (fadeA = 1, fadeDir = −1) в кадре с dt = 0
+// (под карточкой мир стоит), а fadeTick считал «дошло до чёрного» по одному fadeA >= 1 без учёта направления: выход из чёрного сам отменялся (fadeDir = 0), экран оставался чёрным, пока сторож 1316 через 5 с не снимал его.
+// Теперь «дошло до чёрного» только при уходе в чёрное (fadeDir > 0). FADEDIR1349_OLD=1 / flag fadedir1349old 1 — как было
+#ifndef FADEDIR1349_OLD
+#define FADEDIR1349_OLD 0
+#endif
+int mvFadeDir1349Old = FADEDIR1349_OLD;
 static void fadeTick(float dt) {
-  if (fadeDir) { fadeA += (float)fadeDir * dt / fadeLen; if (fadeA >= 1.f) { fadeA = 1.f; fadeDir = 0; if (blackAt < 0.f) blackAt = clock_; } if (fadeA <= 0.f) { fadeA = 0.f; fadeDir = 0; } }
-  if (rsPend && fadeA >= 1.f && fadeDir == 0) { int k = rsPend; rsPend = 0; restartRun(k); fadeA = 1.f; fadeDir = -1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; }   // сверка g07b M2 Д4: ирис закрыт — перезапуск и открытие
+  if (fadeDir) { fadeA += (float)fadeDir * dt / fadeLen; if (fadeA >= 1.f && (fadeDir > 0 || mvFadeDir1349Old)) { fadeA = 1.f; fadeDir = 0; if (blackAt < 0.f) blackAt = FCLK; } if (fadeA > 1.f) fadeA = 1.f; if (fadeA <= 0.f && (RSPEND1304_OLD || fadeDir < 0)) { fadeA = 0.f; fadeDir = 0; } }   // 1304 (корень): «Yes»/Restart зовут restartIris в кадре с dt = 0 (экран провала и пауза — мир стоит); затемнение «из прозрачного в чёрное» (dir > 0, fadeA = 0) конец «прозрачный» обрывал в том же кадре, и перезапуск ждал чёрного вечно. Теперь конец «прозрачный» — только при движении к прозрачному
+  if (rsPend && !FADEGUARD1316_OLD && (!active || M.rt.cur != rsPendMsn || M.rt.status == MSN_MISSION_DONE || M.rt.status == MSN_LEVEL_DONE)) {   // 1316: отметка чужая (миссия сменилась, пройдена или закрыта) — снять и не перезапускать
+    logf_("MSN rspend-drop kind=%d msn=%d cur=%d status=%d t=%.1f\n", rsPend, rsPendMsn, M.rt.cur, M.rt.status, clock_); rsPend = 0; if (fadeA >= 1.f && fadeDir == 0 && !stayBlack) { fadeDir = -1; fadeLen = SV_FADE_OUT; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f; } }
+  if (rsPend) rsPendT += dt; else rsPendT = 0.f;
+  if (rsPend && !RSPEND1304_OLD && rsPendT >= RSPEND_FORCE_S && !(fadeA >= 1.f && fadeDir == 0)) { logf_("MSN restart-force kind=%d fade=%.2f dir=%d t=%.1f\n", rsPend, fadeA, fadeDir, clock_); fadeA = 1.f; fadeDir = 0; }   // 1304: чёрного нет 1,5 с — перезапуск принудительно
+  if (rsPend && fadeA >= 1.f && fadeDir == 0) { int k = rsPend; rsPend = 0; if (!FADEGUARD1316_OLD) logf_("MSN rspend-fire kind=%d wait=%.1f t=%.1f\n", k, rsPendT, clock_); restartRun(k); { char b_[100]; snprintf(b_, sizeof b_, "kind=%d stage=%d.%d status=%d rem=%.1f wait=%.1f", k, M.rt.phase, M.rt.stage, M.rt.status, M.rt.remaining, rsPendT); bbNoteDiag("RESTART", b_); } /* 1331: старт повтора — в ящик */ fadeA = 1.f; fadeDir = -1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; }   // сверка g07b M2 Д4: ирис закрыт — перезапуск и открытие
   if (!SV_FADE_OLD && fadeInPend && fadeDir == 0 && fadeA < 1.f) { fadeInPend = 0; fadeHoldNeed = 0; }
-  if (!SV_FADE_OLD && fadeInPend && fadeA >= 1.f && fadeDir == 0 && blackAt >= 0.f && clock_ >= blackAt + SV_FADE_HOLD) fadeInStart();   // сверка g07b P06-9: выдержка кончилась — выходим из чёрного
+  if (!FADEGUARD1316_OLD) {   // 1316: сторож затемнения
+    static int wasBlack; int blk = fadeA >= .99f && fadeDir == 0;
+    if (blk != wasBlack) { wasBlack = blk; logf_("FADE1316 %s wall=%.1f t=%.1f stay=%d rs=%d pend=%d\n", blk ? "black" : "clear", fclk_, clock_, stayBlack, rsPend, fadeInPend); }
+    fadeBlackT = blk ? fadeBlackT + dt : 0.f;
+    int why = stayBlack || rsPend || fadeInPend || M.rt.load_busy || M.rt.status == MSN_LEVEL_DONE || H.levelDone || H.levelEnd || H.fmvWait;
+    fadeStuckT = blk && !why ? fadeStuckT + dt : 0.f;
+    if (fadeStuckT > 5.f) { logf_("WATCHDOG fade-stuck a=%.2f black=%.1f st=%d.%d status=%d t=%.1f\n", fadeA, fadeStuckT, M.rt.phase, M.rt.stage, M.rt.status, clock_); fadeDir = -1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; blackAt = -1.f; fadeStuckT = 0.f; }
+  }
+  if (!SV_FADE_OLD && fadeInPend && fadeA >= 1.f && fadeDir == 0 && blackAt >= 0.f && FCLK >= blackAt + SV_FADE_HOLD) fadeInStart();   // сверка g07b P06-9: выдержка кончилась — выходим из чёрного
 }
 static void cleanupCb(void *u) {
   (void)u; brModeOff(); failStoreOff(); oovOn = 0; dropOn = 0; lapT0 = -1.f; lapLast = 0; raceOff(); if (!rsPend) { fadeA = 0.f; fadeDir = 0; } stayBlack = 0; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f;   // правка 122: пропы и заборы гонки — до конца гонки
-  H.failed = 0; H.markerOn = 0; H.talk[0] = 0; uiMessage(NULL, -1, 0.f); iconNote("cleanup");
+  H.failed = 0; H.markerOn = 0; H.talk[0] = 0; if (!(mvBubble1264Old & 4)) holdOn = 0; uiMessage(NULL, -1, 0.f); bbNoteMsnEnd("cleanup"); iconNote("cleanup");
+  if (!rsPend && !msnRetrying109) msnartMissionEnd109();   // 109 (е): конец миссии без повтора — её записи msnart снимаются сейчас, не на старте следующей   // №1264в: ждущий текст снимается вместе с показанным
   uiHudShow(UI_T_MISSION_FAILED, 0); uiHudShow(UI_T_TIMER, 0); uiHudShow(UI_T_COLLECTIBLES, 0); uiHudShow(UI_T_COUNTDOWN, 0);
   animPrune();
 }
@@ -996,6 +1275,70 @@ static void lookAheadStage(const MsnStage *st) {
       if (cn && *cn && mvCarPrefetch) { mvCarPrefetch(cn); logf_("MSN readahead car %s t=%.1f\n", cn, clock_); } }
   }
 }
+// 109 (в, ПОРЯДОК_ЗАГРУЗКИ §4 п.3): чтение вперёд — на ВСЕ машины фазы, а не только следующего этапа: в начале фазы (под карточкой/газетой) читаем модели всех ADDSTAGEVEHICLE её этапов (до MSN_PHASECARS_MAX имён);
+// повтор раз в секунду, пока не все в памяти (чтение синхронное, один отказ не ломает: лестница и паузы в main_render.h). MSN_PHASECARS109_OLD=1 — как было (следующий этап)
+#ifndef MSN_LOADWAIT_VIEW_OLD
+#define MSN_LOADWAIT_VIEW_OLD 0   // 109 (г): 1 — хост не просит ждать очередь
+#endif
+int mvLoadWait109Old = MSN_LOADWAIT_VIEW_OLD;   // flag msnloadwait109old
+#undef MSN_LOADWAIT_VIEW_OLD
+#define MSN_LOADWAIT_VIEW_OLD mvLoadWait109Old
+#ifndef MSN_PHASECARS109_OLD
+#define MSN_PHASECARS109_OLD 0
+#endif
+int mvPhaseCars109Old = MSN_PHASECARS109_OLD;   // flag msnphasecars109old
+#undef MSN_PHASECARS109_OLD
+#define MSN_PHASECARS109_OLD mvPhaseCars109Old
+#define MSN_PHASECARS_MAX 6
+static char phaseCars[MSN_PHASECARS_MAX][24]; static int nPhaseCars, phaseKey = -1; static float phaseCarsT;
+static void phaseCarsCollect(void) {
+  int key = M.rt.cur; if (key == phaseKey) return; phaseKey = key; nPhaseCars = 0; phaseCarsT = 0.f;   // ключ — миссия: у оригинала в памяти вся миссия (вступление и основная часть), не только текущая фаза
+  if (MSN_PHASECARS109_OLD || M.rt.cur < 0 || (unsigned)M.rt.cur >= M.f.nmissions) return;
+  const MsnMission *ms = &M.f.missions[M.rt.cur];
+  for (int w = 0; w < 2; w++) { unsigned pi = w ? ms->main : ms->intro; if (pi == MSN_NONE16 || pi >= M.f.nphases) continue; const MsnPhase *ph = &M.f.phases[pi];
+    for (unsigned q = 0; q < ph->stage_count && nPhaseCars < MSN_PHASECARS_MAX; q++) { const MsnStage *sg = &M.f.stages[ph->first_stage + q];
+      for (unsigned c = 0; c < sg->cmd_count && nPhaseCars < MSN_PHASECARS_MAX; c++) { const MsnCmd *k = &M.f.cmds[sg->cmd_first + c]; if (k->op != MSN_OP_ADDSTAGEVEHICLE) continue;
+        const char *cn = msn_arg_s(&M.f, k, 0); if (!cn || !*cn) continue; int dup = 0; for (int i = 0; i < nPhaseCars; i++) if (!strcasecmp(phaseCars[i], cn)) dup = 1;
+        if (!dup) { strncpy(phaseCars[nPhaseCars], cn, 23); phaseCars[nPhaseCars][23] = 0; nPhaseCars++; } } } }
+  logf_("MSN phasecars n=%d (вся миссия) t=%.1f\n", nPhaseCars, clock_);
+}
+// 109: крючок Бабла mvPhaseCarsReady (msn_view.h, готовность карточки): все машины фазы в памяти (или их уже не будет — mvCarReady). 1 — готово; пока 0, карточка миссии ждёт (предел 25 с у Бабла)
+// 1362 (слово Роба: «всё нужно загрузить во время загрузки с газетой»): под газетой дочитываются машины ВСЕЙ миссии (вступление и основная часть: phaseCars), а не только текущего этапа; раньше они читались
+// синхронно уже в первом кадре мира (BBOP car+ cDonut sync=1, 50 мс) и под карточкой. Возвращает, сколько машин фазы ещё не в памяти (и просит их у чтения). 0 — готово или условия нет.
+int mvLoadPrime1362(void) {
+  if (!active || MSN_PHASECARS109_OLD || !mvCarReady || !mvCarPrefetch || M.rt.cur < 0) return 0;
+  phaseCarsCollect(); int n = 0;
+  for (int i = 0; i < nPhaseCars; i++) if (!mvCarReady(phaseCars[i])) { n++; mvCarPrefetch(phaseCars[i]); }
+  return n;
+}
+static int phaseCarsAllReady(void) {
+  phaseCarsCollect(); if (MSN_PHASECARS109_OLD || !mvCarReady) return 1;
+  int ok = 1; for (int i = 0; i < nPhaseCars; i++) if (!mvCarReady(phaseCars[i])) { ok = 0; if (mvCarPrefetch) mvCarPrefetch(phaseCars[i]); }
+  return ok;
+}
+int mvPhaseCarHeld(const char *name) {
+  if (MSN_PHASECARS109_OLD || !name || M.rt.cur < 0 || phaseKey != M.rt.cur) return 0;
+  for (int i = 0; i < nPhaseCars; i++) if (!strcasecmp(phaseCars[i], name)) return 1;
+  return 0;
+}
+static void phaseCarsStep(float dt) {   // раз в секунду: кого из машин фазы ещё нет в памяти — читать
+  if (MSN_PHASECARS109_OLD || !mvCarPrefetch || !mvCarReady) return;
+  if (!mvPhaseCarsReady) mvPhaseCarsReady = phaseCarsAllReady;   // карточка Бабла ждёт машин фазы (109); служебный крючок flag mvcarsdelay109 перекрывает
+  phaseCarsCollect(); if (!nPhaseCars) return;
+  if ((phaseCarsT -= dt) > 0.f) return; phaseCarsT = 1.f;
+  for (int i = 0; i < nPhaseCars; i++) if (!mvCarReady(phaseCars[i])) { mvCarPrefetch(phaseCars[i]); logf_("MSN phasecars read %s t=%.1f\n", phaseCars[i], clock_); }
+}
+// 109 (г): очередь загрузки следующего этапа пуста? Машины следующего этапа в памяти, фоновые чтения персонажей закончены. 1 — ждать (msn_run.c MSN_BETWEEN)
+static int mvLoadBusy(void) {
+  if (MSN_LOADWAIT_VIEW_OLD || M.rt.cur < 0 || (unsigned)M.rt.cur >= M.f.nmissions || !mvCarReady) return 0;
+  const MsnMission *ms = &M.f.missions[M.rt.cur]; unsigned pi = M.rt.phase == 0 ? ms->intro : ms->main; if (pi == MSN_NONE16 || pi >= M.f.nphases) return 0;
+  const MsnPhase *ph = &M.f.phases[pi]; int nx = M.rt.stage + 1; if (nx < 0 || (unsigned)nx >= ph->stage_count) return 0;
+  const MsnStage *sg = &M.f.stages[ph->first_stage + nx]; int busy = 0;
+  for (unsigned c = 0; c < sg->cmd_count; c++) { const MsnCmd *k = &M.f.cmds[sg->cmd_first + c];
+    if (k->op == MSN_OP_ADDSTAGEVEHICLE) { const char *cn = msn_arg_s(&M.f, k, 0); if (cn && *cn && !mvCarReady(cn)) { if (mvCarPrefetch) mvCarPrefetch(cn); busy = 1; } }
+    else if (k->op == MSN_OP_ADDNPC) { const char *nn = msn_arg_s(&M.f, k, 0); if (nn && *nn && prePending(nn)) busy = 1; } }
+  return busy;
+}
 static void stageLookAhead(void) {   // персонажи (AddNPC) и машины следующего этапа той же фазы; на конце intro — первый этап main
   if (STAGE_PREFETCH_OLD || M.rt.cur < 0 || (unsigned)M.rt.cur >= M.f.nmissions) return;
   const MsnMission *ms = &M.f.missions[M.rt.cur]; unsigned pi = M.rt.phase == 0 ? ms->intro : ms->main;
@@ -1011,12 +1354,43 @@ static void stageLookAhead(void) {   // персонажи (AddNPC) и маши�
   if (!MSN_READAHEAD_OLD && M.rt.phase == 0 && ms->main != MSN_NONE16 && ms->main < M.f.nphases) {   // следующая фаза: первый её этап
     const MsnPhase *pm = &M.f.phases[ms->main]; if (pm->stage_count > 0) { logf_("MSN readahead main stage0 cmds=%u t=%.1f\n", M.f.stages[pm->first_stage].cmd_count, clock_); lookAheadStage(&M.f.stages[pm->first_stage]); } }
 }
+// 1338: строка TARGET в ящик выпуска и смоук: на старте этапа talkto/follow/goto — цель, её позиция (метка), есть ли машина цели (модель в памяти) и есть ли персонаж. Раз на этап, как только метка встала (до 3 с)
+// 1337/1338 (Роб: L4 m1, этап «FOLLOW THE POLICE», на метке пусто; машина этапа не прочиталась, карточка вышла по сроку 25 с, этап пошёл без неё; каноны 16 и 17): этап с целью-машиной, чьей модели ещё нет в памяти, не идёт: логика миссии стоит
+// (отсчёт, условия, ИИ машины), метка на пустом месте не показывается, пока чтение машины повторяется с паузами (лестница mcrEnsure и phaseCarsStep, файл открывается заново каждой попыткой), не дольше MCRWAIT1337_S (30 с), потом этап идёт как раньше.
+// Строка TARGETWAIT1337 waited=Nms (смоук и ящик). MCRWAIT1337_OLD=1 / flag mcrwait1337old 1 — как было
+#ifndef MCRWAIT1337_OLD
+#define MCRWAIT1337_OLD 0
+#endif
+#define MCRWAIT1337_S 30.f
+int mvMcrWait1337Old = MCRWAIT1337_OLD; static int tgtWait1337, tgtMark1337; static float tgtWaited1337;
+static char tgtName1338[24]; static int tgtObj1338; static float tgtT1338;
+// 1: логика миссии этого кадра стоит (цель-машина без модели). Зовётся раз в кадр до gameMsnTick
+static int tgtCarWait1337(float dt) {
+  if (!tgtWait1337) return 0;
+  if (!active || M.rt.status != MSN_RUNNING || H.briefing || !tgtName1338[0]) { tgtWait1337 = 0; return 0; }
+  int ready = mvCarReady ? mvCarReady(tgtName1338) : 1;
+  if (!ready && tgtWaited1337 < MCRWAIT1337_S) { tgtWaited1337 += dt; if (H.markerOn) { tgtMark1337 = 1; H.markerOn = 0; } if (mvCarPrefetch) { static float pf_; if ((pf_ -= dt) <= 0.f) { pf_ = 1.f; mvCarPrefetch(tgtName1338); } } return 1; }
+  tgtWait1337 = 0; if (tgtMark1337) { tgtMark1337 = 0; H.markerOn = 1; }
+  { char l_[120]; snprintf(l_, sizeof l_, "stage=%d.%d name=%s waited=%dms car=%d%s", M.rt.phase, M.rt.stage, tgtName1338, (int)(tgtWaited1337 * 1000.f), ready, ready ? "" : " cap"); char s_[160]; snprintf(s_, sizeof s_, "TARGETWAIT1337 %s t=%.1f\n", l_, clock_); logf_("%s", s_); bbNoteDiag("TARGETWAIT", l_); }
+  return 0;
+}
+static void tgtNote1338(float dt) {
+  if (tgtT1338 <= 0.f || H.briefing) return;
+  tgtT1338 -= dt;
+  if (!H.markerOn && tgtT1338 > 0.f) return;
+  tgtT1338 = 0.f;
+  int car = tgtName1338[0] && mvCarReady ? (mvCarReady(tgtName1338) ? 1 : 0) : -1, npc = tgtName1338[0] ? (gameMsnNpc(&M, tgtName1338) != 0) : -1;
+  char l_[160]; snprintf(l_, sizeof l_, "stage=%d.%d obj=%s name=%s pos=%.0f,%.0f,%.0f marker=%d car=%d npc=%d", M.rt.phase, M.rt.stage, msn_objective_name[tgtObj1338], tgtName1338[0] ? tgtName1338 : "-", H.marker.pos.x, H.marker.pos.y, H.marker.pos.z, H.markerOn, car, npc);
+  char s_[200]; snprintf(s_, sizeof s_, "TARGET %s t=%.1f\n", l_, clock_); logf_("%s", s_); bbNoteDiag("TARGET", l_);
+}
 static void eventCb(void *u, const MsnEvent *e) {
   (void)u; const GameMsn *m = &M;
   switch (e->type) {
-    case MSN_EV_MISSION_START: H.present[0] = 0; logf_("MSN mission %s \"%s\" t=%.1f\n", e->name ? e->name : "", e->text ? e->text : "", clock_); msnartMissionStart(); break;
+    case MSN_EV_MISSION_START: H.present[0] = 0; logf_("MSN mission %s \"%s\" t=%.1f\n", e->name ? e->name : "", e->text ? e->text : "", clock_); msnartMissionStart(); resOrder109(e->name); break;
     case MSN_EV_STAGE_START: H.stages++;
-      if (!stayBlack && fadeA > 0.f && fadeDir >= 0) { fadeInStart(); }   // правка 122: из чёрного   // talk_target этого этапа уже пришёл (msn_game зовёт его до хвоста событий)
+      if (e->index == MSN_OBJ_TALKTO || e->index == MSN_OBJ_FOLLOW || e->index == MSN_OBJ_GOTO) { tgtObj1338 = e->index; snprintf(tgtName1338, sizeof tgtName1338, "%s", e->name2 ? e->name2 : ""); tgtT1338 = 3.f; } else tgtT1338 = 0.f;   // 1338: строка TARGET
+      tgtWait1337 = !mvMcrWait1337Old && e->name2 && *e->name2 && mvCarReady && !mvCarReady(e->name2) && e->index != MSN_OBJ_TALKTO; tgtWaited1337 = 0.f; tgtMark1337 = 0; if (tgtWait1337) snprintf(tgtName1338, sizeof tgtName1338, "%s", e->name2);   // 1337
+      if (!stayBlack && fadeA > 0.f && fadeDir >= 0 && !(rsPend && !RSPEND1304_OLD)) { fadeInStart(); }   // правка 122: из чёрного   // 1304: перезапуск ждёт чёрного — не разворачивать   // talk_target этого этапа уже пришёл (msn_game зовёт его до хвоста событий)
       logf_("MSN stage %s.%d.%d obj=%s text=\"%s\" icon=%s t=%.1f\n", m->rt.cur >= 0 ? msn_str(&m->f, m->f.missions[m->rt.cur].id) : "-",
             m->rt.phase, m->rt.stage, e->index >= 0 && e->index < MSN_OBJ_COUNT ? msn_objective_name[e->index] : "?", e->text ? e->text : "",
             e->name ? e->name : "", clock_);
@@ -1028,13 +1402,13 @@ static void eventCb(void *u, const MsnEvent *e) {
       if (m->rt.st && m->rt.st->obj == MSN_OBJ_GOTO) {   // цель goto: эффект там, где игрок въехал в объём цели (запись PS2 10:34.7 — столб
         MsnWorld w; gameMsnWorld(m, &w); cfxAt(stageEffect(), &w.player, "goto", m->rt.stage); }   // света у машины, а не в центре локатора: объём у дома Фландерса 44 x 72 м)
       break;   // правка 122: stayBlack — StayInBlack только на свой этап
-    case MSN_EV_MISSION_COMPLETE: logf_("MSN complete %s t=%.1f\n", e->name ? e->name : "", clock_); voMissionEnd(0); break;
-    case MSN_EV_MISSION_FAILED: voReason = e->index; voMissionEnd(1); break;   // аудит 09.10: реплика провала (экран провала — свой обработчик)
+    case MSN_EV_MISSION_COMPLETE: bbNoteMsnEnd("success"); logf_("MSN complete %s t=%.1f\n", e->name ? e->name : "", clock_); voMissionEnd(0); break;
+    case MSN_EV_MISSION_FAILED: bbNoteMsnEnd("fail"); voReason = e->index; voMissionEnd(1); break;   // аудит 09.10: реплика провала (экран провала — свой обработчик)
     case MSN_EV_DROP: if (SV_DROP_OLD) uiForceShow(UI_T_ITEM_DROPPED, 2.f); else { if (!dropOn) logf_("MSN dropmsg on t=%.1f\n", clock_); dropOn = 1; dropT0 = clock_; }   // таран машины с грузом: «Item Dropped!» (Scrooby HUD), 2 с — правило порта
       logf_("MSN drop %d at %.1f %.1f t=%.1f\n", e->index, e->pos.x, e->pos.z, clock_); break;
     case MSN_EV_IRIS: if (SV_EVENTS2_OLD) break;
       if (e->index) { fadeDir = 1; fadeLen = 1.f; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; }
-      else if (fadeA > 0.f) { fadeDir = -1; fadeLen = 1.f; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f; }
+      else if (fadeA > 0.f && !(rsPend && !RSPEND1304_OLD)) { fadeDir = -1; fadeLen = 1.f; fadeInPend = 0; fadeHoldNeed = 0; blackAt = -1.f; }   // 1304: то же
       logf_("MSN iris %s t=%.1f\n", e->index ? "close" : "open", clock_); break;
     case MSN_EV_PAR_LATE: if (SV_EVENTS2_OLD) break;
       { const char *t = msn_text_h(&M.f, 0x82030fafu);   /* ключа в пакете нет — запасной текст "TOO SLOW" (раньше msn_text отдавал сам ключ) */ char b[160]; snprintf(b, sizeof b, "%s %d", t && *t ? t : "TOO SLOW", (int)e->value); uiMessage(b, -1, 1.1f); }
@@ -1082,6 +1456,7 @@ int mvInit(const char *ebootPath, int level) {
   strncpy(dir, ebootPath, sizeof dir - 1); char *sl = strrchr(dir, '/'); if (sl) sl[1] = 0; else dir[0] = 0;
   char art[sizeof dir + 8]; if (level > 1) snprintf(art, sizeof art, "%sl%d/", dir, level); else snprintf(art, sizeof art, "%s", dir);   // msnart.shr: 2–7 — в l<N>/
   msnartInit(art);
+  { int lv_ = level >= 1 && level <= 7 ? level : 1; msnResClose(); resMi109 = -1; resOk109 = !mvList109Old && msnResOpen(dir, lv_) == 0; logf_("MSN reslist level=%d open=%d\n", lv_, resOk109); }
   mvFreePack();   // смена уровня: пакет прошлого уровня — в кучу
   if (level < 1 || level > 7) level = 1;
   char nm[32]; if (level > 1) snprintf(nm, sizeof nm, "l%d/level%02d.msn", level, level); else snprintf(nm, sizeof nm, "level%02d.msn", level);
@@ -1092,7 +1467,7 @@ int mvInit(const char *ebootPath, int level) {
 }
 void mvSetLog(void (*log)(const char *)) { logFn = log; }
 void mvFreePack(void) { if (pack) free(pack); pack = 0; packSize = 0; }
-void mvFree(void) { mvShutdown(); mvFreePack(); msnartShutdown(); }   // смена уровня: всё, что держали миссии уровня
+void mvFree(void) { mvShutdown(); mvFreePack(); msnartShutdown(); mvResFree109(); }   // смена уровня: всё, что держали миссии уровня
 int mvPackLevel(void) { unsigned short l; if (!pack || packSize < 8) return 0; memcpy(&l, (const char *)pack + 6, 2); return l; }   // MSN1 @6
 int mvLevelEnd(void) { return active && H.levelEnd; }
 int mvGiverNear(float x, float z, float r) {   // ближайший значок бонус-миссии / гонки / продавца в радиусе r (UI_R_*), -1 — нет
@@ -1225,13 +1600,36 @@ void mvMarkStoryDone(void) {
   if (!active) return;
   for (unsigned i = 0; i < M.f.nmissions; i++) { const MsnMission *ms = &M.f.missions[i]; if (!(ms->flags & (MSN_MF_BONUS | MSN_MF_NOSCRIPT))) M.rt.completed |= 1u << i; }
 }
+int mvGotoDiag(char *out, int n) {   // 1355 служебно (flag gotodiag): где игрок против цели goto — расстояния, внутри ли триггера, пешком ли, в комнате ли
+  if (!active) return 0; MsnWorld w; gameMsnWorld(&M, &w);
+  const MsnLoc *l = msn_nav_locator(&M.rt, &w); if (!l) { snprintf(out, n, "GOTODIAG noloc player=%.1f,%.1f,%.1f foot=%d room=%d", w.player.x, w.player.y, w.player.z, w.on_foot, w.interior != NULL); return 1; }
+  float dx = w.player.x - l->pos[0], dy = w.player.y - l->pos[1], dz = w.player.z - l->pos[2];
+  snprintf(out, n, "GOTODIAG loc=%s pos=%.1f,%.1f,%.1f ntrig=%u player=%.1f,%.1f,%.1f foot=%d room=%d d2=%.1f dy=%.1f in=%d incar=%d", msn_str(&M.f, l->name), l->pos[0], l->pos[1], l->pos[2], (unsigned)l->ntrig,
+           w.player.x, w.player.y, w.player.z, w.on_foot, w.interior != NULL, hypotf(dx, dz), dy, msn_loc_contains(&M.f, l, w.player, 2.6f), msn_loc_contains_car(&M.f, l, &w, 6.5f));
+  return 1; }
+int mvMarkerAt(float o[3]) { if (!active || !H.markerOn) return 0; o[0] = H.marker.pos.x; o[1] = H.marker.pos.y; o[2] = H.marker.pos.z; return 1; }   // 1355 служебно (flag tgtgo): где сейчас метка цели
 void mvServiceFail(void) {   // служебное (flag msnfail): провал миссии с экраном повтора (№572)
   H.failed = 1; H.failSel = 0;
   uiSetMissionOver("Timed out.", "Hint : Speed is essential! Drive a fast vehicle.");
   uiMessage(NULL, -1, 0.f);
+  logf_("MSN failed 1 Timed out. t=%.1f lastshown=%d tries=%d skip=%d service=1\n", clock_, tmrLastSec1324, M.rt.cur >= 0 && M.rt.cur < 32 ? msTries[M.rt.cur] : -1, mvFailSkipOk());   // 1331: тот же формат, что у настоящего провала
 }
+static void restartNow(void);
+void mvServiceRetry(void) { restartNow(); }
+static void restartIris(int kind);
+void mvServiceRetryIris(void) { restartIris(2); }   // служебное (flag msnretryiris, 1304): тот же путь, что Yes на экране провала   // служебное (flag msnretry, №1264д): тот же путь, что Restart Mission паузы / Yes на экране провала
 int mvActive(void) { return active; }
+// 1309 служебное (flag trflog): раз в секунду строка MCLOG по каждой машине миссии — где стоит, скорость, режим ИИ, счётчики застреваний; нет машин — пустая строка
+int mvMcLogFast;
+int mvMcLog(char *out, int n) {
+  int k = 0; out[0] = 0; if (!active) return 0;
+  MsnWorld pw_; gameMsnWorld(&M, &pw_);
+  for (int i = 0; i < M.cars.n && k < n - 320; i++) { const McCar *c = &M.cars.c[i]; if (!c->on) continue;
+    k += snprintf(out + k, (size_t)(n - k), "MCLOG %s pos=%.1f,%.1f v=%.1f h=%.2f thr=%.2f brk=%.2f str=%.2f hb=%.0f gap=%.1f mode=%d wp=%d stuckN=%d resets=%u replans=%u offroad=%d direct=%d nroute=%d still=%.1f top=%.1f base=%.1f vdes=%.1f turning=%d slip=%.1f dp=%.1f\n", c->name, c->car.x, c->car.z, hypotf(c->car.vel[0], c->car.vel[2]), c->car.h, c->lastIn.throttle, c->lastIn.brake, c->lastIn.steer, c->lastIn.handbrake, c->dbgGap, c->mode, c->wp, c->stuckN, c->resets, c->replans, c->offroad, c->direct, c->nroute, c->still, c->car.p.topSpeed, c->baseTop, c->vdes, c->turning, c->slipT, hypotf(pw_.player.x - c->car.x, pw_.player.z - c->car.z)); }
+  return k;
+}
 void mvShutdown(void) {   // выход в главное меню: всё, что миссии заняли в куче, освобождается (куча меню — как до игры)
+  if (active) bbNoteMsnEnd("shutdown");
   if (active) { MsnEvent e; memset(&e, 0, sizeof e); e.type = MSN_EV_CLEANUP; M.rt.host.event(M.rt.host.user, &e); }   // прошлый круг: убрать всё
   if (active) msnAudioStopVoice(&M.audio);   // и реплику завершения, если ещё звучит
   abSavedMode = -1;
@@ -1241,6 +1639,8 @@ void mvShutdown(void) {   // выход в главное меню: всё, чт
   nNpcPend = 0;
   msnartReset(); uiMessage(NULL, -1, 0.f); iconNote("shutdown"); uiPauseMenuHide(0); raceOff(); cfxReset();
   H.levelDone = 0; H.fmvWait = 0; H.levelEnd = 0;
+  if (rsPend) logf_("MSN rspend-drop kind=%d why=close t=%.1f\n", rsPend, clock_);
+  rsPend = 0; rsPendT = 0.f; fadeStuckT = fadeBlackT = 0.f;   // 1316
   active = 0;
 }
 int mvNewGame(Game *g) { return mvNewGameAt(g, NULL); }
@@ -1258,7 +1658,20 @@ int mvCanSave(void) {
   if (mvSaveRoamOld) return 0;
   return M.rt.cur >= 0 && M.rt.cur == M.rt.story && M.rt.phase == 0 && M.rt.status == MSN_RUNNING && !H.briefing && !M.talk.on;
 }
+int mvResetBlocked(void) { return active && gameMsnResetBlocked(&M); }
+// 1348 (Роб/дирижёр: пауза во время миссии одна, по оригиналу): в 6-секундном окне между этапами (MSN_BETWEEN: этап закончен, следующий ещё грузится) пауза открывалась свободной
+// (MISSION SELECT, LEVEL PROGRESS), потому что mvInMission() в этом окне ложно. Пауза миссии — RESTART / CANCEL MISSION и окно задания (1347). Сам mvInMission не менялся: от него зависят штраф ареста, точка возврата, гэги.
+// PAUSEBETWEEN1348_OLD=1 / «flag pausebetween1348old 1» — прежнее
+#ifndef PAUSEBETWEEN1348_OLD
+#define PAUSEBETWEEN1348_OLD 0
+#endif
+int mvPauseBetween1348Old = PAUSEBETWEEN1348_OLD;
+#ifndef INPUTHINTS1357_OLD
+#define INPUTHINTS1357_OLD 0
+#endif
+int inputHints1357Old = INPUTHINTS1357_OLD; static unsigned ldUs_;   // 1357 (см. main_loop.h, mvBriefingInput)
 int mvInMission(void) { return active && M.rt.cur >= 0 && (M.rt.status == MSN_RUNNING || M.rt.status == MSN_COUNTDOWN) && M.rt.phase == 1 && !msn_free_roam(&M.rt); }
+int mvInMissionPause(void) { return mvInMission() || (!mvPauseBetween1348Old && active && M.rt.cur >= 0 && M.rt.status == MSN_BETWEEN && M.rt.phase == 1 && !msn_free_roam(&M.rt)); }
 #ifndef SV_RESTART_OLD
 #define SV_RESTART_OLD 0   // сверка g07b (P13-2, P06-6): 1 — Restart паузы с первого этапа основной части и стирает контрольную точку (прежнее)
 #endif
@@ -1274,23 +1687,25 @@ static void restartNow(void) {
   } else if (M.f.missions[M.rt.cur].main != MSN_NONE16) {   // прежнее (SV_RESTART_OLD=1): основная часть с первого этапа, точка перезаписывается на этап 0
     M.rt.cp_phase = 1; M.rt.cp_stage = 0; M.rt.cp_timer = 0; M.rt.cp_remaining = 0; msn_retry(&M.rt, 0);
   } else msn_retry(&M.rt, 1);
+  bbNoteMsnEnd("pause-restart");
   logf_("MSN pause-restart %s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), clock_);
 }
 static void restartRun(int kind) { if (kind == 1) restartNow(); else if (active && M.rt.cur >= 0) msn_retry(&M.rt, 0); }
 static void restartIris(int kind) {   // kind 1 — Restart паузы, 2 — Yes на экране провала
   if (SV_RESTART_IRIS_OLD) { restartRun(kind); return; }
   msnAudioStopVoice(&M.audio);
-  fadeDir = 1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; rsPend = kind;
+  fadeDir = 1; fadeLen = SV_FADE_OUT; fadeHoldNeed = 0; fadeInPend = 0; blackAt = -1.f; rsPend = kind; rsPendMsn = M.rt.cur; rsPendT = 0.f;
 }
 void mvPauseRestart(void) {
   if (!active || M.rt.cur < 0) return;
   H.failed = 0; uiHudShow(UI_T_MISSION_FAILED, 0);
-  msTryBump();   // сверка g07b P13-3: перезапуск = один учтённый сброс
+  if (mvSkipCount1331Old) msTryBump();   // сверка g07b P13-3: перезапуск = один учтённый сброс (1331: теперь считает карточка)
   restartIris(1);
 }
 void mvPauseAbort(void) {
   if (!active || M.rt.cur < 0) return;
   if (!SV_RESTART_IRIS_OLD) msnAudioStopVoice(&M.audio);   // сверка g07b M2 Д4: отмена обрывает реплику
+  bbNoteMsnEnd("pause-abort");
   logf_("MSN pause-abort %s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), clock_);
   gameMsnAbort(&M);
 }
@@ -1368,6 +1783,15 @@ void mvPoliceLimbo(int on) { if (active) gameMsnHnrPoliceLimbo(&M, on); }   // �
 void mvPoliceDrop(int i) { if (active) gameMsnHnrPoliceDrop(&M, i); }   // круг 7 (P03 Д2)
 void mvPoliceHold(void) { if (active) gameMsnHnrPoliceHold(&M); }
 float mvHnrDecay(void) { return active ? M.hnr.decay : 3.f; }
+// 1356 (Роб: после follow у Lard Lad «штраф, штраф, штраф, не могу выйти»): погоня Hit & Run считалась по имени модели — стоящая рядом машина миссии cPolice (цель этапа 1.1.2 L4 m1) шла как полицейская в расчёте ареста.
+// Теперь полиция H&R — по флагу police (mvIsHnrCar); hnrPolName1350Old = 1 (HNRPOLNAME1350_OLD / файл hnrpolname1350old) — по имени, как было
+#ifndef HNRBUSTNAME1356_OLD
+#define HNRBUSTNAME1356_OLD 0
+#endif
+int hnrBustName1356Old = HNRBUSTNAME1356_OLD;   // 1356: 1 — арест и погоня считают полицией любую машину с именем модели cPolice, и машину миссии тоже (как было); файл hnrbustname1356old, flag hnrbustname1356old 1
+int mvIsHnrCar(const McCar *c) { return hnrPolName1350Old || hnrBustName1356Old ? mvIsPolice(c->name) : c->police != 0; }
+void mvPoliceAt1359(float d) { if (active) gameMsnPoliceAt1359(&M, d); }
+void mvNpcList1360(void) { if (active) gameMsnNpcList1360(&M, clock_); }
 int mvIsPolice(const char *name) { return !strcasecmp(name,active ? M.hnr.car : "cPolice"); }
 void mvCarjack(const char *model, const CarParams *P, float lift, float x, float y, float z, float h) { if (active) gameMsnCarjack(&M, model, P, lift, x, y, z, h); }
 static float carLogT;   // служебное: строка MCAR раз в секунду, пока у миссии есть машины (гейт tests/aicar/emu.sh)
@@ -1385,12 +1809,14 @@ static void mvPrefetchPoll(void) {
     } else i++;
   }
 }
+const char *mvNpcPendName1361(void) { return nNpcPend ? npcPend[0] : "-"; }   // №1361 служебно: кто ещё читается (строка NPCWAIT1076)
 int mvNpcPending(void) { mvPrefetchPoll(); return nNpcPend; }   // №1076: персонажей миссии, чья модель ещё читается (опрос заодно завершает готовые)
 void mvTick(int action, float dt) {
   mvPrefetchPoll();   // разбор тура 12: фоновое чтение моделей персонажей этапа
   if (!active) return;
-  clock_ += dt; fadeTick(dt);
-  msnartPump();   // записи msnart.shr, заказанные LoadP3DFile, дочитываются фоном
+  { float wdt = FADEGUARD1316_OLD || mvWallDt1316 <= 0.f ? dt : mvWallDt1316; fclk_ += wdt; clock_ += dt; if (wbForceEnd >= 0.f) { if (fclk_ < wbForceEnd) { fadeA = 1.f; fadeDir = 0; } else { wbForceEnd = -1.f; fadeInStart(); } } fadeTick(wdt); }   // 1316: затемнение — настенными секундами
+  msnartPwrPoll107(); msnartChainUs1359 = worldHidden1310() ? 24000u : 8000u; msnartPump();   // записи msnart.shr, заказанные LoadP3DFile, дочитываются фоном
+  { unsigned n_, p_, us_; static int lg1359; if (!lg1359 && msnartChainResult1359(&n_, &p_, &us_)) { lg1359 = 1; logf_("MSNARTCHAIN1359 n=%u pumps=%u ms=%.1f\n", n_, p_, us_ / 1000.f); } }   // 1359: гейт
   int wagerLog = 0;
   if (wagerPayPend) {
     if (M.rt.cur != wagerPayPend - 1 || M.rt.status == MSN_IDLE || M.rt.status == MSN_LEVEL_DONE) wagerPayPend = 0;   // миссию отменили или сменили — платёж не нужен
@@ -1398,15 +1824,18 @@ void mvTick(int action, float dt) {
   }   // Данные-93: ✕ на ставочной карточке = платёж взноса (см. wagerPayPend)
   GamePad p; memset(&p, 0, sizeof p); if (action) p.hit = GP_TRIANGLE;
   static float tickMax;   // служебное: самый долгий кадр логики миссий (с машинами миссии) за секунду — в строке MCAR
-  { unsigned tq = sceKernelGetSystemTimeLow(); gameMsnTick(&M, &p, dt); float ms = (sceKernelGetSystemTimeLow() - tq) / 1000.f; if (ms > tickMax) tickMax = ms; }
+  if (MSN_LOADWAIT_VIEW_OLD) M.rt.load_busy = 0; else { M.rt.load_busy = M.rt.status == MSN_BETWEEN && mvLoadBusy(); if (M.rt.load_busy && M.rt.load_wait <= 0.f) logf_("MSN loadwait stage=%d.%d t=%.1f\n", M.rt.phase, M.rt.stage + 1, clock_); }   // 109 (г)
+  M.rt.scene_busy = !msnTimerHold1324Old && !M.rt.hold_done && (M.rt.status == MSN_COUNTDOWN || (M.rt.status == MSN_RUNNING && M.rt.timer_on)) ? sceneBusy1324() : 0;   // 1324: мир под игроком не готов — отсчёт и таймер этапа ждут
+  phaseCarsStep(dt);   // 109 (в)
+  { unsigned tq = sceKernelGetSystemTimeLow(); gameMsnTick(&M, &p, tgtCarWait1337(dt) ? 0.f : dt); tgtNote1338(dt); if (M.rt.hold_log >= 0) { char l_[96]; snprintf(l_, sizeof l_, "TIMERHOLD1324 waited=%dms%s t=%.1f\n", M.rt.hold_log % 1000000, M.rt.hold_log >= 1000000 ? " cap" : "", clock_); logf_("%s", l_); bbOp("timerhold", l_, 0); M.rt.hold_log = -1; } float ms = (sceKernelGetSystemTimeLow() - tq) / 1000.f; if (ms > tickMax) tickMax = ms; }
   if (wagerLog) logf_("MSN wager-fee coins=%d stage=%d.%d t=%.1f\n", shopCoins(&M.shop), M.rt.phase, M.rt.stage, clock_);   // кошелёк и этап сразу после платежа (гейт tests/data93/wager_check.py)
   { static char fcLast[16]; const char *fc = gameMsnForcedCar(&M);   // SetForcedCar: смена машины игрока — строка журнала
     if (strcmp(fc ? fc : "", fcLast)) { snprintf(fcLast, sizeof fcLast, "%s", fc ? fc : ""); logf_("MSN forced-car %s t=%.1f\n", fc ? fc : "-", clock_); } }
   if (logFn && M.cars.n && (carLogT += dt) >= 1.f) {
     carLogT = 0.f; int racers = 0, pos = gameMsnRacePos(&M, &racers);
     char buf[1200]; int n = 0;   // все машины — одной записью в журнал (запись на карту памяти — одна за секунду, не по машине)
-    for (int i = 0; i < M.cars.n && n < (int)sizeof buf - 200; i++) { const McCar *c = &M.cars.c[i]; if (!c->on) continue;
-      n += snprintf(buf + n, sizeof buf - n, "MCAR t=%.1f name=%s mode=%s x=%.1f z=%.1f v=%.1f wp=%d/%d fin=%d dmg=%.2f lane=%.1f geo=%d con=%d pos=%d/%d tickms=%.1f replans=%u\n", clock_, c->name, mcModeName[c->mode],
+    for (int i = 0; i < M.cars.n && n < (int)sizeof buf - 200; i++) { const McCar *c = &M.cars.c[i]; if (!c->on && !c->name[0]) continue;
+      n += snprintf(buf + n, sizeof buf - n, "MCAR t=%.1f name=%s on=%d leaveQ=%d mode=%s x=%.1f z=%.1f v=%.1f wp=%d/%d fin=%d dmg=%.2f lane=%.1f geo=%d con=%d pos=%d/%d tickms=%.1f replans=%u\n", clock_, c->name, c->on, c->leaveQ, mcModeName[c->mode],
                     c->car.x, c->car.z, c->car.v, c->wp, M.cars.nwp * M.cars.laps, c->finished, c->car.damage, c->offLane, c->geoOk, c->conOk, pos, racers, tickMax, c->replans); }
     if (n) logFn(buf);
     tickMax = 0.f;
@@ -1417,9 +1846,18 @@ void mvTick(int action, float dt) {
 int mvDollarOld;   // правка 329: 1 — без значка доллара над продавцами (прежнее, красный контроль)
 // Low city terrain (L3/L6) is still outdoors. Interior membership comes from
 // SHI1 floors, with an explicit script room taking precedence for NPCs.
+// 108 правка Роба 1314 (L2 m2, этап «TALK TO MOE»: Мо в таверне нет, посетители сидят): AddNPC "moe" ставит персонажа с тегом интерьера из скрипта ("moe1"), а комната таверны и интерьер миссии
+// называются «Moes» — явное имя не совпадало, персонаж скрыт весь этап (NPCVIS hide moe interior="moe1" mission_interior="Moes" room_at="Moes"). Теперь, если тег не совпал, персонаж виден, когда комната,
+// в которой он физически стоит (npcRoomAt), — интерьер миссии. NPCROOM1314_OLD=1 / файл npcroom1314old / flag npcroom1314 0 — прежнее
+#ifndef NPCROOM1314_OLD
+#define NPCROOM1314_OLD 0
+#endif
+int mvNpcRoom1314 = !NPCROOM1314_OLD;
 static int pointVisible(float x, float y, float z, const char *explicitRoom) {
   const char *room = explicitRoom && *explicitRoom ? explicitRoom : npcRoomAt ? npcRoomAt(x, y, z) : NULL;
-  return room ? M.interior && msn_streq(room, M.interior) : !M.interior;
+  int v = room ? M.interior && msn_streq(room, M.interior) : !M.interior;
+  if (!v && mvNpcRoom1314 && explicitRoom && *explicitRoom && npcRoomAt && M.interior) { const char *r2 = npcRoomAt(x, y, z); if (r2 && msn_streq(r2, M.interior)) v = 1; }
+  return v;
 }
 #ifndef NPC_FAR_POSE_OLD
 #define NPC_FAR_POSE_OLD 0
@@ -1428,13 +1866,15 @@ static int npcVisible(const GameNpc *n, float ex, float ey, float ez, float far)
   float dx = n->pos.x - ex, dy = n->pos.y - ey, dz = n->pos.z - ez;
   if (dx * dx + dy * dy + dz * dz > far * far) return 0;
   if (!NPCSCENE431_OLD && mvSceneOk && n->pos.y > -10.f && !n->interior[0]) {
-    int ok = mvSceneOk(n->pos.x, n->pos.z);
+    int ok = mvSceneOkY ? mvSceneOkY(n->pos.x, n->pos.y, n->pos.z) : mvSceneOk(n->pos.x, n->pos.z);
     long ix = n - M.npc; static unsigned char held[GAME_NPC_MAX];
     if (ix >= 0 && ix < GAME_NPC_MAX && held[ix] == ok) { held[ix] = !ok; mvNpcSceneHeld += ok ? -1 : 1; logf_("NPCSCENE431 %s %s at=%.1f,%.1f held=%d\n", ok ? "show" : "hide", n->name, n->pos.x, n->pos.z, mvNpcSceneHeld); }
     if (!ok) return 0;
   }
   if (clipGuardBody(ex, ey, ez, n->pos.x, n->pos.y, n->pos.y + 1.9f, n->pos.z, .35f, CAM_HIDE_NPC)) return 0;   // №502: персонаж у самого глаза не рисуется
-  return pointVisible(n->pos.x, n->pos.y, n->pos.z, n->interior);
+  { int pv_ = pointVisible(n->pos.x, n->pos.y, n->pos.z, n->interior);
+    static float t_; if (!pv_ && clock_ - t_ > 2.f) { t_ = clock_; logf_("NPCVIS hide %s at=%.1f,%.1f,%.1f interior=\"%s\" mission_interior=\"%s\" room_at=\"%s\" t=%.1f\n", n->name, n->pos.x, n->pos.y, n->pos.z, n->interior, M.interior ? M.interior : "-", npcRoomAt ? (npcRoomAt(n->pos.x, n->pos.y, n->pos.z) ? npcRoomAt(n->pos.x, n->pos.y, n->pos.z) : "-") : "?", clock_); }   // 108 1314: диагностика, почему персонаж не рисуется
+    return pv_; }
 }
 // Разговор (правки Роба 26, 38): жест реплики из данных этапа (AddAmbientNpcAnimation / AddAmbientPcAnimation — клип
 // «<код>_dialogue_...» персонажа, один раз с начала реплики, потом стоит), рот — у того, кто говорит (реплика по файлу
@@ -1552,7 +1992,8 @@ void mvDraw3D(float ex, float ey, float ez, float dt) {
           gameMsnTalkAnim(&M, 1, line) ? gameMsnTalkAnim(&M, 1, line) : "none", Hm->jawOpen, ta ? ta->p.jawOpen : 0.f, Hm->clip == Hm->cTalk && Hm->cTalk >= 0);
   }
   for (int i = 0; i < M.nnpc; i++) {
-    const GameNpc *n = &M.npc[i]; NpcAnim *a = animFor(npcKey(n), 0, 0);
+    const GameNpc *n = &M.npc[i]; if (n->twinHide) continue;   // 1296: скрытый бонусный двойник
+    NpcAnim *a = animFor(npcKey(n), 0, 0);
     if (!a) continue;
     int clip = (n->walking || n->homing == 1) && !n->blocked && a->walk >= 0 ? a->walk : a->idle, loop = 1;   // №510: путь перекрыт и обойти нельзя — клип покоя, не ходьба на месте
     if (n->knock == TRP_FLY && a->flail >= 0) clip = a->flail;   // правка 240: сбит — как прохожий трафика (traffic.c pedPlay)
@@ -1596,7 +2037,7 @@ int mvNpcFeet(float (*out)[4], int max, float ex, float ey, float ez, float r) {
   if (!active) return 0;
   int k = 0;
   for (int i = 0; i < M.nnpc && k < max; i++) {
-    const GameNpc *n = &M.npc[i]; float dx = n->pos.x - ex, dz = n->pos.z - ez; if (dx * dx + dz * dz > r * r) continue;   // проверка 17.10: сначала дальность, потом поиск модели по имени
+    const GameNpc *n = &M.npc[i]; if (n->twinHide) continue; float dx = n->pos.x - ex, dz = n->pos.z - ez; if (dx * dx + dz * dz > r * r) continue;   // проверка 17.10: сначала дальность, потом поиск модели по имени
     NpcAnim *a = animFor(npcKey(n), 0, 0);
     if (!a || !a->m || !a->m->h || !npcVisible(n, ex, ey, ez, r)) continue;
     float ht = a->m->h->bbox[4] - a->m->h->bbox[1];
@@ -1610,7 +2051,7 @@ int mvNpcNearList(float (*out)[4], int max, float x, float z, float r) {
   if (!active || !out || max <= 0) return 0;
   float dd[32], q[32][4]; int k = 0;
   for (int i = 0; i < M.nnpc && k < 32; i++) {
-    const GameNpc *n = &M.npc[i]; float dx = n->pos.x - x, dz = n->pos.z - z, d2 = dx * dx + dz * dz; if (d2 > r * r) continue;
+    const GameNpc *n = &M.npc[i]; if (n->twinHide) continue; float dx = n->pos.x - x, dz = n->pos.z - z, d2 = dx * dx + dz * dz; if (d2 > r * r) continue;
     int j = k++; while (j > 0 && dd[j - 1] > d2) { dd[j] = dd[j - 1]; memcpy(q[j], q[j - 1], sizeof q[0]); j--; }
     dd[j] = d2; q[j][0] = n->pos.x; q[j][1] = n->pos.y; q[j][2] = n->pos.z; q[j][3] = .35f;
   }
@@ -1663,6 +2104,7 @@ static void drawNavPath(float ex, float ey, float ez, float t) {
     if (mvGround) { int f = -1; for (int j = 0; j < nyc; j++) if (fabsf(yc[j].x - P[0]) < .5f && fabsf(yc[j].z - P[2]) < .5f) { f = j; break; }
       if (f < 0 && nyc < 24) { yc[nyc].x = P[0]; yc[nyc].z = P[2]; yc[nyc].y = raLiftedY(mvGround, P, arr[k].h); f = nyc++; }
       if (f >= 0) P[1] = yc[f].y; }
+    if (arr[k].hide) continue;   // 108 1312: проехана на 11–20 м — не рисовать
     const char *nm = arr[k].red ? "warrow" : "darrow"; if (arr[k].red && !msnartHas("warrow")) continue;
     msnartDrawRot(nm, P, arr[k].h + 3.14159265f, ex, ey, ez, t);
   }
@@ -1742,11 +2184,16 @@ void mvDrawMarkers(float ex, float ey, float ez, float t) {
     float dy = M.ufoPos[1] - ey, d2 = dx * dx + dy * dy + dz * dz, dot = dx * mvViewDir[0] + dy * mvViewDir[1] + dz * mvViewDir[2];
     if (d2 < 300.f * 300.f && (d2 < 50.f * 50.f || dot > 0.35f * sqrtf(d2))) { ufoDrawn++; msnartDraw("spaceship", M.ufoPos, ex, ey, ez, t); unsigned tb_ = sceKernelGetSystemTimeLow(); if (!(msnartBeam995 && msnartBeam995(M.ufoPos, ex, ey, ez))) msnartDraw("UfoBeam", M.ufoPos, ex, ey, ez, t); mvBeamUs += sceKernelGetSystemTimeLow() - tb_; mvBeamN++; } }   // №995: mvBeamUs — весь свет луча за кадр (конус или билборды), служебно
   unsigned k2_ = sceKernelGetSystemTimeLow(); mvMkUs[1] += k2_ - k1_;
-  if (raceProps[0] && !M.interior) msnartDrawCull(raceProps, NULL, ex, ey, ez, t, 70.f);   // правка 122: шины и отбойники трассы гонки
+  if (raceProps[0] && !M.interior) msnartDrawCull(raceProps, NULL, ex, ey, ez, t, 70.f);
+  { static unsigned rf_; if (raceProps[0] && !M.interior && ++rf_ >= 60u) { logf_("RACEPROP calls=%u us=%u t_grid=%u t_loop=%u t_all=%u mesh_us=%u meshes=%u binds=%u dist_culled=%u bnd=%u frustum_culled=%u viol=%u off=%d cull=%d cullmem=%u t=%.1f\n", msnartRaceCalls, msnartRaceUs, msnartRaceT[0], msnartRaceT[1], msnartRaceT[2], msnartRaceMeshUs, msnartRaceMesh, msnartRaceBind, msnartRaceCullN, msnartRaceBnd, msnartRaceFrustum, msnartRaceViol, msnartRaceOff, msnartCull1298, msnartCullMemBytes, clock_); msnartRaceT[0] = msnartRaceT[1] = msnartRaceT[2] = msnartRaceMeshUs = msnartRaceBnd = msnartRaceFrustum = msnartRaceUs = msnartRaceMesh = msnartRaceBind = msnartRaceCullN = msnartRaceCalls = 0; rf_ = 0; } }   // 1298 замер раз в 60 кадров   // правка 122: шины и отбойники трассы гонки
   if (H.markerOn && H.marker.drawable && *H.marker.drawable) {
     int ident = M.rt.obj == MSN_OBJ_INTERIOR;   // вход в здание: звезда двери смоделирована в координатах мира (kwk_door.p3d)
     if (ident || pointVisible(H.marker.pos.x, H.marker.pos.y, H.marker.pos.z, NULL)) {
-      msnartDraw(H.marker.drawable, ident ? 0 : &H.marker.pos.x, ex, ey, ez, t);
+      // 1317 (Роб, L2 m4: «финишная лента не перпендикулярна дороге, а вдоль полосы»): лента finish_line (fline.p3d, AddCollectible гонки) стоит на локаторе с его поворотом (матрица локатора в данных диска, у CARSTART — курс),
+      // а мы рисовали без поворота — лента лежала вдоль осей модели, не поперёк дороге. Теперь с поворотом локатора (MsnLoc.flags бит0 курс CARSTART / бит1 матрица, данные миссий пересобраны). FINLINE1317_OLD=1 / flag finline1317old 1 — прежнее
+      if (!mvFinLine1317Old && !ident && !strcmp(H.marker.drawable, "finish_line") && H.marker.loc && (H.marker.loc->flags & 3) && H.marker.loc->heading == H.marker.loc->heading)
+        msnartDrawRot(H.marker.drawable, &H.marker.pos.x, H.marker.loc->heading, ex, ey, ez, t);
+      else msnartDraw(H.marker.drawable, ident ? 0 : &H.marker.pos.x, ex, ey, ez, t);
       // 04.10 (запись PS2 10:34.1–10:34.3: у сферы цели carsphere — светлое кольцо на земле): пятно цели «<рисунок>_shadow» того
       // же файла (missgen.p3d: carsphere_shadow — кольцо ring.bmp 10 м, triggersphere_shadow; у предметов миссий — tux_shadow,
       // flanpic_shadow…), как у значков бонус-миссий (правка 180). mkShadowOld = 1 — прежнее (без пятна, флаг mkshadowold)
@@ -1764,7 +2211,8 @@ void mvDrawMarkers(float ex, float ey, float ez, float t) {
   if (M.rt.status == MSN_RUNNING || M.rt.status == MSN_COUNTDOWN) for (int i = 0; i < M.cars.n; i++) {
     const McCar *c = &M.cars.c[i]; if (!c->on || c->mode == MC_PARKED || c->finished || c->car.destroyed) continue;
     const char *arrow = 0; int tgt = M.rt.target && msn_streq(M.rt.target, c->name);
-    if (tgt && (M.rt.obj == MSN_OBJ_DESTROY || M.rt.obj == MSN_OBJ_DUMP)) arrow = "arrow_destroy";
+    if (tgt && M.rt.obj == MSN_OBJ_DUMP) arrow = mvDumpArrow1264(M.rt.nbind, msnCosm1264Old & 4);   // №1264 A1.8: с привязками к точкам пути — «следуй»
+    else if (tgt && M.rt.obj == MSN_OBJ_DESTROY) arrow = "arrow_destroy";
     else if (tgt && M.rt.obj == MSN_OBJ_FOLLOW) arrow = "arrow_chase";
     else if (tgt && M.rt.obj == MSN_OBJ_LOSETAIL) arrow = "arrow_evade";
     else if (M.rt.obj == MSN_OBJ_RACE) arrow = "arrow_race";
@@ -1772,12 +2220,31 @@ void mvDrawMarkers(float ex, float ey, float ez, float t) {
     float dx = c->car.x - ex, dz = c->car.z - ez; if (dx * dx + dz * dz > 150.f * 150.f) continue;
     float p[3] = {c->car.x, c->car.y + c->car.p.bodyHi + .6f, c->car.z}; msnartDraw(arrow, p, ex, ey, ez, t);
   }
+  // A1.3 (сверка Fable 13.11, §4 с поведением оригинала): на этапе «сядь в машину» над машиной, в которую надо сесть (текущая машина игрока, у строгого getin — названная),
+  // на высоте крыши прыгает стрелка «arrow» (animatedicon.h: размер 1,8 на 10 м и ближе, 5,0 на 80 м и дальше — масштаб по расстоянию в msnartDraw). Раньше стрелка была у destroy/dump/follow/losetail/race, у getin — нет.
+  // MVGETINARROW_OLD=1 — как было (без стрелки)
+  {
+#ifndef MVGETINARROW_OLD
+#define MVGETINARROW_OLD rb_MVGETINARROW_OLD
+#endif
+    static int gaOn;
+    int want = !MVGETINARROW_OLD && (M.rt.status == MSN_RUNNING || M.rt.status == MSN_COUNTDOWN) && M.rt.obj == MSN_OBJ_GETIN && !M.interior && M.g && M.g->pCar && gameOnFoot(M.g);
+    if (want) {
+      const Car *gc = &M.g->pCar[0]; const McCar *named = (M.rt.target && *M.rt.target && !msn_streq(M.rt.target, "current") && !msn_streq(M.rt.target, "default")) ? (const McCar *)mcFind(&M.cars, M.rt.target) : 0;
+      if (named && named->on) gc = &named->car;
+      float dx = gc->x - ex, dz = gc->z - ez;
+      if (dx * dx + dz * dz < 150.f * 150.f) {
+        float p[3] = {gc->x, gc->y + gc->p.bodyHi + .6f, gc->z}; msnartDraw("arrow", p, ex, ey, ez, t);
+        if (!gaOn) { gaOn = 1; logf_("MSN getin-arrow drawn car=%s dist=%.1f t=%.1f\n", named ? named->name : "current", sqrtf(dx * dx + dz * dz), clock_); }
+      }
+    } else gaOn = 0;
+  }
   // Правка 180 (близнец О4 03.10, кадры f03600 и f04600): над персонажем бонус-миссии — её значок (AddNPCCharacterBonusMission,
   // 5-й аргумент: checkered — уличная гонка, dice — гонка на ставку, exclamation — бонус-миссия), под ним — светлое пятно
   // <значок>_shadow (missgen.p3d), пока миссия не пройдена. Дальше 100 м не рисуется (правило порта)
   unsigned k3_ = sceKernelGetSystemTimeLow(); mvMkUs[3] += k3_ - k2_;
   if (!M.interior) for (int i = 0; i < M.nnpc; i++) {
-    const GameNpc *n = &M.npc[i]; int mi = n->bonus - 1;
+    const GameNpc *n = &M.npc[i]; int mi = n->bonus - 1; if (n->twinHide) continue;
     if (mi < 0 || (uint32_t)mi >= M.f.nmissions || mi >= 32) continue;
     const MsnMission *ms = &M.f.missions[mi]; if (ms->bonus_npc == 0xFFFFFFFFu) continue;
     int doneB = (M.rt.completed & (1u << mi)) && !M.rt.dev_bonus_replay;
@@ -1832,9 +2299,12 @@ void mvBriefingInput(unsigned hit) {   // X — Continue, △ — Cancel Mission
     if (M.shop.buys != b0) logf_("MSN shop-buy item=%d coins=%d t=%.1f\n", shopSellerItem(&M.shop, M.shop.at, M.shop.sel), shopCoins(&M.shop), clock_);
     return;
   }
-  if (!brOld && !H.brLoaded) { if (hit & PSP_CTRL_CROSS) H.brQueued = 1; return; }   // правка 52: ✕ во время LOADING — после загрузки
+  { static int ldSeen_;   // 1357: карточка въезжает UI_BR_IN (0,40 с) после загрузки; в оригинале ввод только в состоянии RUNNING, когда кнопки видны (и загрузка кончена). До этого ✕/△/○ не считаются
+    if (!H.brLoaded) ldSeen_ = 0; else if (!ldSeen_) { ldSeen_ = 1; ldUs_ = sceKernelGetSystemTimeLow(); }
+    if (!inputHints1357Old && !brOld && H.brLoaded && (unsigned)(sceKernelGetSystemTimeLow() - ldUs_) < 400000u) hit &= ~(PSP_CTRL_CROSS | PSP_CTRL_TRIANGLE | PSP_CTRL_CIRCLE); }
+  if (!brOld && !H.brLoaded) { if ((hit & PSP_CTRL_CROSS) && mvLoadQ1303Old) H.brQueued = 1; else if (hit & PSP_CTRL_CROSS) logf_("MSN briefing-x-ignored (LOADING) t=%.1f\n", clock_); return; }   // правка 52: ✕ во время LOADING — после загрузки (1303: теперь не считается)
   if (wagerShort() && (hit & PSP_CTRL_CROSS)) hit &= ~PSP_CTRL_CROSS;   // сверка g07b: монет не хватает — ✕ ничего не делает (P13-10)
-  if (hit & PSP_CTRL_CROSS) { H.briefing = 0; brModeOff(); uiBriefAnim(0); logf_("MSN briefing-continue t=%.1f\n", clock_); if (!svWagerAcceptOld && H.brWager && M.rt.status == MSN_RUNNING && M.rt.cur >= 0) { wagerPayPend = M.rt.cur + 1; logf_("MSN wager-accept fee=%d t=%.1f\n", H.brFee, clock_); }   // платёж ждёт этап coins (на L2 перед ним идёт вступительный диалог) if (M.mg.hud.objective && *M.mg.hud.objective) uiObjectiveCb(&M, M.mg.hud.objective, M.mg.hud.objective_msg, M.mg.hud.icon);
+  if (hit & PSP_CTRL_CROSS) { H.briefing = 0; brModeOff(); uiBriefAnim(0); logf_("BRIEFIN1357 continue after_loaded_ms=%u\n", (unsigned)(sceKernelGetSystemTimeLow() - ldUs_) / 1000u); logf_("MSN briefing-continue t=%.1f\n", clock_); mvContUs1326 = sceKernelGetSystemTimeLow() | 1u; if (!msnTimerHold1324Old) { M.rt.hold_done = 0; M.rt.hold_t = 0.f; M.rt.hold_log = -1; }   /* 1324: карточка ушла — ожидание готового мира считается отсюда, не со старта этапа под карточкой */ if (!svWagerAcceptOld && H.brWager && M.rt.status == MSN_RUNNING && M.rt.cur >= 0) { wagerPayPend = M.rt.cur + 1; logf_("MSN wager-accept fee=%d t=%.1f\n", H.brFee, clock_); } if (M.mg.hud.objective && *M.mg.hud.objective) uiObjectiveCb(&M, M.mg.hud.objective, M.mg.hud.objective_msg, M.mg.hud.icon);   // платёж ждёт этап coins (на L2 перед ним идёт вступительный диалог)
     // правка 345: [PS2] через 3 кадра после ✕ Continue — реплика водителя на старте миссии W_Mstart_<код>_* (3 из 3, выбор случайный)
     // сверка g07b-msnview (P09 Д8): принятие брифинга в гонке (уличная, на ставку) реплику Mstart не даёт. Было: в любой миссии. SV_RACE_MSTART_OLD=1 — прежнее
     if ((SV_RACE_MSTART_OLD || !(M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions && mvMstartMuted(M.f.missions[M.rt.cur].flags, SV_RACE_MSTART3_OLD))) && sndSay(SND_SAY_MSTART, 1)) logf_("MSN say mstart %s t=%.1f\n", sndSayLastName(), clock_); }
@@ -1854,8 +2324,8 @@ int mvProfTake(char *out, int n) {
   l += snprintf(out + l, (size_t)(n - l), "\n"); memset(mvPf, 0, sizeof mvPf); mvPfN = 0; return l;
 }
 void mvHud(float dt) {
-  (void)dt;
   if (!active) return;
+  bubTick1310(dt);
   if (mvProfOn) { mvPfT = sceKernelGetSystemTimeLow(); mvPfN++; }
   if (!H.briefing && shopOn() && !shopViewOn()) {   // лавка продавца карточкой брифинга, если экрана покупки нет (см. mvBriefing)
     const Shop *S = &M.shop; int it = shopSellerItem(S, S->at, S->sel), n = shopSellerCount(S, S->at); static char title[48], info[160];
@@ -1883,7 +2353,7 @@ void mvHud(float dt) {
     uiShow(UI_SCREEN_MISSIONLOAD, UI_T_SKIP, brOld || (!SV_WAGER_CANCEL_OLD && H.brWager && H.brLoaded && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))));                             // Cancel Mission — только прежняя карточка
   }
   MVPF(1);
-  dropTick(); lapTick();
+  dropTick(); lapTick(); raceFenceTick();
   if (oovOn && !SV_EVENTS2_OLD) { float left = oovWin - (clock_ - oovT0); if (left < 0.f) left = 0.f; uiHudSet(UI_F_TIMER, (int)(left * 1000.f)); uiHudShow(UI_T_TIMER, 1); }   // окно «сядь в машину»
   uiHudShow(UI_T_STAGE_COMPLETE, clock_ < H.stageFlash);
   uiHudShow(UI_T_MISSION_COMPLETE, clock_ < H.missionFlash);
@@ -1940,8 +2410,13 @@ void mvHud(float dt) {
     const MsnCond *cd = &M.f.conds[M.rt.st->cond_first + k];
     for (unsigned i = 0; cd->type == MSN_COND_FOLLOWDISTANCE && i < cd->cmd_count; i++) {
       const MsnCmd *c = &M.f.cmds[cd->cmd_first + i]; if (c->op == MSN_OP_SETFOLLOWDISTANCES) lim = msn_arg_f(&M.f, c, 1); } }
+  // 1318 (Роб: шкалы «красная — разбить, жёлтая — угнать как можно дальше, зелёная — прогресс»: что-то не так; сверка с оригиналом и записью PS2 L1 m3/m5): шкала близости в оригинале стоит полной, пока игрок рядом с целью,
+  // и пустеет по мере удаления: значение = 1 − расстояние/предел (у нас было расстояние/предел, то есть наоборот); цвет полосы красный у «оторваться» (losetail), зелёный у «не отставай» (follow), у нас серый.
+  // PROXBAR1318_OLD=1 / flag proxbar1318old 1 — прежнее
   if (lim > 0.f) { MsnWorld w; gameMsnWorld(&M, &w); float d = hypotf(w.player.x - tc->car.x, w.player.z - tc->car.z) / lim;
-    uiHudSet(UI_F_PROXIMITY, (int)(fminf(1.f, d) * 1000.f)); }
+    float fill_ = mvProxBar1318Old ? d : 1.f - d; if (fill_ < 0.f) fill_ = 0.f; if (fill_ > 1.f) fill_ = 1.f;
+    uiHudSet(UI_F_PROXIMITY, (int)(fill_ * 1000.f)); uiProxTint(mvProxBar1318Old ? 0u : obj == MSN_OBJ_LOSETAIL ? 0xff0000ffu : 0xff00ff00u);
+    static float pl_; if (clock_ - pl_ >= 1.f) { pl_ = clock_; logf_("PROXBAR1318 obj=%s dist=%.1f lim=%.1f fill=%d t=%.1f\n", obj == MSN_OBJ_LOSETAIL ? "losetail" : "follow", d * lim, lim, (int)(fill_ * 1000.f), clock_); } }
   uiHudShow(UI_T_PROXIMITY, lim > 0.f);
   MVPF(7);
 }
@@ -1957,7 +2432,9 @@ int mvInput(unsigned *hit) {   // MissionOver: «Retry Mission?» YES — пов
   if (act == 2 && mvFailSkipOk()) { mvFailSkip(); *hit = 0; return 1; }   // сверка g07b P13-3: пункт SKIP (включает ui.c через mvFailSkipOk; без пункта — не достижим)
   if (act == 0 || act == 1) {
     H.failed = 0; failStoreOff(); uiHudShow(UI_T_MISSION_FAILED, 0);
-    logf_("MSN %s t=%.1f\n", act ? "abort" : "retry", clock_); if (!act) msTryBump();   /* сверка g07b P13-3: Retry = учтённый сброс */
+    bbNoteMsnEnd(act ? "abort" : "retry");
+    if (!act && mvSkipCount1331Old) msTryBump(); logf_("MSN %s tries=%d t=%.1f\n", act ? "abort" : "retry", M.rt.cur >= 0 && M.rt.cur < 32 ? msTries[M.rt.cur] : -1, clock_);
+    { char b_[100]; snprintf(b_, sizeof b_, "%s stage=%d.%d tries=%d rem=%.1f", act ? "abort" : "yes", M.rt.phase, M.rt.stage, M.rt.cur >= 0 && M.rt.cur < 32 ? msTries[M.rt.cur] : -1, M.rt.remaining); bbNoteDiag("RETRY", b_); }   // 1331: в ящик выпуска   /* сверка g07b P13-3: Retry = учтённый сброс */
     if (active) { if (act) { if (!SV_RESTART_IRIS_OLD) msnAudioStopVoice(&M.audio); gameMsnAbort(&M); } else restartIris(2); }
   }
   *hit = 0; return 1;
@@ -2002,6 +2479,7 @@ static void mvSwitchTo(int mi, const char *why) {   // смена миссии �
   const char *from = M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions ? msn_str(&M.f, M.f.missions[M.rt.cur].id) : "-";
   if (!msnSwitchOld) msn_switch_clear(&M.rt);
   else { MsnEvent e; memset(&e, 0, sizeof e); e.type = MSN_EV_CLEANUP; M.rt.host.event(M.rt.host.user, &e); }   // прежнее: только CLEANUP
+  bbNoteMsnEnd(why);
   logf_("MSNSWITCH why=%s from=%s to=%s marker=%d gmarker=%d reg=%d obj=\"%.40s\" talk=%d briefing=%d t=%.1f\n", why, from, msn_str(&M.f, M.f.missions[mi].id), H.markerOn,
         M.mg.marker_on, msn_reg_mission_count(&M.rt), M.mg.hud.objective ? M.mg.hud.objective : "", H.talk[0] != 0, H.briefing, clock_);
   if (!strcmp(why, "row") || !strcmp(why, "pause")) msn_enter_mission(&M.rt, mi);   // круг 7 (P06-5): выбор в MISSION SELECT — как вход после загрузки, вступление с этапа RESET_TO_HERE; Skip и служебные — с нулевого
@@ -2350,6 +2828,7 @@ static int fitLog(const char *what, const char *t) {
   if (!ok || gw || gh || !strcmp(what, "plant")) logf_("UIFIT %s %s lines=%d/%d w=%d/%d grow=+%dw+%dh \"%.60s\"\n", ok ? "ok" : "over", what, lines, ml, w, bw, gw, gh, t);
   return ok;
 }
+static int mvTalkPromptForce1322;   // служебно (flag uitalkprompt1322 N): подпись разговора принудительно (1 SKIP, 2 Start/Cancel), стенд
 void mvServiceUi(const char *flag, float a) {
   if (!strcmp(flag, "uistack")) { uiOverlayStack(a != 0.f); logf_("UISTACK %d\n", a != 0.f); return; }
   // правка 22: рамки аватара и пузыря задания, как ушли в GE (tests/ui/avatar_check.py); uiavatarold — прежний размер (красный)
@@ -2363,9 +2842,16 @@ void mvServiceUi(const char *flag, float a) {
   if (!strcmp(flag, "uiobjwidowold")) { uiObjWidowOld(1); logf_("UIOBJWIDOW old\n"); return; }   // правка 215: красный контроль
   if (!strcmp(flag, "uimsgnoicon") || !strcmp(flag, "uimsgnoiconold")) { uiObjTextOld(flag[11] == 'o'); uiTrace(UI_TRACE_AVATAR);
     uiMessage("GO TO THE KWIK-E-MART", -1, 2.f); return; }
+  if (!strcmp(flag, "uitalkprompt1322")) { mvTalkPromptForce1322 = (int)a; logf_("TALKPROMPT1322 force=%d\n", mvTalkPromptForce1322); return; }
   if (!strcmp(flag, "uitalkoff")) { M.talk.off = 1; logf_("TALKOFF (отрицательный контроль: разговор не ставится)\n"); return; }   // правки 26, 38
   if (!strcmp(flag, "uipulsetrace")) { uiTrace(UI_TRACE_PULSE); return; }   // правка 41: рамка △ покадрово, без служебного показа
   if (!strcmp(flag, "uinovoice")) { abNoVoice = 1; logf_("VOICE off (отрицательный контроль)\n"); return; }
+  if (!strcmp(flag, "uifinmark1317")) { for (uint32_t i = 0; i < M.f.nlocs; i++) if (!strcmp(msn_str(&M.f, M.f.locs[i].name), "m4_finish")) {   // 1317 служебно: поставить метку finish_line на локатор m4_finish (стенд снимка до/после)
+      memset(&H.marker, 0, sizeof H.marker); H.marker.drawable = "finish_line"; H.marker.loc = &M.f.locs[i]; H.marker.pos.x = M.f.locs[i].pos[0]; H.marker.pos.y = M.f.locs[i].pos[1]; H.marker.pos.z = M.f.locs[i].pos[2]; H.markerOn = 1; logf_("FINMARK1317 set heading=%.3f flags=%u\n", M.f.locs[i].heading, M.f.locs[i].flags); return; } logf_("FINMARK1317 not found nlocs=%u active=%d\n", (unsigned)M.f.nlocs, active); return; }
+  if (!strcmp(flag, "uiproxdemo1318")) { int lose_ = a >= 100.f; float d_ = (lose_ ? a - 100.f : a) / 100.f;   /* a: 0..99 — «не отставай» (зелёная), 100..199 — «оторвись» (красная), расстояние = (a mod 100)% предела (отрицательное smoke.h режет до нуля) */   // 1318 служебно: шкала близости как у «не отставай» (a<100) / «оторвись» (a>=100) при расстоянии (a mod 100)% от предела: заполнение и цвет, как в игре
+    float fill_ = mvProxBar1318Old ? d_ : 1.f - d_; if (fill_ > 1.f) fill_ = 1.f; if (fill_ < 0.f) fill_ = 0.f;
+    uiHudSet(UI_F_PROXIMITY, (int)(fill_ * 1000.f)); uiProxTint(mvProxBar1318Old ? 0u : lose_ ? 0xff0000ffu : 0xff00ff00u); uiOvForce1308 = 2048u; logf_("PROXDEMO1318 d=%.2f fill=%d lose=%d old=%d\n", d_, (int)(fill_ * 1000.f), lose_, mvProxBar1318Old); return; }
+  if (!strcmp(flag, "uiovforce1308")) { uiOvForce1308 = (unsigned)a; uiHudSet(UI_F_TIMER, 90000); uiHudSet(UI_F_PROXIMITY, 400); uiHudSet(UI_F_DAMAGE, 300); logf_("OVFORCE1308 mask=%u\n", uiOvForce1308); return; }   // 1308: оверлеи по маске (таймер + шкала близости/урона) для гейта
   if (!strcmp(flag, "uiov")) {   // рамки видимых оверлеев последнего кадра HUD
     int tags[8], r[8][4], n = uiOverlayBoxes(tags, r, 8);
     for (int i = 0; i < n; i++) logf_("UIOV tag=%d %d %d %d %d\n", tags[i], r[i][0], r[i][1], r[i][2], r[i][3]);
@@ -2425,6 +2911,8 @@ int mvServicePass(const char *why) {   // служебное (06.11): засчи
   logf_("MSN pass %s %d.%d obj=%s why=%s t=%.1f\n", msn_str(&M.f, M.f.missions[M.rt.cur].id), M.rt.phase, M.rt.stage, msn_objective_name[M.rt.obj], why ? why : "-", clock_);
   return msn_service_pass(&M.rt);
 }
+// 1348 (служебное, гейт): засчитать этап и удержать окно между этапами BETWEEN sec секунд мира, независимо от того, где игрок и как быстро грузится следующий этап (flag msnpasshold SEC)
+int mvServicePassHold(float sec) { int r = mvServicePass("hold"); if (active && M.rt.status == MSN_BETWEEN && M.rt.delay < sec) M.rt.delay = sec; return r; }
 void mvServiceMainAt(int code) {   // служебное (правка 302): основная часть миссии code/100 с этапа code%100 (как чекпоинт этапа)
   int ph0 = code < 0; if (ph0) code = -code;   // отрицательный код — вступительная часть (фаза 0)
   int mi = code / 100, st = code % 100;
@@ -2434,9 +2922,19 @@ void mvServiceMainAt(int code) {   // служебное (правка 302): о�
   M.rt.cp_phase = ph0 ? 0 : 1; M.rt.cp_stage = st; msn_start_mission(&M.rt, mi, 1);
   if (ph0) M.rt.story = mi;   // прогулка — у сюжетной миссии (как в игре; правка 330: SAVE GAME проверяет story)
 }
+// 1320: чистая перезагрузка уровня (будка, дверь) посреди основной части миссии возвращала миссию в начало (BOOTH1060 msn same=0: было phase=1 stage=1, стало phase=0 stage=0). Теперь перед выгрузкой
+// запоминается точка (миссия, фаза, этап), после загрузки миссия стартует с этого этапа, как чекпоинт после провала. ROOMRELOAD1320_OLD=1 — как было
+int mvResumePoint1320(int *cur, int *ph, int *st) { if (!mvInMission()) return 0; *cur = M.rt.cur; *ph = M.rt.phase; *st = M.rt.stage; return 1; }
+void mvResumeAt1320(int cur, int ph, int st) {
+  if (!active || cur < 0 || (unsigned)cur >= M.f.nmissions || M.f.missions[cur].main == MSN_NONE16) return;
+  logf_("MSN resume1320 %s phase=%d stage=%d t=%.1f\n", msn_str(&M.f, M.f.missions[cur].id), ph, st, clock_);
+  MsnEvent e; memset(&e, 0, sizeof e); e.type = MSN_EV_CLEANUP; M.rt.host.event(M.rt.host.user, &e);
+  M.rt.cp_phase = ph; M.rt.cp_stage = st; msn_start_mission(&M.rt, cur, 1);
+}
 void mvServiceUfo(void) { logf_("MSNUFO on=%d pos=%.1f,%.1f,%.1f charge=%.1f sent=%d old=%d ship=%d beam=%d drawn=%u t=%.1f\n", active ? M.ufoOn : 0, M.ufoPos[0], M.ufoPos[1], M.ufoPos[2], M.ufoCharge, M.ufoSent, gameBoss967Old, msnartHas("spaceship"), msnartHas("UfoBeam"), ufoDrawn, clock_); }   // №967: состояние тарелки для гейта tests/missions/boss_l7.sh
 void mvServiceHud(void) {   // №943: что миссия считает целью сейчас (stage — этап рантайма), что держит HUD (obj — текст цели) и маркер; строки сверяет tests/msnhome/check.py
   { int ic, px; const char *t, *l; uiObjDebug(&ic, &px, &t, &l); logf_("MSNICON want=\"%s\" field=%d pix=%d pixok=%d home=%d msg=\"%.30s\" last=\"%.30s\" active=%d t=%.1f\n", msnartWantIcon(), ic, px, msnartIconPixOk(), uiHomeShown(), t, l, active, clock_); }   // №958б
+  if (active) logf_("MSNTIMER on=%d up=%d rem=%.2f status=%d hold=%d done=%d coins=%d t=%.1f\n", M.rt.timer_on, M.rt.timer_up, M.rt.remaining, M.rt.status, M.rt.scene_busy, M.rt.hold_done, shopCoins(&M.shop), clock_);   // 1324: остаток таймера (красный контроль ожидания мира)
   if (!active) { logf_("MSNHUD active=0\n"); return; }
   int cur = M.rt.cur >= 0 && (unsigned)M.rt.cur < M.f.nmissions;
   logf_("MSNHUD cur=%s story=%s phase=%d stage=%d status=%d stagetext=\"%.40s\" obj=\"%.40s\" marker=%d gmarker=%d mpos=%.1f,%.1f briefing=%d t=%.1f\n",
@@ -2524,7 +3022,7 @@ static int talkIsStart(void) {   // разговор — последний эт
   return ph != MSN_NONE16 && ph < M.f.nphases && rt->stage == (int)M.f.phases[ph].stage_count - 1;
 }
 // сверка g07b-msnview круг 2 (g07-missions 30, P07:23): AllowMissionAbort("false") — Accept/Cancel вступления не показываются и △ не отменяет (подпись «Start Mission / Cancel» заменена на ✕ SKIP). SV_ABORTOK_OLD=1 — прежнее
-int mvTalkPrompt(void) { return !mvTalkActive() ? UI_LB_NONE : (talkIsStart() && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))) ? UI_LB_START : UI_LB_SKIP; }
+int mvTalkPrompt(void) { return !mvTalkActive() ? UI_LB_NONE : mvTalkPromptForce1322 ? mvTalkPromptForce1322 : (talkIsStart() && (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M))) ? UI_LB_START : UI_LB_SKIP; }
 // круг 3 (проверка g10b-loop, M2:23): на последнем этапе свободной езды (разговор, после которого брифинг миссии) и в разговоре Пэтти с Сельмой полосы на выходе сходятся к
 // центру, а не уезжают. Диалог гонки в данных нашего порта отдельным признаком не отличается — не включён (см. журнал)
 int mvTalkConverge(void) {
@@ -2536,6 +3034,7 @@ int mvTalkConverge(void) {
 int mvTalkInput(unsigned hit) {
   if (!mvTalkActive()) return 0;
   int start = talkIsStart();
+  { static int lg_; if (hit && lg_++ < 40) logf_("TALKIN1357 hit=0x%x start=%d abortok=%d t=%.2f\n", hit, start, (SV_ABORTOK_OLD || gameMsnAbortAllowed(&M)), clock_); }   // 1357: что дошло до разговора (гейт)
   if (hit & PSP_CTRL_CROSS) {   // SKIP / Start Mission: разговор кончается сразу — дальше брифинг или следующий этап
     logf_("TALKSKIP start=%d line=%d t=%.1f\n", start, TC.line, clock_);
     msnAudioStopVoice(&M.audio); msn_notify(&M.rt, MSN_IN_DIALOGUE_DONE, 0, 0);
@@ -2561,6 +3060,17 @@ void mvDropSim(int op, int idx) {   // служебное (№1229): без ез
   if (idx < 0 || idx >= M.rt.nitems || idx >= MSN_MAX_ITEMS) return;
   if (op == 0) { { MsnWorld w_; gameMsnWorld(&M, &w_); M.rt.relpos[idx] = w_.player; M.rt.relpos[idx].x += 30.f;   /* в 30 м: не подбирается сама */ M.rt.drop_life[idx] = 0; M.rt.drop_blink[idx] = 0; } M.rt.released[idx] = 1; if (!dropOn) logf_("MSN dropmsg on t=%.1f\n", clock_); dropOn = 1; dropT0 = clock_; logf_("MSN drop %d (sim) t=%.1f\n", idx, clock_); }
   else { M.rt.done[idx] = 1; logf_("MSN got %d (sim) t=%.1f\n", idx, clock_); }
+}
+// 1355 (бот-проходчик по миссиям, Роб: «радар ведёт не туда, у пончиковой нет Виггама»): строка AUDIT1355 по текущему этапу — что игра считает целью (msn_nav_target), где метка HUD и радара (H.marker, радар рисует её же),
+// насколько метка далека от цели, расстояние до игрока, есть ли модель машины и персонаж цели, видна ли точка цели (клетка под ней загружена). Только чтение; flag msnaudit
+void mvServiceAudit(void) {
+  if (!active || M.rt.cur < 0) { logf_("AUDIT1355 none t=%.1f\n", clock_); return; }
+  MsnRuntime *rt = &M.rt; MsnVec3 p; memset(&p, 0, sizeof p); MsnWorld w; gameMsnWorld(&M, &w); int has = msn_nav_target(rt, &w, &p);
+  const char *nm = rt->target && *rt->target ? rt->target : tgtName1338[0] ? tgtName1338 : "";
+  float me = H.markerOn && has ? hypotf(H.marker.pos.x - p.x, H.marker.pos.z - p.z) : -1.f, dp = has ? hypotf(w.player.x - p.x, w.player.z - p.z) : -1.f;
+  int car = *nm && mvCarReady ? (mvCarReady(nm) ? 1 : 0) : -1, npc = *nm ? (gameMsnNpc(&M, nm) != 0) : -1, vis = has ? pointVisible(p.x, p.y, p.z, NULL) : -1;
+  logf_("AUDIT1355 mission=%s stage=%d.%d obj=%s name=%s target=%d(%.0f,%.0f) marker=%d(%.0f,%.0f) markerErr=%.1f playerDist=%.1f car=%d npc=%d visible=%d status=%d t=%.1f\n", msn_str(&M.f, M.f.missions[rt->cur].id), rt->phase, rt->stage,
+        rt->obj >= 0 && rt->obj < MSN_OBJ_COUNT ? msn_objective_name[rt->obj] : "?", *nm ? nm : "-", has, p.x, p.z, H.markerOn, H.markerOn ? H.marker.pos.x : 0.f, H.markerOn ? H.marker.pos.z : 0.f, me, dp, car, npc, vis, (int)rt->status, clock_);
 }
 void mvServiceGo(float far) {
   if (!active || M.rt.status != MSN_RUNNING) return;

@@ -42,5 +42,6 @@
 #define TFSM_IMPL
 #include "transit_fsm.h"   // ldrRun: реализация после mem1060.h (прелоадер, шкала, возврат клеток)
 #include "transit_booth.h"   // Build 95 П2: класс BOOTH на ldrRun
+#include "rollback.h"   // 107б: rollback.txt рядом с EBOOT — прежний путь любой правки 107 без пересборки
 #include "main_loop.h"
 #endif

@@ -1,0 +1,22 @@
+# 1316 (А): L2 m3 «Vox Nerduli» без провалов: карточка → ✕ → гонка → msnpass → финиш
+flag nosave
+scene A
+flag golevel 2
+wait 25
+flag player 1
+wait 2
+flag msnmainat 200
+wait 10
+press cross 0.3
+wait 8
+scene RACE0
+flag msnpass
+wait 6
+scene PASS1
+flag msnpass
+wait 6
+flag msnpass
+wait 6
+scene END
+wait 10
+end

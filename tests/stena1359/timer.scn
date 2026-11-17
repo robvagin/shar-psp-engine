@@ -1,0 +1,11 @@
+scene g1359
+flag golevel 5
+wait 25
+flag msnmainat 100
+wait 1
+press cross
+wait 1.5
+shot tm1
+wait 2
+shot tm2
+end

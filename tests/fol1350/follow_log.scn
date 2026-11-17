@@ -1,0 +1,20 @@
+scene g1338f
+flag golevel 4
+flag mclogfast 1
+wait 30
+flag msnmainat 0
+wait 3
+press cross
+wait 4
+flag msnhud
+flag msnpass
+wait 4
+flag msnhud
+wait 10
+flag msnhud
+wait 10
+flag msnhud
+wait 10
+flag msnhud
+wait 5
+end

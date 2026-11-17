@@ -1,0 +1,55 @@
+flag menu
+flag lvset 2
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=2 300
+wait 10
+flag player 1
+flag msn
+wait 6
+flag msnsel 1
+wait 5
+scene M2_P0
+flag msnpass 1
+wait 3
+flag msnpass 1
+wait 4
+flag repair
+wait 4
+scene M2_P1
+flag msnpass 1
+wait 3
+scene M2_Q0
+wait 1
+flag msnpass 1
+wait 3
+scene M2_Q1
+wait 1
+flag msnpass 1
+wait 3
+scene M2_Q2
+wait 1
+flag msnpass 1
+wait 3
+scene M2_Q3
+wait 1
+flag msnpass 1
+wait 3
+scene M2_Q4
+wait 1
+scene M2_DOOR
+foot -173.6 -24.5 0.0 7.1
+wait 6
+press triangle 0.3
+wait 12
+scene M2_IN
+shot m2in
+flag msnpass 1
+wait 6
+scene M2_TALK
+shot m2talk
+wait 4
+flag stop
+wait 2
+end

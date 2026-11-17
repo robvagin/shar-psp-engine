@@ -1,0 +1,21 @@
+# 1356: не зависит от темпа бота. L4 m1 этап 1.1.2 (TALK TO CHIEF WIGGUM) берётся прямо: flag msnmainat 2; помощник msnbot только снимает вступительные экраны (msnbotpass 0 — этапы не засчитывает), этап держится сам (пока не заговорили с Виггамом).
+# Игрок пешком в 3 м от машины миссии cPolice (m1_cop_stop 237,366), стоит 8 с; считаем строки ареста (BUSTED / HNR busted).
+scene F_L1
+flag cfgdefaults 1
+flag repair
+wait 6
+scene F_GO4_L4
+flag golevel 4
+wait 25
+flag msnbot 1
+flag msnbotpass 0
+flag msnmainat 2
+wait 12
+flag msnaudit
+scene POL_stand
+foot 240.0 366.0 0
+wait 8
+flag msnaudit
+wait 4
+flag msnaudit
+end

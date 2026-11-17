@@ -1,0 +1,27 @@
+# О16 (108, Стена): пропуск collStreamPrepare в покое == полный расчёт. L1: автопилот по городу, потом двор Симпсонов у гэгов и ходьба (набор желаемых гэгов меняется, гэги подгружаются и отдаются);
+# flag collprepcheck 1 считает оба пути и сверяет (строка COLLPREPCHECK, расхождений 0)
+flag nosave
+scene CPC_CHECK
+flag collprepcheck 1
+goto 220 172 1.5708
+wait 3
+flag drive 30
+wait 31
+flag stop
+foot 225 195 0
+wait 4
+press up 1.5
+wait 1.6
+press left 1.5
+wait 1.6
+foot 12.35 -335.6 3.1416
+wait 5
+press up 1.5
+wait 1.6
+foot 238 196 1.57
+wait 5
+flag walk 10
+wait 11
+flag stop
+flag collprepcheck 1
+end

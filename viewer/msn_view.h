@@ -21,7 +21,9 @@ int  mvNewGame(Game *g);                     // старт уровня: m0 (Г�
 int  mvNewGameAt(Game *g, const MsnProgress *resume);   // то же с загрузкой сохранения (NULL — mvNewGame), viewer/savegame.h
 extern int (*mvHeapRoom)(unsigned);
 extern int (*mvViewBusy)(void);   // №632: 1 — камера будки/лавки: чтение NPC не начинать   // ревизия 1.1: хватает ли кучи под чтение впрок (запас стриминга сохраняется); NULL — не проверять
+extern int (*mvCarReady)(const char *);   // 109: модель машины миссии в памяти (или её уже не будет)
 extern void (*mvCarPrefetch)(const char *);   // №629: чтение впрок блока машины миссии (ставит main)
+int mvPhaseCarHeld(const char *name);   // 109 (в): машина из списка ВСЕЙ текущей миссии — держать в памяти до конца миссии (main_render.h mcrKept), не выгружать и не читать заново
 extern int mvProfOn;   // тест-апка: разбивка mvHud
 int mvProfTake(char *out, int n);   // строка MVHUD или 0
 extern int (*mvFlatGlow)(const char *name, const float *pos, float ex, float ey, float ez);   // №793: пятно <рисунок>_shadow векторно (ставит main); 0 — рисовать картинкой
@@ -31,6 +33,10 @@ int  mvProgress(MsnProgress *p);             // прогресс миссий д
 // езда) — START открывает паузу миссии; RESTART MISSION — миссия заново с первого этапа основной части (игрок — на точку
 // сброса миссии), CANCEL MISSION — отмена, как Cancel брифинга (назад к вступлению миссии)
 int  mvInMission(void);
+int  mvInMissionPause(void);   // 1348: то же + окно между этапами (для выбора паузы миссии)
+extern int mvPauseBetween1348Old;
+extern int inputHints1357Old;   // 1357: ✕/△ на разговоре и карточке миссии — только когда подсказки кнопок видны (Old=1 — как было)
+int  mvResetBlocked(void);   // Ф2-11: отсчёт перед гонкой — сброс машины запрещён
 int  mvModels(void);                          // правка 103: моделей персонажей в памяти сейчас (строка чёрного ящика)
 int  mvGiverNear(float x, float z, float r);   // значок бонус-миссии / гонки / продавца ближе r м: его UI_R_* (-1 — нет); подсказки Барта
 int  mvGiverAt(int type, int k, float *xz);   // служебное (flag bonusgo): k-й значок типа type (UI_R_*) — x, z; 0 — нет
@@ -65,7 +71,7 @@ void mvBusted(void);
 void mvMusicResume(void);   // правка 235: музыка миссии снова (её событие _start), например после магазина                         // правка 121: арест Hit & Run — идущая миссия провалена («Hit & Run: You got busted!»)
 void mvServiceWin(void);
 void mvMarkStoryDone(void);   // №860: финал — все сюжетные миссии уровня пройдены (без событий)
-void mvServiceFail(void);                       // служебное (flag msnfail): экран провала миссии (№572)
+void mvServiceFail(void); void mvServiceRetry(void);                       // служебное (flag msnfail): экран провала миссии (№572)
 const char *mvDynaFiles(unsigned *seq);      // сверка g11b-collect круг 5 (P12-10): «l1z7.p3d;l1r6.p3d;» последнего SetDynaLoadData; *seq растёт на каждое выполнение
 const char *mvDynaRoom(void);                // интерьер последнего SetDynaLoadData («…@», "SimpsonsHouse"); "" — город                     // служебное (flag lvwin): все сюжетные миссии пройдены -> конец уровня
 int  mvActive(void);
@@ -74,6 +80,7 @@ int  mvFrozen(void);                         // 1 — отсчёт 3-2-1 эта�
 void mvFreezeCar(CarInput *in);              // во время отсчёта: газ/тормоз/руль 0, ручник
 int  mvWantsAction(void);                    // △ этого кадра — миссии (разговор, точка с действием)
 void mvTick(int action, float dt);
+extern int mvFadeClk1362bOld; extern float mvWallDt1316; extern int mvFadeGuard1316Old; float mvFadePauseAlpha(void);   // 1316: настенное время затемнения, выключатель, альфа для запрета паузы
 int mvNpcPosition(const char *name,float point[3]);
 const MsnCars *mvCars(void);                 // машины миссии с ИИ (viewer/msncar.h) — рисует main.c; NULL — миссий нет
 int mvDriversDrawn(void);                    // аудит 09.10 п. 20: водителей машин миссии нарисовано в последнем кадре
@@ -81,12 +88,17 @@ void mvServiceSellers(void);                  // служебное (flag seller
 void mvServiceMain(int mission);
 void mvMarkerShadowOld(int on);                // 04.10: 1 — маркер цели без пятна <рисунок>_shadow (флаг mkshadowold, красный контроль)
 void mvServiceUfo(void);                       // №967: строка MSNUFO (тарелка L7, заряд луча)
+int mvResumePoint1320(int *cur, int *ph, int *st); void mvResumeAt1320(int cur, int ph, int st);   // 1320: точка миссии через чистую перезагрузку (mem1060.h)
 void mvServiceMainAt(int code);                // служебное (flag msnmainat M*100+S): миссия M с этапа S основной части             // служебное: основная часть миссии с её чекпоинта (flag msnmain N)
 int mvDriverShown(int i);                   // №666: у машины миссии i рисуется водитель-персонаж (запечённого в кузов не рисовать)
 const char *mvForcedCar(void);               // SetForcedCar: игрок на машине миссии (модель пакета msncars); NULL — машина уровня
 void mvCarjack(const char *model, const CarParams *P, float lift, float x, float y, float z, float h);   // правка 63: угон машины трафика
 float mvHnrDecay(void);
 int mvIsPolice(const char *name);
+void mvPoliceAt1359(float d);   // 1359 служебное (flag polat1359)
+void mvNpcList1360(void);   // 1360 служебное (flag npclist1360)
+extern int hnrBustName1356Old;   // 1356: см. msn_view.c
+int mvIsHnrCar(const McCar *c);   // 1356: машина погони Hit & Run по флагу police (не по имени модели)
 void mvPoliceAdd(void);                       // сверка g09b-menu круг 5 (P03-08): одна машина погони
 int  mvPoliceLimit(void);                     // сколько положено уровню
 int mvPoliceSuspend(void);   // круг 7: машины погони уходят в запас (поза и урон), -> сколько
@@ -114,12 +126,15 @@ int  mvSvcDoorWant(void);   // служебное (06.11): бот поставл
 void mvSetRoomAt(const char *(*roomAt)(float x, float y, float z)); // №376: комната по настоящему полу SHI1, а не высоте города
 int  mvTeleported(float pos[3]);             // 1 — сценарий переставил игрока (старт/повтор/выбор миссии): камера, экран загрузки
 int  mvAmbMissingAt(float x, float y, float z);   // №1076: то же у точки (вход в комнату — у её старта)
+extern int mvNpd1361; extern char mvAmbMissName1361[24]; const char *mvNpcPendName1361(void);   // №1361
 int  mvAmbMissing(void);                     // №1076: бонусных/фоновых рядом с игроком без модели (и двигает их чтение)
 int  mvNpcPending(void);                     // №1076: сколько персонажей миссии ещё ждут модель (экран загрузки ждёт их)
 int  mvMsnSetup(void);                       // №1072: 1 — у миссии открыто окно подготовки фазы (перенос игрока ещё может прийти)
 void mvSetGround(int (*f)(float x, float z, float yHi, float yLo, float *out));   // №606: высота коллизии под точкой (main: colGround); без вызова стрелка стоит как раньше
 void mvSetGov(int on);   // L3 причал: кадр в перегрузке (frameGov) — дальние персонажи миссии не рисуются дальше NPC_GOV_DIST
 void mvSetVis(int (*f)(const float bb[6]));   // правка 500: отсечение персонажей по кадру (trVis из main); без вызова — рисуются все
+extern int mvNpcRoom1314;   // 108 1314: тег интерьера персонажа не совпал с комнатой — смотреть комнату, где он стоит (NPCROOM1314_OLD=1 / файл npcroom1314old / flag npcroom1314 0)
+void mvSetSceneOkY(int (*f)(float x, float y, float z));   // 108 1293: то же с высотой ног персонажа (клетки вне набора ворот и вне высоты не считаются)
 void mvSetSceneOk(int (*f)(float x, float z));   // правка 431, канон п.11: персонаж не рисуется, пока клетка под ним не в памяти; без вызова — рисуются все
 int mvNpcCityPos(int i, float *x, float *z);   // служебно (смоук dropnpc, правка 431)
 void mvDraw3D(float ex, float ey, float ez, float dt);   // персонажи миссий (скиннинг GE); после — resetState() в main.c
@@ -181,7 +196,13 @@ void mvServicePrior(int keep);   // служебное: все сюжетные 
 int mvStartCam(const char **phase, const char **cam);
 // №1047 (Роб: «сначала чёрные полоски, наезд, и ПОТОМ пузырь с текстом»): цель этапа (пузырь) не показывается, пока идёт наезд и полосы на экране; mvCamBusy ставит main_loop.h
 // (1 — наезд играет или полосы ещё не ушли), mvBubblePump — каждый кадр: отложенную цель показать, когда полос нет. Без наезда — как раньше
-extern int (*mvCamBusy)(void); void mvBubblePump(void); extern int mvBubble1247Old;   // №1247: 1 — пузырь не ждёт аватар
+extern int mvBriefBb1337Old;   // 1337: 1 — причины ожидания карточки в ящик не пишутся
+extern int mvReady109Old, mvList109Old, mvChr109Old, mvLoadQ1303Old, mvBubVis1310Old, mvBubCam1315Old, mvCamFree1310, mvFinLine1317Old, mvProxBar1318Old; extern int mvWorldHold1326Old; extern unsigned mvContUs1326; int mvFadeCover1326(void); void mvServiceWorldBlack(float s);
+int mvMarkerAt(float o[3]);
+int mvGotoDiag(char *out, int n);
+int mvLoadPrime1362(void);   // 1362: машины всей миссии под газетой; сколько ещё не в памяти   // 1355: позиция метки цели (служебно)
+extern int (*mvWorldHidden1310)(void); extern const char *mvCamWhy1315; void mvCamStuck1315(int on); extern int (*mvPhaseCarsReady)(void); void mvResFree109(void);   // 109 (а): готовность карточки — очередь msnart пуста и модели машин фазы в памяти (крючок Стены; NULL — условия нет)
+extern int (*mvCamBusy)(void); void mvBubblePump(void); extern int mvBubble1247Old; extern int mvBubble1264Old;   // №1247: 1 — пузырь не ждёт аватар
 // камера разговора (viewer/convcam.h): 1 — идёт разговор, план реплики из данных (SetConversationCam, SetCamBestSide) или
 // по правилу порта: глаз, взгляд, вертикальный FOV. prevEye — глаз камеры до разговора (сторона без SetCamBestSide);
 // blocked(от, до) — луч упирается в коллизию (план за стеной не берётся: другой план того же говорящего, иначе прежний,
@@ -204,11 +225,14 @@ void mvTalkCamPlant(int how);            // служебное, отрицате
 // far > 0 — отрицательный контроль: встать на far м дальше от цели (цель обязана НЕ засчитаться)
 extern int (*mvMemLadder)(const char *who, unsigned need, int top);   // №1235: лестница памяти для моделей персонажей миссии (ставит main_frontend.h; top — персонаж миссии)
 extern int npcRetry96;   // Build 96: повтор модели персонажа не чаще раза в секунду, лестница по области «миссия», одна строка WATCHDOG на событие (NPCRETRY96_OLD=1 / flag npcretry96 0 / файл npcretry96old - как было)
+extern int npcP0;   // 107б P0: «нет файла модели» повторяется (P0NPC_OLD=1 / файл p0npcold)
 extern int npcLad1235, npcFailSim1235;   // №1235: 1 — модель персонажа через лестницу, повтор при нехватке памяти, замена загруженным персонажем (NPCLAD1235_OLD=1 / flag npclad1235 0 / файл npclad1235old — как было)
 void mvServiceGo(float far);
+void mvServiceAudit(void);   // 1355: строка AUDIT1355 (цель, метка, расстояния, загружена ли цель)
 void mvDropSim(int op, int idx);   // служебное (№1229, flag dropsim / dropget): op 0 — предмет idx «выпал» (как MSN_EV_DROP), op 1 — «подобран»
 int  mvServiceBot(void);   // flag msnbot: 1 — этап ждёт △ пешком, 2 — этап машинный, а Гомер пешком (0 — ничего)
 int  mvStageKey(void);   // служебное: ключ текущего этапа (миссия, фаза, этап), -1 — миссия не идёт
+int  mvServicePassHold(float sec);   // 1348 служебное: засчитать этап и удержать BETWEEN sec секунд (flag msnpasshold)
 int  mvServicePass(const char *why);   // служебное (06.11): засчитать текущий этап, как выполненная цель (flag msnpass, помощник msnbotpass)
 int  mvServicePlace(int fresh);   // служебное (06.11): помощник msnbotpass ставит игрока к цели этапа перед зачётом (0) и к машине слежки после зачёта (1)
 void mvServiceSwitchOld(const char *what, int on);   // №943: msnswitchold / mscursorold — прежняя смена миссии / курсор MISSION SELECT (красный контроль)

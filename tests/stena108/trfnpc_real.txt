@@ -1,0 +1,10 @@
+# Т1 (107b, Стена): настоящий персонаж миссии (собеседник) попадает в список помех трафика. L1 m0 «TALK TO MARGE»: Мардж у дома (220,2; 177,0) — nnpc >= 1 и npc0 = её место в строке TRFPROBE
+flag nosave
+scene TNPCR
+wait 3
+flag msn
+wait 4
+flag trfprobe
+wait 2
+flag trfprobe
+end

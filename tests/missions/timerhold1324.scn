@@ -1,0 +1,13 @@
+# 1324 (б): L5 m7, мир «не готов» 4 с после ✕ Continue (flag scenehold): таймер этапа стоит до готовности
+scene g1324b
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+flag scenehold 4
+wait 2
+flag msnhud
+wait 5
+flag msnhud
+end

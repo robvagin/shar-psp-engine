@@ -1,0 +1,16 @@
+# 109: крючок готовности карточки (Бабл mvPhaseCarsReady = моя phaseCarsAllReady): модели машин миссии не в памяти (чтение отказывает 8 раз, flag mcrfail 8) — ready=0, потом ready=1. old
+flag nosave
+flag msnphasecars109old 1
+scene CW_old
+wait 3
+flag msn
+wait 2
+flag mcrfail 8
+flag msnsel 1
+wait 0.6
+flag mvphasecars109
+wait 5
+flag mvphasecars109
+wait 12
+flag mvphasecars109
+end

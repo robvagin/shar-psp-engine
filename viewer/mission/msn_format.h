@@ -50,7 +50,7 @@ typedef struct {
     uint32_t data;                /* EVENT: event id; INTERIOR: string (interior name) */
     float    pos[3];              /* engine coordinates (z mirrored like level.shr)    */
     float    heading;             /* CARSTART heading (rad), NaN if none               */
-    uint32_t flags;               /* bit0 = heading valid                              */
+    uint32_t flags;               /* bit0 = heading valid (CARSTART); bit1 = heading from the locator matrix (1317)  */
     uint32_t reserved;
 } MsnLoc;                                     /* 40 bytes */
 

@@ -1,3 +1,4 @@
+#include "power.h"   // 107б P0: эпоха питания
 // №658 «свет и тени спрайтами, одним модулем» (слово Роба 16.10: «как это используется на PSP: спрайты, которые имитируют свет, без настоящего свечения;
 // то же с текстурами тени»). Подключается из main.c после lightsprite.h, до main_loop.h.
 //   ТЕНИ (flag shadowspr 1 / -DSHADOW_SPRITE=1): под Гомером, своей машиной, чужими машинами и прохожими один квад с мягкой текстурой на земле
@@ -638,9 +639,13 @@ static int neonSign950 = !NEONSIGN950_OLD;
 typedef struct { float p[3], X[3], Y[3], uv[4][2]; uint32_t cB, cT; int tex; uint8_t kind, pool; uint16_t pi1; } SlL;   // pi1 (№933): индекс пропа + 1 у свечения пропа (0 — не от пропа): сбитый или сдвинутый проп гасит своё свечение   // pool (№935): 0 — не искали, 1 — эллипс под конусом рисовать, 2 — мост/эстакада, без эллипса   // kind 0 — вертикальный (билборд от оси Y), 1 — плоский (оси X, Y заданы)
 static unsigned slDbgAdd, slDbgMaxNi;
 static SlL *slL; static unsigned slLn, slLcap; static const void *slLspInst, *slLpInst; static unsigned char *slLdone; static unsigned slLdoneN;
+#ifndef SLSCAN108_OLD
+#define SLSCAN108_OLD 0
+#endif
+static int slScan108Old = SLSCAN108_OLD, slScanCheck, slScanOk; static unsigned slScanSeen, slScanNc, slScanSkip, slScanChk, slScanMis; static const unsigned char *slScanDone;
 static int slLightInit = LIGHT_SPRITES; static unsigned slLQuads, slLDraws, slLFrames, slLUs, slLBuildUs, slLCells;
 static int slLCmp(const void *a, const void *b) { int x = ((const SlL *)a)->tex, y = ((const SlL *)b)->tex; return x < y ? -1 : x > y; }
-static void slLightReset(void) { free(slL); free(slLdone); slL = 0; slLdone = 0; slLspInst = 0; slLpInst = 0; slLn = slLcap = slLdoneN = 0; slLightResetReq = 0; }
+static void slLightReset(void) { slScanOk = 0; free(slL); free(slLdone); slL = 0; slLdone = 0; slLspInst = 0; slLpInst = 0; slLn = slLcap = slLdoneN = 0; slLightResetReq = 0; }
 static uint32_t slAvg(const uint32_t *c, int n) {
   if (!n) return 0; unsigned a = 0, b = 0, g = 0, r = 0; for (int i = 0; i < n; i++) { a += c[i] >> 24; b += (c[i] >> 16) & 255; g += (c[i] >> 8) & 255; r += c[i] & 255; }
   return ((a / n) << 24) | ((b / n) << 16) | ((g / n) << 8) | (r / n);
@@ -760,11 +765,22 @@ static void slLightProps(void) {
 }
 static void slLightBuild(void) {
   if (!cl || !ncell || !pc) return;
-  if (slLdoneN != ncell) { free(slLdone); slLdone = (unsigned char *)calloc(ncell, 1); slLdoneN = slLdone ? ncell : 0; slLn = 0; slLspInst = 0; slLpInst = 0; }
+  if (slLdoneN != ncell) { slScanOk = 0; free(slLdone); slLdone = (unsigned char *)calloc(ncell, 1); slLdoneN = slLdone ? ncell : 0; slLn = 0; slLspInst = 0; slLpInst = 0; }
   if (sprops.ninst && slLspInst != sprops.inst) { slLspInst = sprops.inst; slLightSprops(); slLCells++; }
   if (haveProps && props.ninst && slProps933 && slLpInst != props.st) { slLpInst = props.st; slLightProps(); slLCells++; }   // №933: свет пропов
   if (!slLdone) return;
   unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0, built = 0, before = slLn;
+  // О12 (108, Стена; Fable §3): при пустой таблице поиск шёл каждый кадр и обходил все клетки уровня (191 мкс на Маке), хотя новых загруженных клеток нет. Загрузчик на каждую клетку,
+  // ставшую state 2, прибавляет cgDirty (main_stream.h, farcells.h; тот же счётчик ведёт камера, camgrid.h). Обход прошёл целиком (меньше двух построек) при этом cgDirty — значит
+  // все загруженные клетки сделаны, и пока cgDirty тот же, обход вернул бы то же самое (ничего): пропуск. cgDirty читается ДО обхода: загрузка во время обхода даст повтор, не пропуск.
+  // SLSCAN108_OLD=1 / flag slscan108old 1 — обход каждый раз; «flag slscancheck 1» обходит и при пропуске и считает, сколько клеток прежний путь построил бы (строка SLSCANCHECK, обязана быть 0)
+  const unsigned dirty0 = cgDirty;
+#ifdef SLSCAN108_BREAK   // красный контроль гейта: пропуск не учитывает новых загрузок клеток
+  const int skip = !slScan108Old && slScanOk && slScanNc == ncell && slScanDone == slLdone;
+#else
+  const int skip = !slScan108Old && slScanOk && slScanSeen == dirty0 && slScanNc == ncell && slScanDone == slLdone;
+#endif
+  if (skip) { slScanSkip++; if (!slScanCheck) { if (smkOn) slLBuildUs += sceKernelGetSystemTimeLow() - t0; return; } }
   for (unsigned c = 0; c < ncell && built < 2; c++) {
     if (slLdone[c] || cl[c].state != 2) continue;
     slLdone[c] = 1; built++; slLCells++;
@@ -774,6 +790,8 @@ static void slLightBuild(void) {
       else if (smkOn && (d->r.flags & F_ADDITIVE) && d->r.owner == 0) {   // №805: служебно — аддитивный кусок крупнее предела (остаётся картинкой)
         char b[200]; snprintf(b, sizeof b, "SLBIG cell=%u ni=%d tex=%d bb=%.1f,%.1f,%.1f..%.1f,%.1f,%.1f\n", c, d->r.ni, d->r.tex, d->r.bb[0], d->r.bb[1], d->r.bb[2], d->r.bb[3], d->r.bb[4], d->r.bb[5]); smkWrite(b); } }
   }
+  if (skip) { slScanChk++; if (built) slScanMis++; }   // проверка: прежний путь при пропуске что-то построил бы (расхождение)
+  else if (built < 2) { slScanOk = 1; slScanSeen = dirty0; slScanNc = ncell; slScanDone = slLdone; } else slScanOk = 0;
   if (smkOn && slLn != before) for (unsigned k = before; k < slLn; k++) { const SlL *e = &slL[k]; char b[260]; snprintf(b, sizeof b, "SLENTRY sc=%s k=%u kind=%d tex=%d p=%.1f,%.1f,%.1f X=%.2f,%.2f,%.2f Y=%.2f,%.2f,%.2f uv0=%.2f,%.2f uv3=%.2f,%.2f cB=%08x cT=%08x\n", smkScene, k, e->kind, e->tex, e->p[0], e->p[1], e->p[2], e->X[0], e->X[1], e->X[2], e->Y[0], e->Y[1], e->Y[2], e->uv[0][0], e->uv[0][1], e->uv[3][0], e->uv[3][1], e->cB, e->cT); smkWrite(b); }
   if (slLn != before && slLn > 1) qsort(slL, slLn, sizeof(SlL), slLCmp);
   if (smkOn) slLBuildUs += sceKernelGetSystemTimeLow() - t0;
@@ -1393,6 +1411,59 @@ static void nitroGlintBatch1148(const float *P, const float *CY, int n, float ex
   glintFlush();
   if (smkOn && n0) { static int lg_; if (lg_++ < 3) { char l_[96]; snprintf(l_, sizeof l_, "NITROGLINT1148 n=%d t=%.1f\n", n0, smkT); smkWrite(l_); } }
 }
+// №1342 (Роб, 108 на PSP: «у коллекционной карточки нет светяшки блинк-блинк, похожей на гаечный ключ»): у оригинала над карточкой лежит значок card_idle (art/cards.p3d), как над ключом wrench:
+// две звезды-«царапины» scratch2 (одна повёрнута на 45°) шириной 6,26 м, сложением, на 0,66 м над точкой карточки, цвета (133,38,255) и (184,38,255) — фиолетовые, как у ключа (133,38,255),
+// цвета перетекают друг в друга за 4 с (блинк-блинк); под ними розовое кольцо glowsolid (255,207,199) 4 м и белая звёздочка 1,6 м (она у нас уже есть: пятно №1063).
+// У нас карточка светилась только этим белым пятном. Теперь те же две звезды и тот же рисовальщик, размер и прозрачность, что у ключа (wrGlowDraw), только цвета и размер карточки.
+// Подбор (card_collect): те же звёзды вспыхивают и расходятся за 0,5 с — размер 6,2 → 11 м, цвет к нулю; частицы card_collect_psShape у нас уже были (fxBurst). CARDGLINT1342_OLD=1 — как было (flag cardglint1342old 1)
+#ifndef CARDGLINT1342_OLD
+#define CARDGLINT1342_OLD 0
+#endif
+int cardGlint1342Old = CARDGLINT1342_OLD;
+#define CARD1342_S 6.26f      // ширина звёзд card_idle, м (диск)
+#define CARD1342_Y .66f       // высота центра звёзд над точкой карточки, м (диск: смещения суставов card_idle)
+#define CARD1342_FLASH_S .5f  // вспышка подбора, с (цвет card_collect гаснет к 15-му кадру из 30 к/с)
+static struct { float p[3]; unsigned t0; int on; } cardFl1342[4];
+void cardFlash1342(const float p[3]) {
+  if (cardGlint1342Old) return;
+  int s = 0; for (int i = 0; i < 4; i++) if (!cardFl1342[i].on) { s = i; break; }
+  cardFl1342[s].on = 1; cardFl1342[s].p[0] = p[0]; cardFl1342[s].p[1] = p[1]; cardFl1342[s].p[2] = p[2]; cardFl1342[s].t0 = sceKernelGetSystemTimeLow();
+  if (smkOn) { char l_[96]; snprintf(l_, sizeof l_, "CARDGLINT1342 flash at=%.1f,%.1f,%.1f\n", p[0], p[1], p[2]); smkWrite(l_); }
+}
+static void cardGlintDraw1342(float ex, float ey, float ez, int inR) {
+  if (cardGlint1342Old || inR || !haveColl || !haveSP) return;
+  unsigned nIdle = 0, nFl = 0; unsigned now = sceKernelGetSystemTimeLow();
+  for (int i = 0; i < 4; i++) if (cardFl1342[i].on) { if ((now - cardFl1342[i].t0) * 1e-6f >= CARD1342_FLASH_S) cardFl1342[i].on = 0; else nFl++; }
+  for (unsigned k = 0; k < coll.ncard && k < COLL_MAXCARD; k++) if (!coll.st.cardGot[k]) nIdle++;
+  if (!nIdle && !nFl) return;
+  float e3[3] = {ex, ey, ez}; unsigned n0 = 0, nd_ = 0;
+  glintBegin(nIdle + nFl > 32 ? 32 : nIdle + nFl);
+  for (unsigned k = 0; k < coll.ncard && k < COLL_MAXCARD && n0 < 32; k++) {
+    if (coll.st.cardGot[k] || collectInstRoom(&coll, coll.card[k].inst) != -1) continue;
+    const CollCard *C = &coll.card[k]; float dx = C->x - ex, dy = C->y - ey, dz = C->z - ez, d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > 40.f * 40.f) continue;
+    float f = d2 < 30.f * 30.f ? 1.f : (40.f - sqrtf(d2)) / 10.f;
+    float c3[3] = {C->x, C->y + CARD1342_Y, C->z}, obj_[3] = {c3[0], c3[1], c3[2]};
+    if (rfSphereOut(pl, e3, c3, 3.f)) continue;
+    float l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) l = 1e-3f; c3[0] += dx / l * .9f; c3[2] += dz / l * .9f;   // за карточкой от камеры, как у ключа
+    if (glint1031 && glintFix1022) { if (!gf1022Visible(obj_, ex, ey, ez)) continue; nd_ = 1; }
+    float kp_ = gf1022Pull(c3, obj_, ex, ey, ez);
+    gvMode970 = 1; gvSrc1022 = "card";
+    glintAdd(c3, ex, ey, ez, CARD1342_S * (fxGlint970Old ? 1.f : WRENCH970_S) * kp_, 0xFF2685u, 0xFF26B8u, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * f * (fxGlint970Old ? 1.f : WRENCH970_A), (float)k * .37f + .6f); n0++;
+    gvMode970 = 0;
+  }
+  for (int i = 0; i < 4 && n0 < 32; i++) {   // вспышка подбора: звёзды расходятся и гаснут
+    if (!cardFl1342[i].on) continue;
+    float a = 1.f - (now - cardFl1342[i].t0) * 1e-6f / CARD1342_FLASH_S, sc = 6.2f + (11.f - 6.2f) * (1.f - a);
+    float c3[3] = {cardFl1342[i].p[0], cardFl1342[i].p[1] + CARD1342_Y, cardFl1342[i].p[2]};
+    float dx = c3[0] - ex, dz = c3[2] - ez, l = sqrtf(dx * dx + dz * dz); if (l < 1e-3f) l = 1e-3f; c3[0] += dx / l * .9f; c3[2] += dz / l * .9f;
+    glintAdd(c3, ex, ey, ez, sc * (fxGlint970Old ? 1.f : WRENCH970_S), 0xFF2685u, 0xFFFFFFu, (GLINT_VEC_OLD ? GLINT_A : GLINT_VA) * a, (float)i * .3f); n0++;
+  }
+  if (nd_) sceGuDisable(GU_DEPTH_TEST);
+  glintFlush();
+  if (nd_) sceGuEnable(GU_DEPTH_TEST);
+  if (smkOn) { static unsigned lg_; if (n0 && lg_++ < 4) { char l_[160]; snprintf(l_, sizeof l_, "CARDGLINT1342 stars=%u flash=%u t=%.1f card0=%.1f,%.1f,%.1f r=%.2f\n", n0 - nFl, nFl, smkT, coll.card[0].x, coll.card[0].y, coll.card[0].z, coll.card[0].r); smkWrite(l_); } }
+}
 static void wrGlowDraw(float ex, float ey, float ez, int inR) {
   if (!wrGlowOn || inR || !haveCol || !world.nwrench || !haveSP) return;
   if (smkOn) { static const void *wl_; if (wl_ != (const void *)world.wrench) { wl_ = world.wrench; char l_[200]; int o_ = snprintf(l_, sizeof l_, "WRENCHAT n=%u", world.nwrench);
@@ -1484,11 +1555,18 @@ static const char *const wsFile[WS_N] = {"wrenchspr.bin", "exclspr.bin", "phones
 #define WS_SOFT_OLD 0
 #endif
 #define WS_PAGES 4
-static struct { WsHdr h; unsigned char *mem; const unsigned char *pal, *lv[WS_PAGES][2]; int state, pages, soft; unsigned char palRaw[1024]; } wsA[WS_N];
+// 107б P0 (сон и пробуждение, Роб 1273; генплан Fable §P0.3): отказ первой загрузки (state = −1) держался до перезапуска игры — значки ключей, восклицаний и будки не рисовались. Теперь отказ помнит эпоху питания и время:
+// эпоха сменилась или прошло WS_RETRY_US — одна новая попытка (раз в 10 с, не каждый кадр). WSP0_OLD=1 / файл wsp0old — как было
+#ifndef WSP0_OLD
+#define WSP0_OLD 0
+#endif
+#define WS_RETRY_US 10000000u
+static int wsP0 = !WSP0_OLD;
+static struct { WsHdr h; unsigned char *mem; const unsigned char *pal, *lv[WS_PAGES][2]; int state, pages, soft; unsigned char palRaw[1024]; unsigned failEp, failT, failN; } wsA[WS_N];
 #define WS_MAXQ 40
 static struct { int a; float c[3], rot, px, py, ox, oy; } wsQ[WS_MAXQ]; static unsigned wsN, wsDrawn, wsFrames, wsIcons, wsIconUs;   // c — точка опоры, (px, py) — её место от центра квадрата, (ox, oy) — сдвиг по экрану, м
 static void wsLoad(int a) {
-  wsA[a].state = -1; char fn[256]; sibling(fn, wsFile[a]); SceUID fd = sceIoOpen(fn, PSP_O_RDONLY, 0); if (fd < 0) return;
+  wsA[a].state = -1; if (wsA[a].failEp != pwrEpoch()) wsA[a].failN = 0; wsA[a].failN++; wsA[a].failEp = pwrEpoch(); wsA[a].failT = sceKernelGetSystemTimeLow(); char fn[256]; sibling(fn, wsFile[a]); SceUID fd = pwrSimFault("wsprite") ? -1 : sceIoOpen(fn, PSP_O_RDONLY, 0); if (fd < 0) return;
   int n = (int)sceIoLseek32(fd, 0, PSP_SEEK_END); sceIoLseek32(fd, 0, PSP_SEEK_SET); WsHdr *H = &wsA[a].h;
   if (n > 32 + 1024 && n < 1 << 20 && (wsA[a].mem = (unsigned char *)memalign(16, (size_t)n)) && sceIoRead(fd, wsA[a].mem, (SceSize)n) == n) {
     memcpy(H, wsA[a].mem, sizeof *H); unsigned l0 = (unsigned)H->w * H->h, l1 = l0 / 4, pg = H->pad ? H->pad : 1u;
@@ -1510,7 +1588,10 @@ static void wsRetone(void) {
   for (int a = 0; a < WS_N; a++) { if (wsA[a].state != 1 || !wsA[a].pal) continue;
     memcpy((void *)wsA[a].pal, wsA[a].palRaw, 1024); palTone((void *)wsA[a].pal); sceKernelDcacheWritebackRange((void *)wsA[a].pal, 1024); }
 }
-static int wsOn(int a) { if (!wsA[a].state) wsLoad(a); return wsA[a].state > 0; }
+static int wsOn(int a) {
+  if (wsP0 && wsA[a].state < 0 && (wsA[a].failEp != pwrEpoch() || (wsA[a].failN < 3 && (int)(sceKernelGetSystemTimeLow() - wsA[a].failT) > (int)WS_RETRY_US))) {   // файла нет вовсе (атласа нет в наборе) — не больше трёх повторов за эпоху
+     wsA[a].state = 0; if (smkOn) { char l_[100]; snprintf(l_, sizeof l_, "WSPRITE retry %s epoch=%u t=%.1f\n", wsFile[a], pwrEpoch(), smkT); smkWrite(l_); } }
+  if (!wsA[a].state) wsLoad(a); return wsA[a].state > 0; }
 static void wsPreload(void) { for (int a = 0; a < WS_N; a++) if (!wsA[a].state) wsLoad(a); }   // Build 94 Z0-лайт: спрайты гаечных ключей, восклицания и будки читаются один раз при первой загрузке уровня, а не по первому показу посреди кучи
 static int wrSprOn(void) { if (WRENCH_SPRITE_OLD || !haveCol || !world.nwrench) return 0; return wsOn(WS_WRENCH); }
 static int wrSprInst(unsigned i) { for (unsigned k = 0; k < world.nwrench && k < 32; k++) if (G.wrenchInst[k] == (int)i) return 1; return 0; }

@@ -1,0 +1,27 @@
+scene g1321
+flag lockicon1321old 1
+flag golevel 2
+wait 25
+flag msnmainat -504
+wait 8
+flag msnhud
+shot s4_talkto
+flag msnpass
+wait 5
+flag msnhud
+shot s5_dialogue
+flag msnpass
+wait 5
+flag msnhud
+shot s6_buycar_a
+wait 4
+flag msnhud
+shot s6_buycar_b
+foot 283 -60 1.5 9
+wait 4
+flag msnhud
+shot s6_near_seller
+wait 3
+flag msnhud
+shot s6_near_seller2
+end

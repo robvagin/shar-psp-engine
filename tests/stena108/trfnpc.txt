@@ -1,0 +1,19 @@
+# Т1 (107b, Стена): персонаж миссии на полосе (пустышка flag trfnpc108 x z): трафик ПЕРЕД ним встаёт, как у оригинала (перед обычным пешеходом не встаёт — trfped_gate)
+flag nosave
+scene TNPC
+wait 3
+flag msn
+wait 2
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 10
+flag trfnpc108 243 161.1
+wait 0.5
+flag trfprobe
+wait 4
+flag trfprobe
+wait 4
+flag trfprobe
+wait 4
+flag trfprobe
+end

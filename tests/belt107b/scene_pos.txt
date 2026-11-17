@@ -1,0 +1,55 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+flag dalbelt 1
+goto 344.11 96.38 -3.1412
+wait 10
+scene Pa1
+wait 2
+shot pa1
+flag dalbelt 0
+wait 3
+scene Pa0
+shot pa0
+flag dalbelt 1
+goto 388.39 53.07 1.5684
+wait 10
+scene Pb1
+wait 2
+shot pb1
+flag dalbelt 0
+wait 3
+scene Pb0
+shot pb0
+flag dalbelt 1
+goto 342.14 -211.94 -3.1416
+wait 10
+scene Pc1
+wait 2
+shot pc1
+flag dalbelt 0
+wait 3
+scene Pc0
+shot pc0
+flag dalbelt 1
+goto 439.13 -441.28 3.1414
+wait 10
+scene Pd1
+wait 2
+shot pd1
+flag dalbelt 0
+wait 3
+scene Pd0
+shot pd0
+flag dalbelt 1
+flag stop
+wait 2
+end

@@ -74,25 +74,33 @@ typedef struct {
   uint8_t state, alive, colOn, col2On, poseValid, burst, posed;   // posed: поза суставов jm хоть раз посчитана (main_loop.h: далёкие — реже)
   uint8_t fxStarted;               // бит k: родная система окна EFX k уже запущена в этом состоянии
   uint16_t callDone;               // выполненные вызовы текущего состояния (бит = номер вызова)
+  // 108 О11 (Бабл; документ Fable: «170 из 197 стейтпропов каждый кадр проходят шаг и выходят на первых строках»): поля, которые читает ранний выход шага (alive, fall, loopOn, t, cool, burst), стоят в первых 32 байтах записи,
+  // а признак trivial (в текущем состоянии нет вызовов, автоперехода, позы и частиц) — рядом с ними: шаг такого экземпляра читает одну строку кэша вместо цепочки запись → экземпляр → тип → состояние.
+  // Порядок полей поменян без изменения смысла; trivial выставляют spTrivialSet (init, enter). SPIDLE108_OLD=1 / «flag spidle108old 1» — прежняя проверка по таблице состояний
+  uint8_t fall;                    // №975: 1 — столб валится на шарнире у основания, 2 — лежит
+  uint8_t loopOn;                  // сверка g11 круг 2 (P15-19): цикл кадров [loopA, loopB) вместо хода клипа (вступление и окончание гэга), spLoop
+  uint8_t trivial;                 // 108 О11: состояние без вызовов, автоперехода, позы и частиц (выводится из таблицы состояний при входе в состояние)
   float t;                         // с от входа в состояние
   float poseF;                     // текущий кадр клипа
   float liftK;                     // №519: > 1 — вертикальный ход дорожек клипа растянут во столько раз от кадра 0 (подъёмник Duff: с любого ящика два прыжка до крыши); 0 — как в клипе
   float cool;                      // «остывание» контакта с машиной: новое событие только после 0.3 с без касания
   float away; uint8_t noRespawn;    // миссионные/постоянные объекты запрещают фоновое восстановление
+  uint8_t byOther;                 // 108 (1305): разовый предмет разбит НЕ игроком (трафик, погоня, машина миссии): в сохранение не пишется и возвращается по правилу района
   float fxAcc[4];
   float x, y, z, R[9];             // положение и поворот экземпляра (R по столбцам: мир = R*v + T)
   float *jm;                       // мировые (в осях объекта) матрицы суставов: 9 (R по столбцам) + 3 (t) на сустав
   float *jm0;                      // №923: матрицы суставов в кадре 0 обломка (rest) и поворот сдвига кусков (dirC, dirS) — осколки летят по ходу машины; NULL — как в клипе
   float dirC, dirS;
-  uint8_t fall; float fallTh, fallW, fallD[2], fallR0[9];   // №975: 1 — столб валится на шарнире у основания (угол, скорость, направление, исходный поворот), 2 — лежит
+  float fallTh, fallW, fallD[2], fallR0[9];   // №975: угол столба, скорость, направление, исходный поворот (fall — в начале записи)
   float hv[2];                     // №923: горизонтальная скорость машины (до стен кадра) при её ударе по этому предмету; обломок по вызову с задержкой берёт её отсюда
   uint8_t ownFx;                  // №1175: обломок запущен самим стейтпропом (вызов BREAK барьера) — его родные частицы играет он сам, не вызывающий; 0 — обломок предмета (частицы у вызывающего)
   uint8_t bushPass;               // №1101: куст-шар — машина вошла на скорости и проходит насквозь (держится, пока касание не кончилось)
   uint8_t hitPend;                 // сверка g11 круг 2 (P18 Д5): вызов монет при выключенном Hit & Run подал предмету ещё одно событие HIT — отправить после вызова
-  uint8_t loopOn; float loopA, loopB;   // сверка g11 круг 2 (P15-19): цикл кадров [loopA, loopB) вместо хода клипа (вступление и окончание гэга), spLoop
+  float loopA, loopB;   // сверка g11 круг 2 (P15-19): границы цикла кадров (loopOn — в начале записи)
   uint16_t slN; uint8_t slMix; float slD0, slSum;   // №1000: далёкий экземпляр спит — сколько кадров не шагал, первый dt, все ли dt равны, сумма dt; при пробуждении время догоняется (stateprops.c spNearStep)
 } SpRun;
 
+extern int spIdle108Old;   // 108 О11
 typedef struct { uint8_t preset, first; int16_t sys; float x, y, z, dx, dz, t0; } SpFxOut;   // t0 — кадр начала окна EFX (правка 80)   // sys >= 0: родная система fx.shr (один раз), иначе пресет
 #define SP_FXQ 96
 
@@ -146,11 +154,22 @@ int spInit(StateProps *sp, const void *section, unsigned size);
 int spInitResident(StateProps *sp, const void *section, unsigned size, int detachedKeys);   // detachedKeys: бит 1 - ключи, бит 2 - вершины не лежат в section (их размер в section не занят)
 void spFree(StateProps *sp);
 extern unsigned spHitStat[3];   // №1159: [0] просмотрено в spHitCar, [1] дошло до carContact, [2] из них с объёмом (до дорогой части); счётчики для теста
-int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]);   // круг 7: центр объёма в мире с учётом следования за суставом (тест)
+int spVolumeCenter(StateProps *sp, unsigned i, unsigned k, float out[3]);
+int spNoSolid(const StateProps *sp, unsigned i);   // 107b: 1 — в текущем состоянии ничего не рисуется и оно ни во что не перейдёт: твёрдости нет (общее для машины №1248е и для Гомера)
+int spVolumeShift(StateProps *sp, unsigned i, float offOld[3], float offW[3]);   // 107b: сдвиг объёмов за суставом (offOld — в осях объекта, offW — в мире); 1 — тип со следованием
+   // круг 7: центр объёма в мире с учётом следования за суставом (тест)
 // кадр: состояния, вызовы, частицы; машина (может быть NULL) — удары и упор в целые пропы; монеты — в coins (может быть NULL)
 void spUpdate(StateProps *sp, const ColWorld *world, Car *car, Coins *coins, float dt);
 // Contact pass without advancing the shared animation/state clocks.
 void spHitCar(StateProps *sp, const ColWorld *world, Car *car, Coins *coins);
+// 107б П9 (сверка физики Fable-2): «отреагировавший» стейтпроп (состояние не начальное, не куст-шар) машину не держит (stateprops.c, SP_REACT_PASS); у Гомера пешком (homer.c homerSolidSprops) то же правило — зовёт эту функцию.
+// 1 — предмет уже отреагировал на удар и проходим
+static inline int spReacted107(const SpRun *r, const SpType *T) { return r->state != 0 && T->cls != 2; }
+void spHitOther(StateProps *sp, const ColWorld *world, Car *car);
+extern int spOnceOther1305Old;   // 108 (1305): 1 — разовые, разбитые чужой машиной, пишутся в сохранение и не возвращаются, как в 107
+extern const char *spHitOtherWho;   // 108 (1305): кто бьёт в этом вызове spHitOther ("traffic" / "mission"), для строки журнала
+extern void (*spLogFn)(const char *line);   // 108 (1305): строка журнала (ящик/смоук), NULL — молча   // 107б П3: касание чужой машины (трафик, погоня, ИИ) со стейтпропами, без монет и шкалы Hit & Run
+extern int spOther107Old;
 // сверка g11 P11-Д1/P11-05: толчок предмету-стейтпропу от пинка героя (400, 45° вверх от курса), стомпа (800) и взрыва машины (20000): скорость сила / масса (масса из ATC, 100 если нуль).
 // У типа 10 (фонари, светофоры, столбы) толчок запускает падение на шарнире у основания в сторону (dx, dz); у ломаемых (4) и статики (2) скорость не добавляется. Возврат 1 — упал
 int spImpulse(StateProps *sp, unsigned i, float dx, float dz, float force);

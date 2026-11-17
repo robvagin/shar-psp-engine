@@ -5,7 +5,7 @@
 static int ground(float x, float z, float y, float step, float *out) {
   int gx = (int)((x - hox) / hcell), gz = (int)((z - hoz) / hcell);
   if (gx < 0 || gz < 0 || gx >= hw || gz >= hh) return 0;
-  short *c = hm + ((size_t)gz * hw + gx) * 4; int found = 0; float best = -1e9f;
+  short tmp_[4]; const short *c = hmAt(gx, gz, tmp_); int found = 0; float best = -1e9f;
   for (int i = 0; i < 4; i++) {
     if (c[i] == -32768) continue;
     float h = c[i] * .01f;
@@ -21,7 +21,7 @@ static int mvGroundNHook(float x, float z, float yHi, float yLo, float *y, float
 static int wallAt(float x, float z, float y) {
   int gx = (int)((x - hox) / hcell), gz = (int)((z - hoz) / hcell);
   if (gx < 0 || gz < 0 || gx >= hw || gz >= hh) return 1;
-  short *w = wl + ((size_t)gz * hw + gx) * 2;
+  const short *w = wlAt(gx, gz);
   if (w[0] > w[1]) return 0;
   float lo = w[0] * .01f, hi = w[1] * .01f;
   return hi > y + 0.45f && lo < y + 1.6f;
@@ -57,7 +57,7 @@ static void swizzleAll(void) {
 // ---------- состояние GE: шлём только то, что поменялось ----------
 static int bound, texOn, curFlags, curFilt, binds;
 static void setCull(int on); static void setBias(int b);
-static float curSlope = -1.f; static int mipAuto, mipConst = -1, curLvlMode = -1;   // mipConst — служебное «flag mipconst N» (-1 выкл.): один уровень мипа у всех текстур, A/B арки J9-5 на железе static float curSlope = -1.f;   // правка 77/88: режим выбора мипа в GE (0 по треугольнику, 1 по глубине)
+static float curSlope = -1.f; static int mipAuto, mipConst = -1, curLvlMode = -1;   // mipConst — служебное «flag mipconst N» (-1 выкл.): один уровень мипа у всех текстур, A/B арки J9-5 на железе
 #define MIP_BIAS 0.f
 // «Земля» (асфальт, разметка, тротуар, трава и т.п., tools/psp_export.py GROUND_RE; байт 9 заголовка текстуры level.shr = 1): наклон выбора мипа уже запечён с множителем 2^0,75 (SHR_GROUND_BIAS).
 // Дополнительный множитель наклона в движке без пересборки данных: файл `groundbias` рядом с EBOOT (десятичное число 0,25 до 4, например 1.5; нет файла или число вне предела: 1, как раньше)
@@ -1035,6 +1035,7 @@ static int diagPatch;   // 1 — кусок рисует drawGeoPatch853 (вее
 static struct { const void *v; int ni, tex, owner, ph, fl, patch, far, gon, bigf; unsigned n; float zmin, edge, dist, ext; } diagDt[16]; static int diagDtN;
 static DiagEnt diagEnt[24]; static int diagN, diagFrRisk; static unsigned diagTotRisk, diagTotTri, diagLines, diagUs; static unsigned diagPh[24];
 static const BigInfo *bigInfo(const void *v, int ni, int flags);
+static unsigned bigInfoMissUs;   // 109: суммарная цена промахов bigInfo (только журнал смоука)
 static void diagGeo(const Piece *d, int far, int cnt) {
   if (flatInList) return;   // №921: идёт сборка листа клетки — это не рисование (лист в кадр попадает, только если клетка не под риском: её меряет diagCellList, а куски под риском режутся и рисуются отдельно); раньше такие выбросы шли в DIAGS как «город»
   if (!diagMok || bigCutBlock || ggK.tvy <= 0.f) return;   // нет матрицы модели или бонусный уровень (оси камеры не заданы)
@@ -1148,12 +1149,15 @@ static const BigInfo *bigInfo(const void *v, int ni, int flags) {
   for (; probe < 16; probe++, b = &bigTab[(h + probe) & 511u]) { if (b->used && b->v == v && b->ni == ni) return b; if (!b->used) break; }
   if (probe >= 16) b = &bigTab[h];   // таблица забита: вытеснить первую (редко: типов кусков ≪ 2048)
   bigInfoMiss853++;   // №853 служебно: пересчёт бокса и рёбер куска (промах таблицы)
+  unsigned bigT0_ = smkOn ? sceKernelGetSystemTimeLow() : 0;   // 109: цена промахов (строка PBAKE big_us)
   int v12 = (flags & F_V12) != 0, vs = v12 ? 12 : 16, po = v12 ? 6 : 8; float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
   for (int i = 0; i < ni; i++) { const short *q = (const short *)((const char *)v + i * vs + po);
     for (int a = 0; a < 3; a++) { float x = q[a] * (1.f / 32768.f); if (x < lo[a]) lo[a] = x; if (x > hi[a]) hi[a] = x; } }
   float e2 = 0.f; for (int t = 0; t + 2 < ni; t += 3) for (int k = 0; k < 3; k++) { const short *p = (const short *)((const char *)v + (t + k) * vs + po), *q = (const short *)((const char *)v + (t + (k + 1) % 3) * vs + po);
     float dx = (p[0] - q[0]) * (1.f / 32768.f), dy = (p[1] - q[1]) * (1.f / 32768.f), dz = (p[2] - q[2]) * (1.f / 32768.f), l2 = dx * dx + dy * dy + dz * dz; if (l2 > e2) e2 = l2; }
-  b->edge = sqrtf(e2); b->v = v; b->ni = ni; b->vs = vs; b->used = 1; memcpy(b->lo, lo, sizeof lo); memcpy(b->hi, hi, sizeof hi); return b;
+  b->edge = sqrtf(e2); b->v = v; b->ni = ni; b->vs = vs; b->used = 1; memcpy(b->lo, lo, sizeof lo); memcpy(b->hi, hi, sizeof hi);
+  if (smkOn) bigInfoMissUs += sceKernelGetSystemTimeLow() - bigT0_;
+  return b;
 }
 // №984 (наряд «город в езде L3–L7»): проверки риска выброса GE на кусок — сначала дешёвый отсев без корней (по квадратам), точный расчёт только если отсев не отбросил. Отсев консервативен (запас 0,01 %):
 // отбрасывает только то, что прежний расчёт тоже отбросил, поэтому результат тот же. TRFGEO984_OLD=1 / «flag trfgeo984 0» / файл trfgeo984old — прежний расчёт; «flag trfgeocheck 1» — каждую проверку
@@ -1352,7 +1356,7 @@ static const CarLT *carLongTris940(const Piece *d, float sc, int *built) {
   if (smkOn && cltDiagN < 40) { cltDiagN++; char l_[160]; snprintf(l_, sizeof l_, "CLT940 sc=%s ni=%d nl=%d ng=%d tex=%d own=%d used=%u/%u n=%d\n", smkScene, ni, nl, ng, d->r.tex, d->r.owner, cltUsed, cltLim940, carLTn); smkWrite(l_); }
   return L;
 }
-static const CarLT *carLongTris(const Piece *d, float sc) { int bl = 0; unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0; const CarLT *r = cltFix940 ? carLongTris940(d, sc, &bl) : carLongTris_(d, sc, &bl); if (smkOn) { if (bl) { cltBuilds++; cltBuildUs += sceKernelGetSystemTimeLow() - t0; } if (!r) cltFailN++; } return r; }
+static const CarLT *carLongTris(const Piece *d, float sc) { int bl = 0; unsigned t0 = SMKCLK ? sceKernelGetSystemTimeLow() : 0; const CarLT *r = cltFix940 ? carLongTris940(d, sc, &bl) : carLongTris_(d, sc, &bl); if (SMKCLK) { if (bl) { cltBuilds++; cltBuildUs += sceKernelGetSystemTimeLow() - t0; } if (!r) cltFailN++; } return r; }
 // №940: тот же кадр камеры и матрица куска, и прошлый полный обход не нашёл ни одного выброса — обход повторять нечего (камера стоит: стоянка, пауза, съёмка). Два 32-битных хеша от битов 31 числа
 static void cltHash(const ScePspFMatrix4 *m, unsigned *h0, unsigned *h1) {
   float f[31]; memcpy(f, m, 64); memcpy(f + 16, ggE, 12); memcpy(f + 19, ggR, 12); memcpy(f + 22, ggU, 12); memcpy(f + 25, ggF, 12); f[28] = ggK.zn; f[29] = ggK.tvx; f[30] = ggK.tvy;
@@ -1374,11 +1378,11 @@ static int cltBoxSkip(const float *bx, float A[3][3], const float B[3], const Ca
 static void drawGeoPatch853(const Piece *d, const ScePspFMatrix4 *m) {
   unsigned f0_ = carPatchFans; int cnt = d->r.ni; diagPatch = 1; diagAbsM = 1; drawGeo(d, 0, cnt); diagPatch = 0;
   if ((d->r.flags & F_STRIP) || !(d->r.flags & F_NOIDX)) return;
-  unsigned us0 = smkOn ? sceKernelGetSystemTimeLow() : 0, vb0_ = ggVbUsed;
+  unsigned us0 = SMKCLK ? sceKernelGetSystemTimeLow() : 0, vb0_ = ggVbUsed;
   float sc = matScale((const float *)m); const CarLT *L = carLongTris(d, sc);
-  if (!L || !L->nl) { if (smkOn) carPatchUs += sceKernelGetSystemTimeLow() - us0; return; }
+  if (!L || !L->nl) { if (SMKCLK) carPatchUs += sceKernelGetSystemTimeLow() - us0; return; }
   CarLT *Lm = (CarLT *)L; unsigned qh0 = 0, qh1 = 0;
-  if (cltFix940) { cltHash(m, &qh0, &qh1); if (Lm->quiet && Lm->h0 == qh0 && Lm->h1 == qh1) { cltQuietN++; if (smkOn) carPatchUs += sceKernelGetSystemTimeLow() - us0; return; } }   // №940: ничего не изменилось, выбросов не было
+  if (cltFix940) { cltHash(m, &qh0, &qh1); if (Lm->quiet && Lm->h0 == qh0 && Lm->h1 == qh1) { cltQuietN++; if (SMKCLK) carPatchUs += sceKernelGetSystemTimeLow() - us0; return; } }   // №940: ничего не изменилось, выбросов не было
   int hitN = 0;
   const float lim = (d->r.flags & 2) ? 2048.f : GG_SAFE;
   int v12 = (d->r.flags & F_V12) != 0, vs = v12 ? 12 : 16, po = v12 ? 6 : 8; const float S = 1.f / 32768.f;
@@ -1423,7 +1427,7 @@ static void drawGeoPatch853(const Piece *d, const ScePspFMatrix4 *m) {
   }
   if (cltFix940) { Lm->h0 = qh0; Lm->h1 = qh1; Lm->quiet = !hitN; }
   if (carPatchFans != f0_ && carFanN < 8 && !carFanHas(d->v)) carFanV[carFanN++] = d->v;   // №922: у этого куска в кадре были веера — обводка проверяется
-  if (smkOn) carPatchUs += sceKernelGetSystemTimeLow() - us0;
+  if (SMKCLK) carPatchUs += sceKernelGetSystemTimeLow() - us0;
 }
 static int carNear8531(const Piece *d, const ScePspFMatrix4 *m) {
   if (GG_CAR853_OLD || bigCutBlock || ggK.tvy <= 0.f || (d->r.owner == 0 && !dropFix921) || !(d->r.flags & F_NOIDX) || d->r.ni < 3 || d->r.ni > 65535) return 0;   // №921: owner 0 — проп/свет (сюда город не попадает)
@@ -1504,15 +1508,15 @@ static void drawPieceM(Piece *d, const ScePspFMatrix4 *m) {   // кусок с �
 #ifdef GATE_BREAK_PM
   return;   // отрицательный контроль гейта «КАДР ИГРОКА»: воспроизводит баг 44c9a048 (кусок посчитан, не нарисован)
 #endif
-  unsigned bn0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; int bn_ = bigNear(d, m); if (smkOn) { unsigned bn1_ = sceKernelGetSystemTimeLow(); smkBigNearUs += bn1_ - bn0_; smkBigNearN++; if (trgIn) { trgBnUs += bn1_ - bn0_; trgN++; } } XQ(55);   // №913: цена bigNear на кусок
-  if (bn_) { unsigned bc0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; Piece pb_; const Piece *dg_ = d;
+  unsigned bn0_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0; int bn_ = bigNear(d, m); if (SMKCLK) { unsigned bn1_ = sceKernelGetSystemTimeLow(); smkBigNearUs += bn1_ - bn0_; smkBigNearN++; if (trgIn) { trgBnUs += bn1_ - bn0_; trgN++; } } XQ(55);   // №913: цена bigNear на кусок
+  if (bn_) { unsigned bc0_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0; Piece pb_; const Piece *dg_ = d;
     if (ggPropBatchOn && !d->ggBatch && d->r.owner == 0 && !ggBatchOld) { GgBatch *gb_ = propBatchGet(d); if (gb_) { pb_ = *d; pb_.ggBatch = gb_; dg_ = &pb_; } }   // №913
     unsigned gt0_ = ggTrisF; ggForce = 1; drawGeoG(dg_, 0, d->r.ni, m, 1); ggForce = 0; bigPiecesF++; dbgPMgeo++;
-    if (smkOn) { unsigned dt_ = sceKernelGetSystemTimeLow() - bc0_; smkBigCutUs += dt_; smkBigCutN++;
+    if (SMKCLK) { unsigned dt_ = sceKernelGetSystemTimeLow() - bc0_; smkBigCutUs += dt_; smkBigCutN++;
       int hit_ = -1; for (int q_ = 0; q_ < 12; q_++) if (ggfTab[q_].n && ggfTab[q_].tex == d->r.tex && ggfTab[q_].ni == d->r.ni && ggfTab[q_].ph == bbPhase) { hit_ = q_; break; }
       if (hit_ < 0) for (int q_ = 0; q_ < 12; q_++) if (!ggfTab[q_].n) { hit_ = q_; ggfTab[q_].tex = d->r.tex; ggfTab[q_].ni = d->r.ni; ggfTab[q_].ph = bbPhase; ggfTab[q_].us = 0; memcpy(ggfTab[q_].p, &m->w, sizeof ggfTab[q_].p); ggfTab[q_].dist = sqrtf((m->w.x - ggE[0]) * (m->w.x - ggE[0]) + (m->w.y - ggE[1]) * (m->w.y - ggE[1]) + (m->w.z - ggE[2]) * (m->w.z - ggE[2])); break; }
       if (hit_ >= 0) { ggfTab[hit_].n++; ggfTab[hit_].us += dt_; ggfTab[hit_].fl = d->r.flags; ggfTab[hit_].cuts += ggTrisF - gt0_; } } }
-  else { unsigned cn0_ = (smkOn && trgIn) ? sceKernelGetSystemTimeLow() : 0; int cn_ = carNear853(d, m); if (smkOn && trgIn) trgCnUs += sceKernelGetSystemTimeLow() - cn0_; XQ(56); if (cn_) { drawGeoPatch853(d, m); dbgPMgeo++; }   // №853: кусок машины у камеры — целиком и веера на месте выброшенных
+  else { unsigned cn0_ = (SMKCLK && trgIn) ? sceKernelGetSystemTimeLow() : 0; int cn_ = carNear853(d, m); if (SMKCLK && trgIn) trgCnUs += sceKernelGetSystemTimeLow() - cn0_; XQ(56); if (cn_) { drawGeoPatch853(d, m); dbgPMgeo++; }   // №853: кусок машины у камеры — целиком и веера на месте выброшенных
 #ifndef GATE_DROP_DRAW
     else { diagAbsM = 1; drawGeo(d, 0, d->r.ni); dbgPMgeo++; dpmPlain = 1; }
 #endif
@@ -1776,6 +1780,9 @@ static float pl[4][3], eyeX, eyeY, eyeZ, cfX, cfY, cfZ, drawDist;
 static int pieceCull923 = !PIECECULL923_OLD;
 typedef struct { const void *v; float lo[3], hi[3]; } PcBox;
 static PcBox pcbTab[512];
+// 1298: плоскости кадра для msnart.c (реквизит гонки): сфера целиком снаружи / точка внутри всех четырёх боковых плоскостей (для сверки)
+static int msnartSphereOut1298(const float *c, float r) { float e[3] = {eyeX, eyeY, eyeZ}; return rfSphereOut((const float (*)[3])pl, e, c, r); }
+static int msnartPtIn1298(const float *p) { for (int k = 0; k < 4; k++) if ((p[0] - eyeX) * pl[k][0] + (p[1] - eyeY) * pl[k][1] + (p[2] - eyeZ) * pl[k][2] < 0) return 0; return 1; }
 static int pcOut923(const void *v, unsigned nv, int flags, const float *m, const float e3[3]) {
   PcBox *b = &pcbTab[((uintptr_t)v >> 4) & 511u];
   if (b->v != v) {
@@ -1886,7 +1893,7 @@ static void carFillDraw(Piece *d, const ScePspFMatrix4 *m, int kf) {
   if (k3 >= ni0) { d->r.tex = -1; carGlass(d); drawPieceM(d, m); d->r.tex = tex0; return; }
   if (!CARFILL930B_OLD && !(d->r.flags & (2 | 4 | F_ADDITIVE)) && !geOver(GE_HARD) && !NEON_SKIP(d) && !TREESH_SKIP(d) && !bigCutBlock) {
     float dx = m->w.x - ggE[0], dy = m->w.y - ggE[1], dz = m->w.z - ggE[2];
-    unsigned fg0_ = (smkOn && trgIn && !(dx * dx + dy * dy + dz * dz > CF_FAST_R * CF_FAST_R)) ? sceKernelGetSystemTimeLow() : 0; int fgn_ = dx * dx + dy * dy + dz * dz > CF_FAST_R * CF_FAST_R || (!bigNear(d, m) && !carNear853(d, m)); if (fg0_) { trgFastN++; trgBnUs += sceKernelGetSystemTimeLow() - fg0_; }
+    unsigned fg0_ = (SMKCLK && trgIn && !(dx * dx + dy * dy + dz * dz > CF_FAST_R * CF_FAST_R)) ? sceKernelGetSystemTimeLow() : 0; int fgn_ = dx * dx + dy * dy + dz * dz > CF_FAST_R * CF_FAST_R || (!bigNear(d, m) && !carNear853(d, m)); if (fg0_) { trgFastN++; trgBnUs += sceKernelGetSystemTimeLow() - fg0_; }
     if (fgn_ && pieceOk(d, 0)) {   // ближе CF_FAST_R: проверки риска выброса GE — один раз по целому куску (подмножество не рискованнее целого), иначе два вызова
       RBC(rbcDrawM);
       d->r.ni = k3; d->r.tex = -1; carGlass(d); drawnTris += k3 / 3; draws++; dbgPM++;
@@ -1908,15 +1915,15 @@ static void trDrawPiece(void *u, const TrPiece *p, const void *verts, const floa
   if (p->owner == 3) { flareDrawPiece(p, m, p->tex >= 0 ? (int)trTexBase + p->tex : -1); return; }
   (void)u; Piece d; memset(&d, 0, sizeof d); memcpy(&d.r, p, sizeof d.r);
   d.r.tex = p->tex >= 0 ? (int)trTexBase + p->tex : -1; unsigned cfp0_ = cfCostOn ? sceKernelGetSystemTimeLow() : 0; int kf_ = carFillPick(p, &verts); d.v = (Vert *)verts; if (cfCostOn) cfUsP += sceKernelGetSystemTimeLow() - cfp0_;   // №930: треугольники куска с ровной областью текстуры — без текстуры (цвет уже в вершинах), с рисунком — родной
-  unsigned tw0_ = smkOn ? (unsigned)sceGuCheckList() : 0, tt0_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
+  unsigned tw0_ = SMKCLK ? (unsigned)sceGuCheckList() : 0, tt0_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0;
   npcCarToon(&d, m);   // №779
-  unsigned tw1_ = smkOn ? (unsigned)sceGuCheckList() : 0, tt1_ = smkOn ? sceKernelGetSystemTimeLow() : 0;
-  if (smkOn) cfUsH += tt1_ - tt0_;
-  unsigned trg0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; trgIn = 1;
+  unsigned tw1_ = SMKCLK ? (unsigned)sceGuCheckList() : 0, tt1_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0;
+  if (SMKCLK) cfUsH += tt1_ - tt0_;
+  unsigned trg0_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0; trgIn = 1;
   { unsigned cfq_ = cfCostOn ? sceKernelGetSystemTimeLow() : 0; if (kf_ > 0) carFillDraw(&d, (const ScePspFMatrix4 *)m, kf_); else { carGlass(&d); drawPieceM(&d, (const ScePspFMatrix4 *)m); }
     if (cfCostOn) { cfUsD[kf_ > 0] += sceKernelGetSystemTimeLow() - cfq_; cfND[kf_ > 0]++; } }   // служебно (№930б): мкс и число отрисовок куска машины NPC — целиком / двумя заливками
-  trgIn = 0; if (smkOn) { trgDrawUs += sceKernelGetSystemTimeLow() - trg0_; trgPieces++; }
-  if (smkOn) { smkTrfPc[0] += 1.0; smkTrfPc[1] += (tw1_ - tw0_) / 4u; smkTrfPc[2] += ((unsigned)sceGuCheckList() - tw1_) / 4u; smkTrfPc[3] += (tt1_ - tt0_) / 1000.0; smkTrfPc[4] += (sceKernelGetSystemTimeLow() - tt1_) / 1000.0; }   // №914: кусков, слов оболочки / куска, мс оболочки / куска
+  trgIn = 0; if (SMKCLK) { trgDrawUs += sceKernelGetSystemTimeLow() - trg0_; trgPieces++; }
+  if (SMKCLK) { smkTrfPc[0] += 1.0; smkTrfPc[1] += (tw1_ - tw0_) / 4u; smkTrfPc[2] += ((unsigned)sceGuCheckList() - tw1_) / 4u; smkTrfPc[3] += (tt1_ - tt0_) / 1000.0; smkTrfPc[4] += (sceKernelGetSystemTimeLow() - tt1_) / 1000.0; }   // №914: кусков, слов оболочки / куска, мс оболочки / куска
 }
 // Машины миссий с ИИ (29.09, viewer/msncar.h — логика общая с ботами): рисунок — модели пакета msncars-l<N>.shr уровня
 // (tools/msncar_export.py, формат MCR1: куски как у трафика TRF1), читаются с карты памяти по требованию, когда сценарий
@@ -1953,7 +1960,18 @@ static void mcrPreDropAll(void);
 #define MCRLAD1238_OLD 0
 #endif
 #define MCR_BAD_TRIES 3
+#include "power.h"   // Будка P0: pwrEpoch(), pwrSimFault()
 static int mcrLad1238 = !MCRLAD1238_OLD, mcrFailSim1238; static unsigned char mcrBadN1238[MCR_CAT];
+// P0 шаг 1 (107b, Стена; слово Роба 1273 «ничего не ломается навсегда», генплан Fable §2 п.6): раньше три отказа чтения блока модели подряд (в том числе три за один кадр: лестница 1265 звала mcrGet шесть раз) помечали блок битым до смены
+// уровня (mcrBad), а счётчик mcrBadN1238 не сбрасывался даже новым уровнем. Теперь: отказ считается не чаще раза в секунду (mcrBadT108); после MCR_BAD_TRIES отказов блок не «битый навсегда», а ждёт с нарастающей паузой (5, 10, … до 30 с) и пробуется
+// снова; счётчики сбрасываются сменой уровня и пробуждением (mcrFailReset108). Постоянно битым остаётся только структурно неверный блок (текстур больше MCR_TEXPER). MCRBAD108_OLD=1 / flag mcrbad108old 1 — как было;
+// «flag mcrreadfail N» — служебно: N отказов самого чтения блока (проверка счёта отказов)
+#ifndef MCRBAD108_OLD
+#define MCRBAD108_OLD 0
+#endif
+static int mcrBad108Old = MCRBAD108_OLD, mcrReadFailSim108; static unsigned mcrBadT108[MCR_CAT];
+static unsigned char mcrFailMem108[MCR_CAT];   // 107b: последний отказ блока: 1 — память (нет цельного куска, тест mcrfail), 0 — чтение с карты
+static unsigned mcrBadWaits108;   // сколько раз блок ушёл на паузу после MCR_BAD_TRIES отказов (журнал)
 // Build 94 (Фабль П3): машина миссии, которой не хватило памяти (или чтение дало отказ), «ждёт память»: метка с временем, повтор не чаще раза в секунду (раньше — каждый кадр,
 // и каждый кадр лестница памяти). Одна строка WATCHDOG на начало ожидания и одна на конец. MCRWAIT94_OLD=1 / flag mcrwait94 0 / файл mcrwait94old — как было
 #ifndef MCRWAIT94_OLD
@@ -1970,9 +1988,15 @@ static void mcrWaitMark94(int e, const char *nm) {   // отказ: ждать �
   if (!mcrWaitN94[e]++) mcrWaitLog94(nm, "wait", 1);
   mcrWaitT94[e] = sceKernelGetSystemTimeLow() + 1000000u; if (!mcrWaitT94[e]) mcrWaitT94[e] = 1;
 }
+static unsigned mcrEnsT1265[16], mcrEnsNext108[16]; static unsigned char mcrEnsStep108[16], mcrEnsExh108[16], mcrEnsCyc108[16]; static unsigned mcrLadFrame108 = ~0u;
+static void mcrFailReset108(const char *why) {   // новый уровень, пробуждение: счёт отказов, паузы и ступени лестницы заново (структурно битые блоки не трогаем)
+  memset(mcrBadN1238, 0, sizeof mcrBadN1238); memset(mcrBadT108, 0, sizeof mcrBadT108); memset(mcrWaitT94, 0, sizeof mcrWaitT94); memset(mcrWaitN94, 0, sizeof mcrWaitN94);
+  memset(mcrEnsT1265, 0, sizeof mcrEnsT1265); memset(mcrEnsNext108, 0, sizeof mcrEnsNext108); memset(mcrEnsStep108, 0, sizeof mcrEnsStep108); if (!strcmp(why, "level")) memset(mcrEnsExh108, 0, sizeof mcrEnsExh108); memset(mcrEnsCyc108, 0, sizeof mcrEnsCyc108); memset(mcrFailMem108, 0, sizeof mcrFailMem108);   // заглушка не снимается до прихода своей модели (107b ревью): после сна флаг «исчерпана» остаётся, сбрасывается только сменой уровня
+  if (smkOn) { char s_[100]; snprintf(s_, sizeof s_, "MCR failreset why=%s t=%.1f\n", why, smkT); smkWrite(s_); }
+}
 static unsigned char mcrBad[MCR_CAT];   // блок модели не прочитался (битый / обрезанный пакет): больше не пробовать до смены уровня
 static void mcrDirLoad(void) {   // каталог пакета уровня: имена, TrModel (кузов, колёса), где блок модели
-  mcrPreDropAll(); free(mcrDir); mcrDir = 0; mcrN = 0; mcSetGeo(0, 0); memset(mcrBad, 0, sizeof mcrBad);
+  mcrPreDropAll(); free(mcrDir); mcrDir = 0; mcrN = 0; mcSetGeo(0, 0); memset(mcrBad, 0, sizeof mcrBad); mcrFailReset108("level");
   levelFile(mcrPath, "msncars-l%d.shr");
   SceUID f = sceIoOpen(mcrPath, PSP_O_RDONLY, 0); if (f < 0) return;
   unsigned h[8]; if (sceIoRead(f, h, 32) != 32 || memcmp(h, "MCR1", 4) || h[3] > MCR_CAT) { sceIoClose(f); return; }
@@ -1998,7 +2022,16 @@ static char mcrKeepN[6][24]; static unsigned mcrKeepT[6];
 static void mcrFreeAll(void) { mcrPreDropAll(); for (int k = 0; k < MCR_MAX; k++) mcrDrop(k); if (!MCR_KEEP_CLEAR_OLD) { memset(mcrKeepN, 0, sizeof mcrKeepN); memset(mcrKeepT, 0, sizeof mcrKeepT); } }
 static const MsnCars *mcrCars(void) { return bonusCarsPtr ? bonusCarsPtr : mvCars(); }   // правка 420: машины бонус-гонки
 // №629: машины этапа, прочитанные впрок под газетой, до появления в списке миссии не выгружаются (mcrSync иначе выбросил бы их в первом кадре). Держим 90 с; MSN_READAHEAD_OLD=1 — не держим
+#ifndef MCRHOLD109_OLD
+#define MCRHOLD109_OLD 0   // 109 (в, Fable-2): 1 — машины миссии держатся 90 с (список mcrKeep), потом выгружаются и читаются снова синхронно каждые ~91 с
+#endif
+int mcrLadOld109;   // flag mcrladold109
+int mcrHold109Old = MCRHOLD109_OLD;   // flag mcrhold109old
+#undef MCRHOLD109_OLD
+#define MCRHOLD109_OLD mcrHold109Old
+static int memLadderTo(const char *who, unsigned need, int prio, int maxStep);   // memladder.h (включается позже)
 static int mcrKept(const char *name) {
+  if (!MCRHOLD109_OLD && mvPhaseCarHeld(name)) return 1;   // 109: машина фазы — занята до конца миссии
   unsigned now = sceKernelGetSystemTimeLow();
   for (int i = 0; i < 6; i++) if (mcrKeepN[i][0] && now - mcrKeepT[i] < 90000000u && !strcasecmp(mcrKeepN[i], name)) return 1;
   return 0;
@@ -2026,23 +2059,28 @@ static int mcrLoadedF, mcrDeferred, mcrForceLoad, mcrStaggerOn;   // StaggerOn �
 // №538: блок модели читается в фоне (sceIoReadAsync), как .chr персонажей (skinPreStart): машина миссии появляется, когда блок прочитан (кадр без 33–42 мс чтения);
 // не успел за MCRPRE_MAX_AGE вызовов или это машина игрока — ждём остаток, как прежнее синхронное чтение. Запас кучи — memPrefetchRoom (тот же механизм, что у персонажей, msn_view.c).
 // MCR_ASYNC_OLD=1 — прежнее чтение в кадре
+extern int mcrPrePollOld;   // 1362: 1 — итог опроса предчтения машины не запоминается (rollback.h)
+#define MCRPRE_OLDVAR mcrPrePollOld
 #include "mcrpre.h"
+int mcrPrePollOld = MCRPREPOLL_OLD;
 #ifndef MCR_ASYNC_OLD
 #define MCR_ASYNC_OLD 0
 #endif
 #ifndef NEAR_CAR_DRAW_OLD
 #define NEAR_CAR_DRAW_OLD 0   // №544/546 включены по умолчанию (слово Роба 27.10: машины, что бьют игрока, видны всегда; грузовик не пропадает у края кадра; выключили без слова Роба 15.10); прежнее -DCULL_SPHERE_OLD=1 / -DNEAR_CAR_DRAW_OLD=1; TEST17 (слово Роба/дирижёра 15.10: отрисовка как в 1721 f32c8c31): машины ближе 30 м без принудительной отрисовки (как в 1721); 0 — №544/546
 #endif
-typedef struct { int e; SceUID fd; unsigned char *b; unsigned size; int age; } McrPre;
+typedef struct { int e; SceUID fd; unsigned char *b; unsigned size; int age; McrPollC pc; } McrPre;   // 1362: pc — итог опроса (sceIoPollAsync отдаёт его один раз)
 #define MCR_NPRE 2
 static McrPre mcrPre[MCR_NPRE];
 static McrPre *mcrPreFind(int e) { for (int i = 0; i < MCR_NPRE; i++) if (mcrPre[i].b && mcrPre[i].e == e) return &mcrPre[i]; return 0; }
-static void mcrPreDrop(McrPre *q) { if (!q->b) return; long long r; ioWaitBounded(q->fd, &r, q->size, "mcrdrop"); sceIoClose(q->fd); free(q->b); memset(q, 0, sizeof *q); }   // ТЕСТ90: ожидание с пределом
+static void mcrPreDrop(McrPre *q) { if (!q->b) return; long long r; if (mcrPrePollOld || !q->pc.done) ioWaitBounded(q->fd, &r, q->size, "mcrdrop"); sceIoClose(q->fd); free(q->b); memset(q, 0, sizeof *q); }   // ТЕСТ90: ожидание с пределом
 static void mcrPreDropAll(void) { for (int i = 0; i < MCR_NPRE; i++) mcrPreDrop(&mcrPre[i]); }
-static int mcrPreReady(const McrPre *q) { SceInt64 r; return sceIoPollAsync(q->fd, &r) == 0; }
+static int mcrPollCb(void *u, long long *res) { SceInt64 r = -1; int pr = sceIoPollAsync(((McrPre *)u)->fd, &r); *res = r; return pr; }
+static int mcrWaitCb(void *u, long long *res) { McrPre *q = (McrPre *)u; return ioWaitBounded(q->fd, res, q->size, "mcrtake"); }   // ТЕСТ90: ожидание с пределом
+static int mcrPreReady(McrPre *q) { return mcrPreReadyC(&q->pc, mcrPollCb, q); }
 static unsigned char *mcrPreTake(McrPre *q, unsigned size) {   // готовый (или дождаться остатка) блок -> владение буфером; 0 — чтение не удалось
-  long long r = -1; if (ioWaitBounded(q->fd, &r, size, "mcrtake") != 1) r = -1; sceIoClose(q->fd);   // ТЕСТ90: нет ответа — отмена и отказ модели (машина миссии не появится, игра не стоит)
-  unsigned char *b = q->b; int ok = r == (long long)size && q->size == size; memset(q, 0, sizeof *q);
+  int got = mcrPreTakeC(&q->pc, size, mcrWaitCb, q); sceIoClose(q->fd);   // ТЕСТ90: нет ответа — отмена и отказ модели (машина миссии не появится, игра не стоит); 1362: готовый итог из памяти опроса, не вторым опросом
+  unsigned char *b = q->b; int ok = got && q->size == size; memset(q, 0, sizeof *q);
   if (!ok) { free(b); return 0; }
   return b;
 }
@@ -2066,15 +2104,20 @@ static const McrModel *mcrGet(const char *name) {   // модель машины
   if (!b) {
     // №1238 (аудит моделей миссий, семейство №1235): блок машины миссии читался мимо лестницы памяти (канон п.13): нет цельного куска — молча «без машины» (MCRNONE), хотя клетки и впрок прочитанное можно было выкинуть.
     // Теперь перед memalign — memLadder (машине миссии высший приоритет); отказ чтения — не навсегда: до MCR_BAD_TRIES попыток. MCRLAD1238_OLD=1 / flag mcrlad1238 0 / файл mcrlad1238old — как было; flag mcrfail N — N отказов подряд (служебно)
-    if (mcrFailSim1238 > 0) { mcrFailSim1238--; if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MCR sim-fail %.15s left=%d t=%.1f\n", (const char *)d, mcrFailSim1238, smkT); smkWrite(s_); } mcrWaitMark94(e, (const char *)d); return 0; }
+    if (mcrFailSim1238 > 0) { mcrFailSim1238--; mcrFailMem108[e] = 1; if (smkOn) { char s_[96]; snprintf(s_, sizeof s_, "MCR sim-fail %.15s left=%d t=%.1f\n", (const char *)d, mcrFailSim1238, smkT); smkWrite(s_); } mcrWaitMark94(e, (const char *)d); return 0; }
     if (mcrLad1238 && memLadOn) memLadderZ(LADZ_MISSION, "car", u[1] + (64u << 10), 2 /* LAD_TOP */);
-    b = zone3AllocX(Z3A_MISSION, "mcr", u[1], 64); if (!b) { mcrWaitMark94(e, (const char *)d); return 0; } }   // П5 Зоны-95: область «миссия» (после лестницы 1238); Build 94: метка «ждёт память»
+    b = zone3AllocX(Z3A_MISSION, "mcr", u[1], 64); if (!b) { mcrFailMem108[e] = 1; mcrWaitMark94(e, (const char *)d); return 0; } }   // П5 Зоны-95: область «миссия» (после лестницы 1238); Build 94: метка «ждёт память»
   SceUID f = fromPre ? 0 : sceIoOpen(mcrPath, PSP_O_RDONLY, 0);
   if (!fromPre) DCPRE96(b, u[1]);
-  if (!fromPre && (f < 0 || sceIoLseek32(f, u[0], PSP_SEEK_SET) < 0 || sceIoRead(f, b, u[1]) != (int)u[1])) {
-    if (f >= 0) sceIoClose(f); free(b); if (!mcrLad1238 || ++mcrBadN1238[e] >= MCR_BAD_TRIES) mcrBad[e] = 1;
-    if (smkOn) { char s[96]; snprintf(s, sizeof s, "MCR bad %.15s t=%.1f\n", (const char *)d, smkT); smkWrite(s); }
-    if (!mcrBad[e]) mcrWaitMark94(e, (const char *)d);
+  if (!fromPre && (f < 0 || sceIoLseek32(f, u[0], PSP_SEEK_SET) < 0 || sceIoRead(f, b, u[1]) != (int)u[1] || (mcrReadFailSim108 > 0 && mcrReadFailSim108--) || pwrSimFault("mcr"))) {
+    if (f >= 0) sceIoClose(f); free(b); mcrFailMem108[e] = 0;
+    if (mcrBad108Old || !mcrLad1238) { if (!mcrLad1238 || ++mcrBadN1238[e] >= MCR_BAD_TRIES) mcrBad[e] = 1; }
+    else { unsigned nw_ = sceKernelGetSystemTimeLow(); if (!mcrBadT108[e] || (int)(nw_ - mcrBadT108[e]) >= 1000000) { if (mcrBadN1238[e] < 250) mcrBadN1238[e]++; mcrBadT108[e] = nw_ | 1u; } }   // не чаще раза в секунду
+    if (smkOn) { char s[110]; snprintf(s, sizeof s, "MCR bad %.15s n=%d perm=%d t=%.1f\n", (const char *)d, mcrBadN1238[e], mcrBad[e], smkT); smkWrite(s); }
+    { static unsigned char lastN_[64]; if (e < 64 && mcrBadN1238[e] != lastN_[e]) { lastN_[e] = mcrBadN1238[e]; char b_[100]; snprintf(b_, sizeof b_, "%.15s n=%d perm=%d mem=%d", (const char *)d, mcrBadN1238[e], mcrBad[e], mcrFailMem108[e]); bbNoteDiag("MCRBAD", b_); } }   // 1338: отказ чтения машины миссии — в ящик выпуска
+    if (!mcrBad[e]) { mcrWaitMark94(e, (const char *)d);
+      if (!mcrBad108Old && mcrBadN1238[e] >= MCR_BAD_TRIES) { unsigned sec = 5u * (unsigned)(mcrBadN1238[e] - MCR_BAD_TRIES + 1); if (sec > 30u) sec = 30u; unsigned t_ = sceKernelGetSystemTimeLow() + sec * 1000000u; mcrWaitT94[e] = t_ ? t_ : 1u; mcrBadWaits108++;
+        if (smkOn) { char s_[110]; snprintf(s_, sizeof s_, "MCR bad-wait %.15s n=%d wait=%us t=%.1f\n", (const char *)d, mcrBadN1238[e], sec, smkT); smkWrite(s_); } } }
     return 0; }
   if (!fromPre) sceIoClose(f);
   sceKernelDcacheWritebackRange(b, u[1]); toneBlkAdd(b, u[1], TF_MCR, u[0]);   // правка 144: палитры — из пакета заново
@@ -2097,7 +2140,7 @@ static const McrModel *mcrGet(const char *name) {   // модель машины
   if (mcrWait94On && e < MCR_CAT && mcrWaitN94[e]) { mcrWaitLog94(M->name, "ready", mcrWaitN94[e]); mcrWaitN94[e] = 0; mcrWaitT94[e] = 0; }
   if (!fromPre) mcrLoadedF = 1;   // готовый фоновый блок кадр не задерживает
   bound = -2; mcrLoads++; mcrLoadBytes += u[1]; mcrLoadMs = (sceKernelGetSystemTimeLow() - t0) / 1000.f;
-  if (smkOn) { char s[128]; snprintf(s, sizeof s, "MCR load %s bytes=%u ms=%.0f t=%.1f\n", M->name, u[1], mcrLoadMs, smkT); smkWrite(s); }
+  if (smkOn) { char s[128]; snprintf(s, sizeof s, "MCR load %s bytes=%u ms=%.0f pre=%d t=%.1f\n", M->name, u[1], mcrLoadMs, fromPre, smkT); smkWrite(s); }   // 1362: pre=1 — блок был прочитан впрок, в кадре только разбор
   return M;
 }
 // Правка Роба 474 (10.10): модель машины из будки читается с карты памяти в момент вызова (блок пакета msncars-lN, а не заранее с уровнем): пакет
@@ -2111,10 +2154,24 @@ static void mcrPrefetch(const char *name) {
   mcrGet(name);
 }
 static void mcrReadahead(const char *name) {   // №629: машина этапа — в память под газетой (разбор блока 14–40 мс уходит из первых секунд после Continue)
-  if (!name || !*name || trModelOf(name) >= 0 || !memPrefetchRoom(768u << 10)) return;
+  if (!name || !*name || trModelOf(name) >= 0) return;
+  if (!memPrefetchRoom(768u << 10)) {   // 109 (в, Fable-2): места мало — не ждать 25 с у карточки, а идти по лестнице памяти (подгруженное впрок, далёкие клетки; на стоящем мире и все вне кадра); не помогло — читаем в следующую секунду
+    extern int mvPhaseCars109Old;
+    if (MCRHOLD109_OLD || mvPhaseCars109Old || !memLadOn) return;   // в игре, где (в) выключено, путь прежний
+    if (mcrLadOld109) memLadder("car-ahead", MEM_RESERVE + (768u << 10), 1);   // красный контроль гейта: flag mcrladold109 1 — прежний вызов 9bc6bd9c (цельные 3,75 МБ, LAD_NORM)
+    else memLadderTo("car-ahead", 768u << 10, 0, 2);   // только ступени 1–2 и без итоговой строки simplify (впрок не «отказ»)   // 0 = LAD_PRE: чтение впрок — только ступени 1–2 (подгруженное впрок, далёкие клетки за спиной); цельный кусок под саму модель, не резерв кучи (Fable-2)
+    if (!memPrefetchRoom(768u << 10)) return;
+  }
   int slot = 0; for (int i = 0; i < 6; i++) { if (!mcrKeepN[i][0] || sceKernelGetSystemTimeLow() - mcrKeepT[i] >= 90000000u) { slot = i; break; } slot = (i + 1) % 6; }
   strncpy(mcrKeepN[slot], name, 23); mcrKeepN[slot][23] = 0; mcrKeepT[slot] = sceKernelGetSystemTimeLow();
   int sv_ = mcrStaggerOn; mcrStaggerOn = 0; mcrGet(name); mcrStaggerOn = sv_;   // не откладывать до следующего кадра: списка машин миссии это имя ещё не знает
+}
+static int mcrReadyOrGone(const char *name) {   // 109 (в/г): 1 — модель машины миссии в памяти или её уже не будет (нет пакета/записи, блок структурно битый, модель трафика); 0 — ещё ждём (идёт чтение, отказ с паузой)
+  if (!name || !*name || trModelOf(name) >= 0) return 1;
+  for (int k = 0; k < MCR_MAX; k++) if (mcr[k].blob && !strcasecmp(mcr[k].name, name)) return 1;
+  if (!mcrDir || !mcrTexOk) return 1;
+  int e = -1; for (unsigned i = 0; i < mcrN; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) { e = (int)i; break; }
+  return e < 0 || mcrBad[e];
 }
 static void mcrPreStart(const char *name) {   // начать фоновое чтение блока модели name, если можно
   if (MCR_ASYNC_OLD || !mcrDir || !mcrTexOk) return;
@@ -2193,6 +2250,53 @@ static int mcrDrawn, mcrTris;
 // Правка Роба 268 (04.10: «у ракетной машины стоит машина, которую не видно — въехал в пустоту и разбил»): машина миссии в кадре
 // без модели (нет в пакете, все MCR_MAX мест заняты, не хватило памяти) — строка MCRNONE в журнал и в чёрный ящик, раз на имя
 static char mcrNoneSeen[8][16]; static int mcrNoneN;
+#ifndef MCRFIX1265_OLD
+#define MCRFIX1265_OLD 0
+#endif
+static int mcrFix1265 = !MCRFIX1265_OLD;   // служебное «flag mcrfix1265 0» — как было
+// Правка 1265, переделана в P0 шаге 1 (107b): модель машины этапа не прочиталась (отказ, а не «читается в фоне»): лестница памяти (канон п.13) по ступеням, ОДНА ступень за вызов и не чаще раза в кадр на все машины, шаг не быстрее
+// 150 мс на машину; сама попытка чтения — один mcrGet на машину за кадр в mcrDraw (раньше шесть подряд в одном кадре сжигали три разрешённых отказа и звали лестницу пять раз). После шестой ступени — «исчерпана» (WATCHDOG mcr ladder-exhausted,
+// кузов-заглушка mcrStandIn1265 встаёт ТОЛЬКО с этого момента), следующий круг лестницы через 1,5 с, потом 3, 6, … до 30 с: своя модель пробуется всё это время. MCRBAD108_OLD=1 / flag mcrbad108old 1 — как было (шесть попыток подряд)
+// Возврат: 1 — модель в памяти (старый путь, mcrBad108Old); 0 — иначе (новый путь: модель придёт на следующих кадрах из mcrGet)
+static int mcrEnsure1265(int idx, const char *name) {
+  if (!mcrDir || !mcrTexOk) { if (!mcrBad108Old && idx >= 0 && idx < 16) mcrEnsExh108[idx] = 1; return 0; }   // нет каталога пакета: ждать нечего, лестница не поможет — сразу «исчерпана», заглушка встаёт (107b ревью: раньше тело стояло невидимым до смены уровня)
+  unsigned now = sceKernelGetSystemTimeLow();
+  if (idx >= 0 && idx < 16 && mcrEnsT1265[idx] && (int)(now - mcrEnsT1265[idx]) < 0) return 0;
+  if (!mcrBad108Old) {
+    int ix = idx >= 0 && idx < 16 ? idx : 15;
+    if (mcrLadFrame108 == diagFrame108) return 0;                                   // лестница не чаще раза в кадр
+    if (mcrEnsNext108[ix] && (int)(now - mcrEnsNext108[ix]) < 0) return 0;          // шаг не чаще раза в 150 мс на машину
+    int st = ++mcrEnsStep108[ix];
+    mcrLadFrame108 = diagFrame108; mcrEnsNext108[ix] = now + 150000u; if (!mcrEnsNext108[ix]) mcrEnsNext108[ix] = 1;
+    unsigned b0 = memMaxBlock ? memMaxBlock() : 0, f0 = heapFreeBytes();
+    int memFail_ = 1; for (unsigned i = 0; i < mcrN && i < MCR_CAT; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) memFail_ = mcrFailMem108[i];   // 107b (ревью): лестница памяти — только при отказе ПАМЯТИ; отказ чтения с карты (iо) память не лечит
+    if (memLadOn && memFail_) { if (st >= 3) memLadMissionRoom("car-res", 1536u << 10);   /* 107: общая функция возврата области «миссия» (Будка, memladder.h) */ memLadder("car", 1536u << 10, 2); }
+    if (smkOn) { char s_[170]; snprintf(s_, sizeof s_, "WATCHDOG mem who=car size=%u step=%d blk=%u->%u free=%u->%u msncar1265 %.15s mem=%d t=%.1f\n", 1536u << 10, st, b0, memMaxBlock ? memMaxBlock() : 0, f0, heapFreeBytes(), name, memFail_, smkT); smkWrite(s_); }
+    for (unsigned i = 0; i < mcrN && i < MCR_CAT; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) mcrWaitT94[i] = 0;   // «ждёт память» снято: следующий кадр пробует чтение
+    if (st >= 5) {   // исчерпана: заглушка встаёт, свою модель пробуем дальше с нарастающей паузой
+      mcrEnsStep108[ix] = 0; mcrEnsExh108[ix] = 1; unsigned sec = 3u << (mcrEnsCyc108[ix] < 4 ? mcrEnsCyc108[ix] : 4); if (sec > 30u) sec = 30u; if (mcrEnsCyc108[ix] < 250) mcrEnsCyc108[ix]++;
+      mcrEnsNext108[ix] = now + sec * 500000u; if (!mcrEnsNext108[ix]) mcrEnsNext108[ix] = 1;   // 1,5 с, 3, 6, 12, 24 (sec/2)
+      if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "WATCHDOG mcr ladder-exhausted %.15s t=%.1f\n", name, smkT); smkWrite(s_); } }
+    return 0;
+  }
+  for (int st = 0; st <= 5; st++) {
+    unsigned b0 = memMaxBlock ? memMaxBlock() : 0, f0 = heapFreeBytes();
+    if (st > 0) { if (memLadOn) { if (st >= 3) memLadMissionRoom("car-res", 1536u << 10);   /* 107: общая функция возврата области «миссия» (Будка, memladder.h) */ memLadder("car", 1536u << 10, 2); }
+      if (smkOn) { char s_[150]; snprintf(s_, sizeof s_, "WATCHDOG mem who=car size=%u step=%d blk=%u->%u free=%u->%u msncar1265 %.15s t=%.1f\n", 1536u << 10, st, b0, memMaxBlock ? memMaxBlock() : 0, f0, heapFreeBytes(), name, smkT); smkWrite(s_); } }
+    for (unsigned i = 0; i < mcrN && i < MCR_CAT; i++) if (!strncasecmp((const char *)mcrDir + i * 176, name, 16)) mcrWaitT94[i] = 0;   // «ждёт память» снято: пробуем сейчас
+    mcrForceLoad = 1; const McrModel *M = mcrGet(name); mcrForceLoad = 0; if (M) return 1;
+  }
+  if (idx >= 0 && idx < 16) { mcrEnsT1265[idx] = now + 1500000u; if (!mcrEnsT1265[idx]) mcrEnsT1265[idx] = 1; }
+  if (smkOn) { char s_[120]; snprintf(s_, sizeof s_, "WATCHDOG mcr ladder-exhausted %.15s t=%.1f\n", name, smkT); smkWrite(s_); }
+  return 0;
+}
+static int mcrStandIn1265(const Car *k) {   // кузов трафика уровня, ближайший по размеру к кузову машины этапа (не остов); -1 — трафика нет
+  if (!haveTraffic || !traffic.hd) return -1;
+  int best = -1; float bd = 1e9f;
+  for (unsigned i = 0; i < traffic.hd->nModel; i++) { if ((int)i == (int)traffic.hd->huskModel) continue; const TrModel *m = &traffic.model[i];
+    float d = fabsf(m->halfL - k->p.halfL) + fabsf(m->halfW - k->p.halfW); if (d < bd) { bd = d; best = (int)i; } }
+  return best;
+}
 static void mcrNoModel(const char *name, const Car *k) {
   for (int i = 0; i < mcrNoneN; i++) if (!strncasecmp(mcrNoneSeen[i], name, 15)) return;
   if (mcrNoneN < 8) { strncpy(mcrNoneSeen[mcrNoneN], name, 15); mcrNoneSeen[mcrNoneN][15] = 0; mcrNoneN++; }
@@ -2249,8 +2353,10 @@ static int mcrDrawPlayer2(const Car *k, float wheelAng, const char *fc) {
   int b = (int)(mcrTexBase + M->tex0); trafficDrawModel(M->M, M->pc, M->vt, k, wheelAng, 0, mcDrawPiece, &b, &mcrTris);
   return 1;
 }
+static unsigned mcrDrawnF108[8]; static unsigned char mcrStandF108[8];   // 107b: кадр последнего рисования машины миссии i и «нарисована заглушкой» (строки ящика NEAR/STUCK, stuck108.h)
 static void mcrDraw(const float e3[3]) {   // машины миссии: модель пакета или трафика; разбитая — остов трафика
   const MsnCars *m = mcrCars(); mcrDrawn = mcrTris = 0; if (!m) return;
+  { static unsigned ep_ = ~0u; unsigned e_ = pwrEpoch(); if (!mcrBad108Old && e_ != ep_) { if (ep_ != ~0u) mcrFailReset108("epoch"); ep_ = e_; } }   // сон и пробуждение, смена уровня (viewer/power.h, Будка P0): отказы и паузы заново
   for (int i = 0; i < m->n; i++) {
     const McCar *c = &m->c[i]; if (!c->on) continue;
     const Car *k = &c->car; float dx = k->x - e3[0], dy = k->y - e3[1], dz = k->z - e3[2], d = sqrtf(dx * dx + dy * dy + dz * dz);
@@ -2275,6 +2381,9 @@ static void mcrDraw(const float e3[3]) {   // машины миссии: мод�
     int inContact = (!onFoot() && (carNear2(&car, k, 0.5f) || k->contacts > 0 || k->lastHit > 0.f || k->carHitV > 0.f));
     int drawAlways = (d <= 30.f) || (dp <= 30.f) || inContact;
     float R = carSphereR(k);
+    if (c->leaveQ == 1 && !inContact && dp > 5.f) {   // правка A2.2: машина в очереди на уход — вне кадра дальше 5 м (или дальше дальности рисования): логика её уберёт
+      float lb_[6] = {k->x - R, k->y - R, k->z - R, k->x + R, k->y + R, k->z + R};
+      if (d - R > 110.f || !trVis(lb_)) ((McCar *)c)->leaveQ = 2; }
     if (!drawAlways) {
       if (d - R > 110.f) continue;
       float bb[6] = {k->x - R, k->y - R, k->z - R, k->x + R, k->y + R, k->z + R};
@@ -2290,8 +2399,20 @@ static void mcrDraw(const float e3[3]) {   // машины миссии: мод�
       if (drawAlways) mcrForceLoad = 1;
       const McrModel *M = mcrGet(c->name);
       if (drawAlways) mcrForceLoad = 0;
-      if (!M) { if (!mcrDeferred) mcrNoModel(c->name, k); continue; }
+      if (!M && !mcrDeferred && mcrFix1265 && mcrEnsure1265(i, c->name) && mcrBad108Old) M = mcrGet(c->name);   // правка 1265: сначала лестница памяти, не «пустота» (новый путь — по одной попытке за кадр, P0 шаг 1)
+      if (M && i < 16 && !mcrBad108Old) { mcrEnsStep108[i] = 0; mcrEnsExh108[i] = 0; mcrEnsCyc108[i] = 0; mcrEnsNext108[i] = 0; }   // своя модель встала: ступени заново
+      if (!M) { if (!mcrDeferred) { mcrNoModel(c->name, k);
+          // Правка 1265 (Роб 13.11, L1 M7-1: «врезались в прозрачную стенку», пробка из трафика за ней): модель машины этапа не прочиталась (нет цельного куска в области «миссия»), а тело стоит
+          // и бьёт игрока, Гомера и камеру — невидимая стена. Канон п.13, ступень 5 «упростить просившего»: вместо пустоты рисуется кузов трафика ближайшего размера; настоящая модель
+          // встаёт, как только прочитается (mcrGet повторяет раз в секунду). MCRFIX1265_OLD=1 / flag mcrfix1265 0 — как было (невидимая)
+          int sm = mcrFix1265 && (mcrBad108Old || (i < 16 && mcrEnsExh108[i])) ? mcrStandIn1265(k) : -1;   // P0 шаг 1: заглушка только после исчерпания лестницы
+          if (sm >= 0 && smkOn) { static char seen[8][16]; static int ns; int dup = 0; for (int q = 0; q < ns; q++) if (!strncasecmp(seen[q], c->name, 15)) dup = 1;
+            if (!dup && ns < 8) { strncpy(seen[ns], c->name, 15); seen[ns][15] = 0; ns++; char s_[140]; snprintf(s_, sizeof s_, "WATCHDOG mcr standin %.15s as=%.15s x=%.0f z=%.0f t=%.1f\n", c->name, traffic.model[sm].name, k->x, k->z, smkT); smkWrite(s_); } }
+          if (sm >= 0 && i < 8) { mcrDrawnF108[i] = diagFrame108; mcrStandF108[i] = 1; }
+          if (sm >= 0) { int b = (int)trTexBase; lod = d > trLodDist(&traffic.model[sm]); trafficDrawModel(&traffic.model[sm], traffic.piece, traffic.vert, k, c->wheelAng, lod, mcDrawPiece, &b, &mcrTris); trHideDriver = 0; mcrDrawn++; } }
+        continue; }
       if (M->M) lod = d > trLodDist(M->M);
+      if (i < 8) { mcrDrawnF108[i] = diagFrame108; mcrStandF108[i] = 0; }
       int b = (int)(mcrTexBase + M->tex0); trafficDrawModel(M->M, M->pc, M->vt, k, c->wheelAng, lod, mcDrawPiece, &b, &mcrTris);
     }
     trHideDriver = 0;
@@ -2306,6 +2427,18 @@ static float boxD2(const float *b) {
   float dy = b[1] - cullMg - eyeY > 0 ? b[1] - cullMg - eyeY : (eyeY - b[4] - cullMg > 0 ? eyeY - b[4] - cullMg : 0);
   float dz = b[2] - cullMg - eyeZ > 0 ? b[2] - cullMg - eyeZ : (eyeZ - b[5] - cullMg > 0 ? eyeZ - b[5] - cullMg : 0);
   return dx * dx + dy * dy + dz * dz;
+}
+// Даль-1272 (шаг 2 сверки Fable): пояс за 150 м шаром, как у оригинала (шар диаметром в дальность касается камеры, центр на половине дальности по взгляду): 200 по оси взгляда, ближе по краям;
+// круг 150 м вокруг глаза рисуется всегда. По умолчанию ВКЛЮЧЁН (решение дирижёра 13.11 по слову Роба 1272; цена +0,3…0,9 мс по модели, замер в движке). Откат без пересборки: файл dalbeltoff рядом с EBOOT или «flag dalbelt 0»; DALBELT_OLD=1 - без шара. Радиус шара берёт цель 200 м (не текущую дальность регулятора кадра): регулятор, прижатый к 150, меняет только круг, ось взгляда остаётся 200
+#ifndef DALBELT_OLD
+#define DALBELT_OLD 0   // слово Роба 13.11 21:35 («даль на таком же расстоянии, как в оригинале»): шар 200 м по оси взгляда ВКЛЮЧЁН постоянно (круг 150 + шар, оригинал — шар диаметром 200); выключить: файл dalbeltoff / flag dalbelt 0. До 21:35 по умолчанию был выключен (dalbelton)
+#endif
+#define BELT_CORE_M 150.f
+static int beltOn = !DALBELT_OLD, beltAct, beltEn; static float beltCx, beltCy, beltCz, beltR2, beltCoreR = BELT_CORE_M;   // beltEn: вызывающий включил шар на этот cullCity; beltCoreR: круг, который рисуется всегда
+static int beltOut(const float *b, float d2) {   // 1 - кусок за 150 м и вне шара
+  if (!beltAct || d2 <= beltCoreR * beltCoreR) return 0;
+  float dx = b[0] - beltCx > 0 ? b[0] - beltCx : (beltCx - b[3] > 0 ? beltCx - b[3] : 0), dy = b[1] - beltCy > 0 ? b[1] - beltCy : (beltCy - b[4] > 0 ? beltCy - b[4] : 0), dz = b[2] - beltCz > 0 ? b[2] - beltCz : (beltCz - b[5] > 0 ? beltCz - b[5] : 0);
+  return dx * dx + dy * dy + dz * dz > beltR2;
 }
 static int coneOut(float cx, float cy, float cz, float rad, float *dist) {   // старое отсечение v7
   float dx = cx - eyeX, dy = cy - eyeY, dz = cz - eyeZ, d2 = dx * dx + dy * dy + dz * dz, d = sqrtf(d2);
@@ -2362,7 +2495,7 @@ static void cullPiece(unsigned k) {
     const CullRec *h = &cr[k]; unsigned rg = h->rg;
     if (rg && rg <= 16 && !((regEye >> (rg - 1)) & 1u)) { regCut++; return; }
     float d2 = boxD2(h->bb);
-    if (d2 > drawDist * drawDist || !visBox(h->bb, 0, 0, 0)) return;
+    if (d2 > drawDist * drawDist || beltOut(h->bb, d2) || !visBox(h->bb, 0, 0, 0)) return;
     int far_ = (opt & O_FAR) ? d2 > LOD_DIST * LOD_DIST : 0;
     if (nd >= MAXDRAW) return;
     tk[nd] = h->tk; tp[nd] = k; tf[nd] = far_; tcl[nd] = h->tcl; nd++;
@@ -2372,7 +2505,7 @@ static void cullPiece(unsigned k) {
   { unsigned rg = d->r.pad[0]; if (rg && rg <= 16 && !((regEye >> (rg - 1)) & 1u)) { regCut++; return; } }   // правка 95: регион не загружен
   if (opt & O_PLANES) {
     float d2 = boxD2(d->r.bb);
-    if (d2 > drawDist * drawDist || !visBox(d->r.bb, 0, 0, 0)) return;
+    if (d2 > drawDist * drawDist || beltOut(d->r.bb, d2) || !visBox(d->r.bb, 0, 0, 0)) return;
     far = d2 > LOD_DIST * LOD_DIST;
     if (farPlainD > 0.f && (d->r.flags & F_FARP)) far = d2 > farPlainD * farPlainD;   // правка 508: дальняя версия без нарезки — по своему порогу, не по LOD 50 м
   } else {
@@ -2410,7 +2543,7 @@ static void cullPieceIn(unsigned k, int inside) {   // горячая ветка
   const CullRec *h = &cr[k]; unsigned rg = h->rg;
   if (rg && rg <= 16 && !((regEye >> (rg - 1)) & 1u)) { regCut++; return; }
   float d2 = boxD2(h->bb);
-  if (d2 > drawDist * drawDist || (!inside && !visBox(h->bb, 0, 0, 0))) return;
+  if (d2 > drawDist * drawDist || beltOut(h->bb, d2) || (!inside && !visBox(h->bb, 0, 0, 0))) return;
   int far_ = (opt & O_FAR) ? d2 > LOD_DIST * LOD_DIST : 0;
   if (nd >= MAXDRAW) return;
   tk[nd] = h->tk; tp[nd] = k; tf[nd] = far_; tcl[nd] = h->tcl; nd++;
@@ -2464,10 +2597,10 @@ static int pvsUsed;
 // неверен (с крыши видно дальше): куски по пирамиде обзора, как за 115 м
 #define PVS_EYE_MAX 7.f
 static int pvsEyeOk(void) {
-  if (!hm || hcell <= 0.f) return 1;
+  if ((!hm && !lmPgOn) || hcell <= 0.f) return 1;
   int gx = (int)((eyeX - hox) / hcell), gz = (int)((eyeZ - hoz) / hcell);
   if (gx < 0 || gz < 0 || gx >= hw || gz >= hh) return 1;
-  const short *c = hm + ((size_t)gz * hw + gx) * 4; int top = -32768;
+  short tmp_[4]; const short *c = hmAt(gx, gz, tmp_); int top = -32768;
   for (int k = 0; k < 4; k++) if (c[k] != -32768 && c[k] > top) top = c[k];
   return top == -32768 || eyeY <= top * .01f + PVS_EYE_MAX;
 }
@@ -2531,9 +2664,10 @@ static void crVerify(int fly) {
   nd = nd0; pvsUsed = pu0; regCut = rc0; regEye = re0;
 }
 static void cullCity(int fly) {
+  beltAct = beltOn && beltEn && !fly && drawDist > beltCoreR + 2.f; if (beltAct) { float h_ = drawDist * .5f, fl_ = sqrtf(cfX * cfX + cfY * cfY + cfZ * cfZ) + 1e-6f; beltCx = eyeX + cfX / fl_ * h_; beltCy = eyeY + cfY / fl_ * h_; beltCz = eyeZ + cfZ / fl_ * h_; beltR2 = h_ * h_; }   // Даль-1272: шар пояса
   unsigned us0 = sceKernelGetSystemTimeLow();   // render_fast: время отсечения (строка RFAST cull_us)
   float fl_ = sqrtf(cfX * cfX + cfY * cfY + cfZ * cfZ); if (fl_ < 1e-6f) fl_ = 1.f; float fn_[3] = {cfX / fl_, cfY / fl_, cfZ / fl_};
-  unsigned regE_ = zgOn ? regRes : regAt(eyeX, eyeZ);
+  unsigned regE_ = zgOn ? (regRes | regNear) : regAt(eyeX, eyeZ);   // 1319б: регион «рядом» рисует отсечение целиком, держит стрим по радиусу (regCellOff)
   int reuseOk = 0; unsigned short *pl0_ = 0; int n0_ = -1;
   if (!CULL_REUSE_OLD) {
     n0_ = (opt & O_PVS) && !fly && !regOff && pvsEyeOk() ? pvsListS(eyeX, eyeZ, fn_, &pl0_) : -1;
@@ -2566,13 +2700,13 @@ static void cullCity(int fly) {
     if (drawDist > pvsRange)                            // за 115 м PVS нет: клетки по пирамиде, куски дальше 115 м (без двойников)
       for (unsigned i = 0; i < ncell; i++) {
         Cell *c = &cl[i]; if (c->owner || c->state != 2) continue;
-        if (boxD2(c->bb) > drawDist * drawDist || !visBox(c->bb, 0, 0, 0)) continue;
+        if (boxD2(c->bb) > drawDist * drawDist || beltOut(c->bb, boxD2(c->bb)) || !visBox(c->bb, 0, 0, 0)) continue;
         for (unsigned k = c->first; k < c->first + c->n; k++) if (boxD2(pc[k].r.bb) > pr2) cullPiece(k);
       }
   } else {
     for (unsigned i = 0; i < ncell; i++) {
       Cell *c = &cl[i]; if (c->owner || c->state != 2) continue;
-      if (opt & O_PLANES) { if (boxD2(c->bb) > drawDist * drawDist || !visBox(c->bb, 0, 0, 0)) continue; }
+      if (opt & O_PLANES) { if (boxD2(c->bb) > drawDist * drawDist || beltOut(c->bb, boxD2(c->bb)) || !visBox(c->bb, 0, 0, 0)) continue; }
       else { float dist; if (coneOut(c->cx, c->cy, c->cz, c->rad, &dist)) continue; }
       for (unsigned k = c->first; k < c->first + c->n; k++) cullPiece(k);
     }
@@ -3153,7 +3287,7 @@ static void loadWarmStep(void) {
 }
 // TEST24 (№637, диагностика): кто в кадре города остаётся кусками (drawPiece), а не листом — счётчик и время (мкс) по причинам, только при смоуке; строка DCITY раз в секунду
 static unsigned dcN[10], dcUs[10];
-#define DPC(cat, stmt) do { unsigned t_ = smkOn ? sceKernelGetSystemTimeLow() : 0; stmt; if (smkOn) dcUs[cat] += sceKernelGetSystemTimeLow() - t_; dcN[cat]++; } while (0)
+#define DPC(cat, stmt) do { unsigned t_ = SMKCLK ? sceKernelGetSystemTimeLow() : 0; stmt; if (SMKCLK) dcUs[cat] += sceKernelGetSystemTimeLow() - t_; dcN[cat]++; } while (0)
 // №696: dfN здесь был ТЕМ ЖЕ static, что очередь отложенного освобождения в main_state.h (одна единица трансляции: два «static unsigned dfN» — одна переменная).
 // Раз в секунду смоук-строка DLBUILD обнуляла dfN, и указатели msnart, стоявшие в очереди (до 1,2 МБ за уровень), терялись без free (утечка ~1,5 МБ за смену уровня);
 // dfN++ счётчика листов, наоборот, добавлял в очередь мусорные указатели. Теперь счётчик свой — dlFarN; LVLEAK696_OLD=1 (или «flag lvleak696old 1») — прежняя общая переменная
@@ -3164,8 +3298,8 @@ static int lvLeak696Old = LVLEAK696_OLD;
 static unsigned dlFarN;
 #define DLFARN (*(lvLeak696Old ? &dfN : &dlFarN))
 static unsigned dfUs, dfFrame, dfFrameMax, dfFrames, dfT0, dnN, dnUs;   // аудит FPS: листы дальних/ближних клеток, собранные за секунду (число, мкс, максимум за кадр)
-static int dlBuildFarT(unsigned ci) { unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0; int r = dlBuildFar(ci); if (smkOn) { DLFARN++; dfFrame++; dfUs += sceKernelGetSystemTimeLow() - t0; } return r; }
-static int dlBuildT(unsigned ci) { unsigned t0 = smkOn ? sceKernelGetSystemTimeLow() : 0; int r = dlBuild(ci); if (smkOn) { dnN++; dnUs += sceKernelGetSystemTimeLow() - t0; } return r; }
+static int dlBuildFarT(unsigned ci) { unsigned t0 = SMKCLK ? sceKernelGetSystemTimeLow() : 0; int r = dlBuildFar(ci); if (SMKCLK) { DLFARN++; dfFrame++; dfUs += sceKernelGetSystemTimeLow() - t0; } return r; }
+static int dlBuildT(unsigned ci) { unsigned t0 = SMKCLK ? sceKernelGetSystemTimeLow() : 0; int r = dlBuild(ci); if (SMKCLK) { dnN++; dnUs += sceKernelGetSystemTimeLow() - t0; } return r; }
 // №932б (Роб: «фоны вдалеке мигают»; на L3/L5 причина — 16-битная глубина: дальние слои города 100–250 м делят между собой ≈ 270 ступеней, и слои с общим сдвигом глубины мерцают).
 // Две области глубины: клетки дальше farPlainD (их рисует дальняя версия без нарезки) идут первым проходом со своей проекцией (ближняя плоскость 0,85·farPlainD, дальняя прежняя) —
 // на те же 16 бит приходится не 0,7…260 м, а 85…260 м, ступеней глубины в ≈ 7 раз больше. Дальнее полупрозрачное из очереди tq — туда же (проекция та же); затем глубина очищается
@@ -3181,11 +3315,25 @@ static int zfUser = !ZF932_OLD; static float zfFov, zfNear;   // zfFov — уг�
 static ScePspFMatrix4 zfPmBase; static int zfCurSave; static unsigned zfFrames, zfTqFar;
 static int zfBegin(void) { return zfUser && !ZF932_OLD && zfFov > 0.f && farPlainD >= 60.f && drawDist + 10.f > farPlainD * 1.3f ? 2 : 1; }
 static int zfFarPiece(const Piece *d) { unsigned ci = d->r.cell; return ci < ncell && boxD2(cl[ci].bb) > farPlainD * farPlainD; }
+// 109 О3 шаг 2 (Fable): проход «дальние / ближние клетки» (zfN_ == 2) читал Piece (112 Б, промах кэша на PSP) у КАЖДОГО видимого куска дважды только ради клетки куска. Клетка куска уже лежит рядом с ключом сортировки (scl, u16; у
+// непрозрачного куска это точно r.cell): «дальняя ли клетка» считается один раз на клетку за кадр. Полупрозрачные (scl = 0xFFFF) — как было, по Piece. CITY109_OLD=1 / файл city109old / flag city109 0 — прежнее; flag city109chk 1 — сверка с прежним расчётом на каждом куске (строка CITY109CHK, красный: flag city109break 1)
+#ifndef CITY109_OLD
+#define CITY109_OLD 0
+#endif
+static int city109On = !CITY109_OLD, city109Chk, city109Break; static unsigned city109Ep[4096], city109V[4096], city109Epoch, city109N, city109Bad, city109Hit;
+static inline int zfFarFast109(int i) {
+  unsigned cs = scl[i];
+  if (!city109On || cs >= ncell || ncell > 4096u) return zfFarPiece(&pc[sp[i]]);
+  if (city109Ep[cs] != city109Epoch) { city109Ep[cs] = city109Epoch; city109V[cs] = boxD2(cl[cs].bb) > farPlainD * farPlainD; }
+  int r = (int)city109V[cs]; if (city109Break && (cs & 7u) == 3u) r = !r;   // красный контроль: часть клеток считается наоборот
+  if (city109Chk) { city109N++; if (r != zfFarPiece(&pc[sp[i]])) { city109Bad++; if (smkOn && city109Bad <= 5) { char l_[120]; snprintf(l_, sizeof l_, "CITY109CHK mismatch piece=%d cell=%u fast=%d t=%.1f\n", i, cs, r, smkT); smkWrite(l_); } } }
+  city109Hit++; return r;
+}
 #include "winspr.h"   // №1099: окна вдали ровным цветом (нужны zfBegin, zfFarPiece, boxD2, pl, chClassify выше)
 static void zfPassStart(void) {
   ScePspFMatrix4 pm; zfCurSave = jitCur;
   sceGumMatrixMode(GU_PROJECTION); sceGumStoreMatrix(&zfPmBase); sceGumPushMatrix(); sceGumLoadIdentity();
-  sceGumPerspective(zfFov, ASPECT, farPlainD * ZF932_NEAR_K, drawDist + 10.f); sceGumStoreMatrix(&pm); sceGumPopMatrix(); camAimPm(&pm);   // №1160: тот же сдвиг кадра, что у основного прохода
+  sceGumPerspective(zfFov, ASPECT, farPlainD * ZF932_NEAR_K, farPlaneD() + 10.f); sceGumStoreMatrix(&pm); sceGumPopMatrix(); camAimPm(&pm);   // №1160: тот же сдвиг кадра, что у основного прохода
   if (jitActive) { pm.z.x += jitPmJ.z.x - jitPm0.z.x; pm.z.y += jitPmJ.z.y - jitPm0.z.y; }   // тот же сдвиг ¼ px, что у дальних клеток основного прохода
   sceGuSetMatrix(GU_PROJECTION, &pm); zfHold = 1; zfFrames++;
 }
@@ -3203,6 +3351,7 @@ static void dlCity(float ex, float ey, float ez) {
   if (smkOn) { if (dfFrame > dfFrameMax) dfFrameMax = dfFrame; dfFrame = 0; dfFrames++; unsigned n_ = sceKernelGetSystemTimeLow(); if (!dfT0) dfT0 = n_;
     if (n_ - dfT0 >= 1000000u) { char l_[220]; snprintf(l_, sizeof l_, "DLBUILD t=%.1f frames=%u far_n=%u far_us=%u far_max_frame=%u near_n=%u near_us=%u pre_n=%u pre_us=%u\n", smkT, dfFrames, DLFARN, dfUs, dfFrameMax, dnN, dnUs, dlPreBuilt, dlPreUs); smkWrite(l_); dfT0 = n_; DLFARN = dfUs = dfFrameMax = dfFrames = dnN = dnUs = 0; dlPreBuilt = dlPreUs = 0; } }
   if (++cdlEpoch == 0) { memset(cdlMark, 0, ncell * sizeof *cdlMark); cdlEpoch = 1; }
+  if (++city109Epoch == 0) { memset(city109Ep, 0, sizeof city109Ep); city109Epoch = 1; }
   int builds = 0; dlCallsFrame = dlFallFrame = 0; unsigned dcT1_ = 0;
   cellHybPrep();
   if (!CAM_CLIP_CITY_OLD) for (int i = 0; i < nd; i++) { Piece *d_ = &pc[sp[i]]; unsigned c_ = d_->r.cell; if (c_ < ncell && camClipNear(d_)) cdlMark[c_] = cdlEpoch | 0x80000000u; }   // №634: клетка с куском у камеры — кусками, с отсечением
@@ -3240,10 +3389,11 @@ static void dlCity(float ex, float ey, float ez) {
     if (now_ - t0_ >= 1000000u) { char l_[220]; snprintf(l_, sizeof l_, "CAMCLIPSTAT t=%.1f frames=%u eye_inside=%u near03=%u clip_pieces_max=%u wall_vox=%u wall_grid=%u wall_front=%u ggnear_frames=%u ggnear=%d\n", smkT, nF_, nIn_, nNear_, nMaxCl_, nWall_, nChk_, nFront_, ggNearFrames, ggNearOn); ggNearFrames = 0; smkWrite(l_); t0_ = now_; nF_ = nIn_ = nNear_ = nMaxCl_ = nWall_ = nChk_ = nFront_ = 0; } }
   if (smkOn) dcUs[8] += sceKernelGetSystemTimeLow() - dcS0_;   // TEST24: цена самого счётчика CAMCLIPSTAT (только смоук)
   int zfN_ = zfBegin();   // №932б: 2 — дальние клетки отдельным проходом со своей проекцией, 1 — как раньше
+  static unsigned c9Pre, c9Loop, c9Post, c9N; unsigned c9a_ = smkOn ? sceKernelGetSystemTimeLow() : 0; if (smkOn) c9Pre += c9a_ - dcT0_ - dcUs[8];
   for (int zp_ = 0; zp_ < zfN_; zp_++) {
   if (zfN_ == 2 && zp_ == 0) zfPassStart();
   for (int i = 0; i < nd; i++) {
-    if (zfN_ == 2 && zfFarPiece(&pc[sp[i]]) != (zp_ == 0)) continue;
+    if (zfN_ == 2 && zfFarFast109(i) != (zp_ == 0)) continue;
     if (sf[i] && geOver(GE_SOFT)) continue;   // правка 103: дальние — первыми из кадра
     if (!(rfOld & RF_DL) && scl[i] < ncell && cdlMark[scl[i]] == cdlEpoch) { rfDlSkip++; continue; }   // О4: клетка уже вызвана — Piece не читаем
     Piece *d = &pc[sp[i]]; unsigned ci = d->r.cell;
@@ -3320,6 +3470,7 @@ static void dlCity(float ex, float ey, float ez) {
   }
   if (zfN_ == 2 && zp_ == 0) zfPassEnd();
   }
+  unsigned c9b_ = smkOn ? sceKernelGetSystemTimeLow() : 0; if (smkOn) c9Loop += c9b_ - c9a_;
   // Пропечка №1 (замер тура 100 на PSP: сборка листов в среднем 0,01 мс/кадр, но 31 секунда из 3068 дороже 0,5 мс/кадр, пики 5–8 мс — поворот, въезд в новый район, 32 сборки в одном кадре):
   // клетки, загруженные и ещё без листа, но ближе PREBUILD_RANGE_K·дальности, собираются заранее — по одной за кадр, когда в этом кадре сборок не было и кадр не перегружен; к моменту,
   // когда клетка войдёт в обзор, лист готов. Содержимое листа то же (тот же dlBuildM), память та же, что у листа при первой видимости (≈2 КБ на клетку). DL_PREBUILD_OLD=1 — как было
@@ -3331,6 +3482,7 @@ static void dlCity(float ex, float ey, float ez) {
       if (farPlainD > 0.f && boxD2(c_->bb) > farPlainD * farPlainD) continue;   // дальние клетки — свой лист (dlBuildFar) по первой видимости
       unsigned t0_ = smkOn ? sceKernelGetSystemTimeLow() : 0; int r_ = dlBuildT(ci); dlPreBuilt++; (void)r_; if (smkOn) dlPreUs += sceKernelGetSystemTimeLow() - t0_; break; } }
   if (jitActive && !JITTER_NEAR_OLD && !jitCur) jitterUse(1);   // дальше (небо) — со сдвигом, как раньше
+  if (smkOn) { unsigned c9c_ = sceKernelGetSystemTimeLow(); c9Post += c9c_ - c9b_; c9N++; if (c9N >= 60) { char l_[160]; snprintf(l_, sizeof l_, "DCITY9 t=%.1f frames=%u pre_us=%u loop_us=%u post_us=%u nd=%d zf=%d c109=%d fast=%u chk=%u bad=%u\n", smkT, c9N, c9Pre / c9N, c9Loop / c9N, c9Post / c9N, nd, zfN_, city109On, city109Hit, city109N, city109Bad); smkWrite(l_); c9Pre = c9Loop = c9Post = c9N = 0; } }
   if (smkOn) { dcUs[7] += sceKernelGetSystemTimeLow() - dcT0_; dcN[7]++; }
   dlLost(); resetState();   // после листов состояние GE — последнего куска листа: вернуть кадру его (сдвиг глубины 0, без отсечения)
 }

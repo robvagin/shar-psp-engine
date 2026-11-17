@@ -919,7 +919,8 @@ def prop_entities(scenes, art):
             if cls == 2: continue   # данные говорят: статика — не трогаем
             mats = col_instances(ent)
             if not mats: continue
-            row = out.setdefault(name, dict(scene=scene, mat=mat, mass=atc[mat] if mat < len(atc) else 100.0, mats=[]))
+            row = out.setdefault(name, dict(scene=scene, mat=mat, mass=atc[mat] if mat < len(atc) else 100.0, mats=[], vols=None))
+            if row['vols'] is None and not PROPVOL_OFF: row['vols'] = prp2_export.collision(ent, name)   # №П4 (107б): объёмы столкновения типа из данных диска (CollisionObject), в осях сущности
             row['mats'].extend(mats)
     return out
 
@@ -941,6 +942,20 @@ def quat_from_R(m):
     n = np.sqrt(w * w + x * x + y * y + z * z) or 1.0
     return w / n, x / n, y / n, z / n
 
+# №П4 (107б, сверка физики Fable-2 П4, закон 1276б): у оригинала столкновение предмета — набор объёмов из данных (CollisionObject: ящики, цилиндры, сферы); у нас ствол искали по вершинам. Таблица PVL1 в хвосте PRP2 (@60 смещение):
+# 'PVL1', число типов, число объёмов; на тип u16 первый, u16 число; объём 64 Б как SpCol SPR1: kind (0 ящик, 1 сфера, 2 цилиндр), 3 байта, центр 3f, оси 9f (строки), полуразмеры 3f — в осях модели, зеркало z как у вершин.
+# PROPVOL_OFF=1 — таблицы нет (прежний экспорт)
+PROPVOL_OFF = os.environ.get('SHR_PROPVOL_OFF') == '1'
+def propvol_table(prop_types):
+    if PROPVOL_OFF: return b''
+    recs, idx = bytearray(), bytearray(); nv = 0
+    for ty in prop_types:
+        vs = ty.get('vols') or []
+        idx += struct.pack('<HH', nv, len(vs))
+        for kind, owner, c, A, h in vs:
+            c2 = np.array([c[0], c[1], -c[2]], np.float32); A2 = np.asarray(A, np.float32).copy(); A2[:, 2] *= -1.0   # зеркало z, как у вершин
+            recs += struct.pack('<B3x3f9f3f', kind, *c2, *A2.reshape(-1), *np.asarray(h, np.float32)); nv += 1
+    return b'PVL1' + struct.pack('<2I', len(prop_types), nv) + bytes(idx) + bytes(recs)
 def prop_section(prop_types, prop_pieces_raw, tmap, coin_type=-1, coin_pos=()):
     """-> bytes секции PRP1: общие вершины/индексы (формат кусков города) + таблицы кусков/типов/экземпляров."""
     QV = np.dtype([('u', '<i2'), ('v', '<i2'), ('c', '<u4'), ('x', '<i2'), ('y', '<i2'), ('z', '<i2'), ('pad', '<i2')])
@@ -2947,7 +2962,7 @@ def main(level, out_path=None, scenes=None, coins=True, backdrop_level=None):
         radius = float(np.hypot((hi_[0] - lo_[0]) / 2, (hi_[2] - lo_[2]) / 2))
         ti = len(prop_types)
         for t, fl, P, UV, C in parts: prop_pieces_raw.append((ti, t, fl, P, UV, C))
-        prop_types.append(dict(name=name, index=ti, mass=info['mass'], radius=radius, halfH=float((hi_[1] - lo_[1]) / 2), mats=info['mats'], mat=info['mat']))
+        prop_types.append(dict(name=name, index=ti, mass=info['mass'], radius=radius, halfH=float((hi_[1] - lo_[1]) / 2), mats=info['mats'], mat=info['mat'], vols=info.get('vols') or [], bb=(lo_.tolist(), hi_.tolist())))
     # монеты (этап 3б): один меш coinShape_000 (как лишний тип пропа без экземпляров) + точки kind 14 из локаторов
     coin_pos, seen = [], set()
     for sc_ in scenes:
@@ -3223,7 +3238,7 @@ def main(level, out_path=None, scenes=None, coins=True, backdrop_level=None):
     # PRP2 @44/@48: по типу PRP1 частицы ATC + обломок (удар машиной: вода гидранта, листья, мусор, почта, искры фонарей)
     type_fx = prp2_export.type_fx_table(prop_types, sprops.atc)
     anm = aobj.anm1() if aobj else b''   # ANM1: объект -> экземпляры SPR1, живые объёмы COL1, действие и триггер
-    out += prp2_export.wrap_prp2(prop_section(prop_types, prop_pieces_raw, tmap, coin_type, coin_pos), spr, type_fx, anm)
+    out += prp2_export.wrap_prp2(prop_section(prop_types, prop_pieces_raw, tmap, coin_type, coin_pos), spr, type_fx, anm, propvol_table(prop_types))
     if aobj: print(f'  ANM1: {len(aobj.objs)} объектов, {sum(len(o["vols"]) for o in aobj.objs)} живых объёмов, {len(anm)} Б')
     print('  частицы типов PRP1: ' + ', '.join(f"{t['name']}={type_fx[2 * i]}/{type_fx[2 * i + 1]}" for i, t in enumerate(prop_types)
                                                   if type_fx[2 * i] or type_fx[2 * i + 1] != 0xFF))

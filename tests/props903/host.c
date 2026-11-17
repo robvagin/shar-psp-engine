@@ -9,6 +9,7 @@
 #include "stateprops.h"
 #include "car.h"
 unsigned homerSolidFrame = 0;
+void wdFire(const char *k, const char *a, const char *i) { (void)k; (void)a; (void)i; }   // 107б: заглушка сторожа
 static Props props; static StateProps sp; static ColWorld world; static Car car;
 static int kickAny(void *u, unsigned i, float dx, float dz) { (void)u; (void)i; (void)dx; (void)dz; return 0; }
 static int run(unsigned i, float lat) {   // 1 — проп задет (проснулся/спрятан), 2 — задет, но машину до этого развернуло

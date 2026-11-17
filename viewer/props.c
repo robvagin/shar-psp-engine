@@ -7,6 +7,42 @@
 #include <stdint.h>
 #include <math.h>
 
+// 108 О6 + О9: горячий массив предметов (props.h, PropHot). PROPHOT108_OLD=1 — прежние обходы по PropState. PROPHOT_RED=1 — красный контроль стенда tests/prophot108: удар не обновляет запись
+#ifndef PROPHOT108_OLD
+#define PROPHOT108_OLD 0
+#endif
+#ifndef PROPHOT_RED
+#define PROPHOT_RED 0
+#endif
+int propsHot108Old = PROPHOT108_OLD;
+int propsHotRed = PROPHOT_RED;   // красный контроль: 1 — удар машиной не обновляет запись горячего массива (flag prophotred 1 или -DPROPHOT_RED=1)
+unsigned propsHotMiss;
+static inline unsigned hotFlags(const PropState *s) {
+  unsigned fl = 0;
+  if (s->hidden) fl |= PH_HID;
+  if (!s->asleep || s->hitCool > 0.f || (!s->fresh && !s->noRespawn)) fl |= PH_STEP;
+  if (!(s->noRespawn || (!s->hidden && s->asleep && s->fresh)) || s->away != 0.f) fl |= PH_RESP;
+  return fl;
+}
+void propsHotSync(Props *p, unsigned i) {
+  if (!p->hot || i >= p->ninst) return;
+  const PropState *s = &p->st[i]; PropHot *h = &p->hot[i];
+  h->x = s->x; h->y = s->y; h->z = s->z; h->fl = ((h->fl & PH_VERMASK) + PH_VERINC) | hotFlags(s);   // 108 О7: старшие 16 бит — версия записи, растёт при каждой записи в предмет
+}
+// только признаки, версию не растим: предмет не двигался и не менял позу (шаг лежащего сбитого предмета только копит hitCool и fadeT)
+static inline void hotQuiet(Props *p, unsigned i) { if (p->hot) p->hot[i].fl = (p->hot[i].fl & PH_VERMASK) | hotFlags(&p->st[i]); }
+unsigned propsHotVerify(const Props *p) {
+  unsigned bad = 0;
+  if (!p->hot) return 0;
+  for (unsigned i = 0; i < p->ninst; i++) {
+    const PropState *s = &p->st[i]; const PropHot *h = &p->hot[i];
+    if (h->x != s->x || h->y != s->y || h->z != s->z || (h->fl & ~PH_VERMASK) != hotFlags(s)) bad++;
+  }
+  return bad;
+}
+#define HOT_SYNC(p, i) propsHotSync((p), (i))
+#define HOT_SYNC_KICK(p, i) do { if (!propsHotRed) propsHotSync((p), (i)); } while (0)
+
 int propsInit(Props *p, const void *section, unsigned size) {
   memset(p, 0, sizeof *p);
   if (!section || size < 32) return -1;
@@ -19,6 +55,9 @@ int propsInit(Props *p, const void *section, unsigned size) {
     unsigned so = *(const unsigned *)(h + 32), ss = *(const unsigned *)(h + 36);
     if (ss && ((uint64_t)so + ss > size || (so & 15))) return -9;
     if (ss) { p->spr = h + so; p->sprSize = ss; }
+    { unsigned vo = *(const unsigned *)(h + 60);   // 107в П4: PVL1 — объёмы столкновения типов
+      if (vo && (uint64_t)vo + 12 <= size && !memcmp(h + vo, "PVL1", 4)) { unsigned nt_ = *(const unsigned *)(h + vo + 4), nv_ = *(const unsigned *)(h + vo + 8), nt0 = *(const unsigned *)(h + 8);
+        if (nt_ == nt0 && (uint64_t)vo + 12 + 4ull * nt_ + 64ull * nv_ <= size && !(vo & 3)) { p->volIdx = (const unsigned short *)(h + vo + 12); p->vol = (const PropVol *)(h + vo + 12 + 4 * nt_); p->nvol = nv_; } } }
     unsigned fo = *(const unsigned *)(h + 44), fn = *(const unsigned *)(h + 48);
     if (fo && fn && (uint64_t)fo + 2ull * fn <= size) { p->typeFx = h + fo; p->ntypeFx = fn; }
   } else if (memcmp(h, "PRP1", 4)) return -3;
@@ -46,6 +85,7 @@ int propsInit(Props *p, const void *section, unsigned size) {
   p->nearList = (unsigned *)calloc(ninst ? ninst : 1, sizeof(unsigned));   // №1086; №1170: может быть NULL — все обращения (propsAdvanceEx fuse, propsNearBuild, propsHit useList) проверяют nearList, без списка идёт полный проход
   p->st = calloc(ninst ? ninst : 1, sizeof(PropState));
   if (!p->st) return -7;
+  p->hot = (PropHot *)calloc(ninst ? ninst : 1, sizeof(PropHot));   // 108 О6/О9: нет памяти — NULL, обходы прежние
   // коробка каждого типа в осях модели: по вершинам всех кусочков (модель = o + sc*v)
   float *bb = calloc(ntype ? ntype * 6 : 6, sizeof(float));
   if (!bb) return -7;
@@ -157,6 +197,7 @@ int propsInit(Props *p, const void *section, unsigned size) {
     st->x = p->def[i].x - m[12]; st->y = p->def[i].y - m[13]; st->z = p->def[i].z - m[14];
     st->home[0] = st->x; st->home[1] = st->y; st->home[2] = st->z;
     st->asleep = 1; st->fresh = 1; st->fadeT = 0.f;
+    HOT_SYNC(p, i);
   }
   free(bb);
   return 0;
@@ -168,7 +209,7 @@ void propsTypeFx(const Props *p, unsigned t, int *particle, int *breakIdx) {
   *particle = p->typeFx[2 * t]; *breakIdx = p->typeFx[2 * t + 1] == 0xFF ? -1 : p->typeFx[2 * t + 1];
 }
 
-void propsFree(Props *p) { if (p->st) free(p->st); free(p->nearList); free(p->trunk); memset(p, 0, sizeof *p); }
+void propsFree(Props *p) { if (p->st) free(p->st); free(p->hot); free(p->nearList); free(p->trunk); memset(p, 0, sizeof *p); }
 
 void propPieceMatrix(const PropState *st, float ox, float oy, float oz, float sc, float m[16]) {
   float w = st->q[0], x = st->q[1], y = st->q[2], z = st->q[3];
@@ -335,6 +376,37 @@ static float carHalfHeight(const CarBox *b) {
 }
 // Тонкая коробка вместо большого круга: стекло, щит, панель. Обычные объёмные пропы
 // сохраняют прежний контакт. При повороте берём больший радиус кузова из двух кадров.
+// 107в П4: контакт кузова с одним объёмом предмета (ящик в осях Rv, центр C, полуразмеры half): те же шесть осей и тот же ход по кадру, что у thinContact, без условия «тонкий». Цилиндр и сфера — описанный ящик
+static int boxContactSwept(const float C[3], const float R[3][3], const float half[3], const CarBox *a, const CarBox *b) {
+  int k = 0; for (int j = 1; j < 3; j++) if (fabsf(R[1][j]) < fabsf(R[1][k])) k = j;
+  float len = hypotf(R[0][k], R[2][k]); if (len < 1e-4f) { k = 0; len = hypotf(R[0][0], R[2][0]); if (len < 1e-4f) len = 1.f; }
+  float ux = R[0][k] / len, uz = R[2][k] / len;
+  float axes[6][2] = {{ux, uz}, {-uz, ux}, {a->fx, a->fz}, {-a->fz, a->fx}, {b->fx, b->fz}, {-b->fz, b->fx}}, ext[6] = {0};
+  for (int j = 0; j < 6; j++) for (int t = 0; t < 3; t++) ext[j] += fabsf(axes[j][0] * R[0][t] + axes[j][1] * R[2][t]) * half[t];
+  float enter = 0.f, leave = 1.f;
+  for (int j = 0; j < 6; j++) {
+    float x = axes[j][0], z = axes[j][1], rad = ext[j] + fmaxf(carRadiusOn(a, x, z), carRadiusOn(b, x, z));
+    if (!sweptAxis((a->x - C[0]) * x + (a->z - C[2]) * z, (b->x - C[0]) * x + (b->z - C[2]) * z, rad, &enter, &leave)) return 0;
+  }
+  float ey = fabsf(R[1][0]) * half[0] + fabsf(R[1][1]) * half[1] + fabsf(R[1][2]) * half[2];
+  return sweptAxis(a->y + .5f * (a->lo + a->hi) - C[1], b->y + .5f * (b->lo + b->hi) - C[1], ey + fmaxf(carHalfHeight(a), carHalfHeight(b)), &enter, &leave);
+}
+int propsVol107Old = 0;
+// все объёмы типа предмета i в его положении против кузова; -1 — у типа объёмов нет (прежний контакт)
+static int volContact107(const Props *p, unsigned i, const PropState *st, const float R[3][3], const CarBox *a, const CarBox *b) {
+  if (propsVol107Old || !p->vol) return -1;
+  unsigned t = p->def[i].type, first = p->volIdx[2 * t], n = p->volIdx[2 * t + 1]; if (!n || first + n > p->nvol) return -1;
+  float org[3]; const float cv[3] = {st->cx, st->cy, st->cz};
+  for (int r = 0; r < 3; r++) org[r] = (r == 0 ? st->x : r == 1 ? st->y : st->z) - (R[r][0] * cv[0] + R[r][1] * cv[1] + R[r][2] * cv[2]);
+  for (unsigned v = first; v < first + n; v++) {
+    const PropVol *V = &p->vol[v]; float C[3], Rv[3][3], half[3];
+    for (int r = 0; r < 3; r++) C[r] = org[r] + R[r][0] * V->c[0] + R[r][1] * V->c[1] + R[r][2] * V->c[2];
+    for (int ax = 0; ax < 3; ax++) for (int r = 0; r < 3; r++) Rv[r][ax] = R[r][0] * V->a[3 * ax] + R[r][1] * V->a[3 * ax + 1] + R[r][2] * V->a[3 * ax + 2];
+    half[0] = V->h[0]; half[1] = V->h[1]; half[2] = V->h[2];
+    if (boxContactSwept(C, Rv, half, a, b)) return 1;
+  }
+  return 0;
+}
 static int thinContact(const PropState *s, const float R[3][3], const CarBox *a, const CarBox *b, int *thin) {
   int k = 0; for (int j = 1; j < 3; j++) if (fabsf(R[1][j]) < fabsf(R[1][k])) k = j;
   float len = hypotf(R[0][k], R[2][k]), ux = R[0][k] / len, uz = R[2][k] / len;
@@ -364,12 +436,9 @@ static int thinContact(const PropState *s, const float R[3][3], const CarBox *a,
 #ifndef PROP_FADE_S
 #define PROP_FADE_S (PROP_FADE_S12_OLD ? 12.0f : 30.0f)
 #endif
-void propsRespawnStep(Props *p, float ex, float ez, float dt,
-                      int (*seen)(void *, float, float, float, float), void *user) {
-  if (dt <= 0.f || !seen) return;
-  for (unsigned i = 0; i < p->ninst; i++) {
+static void propsRespawnOne(Props *p, unsigned i, float ex, float ez, float dt, int (*seen)(void *, float, float, float, float), void *user) {
     PropState *s = &p->st[i]; const PropType *t = &p->types[p->def[i].type];
-    if (s->noRespawn || (!s->hidden && s->asleep && s->fresh)) { s->away = 0.f; continue; }
+    if (s->noRespawn || (!s->hidden && s->asleep && s->fresh)) { s->away = 0.f; return; }
     float dx = s->home[0] - ex, dz = s->home[2] - ez, r = t->radius + 2.f * t->halfH + 1.f;
     // сверка g11, P11-17 и P11-Д6 (Н): класс 10 (фонари, светофоры, столбы) после удара остаётся в физике и, как только выходит из пирамиды видимости игрока, удаляется из мира до перезагрузки
     // зоны — без таймера и без возврата. У нас класс 10 — столб, валившийся на шарнире (pole != 0). P12-02 (С): остальные сбитые лежат там, где остановились, до выгрузки и новой загрузки зоны,
@@ -382,21 +451,33 @@ void propsRespawnStep(Props *p, float ex, float ez, float dt,
 #define PROP_ZONE_R 400.f   // м; число наше, не из оригинала (там возврат при перезагрузке зоны мира): расстояние заменяет зону
 #endif
     if (!PROPLIE_SV_OLD) {
-      if (s->gone) { s->away = 0.f; continue; }
-      if (s->pole && !s->hidden && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; s->gone = 1; s->away = 0.f; continue; }
+      if (s->gone) { s->away = 0.f; return; }
+      if (s->pole && !s->hidden && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; s->gone = 1; s->away = 0.f; return; }
     }
     float zoneR = PROPLIE_SV_OLD ? 60.f : PROP_ZONE_R;
 #ifndef PROP_FADE_OLD
     // №589: через PROP_FADE_S (30 с) сбитый предмет убирается, но только когда камера его не видит: прозрачности у пропов в движке нет (куски идут общей
     // пачкой, вершины без альфы), а исчезновение на глазах — «глюк». Видимый лежит дальше; предметы миссий (noRespawn) не убираются
-    if (PROPLIE_SV_OLD && !s->hidden && !s->fresh && s->fadeT > PROP_FADE_S && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; continue; }
+    if (PROPLIE_SV_OLD && !s->hidden && !s->fresh && s->fadeT > PROP_FADE_S && !seen(user, s->x, s->y, s->z, r)) { s->hidden = 1; return; }
 #endif
     if (dx * dx + dz * dz < zoneR * zoneR ||
-        seen(user, s->home[0], s->home[1], s->home[2], r) || seen(user, s->x, s->y, s->z, r)) { s->away = 0.f; continue; }
-    if ((s->away += fminf(dt, .05f)) < 5.f) continue;
+        seen(user, s->home[0], s->home[1], s->home[2], r) || seen(user, s->x, s->y, s->z, r)) { s->away = 0.f; return; }
+    if ((s->away += fminf(dt, .05f)) < 5.f) return;
     s->x = s->home[0]; s->y = s->home[1]; s->z = s->home[2]; memcpy(s->q, p->def[i].q, sizeof s->q);
     memset(s->vel, 0, sizeof s->vel); memset(s->w, 0, sizeof s->w);
     s->asleep = s->fresh = 1; s->hidden = 0; s->away = s->hitCool = s->sleepT = s->gOff = s->fadeT = 0.f; s->pole = 0; s->kicked = s->gone = s->inkTouch = 0;
+}
+// 108 О9 (Бабл): возврат обходил все предметы уровня ради «целый на месте, away = 0» (первая проверка, почти все); теперь предмет без признака PH_RESP (props.h) пропускается по горячему массиву:
+// для него прежний код делал только away = 0, а away у такого уже 0 (признак включает away != 0). После визита запись пересчитывается. PROPHOT108_OLD=1 — все предметы, как было
+void propsRespawnStep(Props *p, float ex, float ez, float dt,
+                      int (*seen)(void *, float, float, float, float), void *user) {
+  if (dt <= 0.f || !seen) return;
+  const int hot = !propsHot108Old && p->hot;
+  for (unsigned i = 0; i < p->ninst; i++) {
+    if (hot && !(p->hot[i].fl & PH_RESP)) continue;
+    propsHotMiss++;
+    propsRespawnOne(p, i, ex, ez, dt, seen, user);
+    if (hot) HOT_SYNC(p, i);
   }
 }
 
@@ -405,10 +486,11 @@ void propsRespawnStep(Props *p, float ex, float ez, float dt,
 void propsZoneReload(Props *p) {
   for (unsigned i = 0; i < p->ninst; i++) {
     PropState *s = &p->st[i];
-    if (s->noRespawn || (!s->hidden && s->asleep && s->fresh && !s->gone)) { s->away = 0.f; continue; }
+    if (s->noRespawn || (!s->hidden && s->asleep && s->fresh && !s->gone)) { s->away = 0.f; HOT_SYNC(p, i); continue; }
     s->x = s->home[0]; s->y = s->home[1]; s->z = s->home[2]; memcpy(s->q, p->def[i].q, sizeof s->q);
     memset(s->vel, 0, sizeof s->vel); memset(s->w, 0, sizeof s->w);
     s->asleep = s->fresh = 1; s->hidden = 0; s->away = s->hitCool = s->sleepT = s->gOff = s->fadeT = 0.f; s->pole = 0; s->kicked = s->gone = s->inkTouch = 0;
+    HOT_SYNC(p, i);
   }
 }
 
@@ -416,6 +498,18 @@ void propsZoneReload(Props *p) {
 #define PROP_TALL_FALL_OLD 0
 #endif
 #define PROP_TALL_HY 2.f
+#ifndef PROPGHOST107_OLD
+#define PROPGHOST107_OLD 0
+#endif
+int propsGhost107Old = PROPGHOST107_OLD;
+#ifndef PROPSTOMP107_OLD
+#define PROPSTOMP107_OLD 0
+#endif
+int propsStomp107Old = PROPSTOMP107_OLD;
+#ifndef PROPLOSS107_OLD
+#define PROPLOSS107_OLD 0
+#endif
+int propsLoss107Old = PROPLOSS107_OLD;
 int propsTallFallOld = PROP_TALL_FALL_OLD;
 // №968 (Роб 25.10: «всё должно падать как в оригинале, что столбы, что деревья»). Замер PS2 (двойник pcsx2-twins, tests/fall968/ps2, уличный фонарь L1 (245,4; 167,8), 1000 кг, машина без газа, 6 скоростей 2,4…22,8 м/с):
 // фонарь падает целым столбом на шарнире у основания, угол от вертикали растёт как θ'' = 0,5·sin θ (рад/с²) от начального 1° и начальной скорости
@@ -433,8 +527,14 @@ int propsPole968Old = PROP_POLE968_OLD;
 #define POLE1046_OLD 0
 #endif
 int pole1046Old = POLE1046_OLD;
+// 107б П6 (сверка физики Fable-2, закон 1276б «всё как в оригинале»; перекрывает слово Роба 1046): толчок бампера 1046 (начальная угловая скорость не меньше 0,25 рад/с на каждый м/с) валил столб за ~0,5 с; запись PS2
+// (№968, tests/fall968/ps2_ref.tsv): 3,5 с до 85° на 8–12 м/с, 2,1 с на 16,8, 1,3 с на 22,8 — закон №968 без толчка. Теперь без толчка. POLE1276_OLD=1 / «flag pole1276old 1» — толчок 1046 (Роб), как в 106
+#ifndef POLE1276_OLD
+#define POLE1276_OLD 0
+#endif
+int propsPoleKick1276Old = POLE1276_OLD;
 float propsPoleKick1046(float v, float w0, float wk, float v0) {
-  float w = w0 + wk * fmaxf(0.f, v - v0); if (pole1046Old) return w;
+  float w = w0 + wk * fmaxf(0.f, v - v0); if (pole1046Old || !propsPoleKick1276Old) return w;
   float k = .25f * v; if (k > 4.f) k = 4.f; return w > k ? w : k;
 }
 #define POLE_W0 0.2f
@@ -476,8 +576,21 @@ static void propsAdvanceEx(Props *p, const ColWorld *world, float dt, const Car 
   if (dt > 0.05f) dt = 0.05f;
   const int fuse = !PROPPASS1106_OLD && !PROPCOST1086_OLD && nearFor && p->nearList;
   if (fuse) { p->nearC[0] = nearFor->x; p->nearC[1] = nearFor->z; p->nearN = 0; }
+  // 108 О6: целый предмет на месте (нет PH_HID и PH_STEP): прежний код только проверял расстояние до игрока по x, z (спит, hitCool 0, fadeT не копит) — берём x, z из горячего массива
+  const int hot = !propsHot108Old && p->hot;
+  const float nr2 = PROP_NEAR_R * PROP_NEAR_R;
   for (unsigned i = 0; i < p->ninst; i++) {
-    PropState *st = &p->st[i]; propsPassIter++; if (st->hidden) continue;
+    if (hot) {
+      const PropHot *h = &p->hot[i]; propsPassIter++;
+      if (h->fl & PH_HID) continue;
+      if (!(h->fl & PH_STEP)) {
+        if (fuse) { float dx = h->x - nearFor->x, dz = h->z - nearFor->z; if (dx * dx + dz * dz < nr2) p->nearList[p->nearN++] = i; }
+        continue;
+      }
+      propsHotMiss++;
+    }
+    PropState *st = &p->st[i]; if (!hot) propsPassIter++; if (st->hidden) continue;
+    const int wasAwake = !st->asleep;   // 108 О7: спящему шаг положение и поза не меняет — версия записи не растёт
     st->hitCool = fmaxf(0.f, st->hitCool - dt);
     if (!st->asleep) { if (st->pole == 1) poleStep(st, dt); else integrateProp(st, world, dt); }
 #ifndef PROP_FADE_OLD
@@ -488,6 +601,7 @@ static void propsAdvanceEx(Props *p, const ColWorld *world, float dt, const Car 
       float dx = st->x - nearFor->x, dz = st->z - nearFor->z;
       if (!st->asleep || dx * dx + dz * dz < PROP_NEAR_R * PROP_NEAR_R) p->nearList[p->nearN++] = i;
     }
+    if (hot) { if (wasAwake) HOT_SYNC(p, i); else hotQuiet(p, i); }
   }
   if (fuse) { p->nearOk = 1; p->ownCar = nearFor; }
 }
@@ -546,7 +660,10 @@ static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const Car
 #ifndef PROPONCE_SV_OLD
 #define PROPONCE_SV_OLD 0
 #endif
-    if (!PROPONCE_SV_OLD && st->kicked && st->asleep) continue;
+    // 107б П1 (сверка физики Fable-2 13.11, оригинал перечитан): «задетый лежит и машине не мешает» у оригинала ТОЛЬКО у одноразового класса (фонари, светофоры, столбы — высокие предметы); обычные сбиваемые
+    // (почтовый ящик, урна, скамья, конус) после покоя остаются твёрдыми, следующее касание снова вводит их в физику. Было: для всех (призрак). Класс — высокий предмет (полувысота коробки >= PROP_TALL_HY).
+    // PROPGHOST107_OLD=1 / «flag propghost107old 1» — призрак для всех, как в 106
+    if (!PROPONCE_SV_OLD && st->kicked && st->asleep && (propsGhost107Old || st->hy >= PROP_TALL_HY)) continue;
     if (PROPTOUCH_SV_OLD && carSpeed < 0.5f) continue;
     float dx = st->x - cb.x, dz = st->z - cb.z;
     float dirx = dirx0, dirz = dirz0;
@@ -573,7 +690,9 @@ static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const Car
       float tdx = tcx - cb.x, tdz = tcz - cb.z, tlf = tdx * cb.fx + tdz * cb.fz, tlr = tdx * rax + tdz * raz;
       ddx = tlf - fmaxf(-cb.hl, fminf(cb.hl, tlf)); ddz = tlr - fmaxf(-cb.hw, fminf(cb.hw, tlr)); hitR = tk[2]; byTrunk = 1;
     }
-    if (thin ? !touching : ddx * ddx + ddz * ddz > hitR * hitR) continue;
+    { int vc = volContact107(p, i, st, R, &prev, &cb);   // 107в П4: объёмы из данных диска; нет таблицы или у типа нет объёмов — прежний контакт
+      if (vc >= 0) { if (!vc) continue; } else
+    if (thin ? !touching : ddx * ddx + ddz * ddz > hitR * hitR) continue; }
     // по высоте: коробка пропа должна пересекать кузов (светофоры/вывески над дорогой не сбиваем снизу)
 #ifndef PROP_GHOST_OLD
     // №588 (#20 столб, #25 ларёк/лавочка): не быть призраком при отсутствии colGround; при посадке вниз ловить верх пропа
@@ -608,11 +727,12 @@ static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const Car
     // удар: отбрасываем по ходу машины и чуть вбок (от центра кузова), подпрыгивает невысоко,
     // верх опрокидывается вперёд. massRatio в квадрате — тяжёлые фонари/светофоры летят заметно слабее.
     if (p->onKick && p->onKick(p->kickUser, i, dirx, dirz)) {   // BreakableObject с мешами: вместо пропа играет обломок
-      st->hidden = 1; st->asleep = 1; st->kicked = 1; if (!other && !INK1096_OLD) st->inkTouch = 1;
+      st->hidden = 1; st->asleep = 1; st->kicked = 1; if (!other && !INK1096_OLD) st->inkTouch = 1; HOT_SYNC_KICK(p, i);
       if (PROP_BREAK_PASS_OLD) { float k = fmaxf(ty->mass, 1.f) / (car->p.mass + fmaxf(ty->mass, 1.f)) * 0.15f; car->vel[0] *= 1.f - k; car->vel[2] *= 1.f - k; }
       continue;
     }
-    if (!hasGround) { st->hitCool = .5f; continue; } // нет ни обломка, ни пола: не запускать бесконечное падение/звук
+    if (!hasGround) { st->hitCool = .5f; HOT_SYNC_KICK(p, i); continue; } // нет ни обломка, ни пола: не запускать бесконечное падение/звук
+    carDamageProp107(car, ty->mass, carSpeed);   // 107б П10: урон машине от удара о предмет (порог оригинала 0,06; ящик не бьёт, фонарь 1000 кг примерно с 9–10 м/с)
     float massRatio = car->p.mass / (car->p.mass + fmaxf(ty->mass, 1.f));
     // №968: столб (высокий предмет с известным стволом, без обломка) валится на шарнире у основания по замеру PS2; машина теряет скорость как у тяжёлого (ниже)
     int pole968 = !propsPole968Old && trunkKnown && st->hy >= PROP_TALL_HY && st->pole != 1 && carSpeed > 0.5f;
@@ -638,7 +758,8 @@ static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const Car
     // min(0,6·kick, 3) рад/с. PROP_TALL_FALL_OLD=1 / flag tallfall946old 1 — как было
     if (!propsTallFallOld && st->hy >= PROP_TALL_HY) ang = fmaxf(ang, fminf(kick * 0.6f, 3.f));
     st->w[0] = dirz * ang; st->w[1] = -side * 3.f; st->w[2] = -dirx * ang;
-    st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; st->kicked = 1; if (!other && !INK1096_OLD) st->inkTouch = 1;
+    st->asleep = 0; st->sleepT = 0.f; st->fresh = 1; if (propsGhost107Old || carSpeed >= 0.5f) st->kicked = 1;   // 107б П2: отметку «тронут» ставит только настоящий удар, касание медленнее 0,5 м/с её не ставит (иначе предмет после сантиметрового сдвига — призрак на любой скорости)
+    if (!other && !INK1096_OLD) st->inkTouch = 1; HOT_SYNC_KICK(p, i);
     if (pole968) {   // кинематика шарнира вместо импульса коробки: основание на месте, угол по θ'' = 0,5·sin θ
       st->pole = 1; st->poleTh = 0.0174533f; st->poleW = propsPoleKick1046(carSpeed, POLE_W0, POLE_WK, POLE_V0);
       st->poleD[0] = dirx; st->poleD[1] = dirz; memcpy(st->poleQ0, st->q, sizeof st->poleQ0);
@@ -651,7 +772,7 @@ static void propsHitCarImpl(Props *p, const ColWorld *world, Car *car, const Car
     // №488 (Стенд 16.10, ps2s_ram.py, famil_v, фонарь 1000 кг, газ держит V): сразу после касания (0,08 с) скорость падает на 2,5 / 3,75 / 6,4 м/с при
     // 5,3 / 10,3 / 20,2 м/с (≈ 1,0 + 0,28·v), дальше газ возвращает; фонарь сбивается и летит вперёд с машиной. Потеря по импульсу, как у лёгких, но с потолком 1,0 + 0,28·v
     if (!light && !PROP_HEAVY_OLD && trunkKnown && carSpeed > 0.5f) {   // только пропы с известным стволом (фонарь, столб); щиты, кроны и касание по радиусу меша прежние
-      float dv = fminf(fmaxf(ty->mass, 1.f) * kick / (0.75f * car->p.mass), 1.0f + 0.28f * carSpeed), k = 1.f - dv / carSpeed;
+      float dv = propsLoss107Old ? fminf(fmaxf(ty->mass, 1.f) * kick / (0.75f * car->p.mass), 1.0f + 0.28f * carSpeed) : propsHeavyLossDv(carSpeed, ty->mass), k = 1.f - dv / carSpeed;   // 107б П5: одна формула с стейтпропами
       car->vel[0] *= k; car->vel[2] *= k; car->v *= k;
     } else
     if (!light) car->v -= car->v * massRatio * 0.15f;   // прежняя потеря (тяжёлый проп, и -DPROP_KICK_OLD=1)
@@ -673,7 +794,7 @@ int propsRadiate(Props *p, float x, float y, float z, float r, float force) {
     float dx = st->x - x, dy = st->y - y, dz = st->z - z, rr_ = r + ty_->radius;   // круг 3 (g11): шар предмета плюс радиус толчка
     if (dx * dx + dy * dy + dz * dz > rr_ * rr_) continue;
     float m = ty_->mass; if (m <= 0.f) m = 100.f;
-    st->vel[1] += force / m; st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1; n++;
+    st->vel[1] += force / m; st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1; n++; HOT_SYNC(p, i);
   }
   return n;
 }
@@ -687,24 +808,41 @@ int propsRadiate(Props *p, float x, float y, float z, float r, float force) {
 #define PROP_BOOM_VMAX 30.f
 #endif
 static unsigned boomSeqPr;
+// 107б П11 (сверка физики Fable-2, закон 1276б): у оригинала взрыв задевает предметы сферы 20 м только из ближнего списка машины — не больше 20 ближайших; у нас лопались все в радиусе (квартал). Теперь не больше
+// PROP_BOOM_MAXN (20) ближайших к центру взрыва (по ближайшей точке коробки), остальные стоят. PROPBOOM107_OLD=1 / «flag propboom107old 1» — все в радиусе, как в 106
+#ifndef PROPBOOM107_OLD
+#define PROPBOOM107_OLD 0
+#endif
+#define PROP_BOOM_MAXN 20
+int propsBoom107Old = PROPBOOM107_OLD;
+static int cmpF(const void *a, const void *b) { float x = *(const float *)a, y = *(const float *)b; return x < y ? -1 : x > y; }
 static void propsBoomStep(Props *p) {
   if (PROPBOOM_SV_OLD || svBoom.seq == boomSeqPr) return;
   boomSeqPr = svBoom.seq;
   if (svBoom.radius <= 0.f || !p->st) return;
   float c[3] = {svBoom.x, svBoom.y, svBoom.z};
+  float thr = 1e30f; unsigned left = 1u << 30;
+  if (!propsBoom107Old) {   // порог: расстояние (в квадрате) 20-го ближайшего из попавших в сферу
+    float *d2 = (float *)malloc(sizeof(float) * (p->ninst ? p->ninst : 1)); unsigned n = 0;
+    if (d2) { for (unsigned i = 0; i < p->ninst; i++) { const PropState *st = &p->st[i]; if (st->hidden || st->pole == 1) continue;
+        float q[3]; propsClosestPoint(p, i, c, q); float dx = q[0] - c[0], dy = q[1] - c[1], dz = q[2] - c[2], dd = dx * dx + dy * dy + dz * dz; if (dd <= svBoom.radius * svBoom.radius) d2[n++] = dd; }
+      if (n > PROP_BOOM_MAXN) { qsort(d2, n, sizeof(float), cmpF); thr = d2[PROP_BOOM_MAXN - 1]; left = PROP_BOOM_MAXN; } free(d2); }
+  }
   for (unsigned i = 0; i < p->ninst; i++) {
     PropState *st = &p->st[i]; if (st->hidden || st->pole == 1) continue;
     float q[3]; propsClosestPoint(p, i, c, q);
     float dx = q[0] - c[0], dy = q[1] - c[1], dz = q[2] - c[2];
     if (dx * dx + dy * dy + dz * dz > svBoom.radius * svBoom.radius) continue;
+    if (dx * dx + dy * dy + dz * dz > thr) continue;   // 107б П11: дальше 20-го ближайшего
+    if (left != (1u << 30)) { if (!left) continue; left--; }
     float ux = st->x - c[0], uz = st->z - c[2], ul = sqrtf(ux * ux + uz * uz);
     if (ul > 1e-3f) { ux /= ul; uz /= ul; } else { ux = 0.f; uz = 1.f; }
-    if (svBoom.byPlayer && p->onKick && p->onKick(p->kickUser, i, ux, uz)) { st->hidden = 1; st->asleep = 1; st->kicked = 1; st->inkTouch = !INK1096_OLD; continue; }
+    if (svBoom.byPlayer && p->onKick && p->onKick(p->kickUser, i, ux, uz)) { st->hidden = 1; st->asleep = 1; st->kicked = 1; st->inkTouch = !INK1096_OLD; HOT_SYNC(p, i); continue; }
     float m = p->types[p->def[i].type].mass; if (m <= 0.f) m = 100.f;
     float v = svBoom.force / m; if (v > PROP_BOOM_VMAX) v = PROP_BOOM_VMAX;
     st->vel[0] = ux * v; st->vel[2] = uz * v; st->vel[1] = v * .5f;
     st->w[0] = uz * v * .3f; st->w[2] = -ux * v * .3f;
-    st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1; if (svBoom.byPlayer) st->inkTouch = !INK1096_OLD;
+    st->asleep = 0; st->fresh = 1; st->sleepT = 0.f; st->kicked = 1; if (svBoom.byPlayer) st->inkTouch = !INK1096_OLD; HOT_SYNC(p, i);
   }
 }
 // №1086: список предметов рядом с игроком (раз в кадр): радиус PROP_NEAR_R и все не спящие (летят, падают — могут быть где угодно)
@@ -720,6 +858,8 @@ static void propsNearBuild(Props *p, const Car *car) {
   }
   p->nearOk = 1;
 }
+int propsHotChk;          // 108: 1 — сверять горячий массив с PropState каждый кадр (flag prophotchk 1; только смоук и стенд)
+unsigned propsHotBad;     // 108: сумма расхождений за все сверенные кадры (0 — верно)
 void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt) {
   if (dt <= 0.f) return;
   propsBoomStep(p);
@@ -728,6 +868,7 @@ void propsUpdate(Props *p, const ColWorld *world, Car *car, float dt) {
   propsNearBuild(p, car);
   propsHitCar(p, world, car, p->havePreviousCar ? &p->previousCar : 0);
   if (car) { carBox(car, &p->previousCar); p->havePreviousCar = 1; }
+  if (propsHotChk) propsHotBad += propsHotVerify(p);
 }
 
 // Правка Роба 290 (04.10: «Гомер проходит через почтовые ящики и гидранты — так быть не должно»): пропы уровня (почтовые ящики,

@@ -60,6 +60,10 @@ void svmMatrix(void);                            // замер всех вари
 // Окно — в обычном запуске; служебный (scenario.txt рядом с EBOOT) — тихо, как раньше. Окно не справилось — прежний тихий путь
 void svmDialog(int on);                          // служебное: flag svdialog — окно и в служебном запуске; flag svquiet — прежний тихий путь (красный)
 void svmPickEmpty(int on);                       // служебное: flag svpickempty — запись только в пустой слот, пустого нет — отмена (ENDSAVE skip)
+extern int svDlgPad1339Old;                     // 1339: 1 — после окна утилиты пульт не пересчитывается (✕ «Да» окна проходит в меню, окно открывается снова)
+int svmTakeDialogEnd(void);                     // 1339: 1 один раз после закрытия окна утилиты (главный цикл берёт пульт заново)
+unsigned svmPhantom1339(void);                  // 1339 стенд: ✕, «оставшийся» в отсчётах пульта после окна
+void svmDlgFake1339(int code, int phantom);     // 1339 стенд: flag svdlgfake / svdlgphantom (-1 — не менять)
 void svmDialogFail(int on);                      // служебное: flag svdlgfail — окно отвергает все варианты (живёт ли тихий запасной путь)
 unsigned svmDialogFrame(float dt, int start);    // в main.c: раз в кадр, пока окно на экране (start — первый кадр окна), — сценарий смоука
                                                  // (press/wait/shot) и кнопки сценария в контроллер эмулятора (строка TWPAD); -> кнопки (на PSP 0)

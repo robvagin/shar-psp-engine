@@ -1,0 +1,14 @@
+# P0 шаг 1 (107b, Стена): L1 m3 (smith_v), отказы чтения модели машины миссии; _OLD: три отказа за кадр, битый навсегда, модели нет до конца
+scene mcrbad_old
+wait 3
+flag msn
+wait 2
+flag mcrbad108old 1
+flag mcrreadfail 6
+flag msnmain 3
+wait 3
+press cross
+wait 3
+goto 214 281 1.57
+wait 30
+end

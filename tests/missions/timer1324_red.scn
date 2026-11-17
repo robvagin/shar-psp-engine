@@ -1,0 +1,12 @@
+# 1324 (а): L5 m7, 30 с, стоим до провала; число таймера
+scene g1324a
+flag timerfloor1324old 1
+flag golevel 5
+wait 25
+flag msnmain 6
+wait 3
+press cross
+wait 3
+flag msnhud
+wait 45
+end

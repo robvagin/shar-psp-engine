@@ -1,0 +1,14 @@
+# 1344: вход в house, модели персонажей читаются медленно (flag npcdelay 1800)
+scene g13440
+flag msn
+wait 10
+flag npcdelay 1800
+flag roomready1344old 1
+foot 228.94 183.30 0.0000 4.23
+wait 2
+press circle 0.3
+wait 1
+press triangle
+wait 10
+shot r1
+end

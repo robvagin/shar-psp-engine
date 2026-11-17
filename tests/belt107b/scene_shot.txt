@@ -1,0 +1,57 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+wait 12
+flag player
+flag msn
+wait 2
+flag ddsetting 2
+flag workmix 33
+wait 8
+flag dalbelt 1
+goto 220 172 1.571
+wait 9
+scene B1e
+wait 1
+shot b1e
+goto 220 172 -1.571
+wait 9
+scene B1w
+wait 1
+shot b1w
+goto 220 172 3.14
+wait 9
+scene B1n
+wait 1
+shot b1n
+goto 220 172 0.0
+wait 9
+scene B1s
+wait 1
+shot b1s
+flag dalbelt 0
+goto 220 172 1.571
+wait 9
+scene B0e
+wait 1
+shot b0e
+goto 220 172 -1.571
+wait 9
+scene B0w
+wait 1
+shot b0w
+goto 220 172 3.14
+wait 9
+scene B0n
+wait 1
+shot b0n
+goto 220 172 0.0
+wait 9
+scene B0s
+wait 1
+shot b0s
+flag stop
+wait 2
+end

@@ -1,0 +1,18 @@
+# 1337: первые N чтений блока машин отказывают, потом успех; карточка main-части L4 m1 выходит по сроку 25 с, этап 1 («FOLLOW THE POLICE») стартует, пока cPolice ещё нет в памяти
+scene g1337w
+flag mcrwait1337old 1
+flag mcrreadfail 15
+flag golevel 4
+wait 30
+flag msnpass
+wait 4
+flag msnpass
+wait 32
+press cross
+wait 4
+flag msnpass
+wait 3
+flag msnhud
+wait 40
+flag msnhud
+end

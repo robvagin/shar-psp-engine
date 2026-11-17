@@ -24,6 +24,26 @@ static inline int zoneGateIn(const ZoneGate *g, float x, float y, float z, float
   }
   return 1;
 }
+// 108 Б.10 (Fable): у машины «касание» ворот — кузовом, а не точкой с запасом 1,5 м (запас был заменой четырёх углов: у узких ворот срабатывал рано, у косых поздно). Объём считается занятым, если в нём центр
+// кузова или любой из четырёх его углов в плане (fx, fz — единичная ось «вперёд», hw/hl — полуширина/полудлина). ZONE_BODY_OLD=1 / файл zonebodyold / flag zonebody 0 — прежнее (точка + 1,5 м)
+static inline int zoneGateInBody(const ZoneGate *g, float x, float y, float z, float fx, float fz, float hw, float hl) {
+  if (zoneGateIn(g, x, y, z, 0.f)) return 1;
+  for (int sl = -1; sl <= 1; sl += 2) for (int sw = -1; sw <= 1; sw += 2) {
+    float cx = x + fx * hl * (float)sl - fz * hw * (float)sw, cz = z + fz * hl * (float)sl + fx * hw * (float)sw;
+#ifdef ZG_BODY_BREAK
+    (void)cx; (void)cz; continue;   // красный контроль: углы не проверяются, только центр
+#endif
+    if (zoneGateIn(g, cx, y, cz, 0.f)) return 1; }
+  return 0;
+}
+static inline unsigned zoneGatesStepBody(const ZoneGate *g, int n, unsigned char *was, unsigned res, float x, float y, float z, float fx, float fz, float hw, float hl, int *fired) {
+  for (int i = 0; i < n; i++) {
+    int in = zoneGateInBody(&g[i], x, y, z, fx, fz, hw, hl);
+    if (in && !was[i]) { res = (res & ~(unsigned)g[i].unload) | g[i].load; if (fired) *fired = i; }
+    was[i] = (unsigned char)in;
+  }
+  return res;
+}
 // кадр: въезд в объём (фронт) меняет набор; was[] — был ли игрок в объёме кадром раньше. -> набор; *fired — последние сработавшие
 static inline unsigned zoneGatesStep(const ZoneGate *g, int n, unsigned char *was, unsigned res, float x, float y, float z, float r, int *fired) {
   for (int i = 0; i < n; i++) {

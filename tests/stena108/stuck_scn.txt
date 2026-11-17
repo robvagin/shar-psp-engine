@@ -1,0 +1,14 @@
+# 107b (Стена): строки ящика STUCK/NEAR/TRFWAIT/MCRSTATE/HNR. L1: стоящая машина трафика в 8 м впереди, игрок давит газ 7 с — упёрся в неё; затем пауза. Нужны строки STUCK с hit и [trf#0 в near, PAUSE
+flag nosave
+scene STK
+goto 215 161.1 1.5708
+wait 3
+flag trfahead 8
+wait 1
+flag trfstill
+wait 1
+press cross 10
+wait 12
+press start 0.2
+wait 2
+end

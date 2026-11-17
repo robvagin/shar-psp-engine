@@ -1,0 +1,40 @@
+# 1316 (Б, красный): ранний «yes» на провале m1 со старым поведением (rspend1304old 1) → m3 → финиш: MSN retry после финиша
+flag nosave
+scene H2o
+flag golevel 2
+wait 12
+flag rspend1304old 1
+flag fadeguard1316old 1
+flag msn
+wait 5
+flag msnpass
+wait 6
+flag msnpass
+wait 8
+press cross
+wait 4
+flag msnpass
+wait 3
+wait 62
+wait 4
+press cross
+wait 3
+wait 12
+wait 8
+scene AFTERYES
+wait 3
+flag msnmainat 200
+wait 10
+press cross 0.3
+wait 8
+scene RACE0
+flag msnpass
+wait 6
+scene PASS1
+flag msnpass
+wait 6
+flag msnpass
+wait 6
+scene END
+wait 10
+end

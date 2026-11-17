@@ -1,0 +1,14 @@
+# Ф2-7 (109, Стена): L3 m5 (индекс 4, не уличная гонка): этап 1 с DisableHitAndRun держится дольше секунды (6 с), потом «засчитать этап»; новое: на конце этапа строка HNROFF stage-end off=0
+flag nosave
+
+scene HS_l3n
+flag golevel 3
+wait 20
+flag player 1
+flag msn
+wait 8
+flag msnmainat 401
+wait 6
+flag msnpass
+wait 4
+end

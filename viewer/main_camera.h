@@ -1296,9 +1296,37 @@ static unsigned skyHorizonColor(void) {
   skyHorizonCacheColor = o; skyHorizonCacheValid = 1;
   return o;
 }
+// 109 З8 (запекание, фаза загрузки «sky» 146 мс эмулятора, на PSP ≈0,3 с): цвет дали считается обходом вершин неба (сортировка, уникальные, arctan, выборка текселей): функция только от вершин неба и их текстур.
+// Суммы acc двух полос дали (8 float) лежат хвостом texbake.shr после записей текстур (SKY1, 48 Б; печёт тот же движок в режиме texbakedump). Ключ — FNV по тем же вершинам, кускам и текселям, что читает обход, и по палитре:
+// любое отличие — считаем сами. texbakecheck считает и берёт файл, расхождение — SKYBAKE bad=. SKYBAKE_OLD=1 / файл skybakeold — всегда считать самим
+#ifndef SKYBAKE_OLD
+#define SKYBAKE_OLD 0
+#endif
+typedef struct { char magic[4]; unsigned key; float acc[8]; unsigned hz, out; } SkyTail;   // hz — цвет горизонта (skyHorizonColor), ~0 — нет
+static int skyBakeOld = SKYBAKE_OLD, skyBakeCheck, skyTailOk; static SkyTail skyTail; static unsigned skyBakeUsed, skyBakeLive, skyBakeBad;
+static void skyBakeDumpHook(unsigned key, const float *acc, unsigned hz);   // main_levels.h
+static unsigned skFnvB(unsigned h, const void *p, unsigned n) { const unsigned char *b = (const unsigned char *)p; for (unsigned i = 0; i < n; i++) h = (h ^ b[i]) * 16777619u; return h; }
+static unsigned skyAccKey(void) {   // 0 — ключ не собрать (нет неба)
+  unsigned h = 2166136261u; int any = 0; h = skFnvB(h, &gameLevel, sizeof gameLevel);
+  for (int s = 0; s < nskyP; s++) {
+    const Piece *d = &pc[skyP[s]]; if (cl[d->r.cell].state != 2 || !d->v) continue;   // те же куски, что обходит skyFogColor
+    h = skFnvB(h, &d->r.tex, sizeof d->r.tex); h = skFnvB(h, &d->r.flags, sizeof d->r.flags); h = skFnvB(h, &d->r.nv, sizeof d->r.nv);
+    h = skFnvB(h, &d->r.sc, sizeof d->r.sc); h = skFnvB(h, &d->r.ox, sizeof d->r.ox); h = skFnvB(h, &d->r.oy, sizeof d->r.oy); h = skFnvB(h, &d->r.oz, sizeof d->r.oz);
+    h = skFnvB(h, d->v, (unsigned)d->r.nv * (unsigned)sizeof(Vert)); any = 1;
+    h = skFnvB(h, &d->r.ni, sizeof d->r.ni); if (!(d->r.flags & F_NOIDX) && d->idx && d->r.ni > 0) h = skFnvB(h, d->idx, (unsigned)d->r.ni * 2u);   // skyHorizonColor ходит по индексам
+    { int c_[2] = {HZ_YAW, HZ_EL}; h = skFnvB(h, c_, sizeof c_); }
+    const Tex *t = d->r.tex >= 0 && d->r.tex < (int)ntex ? &tex[d->r.tex] : 0;
+    if (t && t->lv[0] && t->pal) { unsigned rb = (unsigned)texRowBytes(t->t4, t->pre, t->w), rows = t->pre ? ((unsigned)t->h + 7) & ~7u : (unsigned)t->h;
+      h = skFnvB(h, &t->w, sizeof t->w); h = skFnvB(h, &t->h, sizeof t->h); h = skFnvB(h, &t->t4, sizeof t->t4); h = skFnvB(h, &t->pre, sizeof t->pre);
+      h = skFnvB(h, t->pal, 1024); h = skFnvB(h, t->lv[0], rb * rows); } }
+  return any ? (h | 1u) : 0u;
+}
 static void skyFogColor(void) {
   skyDomeTone();   // №785: купол в тоне до подсчёта цвета дали
-  float acc[2][4] = {{0}};
+  float acc[2][4] = {{0}}, accL[2][4] = {{0}};
+  unsigned skKey = skyBakeOld ? 0u : skyAccKey(); int skHit = skKey && skyTailOk && skyTail.key == skKey;
+  if (skHit) { memcpy(acc, skyTail.acc, sizeof acc); skyBakeUsed++; }   // 109 З8: суммы по двум полосам дали из texbake.shr (ключ — вершины неба, их текстуры и палитры)
+  if (!skHit || skyBakeCheck) {
   for (int s = 0; s < nskyP; s++) {
     if (skyPump) skyPump();
     Piece *d = &pc[skyP[s]]; if (cl[d->r.cell].state != 2 || !d->v) continue;
@@ -1329,10 +1357,13 @@ static void skyFogColor(void) {
         r *= (c & 255) / 255.f; g *= (c >> 8 & 255) / 255.f; b *= (c >> 16 & 255) / 255.f; a *= (c >> 24) / 255.f;
       }
       if (a < .25f) continue;
-      acc[band][0] += r * a; acc[band][1] += g * a; acc[band][2] += b * a; acc[band][3] += a;
+      accL[band][0] += r * a; accL[band][1] += g * a; accL[band][2] += b * a; accL[band][3] += a;
     }
     if (uv_ != d->v) free(uv_);
   }
+  skyBakeLive++; if (skHit) { if (memcmp(accL, skyTail.acc, sizeof accL)) skyBakeBad++; } else memcpy(acc, accL, sizeof acc);
+  }
+  if (smkOn) { char l_[120]; snprintf(l_, sizeof l_, "SKYBAKE level=%d hit=%d used=%u live=%u bad=%u old=%d t=%.1f\n", gameLevel, skHit, skyBakeUsed, skyBakeLive, skyBakeBad, skyBakeOld, smkT); smkWrite(l_); }
   if (acc[0][3] <= 0.f || acc[1][3] <= 0.f) return;   // неба нет — оставляем старый цвет
   unsigned out = 0;
   for (int ch = 0; ch < 3; ch++) {
@@ -1346,7 +1377,10 @@ static void skyFogColor(void) {
   fogSkyCol=out;
   fogCol = fogTone(r,g,b,FOG_LUM,FOG_SAT,fogToneOld);
 #if !FOG_HORIZON_OLD
-  if (!fogHorizonOld) { unsigned h = skyHorizonColor(); if (h != ~0u) fogCol = h; }
+  if (!fogHorizonOld) { unsigned h;
+    if (skHit && !skyBakeCheck) { h = skyTail.hz; if (h != ~0u) { skyHorizonCacheColor = h; skyHorizonCacheValid = 1; } }   // 109 З8: цвет горизонта из файла (лучи × треугольники неба не считаем)
+    else { h = skyHorizonColor(); if (skHit) { if (h != skyTail.hz) skyBakeBad++; } else if (skKey) skyBakeDumpHook(skKey, &acc[0][0], h); }
+    if (h != ~0u) fogCol = h; }
 #endif
   phSetColor(fogCol);
   skinToonAir(fogCol);   // №779: контур мультика вдали светлеет к цвету дали

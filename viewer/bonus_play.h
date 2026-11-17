@@ -517,7 +517,8 @@ static int bnsLoad0(void **fbp, int fe) {
   // правка 420: кадр «LOADING» над тёмным фоном, пока читается трасса (экран загрузки игры — газета уровня, у мини-игры своей нет)
   if (!fe) {
   sceGuStart(GU_DIRECT, list); resetState(); sceGuClearColor(0xff000000); sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
-  bnsTextC(SCR_H / 2 - 8, 0xffffffffu, bnsLbl(BL_LOADING)); sceGuFinish(); sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
+  if (uiLoadMark1366Old && uiLoadMarkReady()) uiLoadMarkDraw(); else bnsTextC(SCR_H / 2 - 8, 0xffffffffu, bnsLbl(BL_LOADING)); sceGuFinish();   // 1366: знак только на экране ириса (transit.c), здесь надпись как до 1360; LOADMARK1366_OLD=1 — знак, как в 1360
+ sceGuSync(0, 0); sceDisplayWaitVblankStart(); *fbp = swapBuf();
   }
   snprintf(fn, sizeof fn, BONUS_BNS, bsel.track); { char p[256]; sibling(p, fn); strcpy(fn, p); }
   SceUID f = sceIoOpen(fn, PSP_O_RDONLY, 0); if (f < 0) return 0;

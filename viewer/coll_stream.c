@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdint.h>
 #include "coll_stream.h"
+#ifndef COLLCHAIN1364_OLD
+#define COLLCHAIN1364_OLD 1   // public build: off until it is checked on hardware
+#endif
 #ifndef SKIN_HOST
 #include <malloc.h>
 #include <pspkernel.h>
@@ -61,29 +64,54 @@ static void *aligned(unsigned n) {
 #define GAG_LOAD_M 100.f   // гэг города подгружается ближе 100 м
 #define GAG_KEEP_M 150.f   // и отдаётся дальше 150 м (гистерезис оригинала)
 #endif
+static struct { int ok,room,snap; const Collect *c; unsigned reqGen; unsigned char wanted[COLL_MAXGAG],block[COLL_MAXGAG]; } prepSig,prepPrev;static unsigned reqGen;
 static unsigned char wantedLast[COLL_MAXGAG];   // желаемые гэги последнего collStreamPrepare (для collStreamPending)
+int collChain1364Old=COLLCHAIN1364_OLD;unsigned collChainUs1364=3000;
 static CollectAsync asy;static int asyOn;static unsigned char allocBlocked;   // Будка-93 (1257): последний запрос памяти под чтение отказан (collStreamPending не ждёт того, что нечем читать)
 static struct { int busy,kind; unsigned i,bytes,t0; unsigned char *buf; } job;static unsigned char *failKey;   // типы, чьи ключи не пришли (тайм-аут, ошибка): не просить снова   // kind 0 — ключи типа i, 1 — гэг-скин i
 static unsigned char *reqKey;   // типы, запрошенные ensureKey в кадре (кадр не читает: ключи придут через несколько кадров)
 unsigned collStreamAsyncStarts,collStreamAsyncDone,collStreamAsyncDefer,collStreamAsyncCancels,collStreamAsyncFails;
-void collStreamSetAsync(const CollectAsync *a){if(a && !SYNCREAD_P1_OLD){asy=*a;asyOn=asy.start&&asy.poll;}else{asyOn=0;memset(&asy,0,sizeof asy);}}
+void collStreamSetAsync(const CollectAsync *a){prepSig.ok=prepPrev.ok=0;if(a && !SYNCREAD_P1_OLD){asy=*a;asyOn=asy.start&&asy.poll;}else{asyOn=0;memset(&asy,0,sizeof asy);}}
+int collCancelDead107;   // 107в: отмена не закончилась в срок — буфер чтения в утечку (ядро могло ещё писать), см. main_collect.h collAsyncCancel
 static void jobCancel(void){   // прервать идущее чтение; буфер освобождается только после конца отмены (иначе ядро писало бы в чужую память)
   if(!job.busy)return;
-  if(asy.cancel)asy.cancel(asy.user);
-  free(job.buf);memset(&job,0,sizeof job);collStreamAsyncCancels++;
+  collCancelDead107=0;if(asy.cancel)asy.cancel(asy.user);
+  if(!collCancelDead107)free(job.buf);
+  collCancelDead107=0;memset(&job,0,sizeof job);collStreamAsyncCancels++;
 }
 static unsigned nowMs(void){return asy.nowMs?asy.nowMs(asy.user):0;}
+static unsigned failAt107,healN107;   // 107б P0: когда последний отказ чтения (мс), сколько повторов после отказов (не больше COLL_HEAL_MAX за уровень)
+int collHeal107Old;   // 107б P0: 1 — пометки отказов не снимаются (как было)
+void (*collStreamReopen107)(void);   // главный модуль: закрыть и открыть заново оба дескриптора пакета
 static void jobFail(void){   // не пришло или ошибка: пометить, чтобы кадр не гонял то же чтение каждый раз
+  failAt107=nowMs()|1u;
   if(job.kind==0){if(!failKey)failKey=calloc(ntypes?ntypes:1,1);if(failKey)failKey[job.i]=1;}
   else if(job.kind==2 || job.kind==3){if(!failVert)failVert=calloc(ntypes+ntexs+1,1);if(failVert)failVert[job.kind==2?job.i:ntypes+job.i]=1;}
   else gagSkinMarkBad(job.i);
   collStreamAsyncFails++;
 }
 static void asyncDrop(void){
-  allocBlocked=0;jobCancel();
+  prepSig.ok=prepPrev.ok=0;allocBlocked=0;jobCancel();
   memset(&job,0,sizeof job);free(reqKey);reqKey=0;free(failKey);failKey=0;
 }
+// 107б P0 (Роб 1273, генплан Fable §P0): отказ чтения гэга (ключи, вершины, текстуры, кожа) раньше помечался до смены уровня: гэг мёртвый, дескрипторы пакета после сна тоже. Теперь через COLL_HEAL_MS после отказа (и сразу
+// по пробуждению, collStreamHeal107) идущее чтение отменяется, пометки (failKey, failVert, badRec) снимаются, дескрипторы открываются заново, и гэг просится обычным путём. Повторов после отказов не больше COLL_HEAL_MAX
+// за уровень (файл, которого нет, не гоняем вечно); пробуждение счёт повторов обнуляет. COLLHEAL107_OLD=1 / «flag collheal107old 1» — как было
+#define COLL_HEAL_MS 1500u
+#define COLL_HEAL_MAX 8u
+void collStreamHeal107(int wake){
+  if(collHeal107Old)return;
+  if(wake)healN107=0;
+  asyncDrop();free(failVert);failVert=0;gagSkinClearBad();failAt107=0;
+  if(collStreamReopen107)collStreamReopen107();
+}
+static void healTick107(void){
+  if(collHeal107Old||!failAt107||healN107>=COLL_HEAL_MAX)return;
+  if((unsigned)(nowMs()-failAt107)<COLL_HEAL_MS)return;
+  healN107++;collStreamHeal107(0);
+}
 void collStreamFree(void) {
+  healN107=0;failAt107=0;
   asyncDrop();asyOn=0;
   if(keys)for(unsigned i=0;i<ntypes;i++)free(keys[i]);
   if(vrec)for(unsigned i=0;i<ntypes;i++)free(vrec[i].buf);
@@ -173,7 +201,7 @@ static int ensureKey(unsigned i){
   if(failKey && failKey[i])return -1;
   if(asyOn){   // кадр не читает: запрос в очередь, позы этого типа — запасным путём, ключи придут следом
     if(!reqKey)reqKey=calloc(ntypes,1);
-    if(reqKey && !reqKey[i]){reqKey[i]=1;collStreamAsyncDefer++;}
+    if(reqKey && !reqKey[i]){reqKey[i]=1;collStreamAsyncDefer++;reqGen++;}
     return -1;
   }
   return loadKeys(liveSp,i);
@@ -244,9 +272,18 @@ void *collStreamLoad(Collect *c,CollectRead read,void *user,unsigned size) {
   collStreamResidentBytes=n;return b;
 bad:free(tr);gagSkinFree();collectFree(c);collStreamFree();packFree(b);return 0;
 }
+// О16 (108, Стена; Fable §3): в покое (набор желаемых гэгов тот же, ничего не читается и не ждёт) каждый кадр заново шли десять циклов по типам, текстурам и скинам впустую (34 мкс на Маке).
+// После вызова, который дошёл до конца фонового пути без задания, запоминается подпись (комната, снимок, Collect, желаемые гэги, gagBlock, число запросов ensureKey); пока подпись та же,
+// остальное не считается: выход тот же (0), память, задания и счётчики не меняются. Любое чтение/освобождение/отмена задания сбрасывает подпись. «flag collprepcheck 1» считает оба пути и сверяет
+// (строка COLLPREPCHECK, расхождений 0). COLLPREP108_OLD=1 / flag collprep108old 1 — считать каждый кадр
+#ifndef COLLPREP108_OLD
+#define COLLPREP108_OLD 0
+#endif
+int collPrep108Old=COLLPREP108_OLD,collPrepCheck;unsigned collPrepSkip,collPrepChk,collPrepMis,collPrepWhy;
 int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int snap) {
   curRoom=room;
   if(!source)return 0;
+  healTick107();
   unsigned char wanted[COLL_MAXGAG]={0};
   for(unsigned g=0;g<c->ngag;g++){
     const CollGag *a=c->gag+g;float dx=a->x-ex,dz=a->z-ez;
@@ -259,6 +296,21 @@ int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int s
     wanted[g]=a->room==room && (!a->random || (snap>=0 ? (int)g==snap : c->st.gagPick[g])) &&
         dx*dx+dz*dz<=R*R;
   }
+  int prepSkip=0;
+  if(asyOn && !collPrep108Old && !collHoldMs && prepSig.ok && prepSig.room==room && prepSig.snap==snap && prepSig.c==c && prepSig.reqGen==reqGen && !job.busy &&
+#ifdef COLLPREP108_BREAK   // красный контроль гейта: набор желаемых гэгов не сверяется
+     1){
+#else
+     !memcmp(prepSig.wanted,wanted,sizeof wanted) && !memcmp(prepSig.block,c->gagBlock,sizeof prepSig.block)){
+#endif
+    collPrepSkip++;
+    if(!collPrepCheck)return 0;
+    prepSkip=1;
+  }
+  unsigned char chkBlock[COLL_MAXGAG],chkWanted[COLL_MAXGAG];unsigned chkTneed[COLL_STREAM_TW],chkB[8];
+  if(prepSkip){memcpy(chkBlock,c->gagBlock,sizeof chkBlock);memcpy(chkWanted,wantedLast,sizeof chkWanted);memcpy(chkTneed,tneed,sizeof chkTneed);
+    chkB[0]=collStreamAsyncStarts;chkB[1]=collStreamAsyncDone;chkB[2]=collStreamTrackBytes;chkB[3]=collStreamVertBytes;chkB[4]=collStreamTexBytes;chkB[5]=gagSkinResidentBytes;chkB[6]=job.busy;chkB[7]=allocBlocked;}
+  const int hadPrev=prepPrev.ok;if(!prepSkip){prepSig.ok=0;prepPrev.ok=0;}
   memcpy(wantedLast,wanted,sizeof wantedLast);
   for(unsigned g=0;g<c->ngag;g++)c->gagBlock[g]=splitOn && c->gag[g].inst>=0 && !collStreamVerts(c->sp.inst[c->gag[g].inst].type);
   for(unsigned i=0;i<ntypes;i++)if(typeGag[i]>=0 && !wanted[typeGag[i]] && keys[i]){
@@ -277,6 +329,12 @@ int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int s
   }
   if(asyOn && snap<0){   // фоновый путь: в кадре — запуск и усвоение, чтение не ждём (снимок гэга snap>=0 — синхронно, как всегда: проверки ждут кадр)
     gagSkinTrim(wanted);
+    // 1364 (аудит простоев П1, оценка: «гэги берут одно задание на кадр, на район 8–36 гэгов и до 77 текстур, ≈ 0,5 с на комнату»), 1364б (тур на PSP: выигрыша нет, сон в цикле стоил 3,6 мс против 1,2): после приёма задание не ждёт кадра — тот же вызов один раз опрашивает
+    // только что запущенное чтение БЕЗ сна и ожидания и, если оно уже кончилось, берёт следующее; предел collChainUs1364 мкс за кадр и 64 круга. Опрос — только здесь (sceIoPollAsync отдаёт результат один раз: после r>0 дескриптор не опрашивается). COLLCHAIN1364_OLD=1 / flag collchain1364old — как было
+    unsigned chainT0=asy.nowUs?asy.nowUs(asy.user):0;int chainOn=!collChain1364Old && asy.nowUs && collChainUs1364>0;unsigned chainLoops=0;
+    static int chainStrikes,chainHold;   // 1364б: три промаха подряд (опрос сразу после запуска ещё не готов — медленная карта PSP) — 200 вызовов без лишнего опроса
+    if(chainHold>0){chainHold--;chainOn=0;}
+    chain1364:
     if(job.busy){   // задание уже не нужно (ушли далеко, перенос, конец миссии) — отменить сразу
       int needed=job.kind==3 ? (tneed[job.i>>5]>>(job.i&31)&1) : job.kind!=1 ? ((typeGag[job.i]>=0 && wanted[typeGag[job.i]]) || (job.kind==0 && typeGag[job.i]<0)) : (gagSkinGagOf(job.i)>=0 && wanted[gagSkinGagOf(job.i)]);
       if(!needed){jobCancel();return 0;}
@@ -284,8 +342,10 @@ int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int s
       int r=asy.poll(asy.user);
       if(r==0){   // не готово — подождать кадр, но не дольше COLL_ASYNC_MS
         if(asy.nowMs && nowMs()-job.t0>COLL_ASYNC_MS){jobFail();jobCancel();return -1;}
-        return 0;
+        if(chainLoops>0 && ++chainStrikes>=3){chainStrikes=0;chainHold=200;}
+        return 0;   // 1364б: не ждём ни мгновения (на PSP чтение 64 КБ ≈ 4 мс, дольше предела; сон в цикле стоил 3,6 мс против 1,2 на событие GAGSTREAM): следующее чтение берётся только если прежнее УЖЕ завершено в момент проверки
       }
+      if(chainLoops>0)chainStrikes=0;
       int ok=0;
       if(r>0){
         if(job.kind==0){keys[job.i]=(float *)job.buf;collStreamTrackBytes+=job.bytes;ok=1;}
@@ -325,6 +385,20 @@ int collStreamPrepare(Collect *c,int room,float ex,float ez,float distance,int s
       unsigned char *b=alignedRoom(gsz);if(!b){allocBlocked=1;return -1;}
       if(asy.start(asy.user,goff,b,gsz)){free(b);return -1;}
       job.busy=1;job.kind=1;job.i=gi;job.bytes=gsz;job.buf=b;job.t0=nowMs();collStreamAsyncStarts++;allocBlocked=0;
+    }
+    if(chainOn && job.busy && chainLoops++<64 && (unsigned)(asy.nowUs(asy.user)-chainT0)<collChainUs1364)goto chain1364;   // 1364б: запущено — один опрос без ожидания: быстро кончившееся (кеш, эмулятор, малое чтение) берётся тем же вызовом; не кончилось — выход, как раньше
+    if(prepSkip){   // проверка: путь без пропуска ничего не изменил бы
+      collPrepChk++;
+      unsigned why=(job.busy?1u:0)|(memcmp(chkBlock,c->gagBlock,sizeof chkBlock)?2u:0)|(memcmp(chkWanted,wantedLast,sizeof chkWanted)?4u:0)|(memcmp(chkTneed,tneed,sizeof chkTneed)?8u:0)|(chkB[0]!=collStreamAsyncStarts?16u:0)|(chkB[1]!=collStreamAsyncDone?32u:0)|
+        (chkB[2]!=collStreamTrackBytes?64u:0)|(chkB[3]!=collStreamVertBytes?128u:0)|(chkB[4]!=collStreamTexBytes?256u:0)|(chkB[5]!=gagSkinResidentBytes?512u:0)|(chkB[6]!=(unsigned)job.busy?1024u:0)|(chkB[7]!=allocBlocked?2048u:0);
+      if(why){collPrepMis++;collPrepWhy|=why;}
+      return 0;
+    }
+    if(!job.busy && !allocBlocked){   // покой: подпись для пропуска. gagBlock считается ДО циклов освобождения этого же вызова, поэтому подпись берётся со второго покойного вызова подряд, у которого gagBlock равен прошлому (состояние устоялось)
+      if(hadPrev && prepPrev.room==room && prepPrev.snap==snap && prepPrev.c==c && prepPrev.reqGen==reqGen && !memcmp(prepPrev.wanted,wanted,sizeof wanted) && !memcmp(prepPrev.block,c->gagBlock,sizeof prepPrev.block)){
+        prepSig=prepPrev;prepSig.ok=1;
+      }
+      prepPrev.ok=1;prepPrev.room=room;prepPrev.snap=snap;prepPrev.c=c;prepPrev.reqGen=reqGen;memcpy(prepPrev.wanted,wanted,sizeof wanted);memcpy(prepPrev.block,c->gagBlock,sizeof prepPrev.block);
     }
     return 0;
   }

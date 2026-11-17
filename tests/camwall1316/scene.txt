@@ -1,0 +1,22 @@
+flag menu
+flag lvset 1
+scene lv_boot
+wait 1.5
+press cross
+waitfor LEVEL ev=load n=1 300
+wait 8
+flag player 0
+flag camwall1316 FLAGVAL
+flag lbforce1316 1
+wait 2
+flag stall1316 120
+scene W_LB
+flag lbforce1316 0
+wait 4
+flag camarc1316 1
+wait 5
+flag stall1316 0
+scene W_END
+flag stop
+wait 2
+end
