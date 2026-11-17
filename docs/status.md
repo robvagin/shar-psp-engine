@@ -1,15 +1,38 @@
 # Status
 
-Where the port stands against the original PS2 game, as of November 11, 2026 (build 106 and its hardware tour of November 11). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
+Where the port stands against the original PS2 game, as of November 16, 2026 (build 108; its hardware numbers are from tours of test sets of November 14, 15 and 16, the build 106 tour of November 11 stays as the full reference). Every row says how it was checked, because a Mac emulator run does not prove anything about PSP speed or a story ending.
 
 - **Hardware:** PSP-2000 with custom firmware, PAL disc. Nothing else has been tested.
 - **Firmware:** tested on PRO-C and ARK-4. The game imports the kubridge library as a whole; ME/LME and Adrenaline were not tried.
-- **Latest hardware tour:** build 106 on November 11 ran the scripted tour of 114 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit). An earlier tour of the same day on build 105 (it differs from 106 only in the videos started from the View Movies menu) is in the numbers below.
+- **Hardware tours:** build 108 test sets, November 14 (159 scenes) and November 15 (164 scenes, two sets), ran to the end with 0 read errors and 0 memory failures (numbers in the bullet on speed and memory below). The last full table is the build 106 tour: build 106 on November 11 ran the scripted tour of 114 scenes to the end with 0 stalls, 0 crashes, 0 read errors and 0 memory failures (no city block failed to fit). An earlier tour of the same day on build 105 (it differs from 106 only in the videos started from the View Movies menu) is in the numbers below.
 - **How it was checked:** *hardware* = scripted tour or play on a real PSP; *emulator* = headless PPSSPP on a Mac (logic only, speed means nothing); *code* = read, never run.
 
 ## What is new in this build
 
-The whole list from build 93 to 106 is in the [changelog](../CHANGELOG.md). In build 106 (changes since build 104):
+The whole list from build 93 to 108 is in the [changelog](../CHANGELOG.md). In build 108 (changes since build 106; emulator, plus the tours of test sets):
+
+- **Missions start when the world is there.** The card closes only after the city around you is drawn; the countdown and the mission timer do not run under a closed screen, and the number shown is the real time left.
+- **Retrying a failed mission is clean.** Yes after a failure restarts the mission without the long black screen (it could last several seconds) and without a second start from nowhere; the failed tries are counted once, so Skip appears on the right try.
+- **Buttons on the mission card and in the talk before a mission wait for their hints.** X and Triangle are taken only once the button hints are on screen, so a press made during the fly-in no longer skips the card. The button icons sit 1 to 2 px lower, and Skip and its icon share a line like Continue.
+- **A locked stage explains itself.** When a stage needs a car or an outfit you do not have, a hint window with Continue says what to get, and the next icon points to the seller.
+- **Stage text and the pause.** The text of a stage is shown for about 3 seconds when it can be seen, the icon flies to the corner and stays. Pausing in a mission always shows the objective window with its text, centred under the menu frame. Pausing between two stages opens the mission pause (Restart and Cancel, with the objective window).
+- **Mission cars behave closer to the original.** A chase follows the roads without braking in every bend and does not freeze after a ram; a mission car that falls in water or a ditch is put back on the road; the police car of a mission is no longer taken for a real cop, so it cannot arrest you or start the fine loop, and a Hit & Run chase is not started or cleared by it.
+- **Races and gauges.** The finish line lies across the road; the closeness bar fills as the distance shrinks and turns red; the damage and closeness gauges no longer sit under the timer.
+- **Interiors.** Characters of a mission are no longer hidden inside buildings (Moe in the tavern); a room opens after its characters have loaded, so Grampa no longer stands up in front of you.
+- **Pickups and entrances.** Mission pickups and collector cards flash and glint at the pick-up like the key; the glow of doors is clear in the middle and bright at the edges; the coin by the counter spins like the original and keeps spinning in pause and in the menus.
+- **Cars.** A car that lies upside down is put back on its wheels by the rules of the original; a car-to-car ram gives damage and does not lift one car on the roof of the other; on foot you can stand on the roofs of cars, tall ones included; suspension travel, spring stiffness and the centre of mass follow the values of the original.
+- **Traffic.** A traffic car that you hit stands as a solid object for 10 to 15 seconds and then drives off to its lane by itself, with no jump in front of your eyes.
+- **Walking.** Homer rides moving platforms and inherits their speed in a jump; the slope limit and the fall of knocked props follow the original more closely.
+- **Breakable props.** On levels 2 to 5 and 7 all breakable state props (vending machines, columns, gates, kiosks) follow their state machine from the disc, and the glass with Krusty is neutral instead of tinted for each level (this is in the data, so the levels must be rebuilt).
+- **Sleep and resume.** Putting the PSP to sleep during play or loading no longer leaves a level, a gag, a mission car or a character broken after waking.
+- **Level 5 loads faster.** The wait for characters under the newspaper, about 3 s on level 5, is gone: the level opens after 8.25 s (median) against 10.98 s (tour of the November 16 set, PSP-2000). The other levels wait 0.3 to 0.45 s longer under the newspaper, because the city blocks around you are now really waited for.
+- **Everything is loaded when the screen opens.** After the screen opens, no city block around you is still missing (0 of 30 level loads against 28 of 30; same tour), and the cars of the first stage are already in place.
+- **Mission cars come in without a hitch.** The car of a mission appears in 18 to 20 ms against 47 to 66 ms (same tour).
+- **Getting into a car from afar.** If the walk round a car to its door would take longer than about a second, or the way is blocked, the screen closes with the iris and you are put into the car, for every character and every car.
+- **Smaller things.** The sounds of the car shop play on the effects bus (they were silent in Store mode); answering Yes to cancelling a save no longer opens the save window again; the draw distance regulator can reach 200 m where memory allows; the boot screen shows build 108; many loops that ran every frame (props, lights, gags, city draw lists) are cheaper.
+- **Setup on Fedora, Arch and Windows.** `setup.sh` now knows `dnf` and `pacman`; on Python 3.13 and 3.14, which have no wheels for the pinned numpy, it installs Python 3.12 or takes newer numpy and Pillow builds; when the build stops, the page shows the reason, the kind of failure (not this disc, build failed, not copied) and the path of the log (`build/app/build.log`); on Windows without WSL it says so instead of failing in silence. Fedora and Arch are not tested by us.
+
+In build 106 (changes since build 104):
 
 - **A car slides along a wall or fence again** at a shallow angle instead of stopping, as in builds 92 to 96, and stays on four wheels in a hard hit. At 45 degrees and more it stops at the wall. The PS2 recordings lose almost all speed at 26 to 35 degrees, so this is further from the original than the sticking of builds 99 to 104 was.
 - **Traffic cars no longer swerve out of your way** (the swerve, in since build 90, is switched off; no PS2 recording of such a swerve exists).
@@ -104,7 +127,7 @@ Compared on the 81 scenes that the build 93, 98, 101 and 106 tours share: p95 36
 
 ## Not verified
 
-Build 106 played by hand to the end; trees and bushes hit at a slide; getting into a car in a traffic jam; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
+Build 108 as released on hardware (the tours were of test sets; a few later changes came after them); build 106 played by hand to the end; trees and bushes hit at a slide; getting into a car in a traffic jam; the memory ladder on hardware (cost of the kept block, shorter draw distance, the long five-round play); the repair paths of the watchdog on hardware (nothing fell in the tour); a refused allocation during a level change on hardware; PSP-3000 and Go; NTSC discs; ME/LME and Adrenaline firmware; sleep and wake; a full memory card; a corrupt save on hardware; a slow memory card; the ending to the credits by hand; every cutscene on hardware; the bonus game on hardware. Building on Linux and WSL: the paths exist and came from outside contributors, we have not run them ourselves.
 
 ## If the game stops
 

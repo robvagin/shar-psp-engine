@@ -1,6 +1,6 @@
 # Changelog
 
-Builds 93 to 106, November 7 to 11, 2026. Newest first.
+Builds 93 to 108, November 7 to 16, 2026. Newest first.
 
 **How to read the numbers.** Every number below is from the scripted tour on a real PSP-2000 unless it says *emulator*. The frame time is the 95th percentile of a scene's frames (p95), then the median over scenes; "dropped" is the share of frames that missed the 30 fps deadline (33.3 ms), also the median over scenes. The tour grew from 55 scenes (build 86) to 113 (build 101), so tours are only compared on the scenes they share. A tour that ends early or runs with debugging switches on says so.
 
@@ -35,6 +35,32 @@ Because the scene lists differ, the fair comparison is the 81 scenes that builds
 | 106 | 35.2 | 20% | 24% | 3.3 MB |
 
 Build 95 was the fastest and also the one that ran out of memory 106 times in the middle of the tour: its memory zones were too greedy. Builds 97 and 98 fixed that, at the price of a slower frame than build 95, which is still not recovered.
+
+## Build 108 (November 16)
+
+Build 108 is build 106 plus the work of five days: the playtest notes of November 12 to 16, an overhaul of how a mission starts, ends and restarts, and a round of speed work. The tables above stop at build 106: build 108 was toured as test sets, with a different scene list and method, so its numbers are given in the last bullet instead of a row. Checked in a headless emulator on a Mac, most of it with a test that fails on the old behaviour.
+
+- **Missions start when the world is there.** The card closes only after the city around you is drawn; the countdown and the mission timer do not run under a closed screen, and the number shown is the real time left.
+- **Retrying a failed mission is clean.** Yes after a failure restarts the mission without the long black screen (it could last several seconds) and without a second start from nowhere; the failed tries are counted once, so Skip appears on the right try.
+- **Buttons on the mission card and in the talk before a mission wait for their hints.** X and Triangle are taken only once the button hints are on screen, so a press made during the fly-in no longer skips the card. The button icons sit 1 to 2 px lower, and Skip and its icon share a line like Continue.
+- **A locked stage explains itself.** When a stage needs a car or an outfit you do not have, a hint window with Continue says what to get, and the next icon points to the seller.
+- **Stage text and the pause.** The text of a stage is shown for about 3 seconds when it can be seen, the icon flies to the corner and stays. Pausing in a mission always shows the objective window with its text, centred under the menu frame. Pausing between two stages opens the mission pause (Restart and Cancel, with the objective window).
+- **Mission cars behave closer to the original.** A chase follows the roads without braking in every bend and does not freeze after a ram; a mission car that falls in water or a ditch is put back on the road; the police car of a mission is no longer taken for a real cop, so it cannot arrest you or start the fine loop, and a Hit & Run chase is not started or cleared by it.
+- **Races and gauges.** The finish line lies across the road; the closeness bar fills as the distance shrinks and turns red; the damage and closeness gauges no longer sit under the timer.
+- **Interiors.** Characters of a mission are no longer hidden inside buildings (Moe in the tavern); a room opens after its characters have loaded, so Grampa no longer stands up in front of you.
+- **Pickups and entrances.** Mission pickups and collector cards flash and glint at the pick-up like the key; the glow of doors is clear in the middle and bright at the edges; the coin by the counter spins like the original and keeps spinning in pause and in the menus.
+- **Cars.** A car that lies upside down is put back on its wheels by the rules of the original; a car-to-car ram gives damage and does not lift one car on the roof of the other; on foot you can stand on the roofs of cars, tall ones included; suspension travel, spring stiffness and the centre of mass follow the values of the original.
+- **Traffic.** A traffic car that you hit stands as a solid object for 10 to 15 seconds and then drives off to its lane by itself, with no jump in front of your eyes.
+- **Walking.** Homer rides moving platforms and inherits their speed in a jump; the slope limit and the fall of knocked props follow the original more closely.
+- **Breakable props.** On levels 2 to 5 and 7 all breakable state props (vending machines, columns, gates, kiosks) follow their state machine from the disc, and the glass with Krusty is neutral instead of tinted for each level (this is in the data, so the levels must be rebuilt).
+- **Sleep and resume.** Putting the PSP to sleep during play or loading no longer leaves a level, a gag, a mission car or a character broken after waking.
+- **Level 5 loads faster.** The wait for characters under the newspaper, about 3 s on level 5, is gone: the level opens after 8.25 s (median) against 10.98 s (tour of the November 16 set, PSP-2000). The other levels wait 0.3 to 0.45 s longer under the newspaper, because the city blocks around you are now really waited for.
+- **Everything is loaded when the screen opens.** After the screen opens, no city block around you is still missing (0 of 30 level loads against 28 of 30; same tour), and the cars of the first stage are already in place.
+- **Mission cars come in without a hitch.** The car of a mission appears in 18 to 20 ms against 47 to 66 ms (same tour).
+- **Getting into a car from afar.** If the walk round a car to its door would take longer than about a second, or the way is blocked, the screen closes with the iris and you are put into the car, for every character and every car.
+- **Smaller things.** The sounds of the car shop play on the effects bus (they were silent in Store mode); answering Yes to cancelling a save no longer opens the save window again; the draw distance regulator can reach 200 m where memory allows; the boot screen shows build 108; many loops that ran every frame (props, lights, gags, city draw lists) are cheaper.
+- **Setup on Fedora, Arch and Windows.** `setup.sh` now knows `dnf` and `pacman`; on Python 3.13 and 3.14, which have no wheels for the pinned numpy, it installs Python 3.12 or takes newer numpy and Pillow builds; when the build stops, the page shows the reason, the kind of failure (not this disc, build failed, not copied) and the path of the log (`build/app/build.log`); on Windows without WSL it says so instead of failing in silence. Fedora and Arch are not tested by us.
+- **Speed and memory (hardware tours of build 108 test sets).** Scripted tours on a PSP-2000 of test sets of build 108 ran to the end: 159 scenes on November 14 and 164 scenes on November 15 (two sets) and 166 scenes on November 16, with 0 read errors, 0 memory failures and three sleep-and-wake cycles per tour that left nothing broken. On the 114 scenes shared with the build 106 tour (November 14 set): average frame rate per scene 25.0 fps against 24.4, frame time p95 35.0 ms against 35.6 (median over scenes), frames missed 12,550 against 16,749 (25 percent fewer), frames with a visible not yet loaded block 39 against 85, lowest free memory 3.2 MB against 3.3, level load 2.9 s against 3.2 s on average (8 to 14 percent shorter on every level). Level 2 had dipped on that intermediate set (23.2 fps median against 25.6 in build 106); that was fixed, and the measurement after the fix, on the November 15 sets: the first drive scene of level 2 runs at 33.3 ms frame time against 36.2 before the fix, and the mission-character step of the frame takes 0.3 ms against 4.2. The final build was not toured as such: a few later changes came after the November 16 set.
 
 ## Build 106 (November 11)
 
